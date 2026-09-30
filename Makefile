@@ -1,7 +1,10 @@
+VERSION ?= $(shell cat VERSION)
+REVISION ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+
 .PHONY: build test check installers docker
 build:
 	mkdir -p bin
-	CGO_ENABLED=1 go build -tags netgo,osusergo,sqlite_omit_load_extension -trimpath -ldflags='-linkmode external -extldflags "-static"' -o bin/redapp ./cmd/redapp
+	CGO_ENABLED=1 go build -tags netgo,osusergo,sqlite_omit_load_extension -trimpath -ldflags='-linkmode external -extldflags "-static" -X main.version=$(VERSION) -X main.revision=$(REVISION)' -o bin/redapp ./cmd/redapp
 test:
 	go test -race ./... -count=1 -timeout=120s
 	python3 scripts/test-installers.py

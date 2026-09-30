@@ -13,6 +13,8 @@ import urllib.error
 import urllib.request
 
 root = Path(__file__).resolve().parents[1]
+version_output = subprocess.check_output([str(root / "bin/redapp"), "version"], text=True)
+assert re.fullmatch(r"RedApp [^\s]+ \(commit [^\s]+\)\n", version_output), "版本信息无效"
 with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
     directory = Path(temp)
     with socket.socket() as socket_probe:

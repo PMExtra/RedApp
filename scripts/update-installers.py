@@ -16,8 +16,8 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 PIN = "ff6aec96948b70d94983af2641a6b67c94faeff5"
 
-def run(args):
-    result = subprocess.run(args, text=True, capture_output=True, check=True, timeout=180)
+def run(args, env=None):
+    result = subprocess.run(args, text=True, capture_output=True, check=True, timeout=180, env=env)
     return result.stdout + result.stderr
 
 def audit(directory):
@@ -34,8 +34,8 @@ def audit(directory):
         raise ValueError("PowerShell 自动更新策略异常")
     run(["sh", "-n", str(directory / "install.sh")])
     if shutil.which("pwsh"):
-        code = "$e=$null;$t=$null;[System.Management.Automation.Language.Parser]::ParseFile($args[0],[ref]$t,[ref]$e)|Out-Null;if($e.Count){exit 1}"
-        run(["pwsh", "-NoProfile", "-Command", code, str(directory / "install.ps1")])
+        code = "$e=$null;$t=$null;[System.Management.Automation.Language.Parser]::ParseFile($env:REDAPP_INSTALLER_SYNTAX_PATH,[ref]$t,[ref]$e)|Out-Null;if($e.Count){exit 1}"
+        run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", code], env={**os.environ, "REDAPP_INSTALLER_SYNTAX_PATH": str(directory / "install.ps1")})
 
 def exchange(a, b):
     # Linux renameat2 atomically swaps the entire installer tree, including provenance.

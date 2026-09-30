@@ -53,10 +53,23 @@ python3 scripts/update-installers.py --source installers/codex/upstream
 python3 scripts/update-installers.py --apply
 ```
 
-更换上游 commit 时，维护者必须显式给出已核验的新 shell/PowerShell SHA-256，并审阅原文、patch、许可证和测试差异。摘要不符、patch 偏移/冲突、出口检查或测试失败，均不会替换已发布目录。详细来源和摘要保存在 `installers/codex/provenance.json`。
+更换上游 commit 时，维护者必须显式给出已核验的新 shell/PowerShell SHA-256，并审阅原文、patch、许可证和测试差异。摘要不符、patch 偏移/冲突、出口检查或测试失败，均不会替换已发布目录。详细来源和摘要保存在 `installers/codex/provenance.json`；生成一致性与 patch 流程见 [安装器维护](docs/installers-maintenance.md)。
 
 目前验证包括本地假上游、并发/故障/续传/清理、真实进程 SIGKILL、HTTP 管理 API、25 个 shell 离线安装场景、Docker 本地 runtime。Windows 实机、macOS 实机、生产 CDN 下载链与全 Docker builder 阶段仍未完整验证，不能据此宣称已完成生产兼容性认证。
 
 ## 许可
 
 RedApp 原创代码采用 [MIT License](LICENSE)，Copyright (c) 2026 PMExtra。第三方材料保持各自原有许可，不受项目 MIT LICENSE 替代：Codex 官方安装器及其修改版本适用 `installers/codex/upstream/LICENSE` 和 `NOTICE`；构建依赖许可见 [third_party](third_party/README.md)。上游许可文件不是整个仓库的统一许可证。
+
+## 自动验证与容器发布
+
+[CI](.github/workflows/ci.yml) 在 PR 和 main 推送时运行格式、vet、race、安装器及 CLI HTTP 测试，并构建完整 Linux/amd64 Dockerfile、验证容器持久化和故障恢复。PR 不登录或发布容器注册表。
+
+[发布工作流](.github/workflows/publish.yml) 仅处理本仓库的稳定 `v0.x.y` 标签。标签必须与 `VERSION` 一致，且相同提交先通过 main CI。使用 Actions 临时 `GITHUB_TOKEN` 发布 `ghcr.io/pmextra/redapp` 的 `v0.x.y`、`0.x.y`、`0.x` 和 `latest` 标签，再按 digest 拉取并执行容器验证。首次创建的 GHCR 包可见性需维护者确认；工作流不会修改账户或包的持久权限。暂不发布 ARM64 镜像。
+
+```sh
+./bin/redapp version
+docker run --rm ghcr.io/pmextra/redapp:v0.1.0 version
+```
+
+版本来自 `VERSION`；本地 `make build` 写入 Git revision。直接构建 Docker 时可传 `--build-arg VERSION=0.1.0 --build-arg REVISION=<commit>`；自动发布会传入准确值。镜像 OCI 标签包含来源、版本、提交和原创代码 MIT 许可，第三方许可边界保持不变。

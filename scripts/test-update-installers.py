@@ -13,6 +13,13 @@ with tempfile.TemporaryDirectory(prefix="redapp-updater-test-") as temp:
     source = Path(temp)
     for file in (target / "upstream").iterdir():
         shutil.copyfile(file, source / file.name)
+    # Published assets must exactly equal the current baseline plus strict patches.
+    for name in ["install.sh", "install.ps1"]:
+        generated = source / (name + ".generated")
+        shutil.copyfile(source / name, generated)
+        result = subprocess.run(["patch", "--batch", "--forward", "--fuzz=0", str(generated), str(target / "patches" / (name + ".patch"))], capture_output=True, text=True)
+        assert result.returncode == 0 and "offset" not in result.stdout and "fuzz" not in result.stdout, result.stdout
+        assert generated.read_bytes() == (target / "generated" / name).read_bytes(), "generated assets drifted from patches"
     result = subprocess.run(["python3", str(root / "scripts/update-installers.py"), "--source", str(source)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     shell = source / "install.sh"

@@ -1,5 +1,4 @@
-# RedApp 企业改版：固定官方 0.159.2 / ff6aec96948b70d94983af2641a6b67c94faeff5。
-# 仅企业 origin、失败关闭、禁止重定向、保留哈希校验、删除自动更新标记。
+# RedApp 修改版：仅从企业服务下载安装，不启用自动更新。
 [CmdletBinding()]
 param(
     [string]$Release = $env:CODEX_RELEASE
@@ -1043,7 +1042,6 @@ try {
             }
         }
         Ensure-Junction -LinkPath $currentDir -TargetPath $releaseDir -InstallerOwnedTargetPrefix $releasesDir
-        # RedApp: 用户决定抑制自动更新标记；CLI 二进制保持原样。
         if (Test-Path -LiteralPath $autoUpdateVersion) {
             Remove-Item -LiteralPath $autoUpdateVersion -Force -ErrorAction Stop
         }

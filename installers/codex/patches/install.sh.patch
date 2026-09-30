@@ -1,13 +1,12 @@
 --- install.sh
 +++ install.sh
-@@ -1,4 +1,6 @@
+@@ -1,4 +1,5 @@
  #!/bin/sh
-+# RedApp 企业改版：固定官方 0.159.2 / ff6aec96948b70d94983af2641a6b67c94faeff5。
-+# 仅企业 origin、失败关闭、禁止重定向、保留哈希校验、删除自动更新标记。
++# RedApp 修改版：仅从企业服务下载安装，不启用自动更新。
  
  set -eu
  
-@@ -7,7 +9,7 @@
+@@ -7,7 +8,7 @@
  DAEMON_ONLY="${CODEX_INSTALL_DAEMON_ONLY:-0}"
  DEFAULT_PREFER_RELEASES_OPENAI_COM="true"
  PREFER_RELEASES_OPENAI_COM="${CODEX_INSTALLER_USE_RELEASES_OPENAI_COM:-$DEFAULT_PREFER_RELEASES_OPENAI_COM}"
@@ -16,7 +15,7 @@
  RELEASES_CONNECT_TIMEOUT=10
  RELEASES_METADATA_TIMEOUT=30
  RELEASES_ASSET_TIMEOUT=300
-@@ -99,7 +101,7 @@
+@@ -99,7 +100,7 @@
    CODEX_RELEASE          Version to install; overridden by --release.
    CODEX_NON_INTERACTIVE  Set to 1, true, or yes to skip prompts.
    CODEX_INSTALLER_USE_RELEASES_OPENAI_COM
@@ -25,7 +24,7 @@
  EOF
          exit 0
          ;;
-@@ -115,97 +117,42 @@
+@@ -115,97 +116,42 @@
  download_file() {
    url="$1"
    output="$2"
@@ -143,7 +142,7 @@
  }
  
  parse_release_metadata() {
-@@ -316,10 +263,7 @@
+@@ -316,10 +262,7 @@
  }
  
  release_url_for_asset() {
@@ -155,7 +154,7 @@
  }
  
  releases_url_for_asset() {
-@@ -330,9 +274,7 @@
+@@ -330,9 +273,7 @@
  }
  
  release_metadata_url() {
@@ -166,7 +165,7 @@
  }
  
  parse_downloaded_release_metadata() {
-@@ -358,29 +300,8 @@
+@@ -358,29 +299,8 @@
  }
  
  resolve_release_from_github() {
@@ -198,7 +197,7 @@
  }
  
  resolve_release_from_releases() {
-@@ -415,19 +336,7 @@
+@@ -415,19 +335,7 @@
  resolve_release() {
    normalized_version="$(normalize_version "$RELEASE")"
    validate_version "$normalized_version"
@@ -219,7 +218,7 @@
  }
  
  release_asset_digest_or_empty() {
-@@ -492,10 +401,10 @@
+@@ -492,10 +400,10 @@
  
    if [ "$release_source" = "releases.openai.com" ]; then
      download_url="$(releases_url_for_asset "$asset" "$resolved_version")"
@@ -232,7 +231,7 @@
      fi
    else
      download_url="$(release_url_for_asset "$asset" "$resolved_version")"
-@@ -1269,12 +1178,8 @@
+@@ -1269,12 +1177,7 @@
    fi
  fi
  update_current_link "$release_dir"
@@ -242,7 +241,6 @@
 -else
 -  rm -f "$AUTO_UPDATE_VERSION"
 -fi
-+# RedApp: 用户决定抑制自动更新标记；CLI 二进制保持原样。
 +rm -f "$AUTO_UPDATE_VERSION"
  if [ "$DAEMON_ONLY" = "1" ]; then
    release_install_lock

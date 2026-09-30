@@ -1,12 +1,11 @@
 --- install.ps1
 +++ install.ps1
-@@ -1,3 +1,5 @@
-+# RedApp 企业改版：固定官方 0.159.2 / ff6aec96948b70d94983af2641a6b67c94faeff5。
-+# 仅企业 origin、失败关闭、禁止重定向、保留哈希校验、删除自动更新标记。
+@@ -1,3 +1,4 @@
++# RedApp 修改版：仅从企业服务下载安装，不启用自动更新。
  [CmdletBinding()]
  param(
      [string]$Release = $env:CODEX_RELEASE
-@@ -18,7 +20,7 @@
+@@ -18,7 +19,7 @@
  } else {
      $env:CODEX_INSTALLER_USE_RELEASES_OPENAI_COM -match "^(?i:1|true|yes)$"
  }
@@ -15,7 +14,7 @@
  $ReleasesMetadataTimeoutSec = 30
  $ReleasesAssetTimeoutSec = 300
  
-@@ -111,47 +113,15 @@
+@@ -111,47 +112,15 @@
  }
  
  function Invoke-WebRequestWithFallback {
@@ -72,7 +71,7 @@
      }
  }
  
-@@ -172,9 +142,9 @@
+@@ -172,9 +141,9 @@
      $checksumFallbackUrl = $null
      if ($ResolvedRelease.Source -eq "ReleasesOpenAICom") {
          $packageUrl = "$ReleasesBaseUri/releases/$version/$packageAsset"
@@ -84,7 +83,7 @@
      }
  
      $packageMetadata = Find-ReleaseAssetMetadata -AssetName $packageAsset -ReleaseMetadata $releaseMetadata -Url $packageUrl -FallbackUrl $packageFallbackUrl
-@@ -193,7 +163,7 @@
+@@ -193,7 +162,7 @@
      $packageFallbackUrl = $null
      if ($ResolvedRelease.Source -eq "ReleasesOpenAICom") {
          $packageUrl = "$ReleasesBaseUri/releases/$version/$packageAsset"
@@ -93,7 +92,7 @@
      }
      $packageMetadata = Find-ReleaseAssetMetadata -AssetName $packageAsset -ReleaseMetadata $releaseMetadata -Url $packageUrl -FallbackUrl $packageFallbackUrl
      if ($null -eq $packageMetadata) {
-@@ -326,34 +296,8 @@
+@@ -326,34 +295,8 @@
  }
  
  function Resolve-ReleaseFromGitHub {
@@ -130,7 +129,7 @@
  }
  
  function Resolve-ReleaseFromReleases {
-@@ -367,7 +311,7 @@
+@@ -367,7 +310,7 @@
          "$ReleasesBaseUri/releases/$NormalizedVersion/release.json"
      }
      try {
@@ -139,7 +138,7 @@
          $releaseMetadata = [string]$metadataResponse.Content | ConvertFrom-Json -ErrorAction Stop
          $resolvedVersion = Resolve-VersionFromReleaseMetadata -ReleaseMetadata $releaseMetadata
          if ($NormalizedVersion -ne "latest" -and $resolvedVersion -cne $NormalizedVersion) {
-@@ -388,16 +332,9 @@
+@@ -388,16 +331,9 @@
  function Resolve-Release {
      $normalizedVersion = Normalize-Version -RawVersion $Release
      Assert-ValidReleaseVersion -Version $normalizedVersion
@@ -159,7 +158,7 @@
  }
  
  function Get-VersionFromBinary {
-@@ -1106,14 +1043,9 @@
+@@ -1106,14 +1042,8 @@
              }
          }
          Ensure-Junction -LinkPath $currentDir -TargetPath $releaseDir -InstallerOwnedTargetPrefix $releasesDir
@@ -171,7 +170,6 @@
 -            if (Test-Path -LiteralPath $autoUpdateVersion) {
 -                Remove-Item -LiteralPath $autoUpdateVersion -Force -ErrorAction Stop
 -            }
-+        # RedApp: 用户决定抑制自动更新标记；CLI 二进制保持原样。
 +        if (Test-Path -LiteralPath $autoUpdateVersion) {
 +            Remove-Item -LiteralPath $autoUpdateVersion -Force -ErrorAction Stop
          }

@@ -7,14 +7,15 @@ export DOCKER_CONFIG="$task_temp/docker-config"
 mkdir -p "$DOCKER_CONFIG"
 task_name="redapp-test-$$"
 task_volume="$task_name-data"
-task_image="$task_name:local"
+task_image="${REDAPP_TEST_IMAGE:-$task_name:local}"
 cleanup() {
   docker rm -f "$task_name" "$task_name-second" >/dev/null 2>&1 || true
   docker volume rm "$task_volume" >/dev/null 2>&1 || true
-  docker image rm "$task_image" >/dev/null 2>&1 || true
+  if [ -z "${REDAPP_TEST_IMAGE:-}" ]; then docker image rm "$task_image" >/dev/null 2>&1 || true; fi
   rm -rf "$task_temp"
 }
 trap cleanup EXIT INT TERM
+if [ -z "${REDAPP_TEST_IMAGE:-}" ]; then
 cp "$task_root/bin/redapp" "$task_temp/redapp"
 cp /etc/ssl/certs/ca-certificates.crt "$task_temp/ca-certificates.crt"
 mkdir "$task_temp/data"
@@ -32,6 +33,7 @@ HEALTHCHECK --interval=2s --timeout=5s --start-period=1s --retries=5 CMD ["/reda
 ENTRYPOINT ["/redapp"]
 DOCKER
 docker build -t "$task_image" "$task_temp" >/dev/null
+fi
 docker volume create "$task_volume" >/dev/null
 docker run -d --read-only --name "$task_name" -v "$task_volume:/data" "$task_image" >/dev/null
 task_try=0

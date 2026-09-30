@@ -21,6 +21,9 @@ import (
 	"time"
 )
 
+var version = "dev"
+var revision = "unknown"
+
 func env(k, defaultValue string) string {
 	if v := os.Getenv(k); v != "" {
 		return v
@@ -28,6 +31,10 @@ func env(k, defaultValue string) string {
 	return defaultValue
 }
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "version" {
+		fmt.Printf("RedApp %s (commit %s)\n", version, revision)
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "healthcheck" {
 		base := env("REDAPP_PUBLIC_URL", "http://localhost:8080")
 		u, err := httpserver.PublicURL(base)
