@@ -46,12 +46,12 @@ docker exec "$task_name" /redapp healthcheck
 test "$(docker inspect --format '{{.Config.User}}' "$task_name")" = '65532:65532'
 # Capture bootstrap logs privately; never print credentials to a report.
 docker logs "$task_name" >"$task_temp/first.log" 2>&1
-test "$(rg -c '首次初始化管理员密码' "$task_temp/first.log")" = 1
+test "$(grep -c '首次初始化管理员密码' "$task_temp/first.log")" = 1
 if docker run --name "$task_name-second" --read-only -v "$task_volume:/data" "$task_image" >"$task_temp/second.log" 2>&1; then
   echo '第二实例错误地取得独占目录' >&2
   exit 1
 fi
-rg -q '数据目录已被另一个实例占用' "$task_temp/second.log"
+grep -q '数据目录已被另一个实例占用' "$task_temp/second.log"
 docker kill "$task_name" >/dev/null
 docker start "$task_name" >/dev/null
 task_try=0
@@ -62,6 +62,6 @@ while [ "$task_try" -lt 20 ]; do
 done
 docker exec "$task_name" /redapp healthcheck
 docker logs "$task_name" >"$task_temp/after.log" 2>&1
-test "$(rg -c '首次初始化管理员密码' "$task_temp/after.log")" = 1
+test "$(grep -c '首次初始化管理员密码' "$task_temp/after.log")" = 1
 docker stop --time 20 "$task_name" >/dev/null
 echo '本地 Docker runtime：非 root、只读根、持久卷、健康检查、双实例拒绝、SIGKILL/正常停止通过。'
