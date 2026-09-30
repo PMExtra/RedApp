@@ -14,18 +14,10 @@
  $ReleasesMetadataTimeoutSec = 30
  $ReleasesAssetTimeoutSec = 300
  
-@@ -111,47 +112,15 @@
- }
- 
- function Invoke-WebRequestWithFallback {
--    param(
--        [object]$Metadata,
--        [string]$OutFile,
--        [string]$ExpectedDigest,
--        [string]$AssetName,
--        [string]$ReleaseVersion,
--        [string]$RequiredManifestAsset
--    )
+@@ -119,39 +120,13 @@
+         [string]$ReleaseVersion,
+         [string]$RequiredManifestAsset
+     )
 -
 -    try {
 -        if ($Metadata.Url.StartsWith("$ReleasesBaseUri/", [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -59,8 +51,6 @@
 -                $null = Get-PackageArchiveDigest -ManifestPath $OutFile -AssetName $RequiredManifestAsset
 -            }
 -        }
-+    param([object]$Metadata, [string]$OutFile, [string]$ExpectedDigest,
-+          [string]$AssetName, [string]$ReleaseVersion, [string]$RequiredManifestAsset)
 +    if (-not $Metadata.Url.StartsWith("$ReleasesBaseUri/", [System.StringComparison]::Ordinal)) {
 +        throw "RedApp: blocked external URL"
 +    }
@@ -71,7 +61,7 @@
      }
  }
  
-@@ -172,9 +141,9 @@
+@@ -172,9 +147,9 @@
      $checksumFallbackUrl = $null
      if ($ResolvedRelease.Source -eq "ReleasesOpenAICom") {
          $packageUrl = "$ReleasesBaseUri/releases/$version/$packageAsset"
@@ -83,7 +73,7 @@
      }
  
      $packageMetadata = Find-ReleaseAssetMetadata -AssetName $packageAsset -ReleaseMetadata $releaseMetadata -Url $packageUrl -FallbackUrl $packageFallbackUrl
-@@ -193,7 +162,7 @@
+@@ -193,7 +168,7 @@
      $packageFallbackUrl = $null
      if ($ResolvedRelease.Source -eq "ReleasesOpenAICom") {
          $packageUrl = "$ReleasesBaseUri/releases/$version/$packageAsset"
@@ -92,13 +82,10 @@
      }
      $packageMetadata = Find-ReleaseAssetMetadata -AssetName $packageAsset -ReleaseMetadata $releaseMetadata -Url $packageUrl -FallbackUrl $packageFallbackUrl
      if ($null -eq $packageMetadata) {
-@@ -326,34 +295,8 @@
- }
- 
- function Resolve-ReleaseFromGitHub {
--    param(
--        [string]$NormalizedVersion
--    )
+@@ -329,31 +304,7 @@
+     param(
+         [string]$NormalizedVersion
+     )
 -
 -    if ($NormalizedVersion -eq "latest") {
 -        $requestedRelease = "latest"
@@ -124,12 +111,11 @@
 -        Metadata = $releaseMetadata
 -        Source = "GitHub"
 -    }
-+    param([string]$NormalizedVersion)
 +    throw "RedApp: public fallback disabled"
  }
  
  function Resolve-ReleaseFromReleases {
-@@ -367,7 +310,7 @@
+@@ -367,7 +318,7 @@
          "$ReleasesBaseUri/releases/$NormalizedVersion/release.json"
      }
      try {
@@ -138,7 +124,7 @@
          $releaseMetadata = [string]$metadataResponse.Content | ConvertFrom-Json -ErrorAction Stop
          $resolvedVersion = Resolve-VersionFromReleaseMetadata -ReleaseMetadata $releaseMetadata
          if ($NormalizedVersion -ne "latest" -and $resolvedVersion -cne $NormalizedVersion) {
-@@ -388,16 +331,9 @@
+@@ -388,16 +339,9 @@
  function Resolve-Release {
      $normalizedVersion = Normalize-Version -RawVersion $Release
      Assert-ValidReleaseVersion -Version $normalizedVersion
@@ -158,7 +144,7 @@
  }
  
  function Get-VersionFromBinary {
-@@ -1106,14 +1042,8 @@
+@@ -1106,14 +1050,8 @@
              }
          }
          Ensure-Junction -LinkPath $currentDir -TargetPath $releaseDir -InstallerOwnedTargetPrefix $releasesDir

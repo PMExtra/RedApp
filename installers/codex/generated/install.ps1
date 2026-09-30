@@ -112,8 +112,14 @@ function Find-ReleaseAssetMetadata {
 }
 
 function Invoke-WebRequestWithFallback {
-    param([object]$Metadata, [string]$OutFile, [string]$ExpectedDigest,
-          [string]$AssetName, [string]$ReleaseVersion, [string]$RequiredManifestAsset)
+    param(
+        [object]$Metadata,
+        [string]$OutFile,
+        [string]$ExpectedDigest,
+        [string]$AssetName,
+        [string]$ReleaseVersion,
+        [string]$RequiredManifestAsset
+    )
     if (-not $Metadata.Url.StartsWith("$ReleasesBaseUri/", [System.StringComparison]::Ordinal)) {
         throw "RedApp: blocked external URL"
     }
@@ -295,7 +301,9 @@ function Resolve-VersionFromReleaseMetadata {
 }
 
 function Resolve-ReleaseFromGitHub {
-    param([string]$NormalizedVersion)
+    param(
+        [string]$NormalizedVersion
+    )
     throw "RedApp: public fallback disabled"
 }
 
