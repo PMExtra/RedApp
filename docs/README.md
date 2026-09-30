@@ -1,0 +1,69 @@
+# RedApp documentation
+
+[English quick start](../README.md) · [Chinese quick start](../README.zh-CN.md)
+
+Use the quick starts to run the service and install Codex on clients. The references below cover advanced operation and development; the existing detailed reference documents are in Chinese.
+
+## Administrator references
+
+- [Operations](operations.md): CLI/environment configuration, latest TTL, reverse proxy and trusted headers, access controls, persistent volumes, backups, recovery, health checks, cleanup, and metrics.
+- [Validation and limitations](acceptance.md): the acceptance matrix, concurrency/failure tests, crash windows, and remaining platform/upstream verification gates.
+
+`REDAPP_PUBLIC_URL` must be an origin without a subpath, query, or credentials. Requests must use its exact Host. For production, use HTTPS at the reverse proxy; download endpoints do not require an admin session, so network access controls remain necessary. See the operations reference for configuration details rather than copying its configuration table here.
+
+## Build from source
+
+Use Linux/amd64 with Go 1.25.1, GCC, static libc development libraries, and Make. Docker builds require Docker and access to the builder image and Go modules.
+
+```sh
+git clone https://github.com/PMExtra/RedApp.git
+cd RedApp
+make build
+./bin/redapp --data ./data --public-url http://localhost:8080
+```
+
+Open `http://localhost:8080/admin/` and use the first-start password from the process logs. For a locally built container:
+
+```sh
+docker build --build-arg VERSION="$(cat VERSION)" \
+  --build-arg REVISION="$(git rev-parse HEAD)" -t redapp:local .
+docker run -d --name redapp --read-only \
+  -p 127.0.0.1:8080:8080 -v redapp-data:/data \
+  -e REDAPP_PUBLIC_URL=http://localhost:8080 redapp:local
+```
+
+The Docker image runs as UID/GID 65532 and needs a writable local data volume. The binary statically links SQLite through CGO, disables SQLite extension loading, and uses Go DNS/user lookup implementations; no separate database service is required.
+
+## Design and development
+
+- [Design baseline](design.md): requirements, architecture boundaries, lifecycle, version cleanup, security, and acceptance criteria.
+- [Upstream contract](upstream-contract.md): pinned official installer sources, metadata/digest rules, platform selection, fallback behavior, and verification boundaries.
+- [Installer maintenance](installers-maintenance.md): minimal patch policy, provenance, generated-asset consistency, failure checks, and atomic updater behavior.
+- [Third-party licenses](../third_party/README.md): dependency and vendored installer notices; these do not replace the project's [MIT License](../LICENSE).
+
+The server embeds admin assets, enterprise installers, and Codex license materials. Changes to those assets require rebuilding the binary. Keep the fixed-upstream distributor/cache separate from the statically linked Codex module; this version supports one application and one owning process.
+
+From the repository root:
+
+```sh
+make check test build
+python3 scripts/test-http-cli.py
+sh scripts/test-docker-local.sh
+node --check internal/httpserver/web/app.js
+python3 scripts/update-installers.py --source installers/codex/upstream
+```
+
+The updater's default mode checks without modifying published assets. To update from an immutable official commit, use `python3 scripts/update-installers.py --apply`; changing the baseline requires explicitly verified shell/PowerShell SHA256 values and review of patches, licenses, and test differences. Full details and minimal-change rules remain in the installer maintenance reference.
+
+## CI, versions, and container publication
+
+[CI](../.github/workflows/ci.yml) runs on PRs and main pushes: formatting, vet, race, installer/CLI tests, full Linux/amd64 Docker builds, and container persistence/recovery checks. PRs do not log in to or publish to a registry.
+
+[Publication](../.github/workflows/publish.yml) runs only for this repository's stable `v0.x.y` tags. A tag must match `VERSION`, and its exact commit must have passed main CI. Actions uses its temporary `GITHUB_TOKEN` to publish `ghcr.io/pmextra/redapp` tags `v0.x.y`, `0.x.y`, `0.x`, and `latest`, then pulls the digest and verifies the running container. ARM64 images are not published. The workflow does not change GHCR package visibility or persistent account permissions; anonymous access has not been verified.
+
+```sh
+./bin/redapp version
+docker run --rm ghcr.io/pmextra/redapp:v0.1.0 version
+```
+
+`make build` embeds `VERSION` and the Git revision. Container build arguments provide the same information; OCI labels include source, version, revision, and the original-code MIT license. For the released v0.1.0 image, full build and digest-pull/runtime verification passed in [CI](https://github.com/PMExtra/RedApp/actions/runs/36788207268) and [publication](https://github.com/PMExtra/RedApp/actions/runs/36788716836). Windows/macOS real-machine installation, real upstream download chains, and bundled artifact license reviews remain separate validation gates.

@@ -74,14 +74,14 @@ git diff --check
 | A18 代理安全 | 通过 | 不可信头忽略、右到左可信链、IPv6/引号、Forwarded 优先、畸形不拼链；host/proto 用固定配置，Host 注入拒绝 |
 | A19 指标 | 通过 | 两次下游共享一次上游的持久字节、cache reuse、版本计数、文件系统余量、逻辑/已分配磁盘分类；`TestEffectiveAverageExcludesVerificationAndRecentSnapshot` 验证平均排除验证及采样时间 |
 | A20 脚本更新 | 未完整验证 | pinned digest、严格 patch、原子目录交换实现、失败保留旧目录、25 个 shell 场景和服务安装链通过；Windows PS 5/7 实测、真实 macOS 实测、新版联网 fetch 未执行成功 |
-| A21 Docker | 未完整验证 | 本地 runtime 全流程通过；完整多阶段 Dockerfile 尚未验证干净机器从头构建 |
+| A21 Docker | 通过 | v0.1.0 的 [托管 CI](https://github.com/PMExtra/RedApp/actions/runs/36788207268) 完成全 Dockerfile 构建及 runtime 检查；[发布工作流](https://github.com/PMExtra/RedApp/actions/runs/36788716836) 按 digest 重新拉取并验证版本、持久化、健康、双实例和崩溃恢复。仅 Linux/amd64；匿名 GHCR 访问未验证 |
 | A22 资源边界 | 通过 | 读者/writer 上限、`/dev/full` 写失败注入、已有缓存不受污染、SQLite busy timeout、源站挂起有限失败；未执行真实卷满和超大流量压力基准 |
 | A23 故障恢复 | 通过 | rename 未提交、坏 blob、part、tombstone、真实进程强杀恢复；恢复后重新 hash，不能仅凭 DB 标记 complete |
 | A24 架构边界 | 通过 | distributor/download/store 不导入 Codex 元数据/版本解析；唯一静态 Codex 模块、固定请求目标、无插件/第二应用/外部运行服务 |
 
 ## 交付前有限复核与 A15 补测
 
-最终统计：**24 项验收中 22 项通过、0 项失败、2 项未完整验证（A20、A21）**。此统计限定于上表的测试范围。
+最终统计：**24 项验收中 23 项通过、0 项失败、1 项未完整验证（A20）**。此统计限定于上表的测试范围。
 
 A15 覆盖的具体故障窗口为：预览记录已提交但未开始清理；退休 tombstone 已提交但 current 尚未删除；current 已删除但内存尚未分离；内存已分离但文件未删除；blob/part 已 unlink 但 generation 尚未删除；generation 删除已提交但清理任务尚未删除；任务已删除但仍被旧读者租约持有；以及新代已发布后旧代最终回收的对应窗口。这些窗口均有确定性故障测试。
 
@@ -124,10 +124,10 @@ sh scripts/test-docker-local.sh
 # vet、格式、静态构建、真实 CLI、Docker runtime 均 exit=0
 ```
 
-完整多阶段 Dockerfile 的干净构建尚未验证。已验证的路径使用 Go 1.25.1 本地工具链和固定模块构建静态二进制，再以 scratch、本地 CA 与该二进制构建 runtime；本轮重新验证运行检查通过。该路径不等价于完整多阶段 Dockerfile 在干净机器构建。
+v0.1.0 的完整多阶段 Dockerfile 已在干净的 Linux/amd64 托管 runner 上构建并通过容器验证；发布后的镜像按 digest 重新拉取和运行验证通过。证据见 A21 中的 CI 与发布链接。匿名拉取和其他架构不包含在此验证结论中。
 
 ## 尚未验证与发布门禁
 
-仍需完成：真实原始 release/manifest 校验样本、旧 legacy 和 alpha/beta 样本、最小 CDN 重定向/Range 实探、Windows/macOS 安装与失败路径、六平台制品内许可材料，以及完整 Docker builder。服务对未核验 origin 失败关闭。
+仍需完成：真实原始 release/manifest 校验样本、旧 legacy 和 alpha/beta 样本、最小 CDN 重定向/Range 实探、Windows/macOS 安装与失败路径、六平台制品内许可材料。服务对未核验 origin 失败关闭。
 
 官方页面文本显示固定 origin 的资产 URL，与当前解析规则相符；文本观察不代替原始字节 fixture 或实际制品链验证。[0.159.2 官方清单](https://releases.openai.com/codex/releases/0.159.2/release.json)。

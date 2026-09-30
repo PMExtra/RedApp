@@ -65,4 +65,4 @@ location / {
 
 企业安装器抑制自动更新标记，保留官方正常交互语义。推荐无人值守环境显式 `CODEX_NON_INTERACTIVE=1`；交互选择启动 CLI 或包管理器子进程仍受企业出口策略控制。固定源码的 TUI 更新检查访问 GitHub，standalone 更新动作和 daemon 更新器获取公共安装器；删除 marker 不等于改写这些二进制路径。来源：[updates.rs](https://github.com/openai/codex/blob/ff6aec96948b70d94983af2641a6b67c94faeff5/codex-rs/tui/src/updates.rs)、[update_action.rs](https://github.com/openai/codex/blob/ff6aec96948b70d94983af2641a6b67c94faeff5/codex-rs/tui/src/update_action.rs)、[update_loop.rs](https://github.com/openai/codex/blob/ff6aec96948b70d94983af2641a6b67c94faeff5/codex-rs/app-server-daemon/src/update_loop.rs)。
 
-正式外部分发之前，仍需核查六平台真实 package 的 LICENSE/NOTICE 和捆绑第三方材料，不改写官方 archive 字节或摘要。Windows/PowerShell 以及真实 macOS 的运行验证未完成。没有推送、外部部署或创建付费资源。
+正式外部分发之前，仍需核查六平台真实 package 的 LICENSE/NOTICE 和捆绑第三方材料，不改写官方 archive 字节或摘要。Windows/PowerShell 以及真实 macOS 的运行验证未完成。
