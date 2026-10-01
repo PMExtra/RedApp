@@ -6,13 +6,13 @@ RedApp 帮助 IT 管理员通过内网下载入口分发 **Codex CLI**。按需�
 
 ## 快速上手
 
-使用能够拉取 v0.2.0 镜像的 Linux/amd64 主机，或[从源码构建](docs/README.md#build-from-source)。尚未验证 GHCR 匿名访问。v0.2.0 使用 `/var/lib/redapp`；旧 v0.1.0 镜像使用 `/data`，不能搭配下面的卷路径。
+使用能够拉取 v0.2.1 镜像的 Linux/amd64 或 Linux/arm64（aarch64）主机，或[从源码构建](docs/README.md#build-from-source)。尚未验证 GHCR 匿名访问。v0.2.1 使用 `/var/lib/redapp`；旧 v0.1.0 镜像使用 `/data`，不能搭配下面的卷路径。
 
 ```sh
 docker run -d --name redapp --read-only \
   -p 127.0.0.1:8080:8080 -v redapp-data:/var/lib/redapp \
   -e REDAPP_PUBLIC_URL=http://localhost:8080 \
-  ghcr.io/pmextra/redapp:v0.2.0
+  ghcr.io/pmextra/redapp:v0.2.1
 docker logs redapp
 ```
 
@@ -20,7 +20,7 @@ docker logs redapp
 
 企业访问应通过 HTTPS 反向代理，并将 `REDAPP_PUBLIC_URL` 设置为对外 origin。代理须使用配置的 Host，并通过代理或网络策略限制下载访问。详见[部署与配置](docs/operations.md)。
 
-当前源码支持构建 Linux/amd64 和 Linux/arm64（aarch64）；已发布 v0.2.0 镜像仅支持 amd64，多架构版本尚待发布。Docker 会自动选择主机架构。
+v0.2.1 面向 Linux/amd64 和 Linux/arm64（aarch64）。Docker 会自动选择主机架构；旧 v0.2.0 仍仅支持 amd64。
 
 ## 客户端安装
 

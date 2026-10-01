@@ -105,7 +105,7 @@ The updater's default mode checks without modifying published assets. To update 
 
 ```sh
 ./bin/redapp version
-docker run --rm ghcr.io/pmextra/redapp:v0.2.0 version
+docker run --rm ghcr.io/pmextra/redapp:v0.2.1 version
 ```
 
 `make build` embeds `VERSION` and the Git revision. Container build arguments provide the same information; OCI labels include source, version, revision, and the original-code MIT license. For the released v0.1.0 image, full build and digest-pull/runtime verification passed in [CI](https://github.com/PMExtra/RedApp/actions/runs/36788207268) and [publication](https://github.com/PMExtra/RedApp/actions/runs/36788716836). Windows/macOS real-machine installation, real upstream download chains, and bundled artifact license reviews remain separate validation gates.
