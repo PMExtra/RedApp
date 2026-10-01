@@ -1,0 +1,61 @@
+name: Verify published image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish.yml'
+      - '.github/workflows/verify-published.yml'
+      - 'scripts/verify-published.sh'
+      - 'scripts/test-docker-local.sh'
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Resolve existing version tag
+        id: release
+        run: |
+          version=$(cat VERSION)
+          revision=$(git ls-remote origin "refs/tags/v$version^{}" | cut -f1)
+          if [ -z "$revision" ]; then
+            echo 'No annotated release tag exists for VERSION; nothing to verify.'
+            exit 0
+          fi
+          printf 'version=%s\nrevision=%s\npresent=true\n' "$version" "$revision" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        if: steps.release.outputs.present == 'true'
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        if: steps.release.outputs.present == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Resolve index and verify native variant
+        if: steps.release.outputs.present == 'true'
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_REVISION: ${{ steps.release.outputs.revision }}
+          REDAPP_VERIFY_PLATFORM: linux/${{ matrix.arch }}
+        run: |
+          image="ghcr.io/pmextra/redapp:v$RELEASE_VERSION"
+          digest=$(docker buildx imagetools inspect "$image" --format '{{.Manifest.Digest}}')
+          export REDAPP_TEST_IMAGE="ghcr.io/pmextra/redapp@$digest"
+          sh scripts/verify-published.sh
+          printf 'Verified index: `%s`\n' "$REDAPP_TEST_IMAGE" >> "$GITHUB_STEP_SUMMARY"

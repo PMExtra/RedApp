@@ -52,7 +52,7 @@ while [ "$task_try" -lt 20 ]; do
 done
 docker exec "$task_name" /redapp healthcheck
 if [ -n "${REDAPP_TEST_PLATFORM:-}" ]; then
-  test "$(docker inspect --format '{{.Os}}/{{.Architecture}}' "$task_image")" = "$REDAPP_TEST_PLATFORM"
+  test "$(docker inspect --format '{{.Os}}/{{.Architecture}}' "$(docker inspect --format '{{.Image}}' "$task_name")")" = "$REDAPP_TEST_PLATFORM"
 fi
 docker_run --rm --network none "$task_image" version
 test "$(docker inspect --format '{{.Config.User}}' "$task_name")" = '65532:65532'
