@@ -34,7 +34,6 @@ COPY redapp /redapp
 COPY ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --chown=65532:65532 data /var/lib/redapp
 USER 65532:65532
-ENV REDAPP_DATA=/var/lib/redapp REDAPP_LISTEN=:8080 REDAPP_PUBLIC_URL=http://localhost:8080
 VOLUME ["/var/lib/redapp"]
 EXPOSE 8080
 HEALTHCHECK --interval=2s --timeout=5s --start-period=1s --retries=5 CMD ["/redapp", "healthcheck"]
@@ -57,7 +56,6 @@ fi
 docker_run --rm --network none "$task_image" version
 test "$(docker inspect --format '{{.Config.User}}' "$task_name")" = '65532:65532'
 test "$(docker inspect --format '{{range .Mounts}}{{if eq .Type "volume"}}{{.Destination}}{{end}}{{end}}' "$task_name")" = '/var/lib/redapp'
-docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$task_name" | grep -qx 'REDAPP_DATA=/var/lib/redapp'
 # Capture bootstrap logs privately; never print credentials to a report.
 docker logs "$task_name" >"$task_temp/first.log" 2>&1
 grep -q 'data directory /var/lib/redapp' "$task_temp/first.log"
