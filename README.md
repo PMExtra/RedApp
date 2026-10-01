@@ -25,16 +25,14 @@ For enterprise access, put RedApp behind an HTTPS reverse proxy and set `REDAPP_
 Replace `codex.example.internal` with your service address:
 
 ```sh
-curl -fsS https://codex.example.internal/install.sh -o install.sh
-sh install.sh --release 0.159.2
+curl -fsS https://codex.example.internal/install.sh | sh -s -- --release 0.159.2
 ```
 
 ```powershell
-Invoke-WebRequest https://codex.example.internal/install.ps1 -OutFile install.ps1
-./install.ps1 -Release 0.159.2
+& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing 'https://codex.example.internal/install.ps1' -ErrorAction Stop).Content)) -Release 0.159.2
 ```
 
-For unattended shell installation, set `CODEX_NON_INTERACTIVE=1`.
+These commands download and execute the installer immediately. For unattended shell installation, put `CODEX_NON_INTERACTIVE=1` before `sh` in the pipeline. To review the script first, see [client installation details](docs/README.md#review-before-installing).
 
 ## Before rollout
 

@@ -25,16 +25,14 @@ docker logs redapp
 将 `codex.example.internal` 替换为服务地址：
 
 ```sh
-curl -fsS https://codex.example.internal/install.sh -o install.sh
-sh install.sh --release 0.159.2
+curl -fsS https://codex.example.internal/install.sh | sh -s -- --release 0.159.2
 ```
 
 ```powershell
-Invoke-WebRequest https://codex.example.internal/install.ps1 -OutFile install.ps1
-./install.ps1 -Release 0.159.2
+& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing 'https://codex.example.internal/install.ps1' -ErrorAction Stop).Content)) -Release 0.159.2
 ```
 
-无人值守 shell 安装可设置 `CODEX_NON_INTERACTIVE=1`。
+上述命令会立即下载并执行安装器。无人值守 shell 安装时，将 `CODEX_NON_INTERACTIVE=1` 放在管道中 `sh` 的前面。如需先审查脚本，见[客户端安装详解](docs/README.md#review-before-installing)。
 
 ## 上线前确认
 

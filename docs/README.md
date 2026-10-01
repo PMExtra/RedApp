@@ -11,6 +11,45 @@ Use the quick starts to run the service and install Codex on clients. The refere
 
 `REDAPP_PUBLIC_URL` must be an origin without a subpath, query, or credentials. Requests must use its exact Host. For production, use HTTPS at the reverse proxy; download endpoints do not require an admin session, so network access controls remain necessary. See the operations reference for configuration details rather than copying its configuration table here.
 
+## Review before installing
+
+The quick-start commands execute the downloaded installer immediately. Administrators who need to inspect it first can download it from their own RedApp service, review the file, and then execute it. Replace `codex.example.internal` with your service address. Run the execution command only after a successful download and review; do not execute a stale or partial file after a download failure.
+
+Shell download and review:
+
+```sh
+curl -fsS https://codex.example.internal/install.sh -o install.sh && less install.sh
+```
+
+After review:
+
+```sh
+sh install.sh --release 0.159.2
+```
+
+PowerShell download and review:
+
+```powershell
+Invoke-WebRequest -UseBasicParsing 'https://codex.example.internal/install.ps1' -OutFile install.ps1 -ErrorAction Stop
+Get-Content ./install.ps1
+```
+
+After a successful download and review:
+
+```powershell
+./install.ps1 -Release 0.159.2
+```
+
+Both methods preserve the installer's release arguments. Omit `--release 0.159.2` / `-Release 0.159.2` to use `CODEX_RELEASE`, or `latest` when that environment variable is unset. The PowerShell quick start invokes a script block so `-Release` reaches the installer without piping script text to its standard input.
+
+Shell confirmation prompts use the controlling terminal (`/dev/tty`) when available, including with piped execution. Without an interactive terminal, optional confirmations are declined without consuming the downloaded script. PowerShell prompts use `Read-Host` when console input and output are not redirected; optional confirmations are declined when they are redirected. To explicitly decline optional confirmations for unattended installation, set `CODEX_NON_INTERACTIVE=1` on the installer process. For piped shell execution:
+
+```sh
+curl -fsS https://codex.example.internal/install.sh | CODEX_NON_INTERACTIVE=1 sh -s -- --release 0.159.2
+```
+
+For PowerShell, set `$env:CODEX_NON_INTERACTIVE = '1'` before running the chosen install command. Shell pipelines can start executing before the whole script has downloaded, and without `pipefail` a pipeline's exit status may hide a download failure; use the review-first method when complete-download-before-execution is required.
+
 ## Build from source
 
 Use Linux/amd64 with Go 1.25.1, GCC, static libc development libraries, and Make. Docker builds require Docker and access to the builder image and Go modules.
