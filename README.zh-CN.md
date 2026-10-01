@@ -6,13 +6,13 @@ RedApp 帮助 IT 管理员通过内网下载入口分发 **Codex CLI**。按需�
 
 ## 快速上手
 
-在 Linux/amd64 上将[当前源码构建](docs/README.md#build-from-source)为 `redapp:local` 后，按以下命令启动。当前源码使用 `/var/lib/redapp`；此前发布的 v0.1.0 镜像使用 `/data`，不适用新的路径约定。
+使用能够拉取 v0.2.0 镜像的 Linux/amd64 主机，或[从源码构建](docs/README.md#build-from-source)。尚未验证 GHCR 匿名访问。v0.2.0 使用 `/var/lib/redapp`；旧 v0.1.0 镜像使用 `/data`，不能搭配下面的卷路径。
 
 ```sh
 docker run -d --name redapp --read-only \
   -p 127.0.0.1:8080:8080 -v redapp-data:/var/lib/redapp \
   -e REDAPP_PUBLIC_URL=http://localhost:8080 \
-  redapp:local
+  ghcr.io/pmextra/redapp:v0.2.0
 docker logs redapp
 ```
 

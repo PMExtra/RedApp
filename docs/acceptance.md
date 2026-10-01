@@ -139,4 +139,4 @@ v0.1.0 的完整多阶段 Dockerfile 已在干净的 Linux/amd64 托管 runner �
 
 `sh scripts/test-docker-local.sh` 使用本地静态二进制离线重建 runtime，已验证 `/var/lib/redapp` 的新空命名卷首次启动与数据库初始化、非 root/只读根、健康检查、双实例拒绝、SIGKILL 恢复、容器重建后数据库保持；重建时清空 `REDAPP_DATA`，独立验证程序默认路径。目录以 UID/GID 65532、0700 预建，不使用 root 入口修正 bind mount。
 
-本次完整 Dockerfile 构建在解析 `golang:1.25.1-bookworm` 基础镜像 metadata 时被 Docker Hub HTTP 429 限制，尚未验证完整 builder；离线 runtime 验证不能替代该检查。现有 CI 已接入新测试，待获准推送后验证完整构建。本次没有发布新镜像；已发布 v0.1.0 仍使用 `/data`，不可视为新路径镜像。上述结果不改变 Windows/macOS 和真实生产上游的既有未验证边界。
+本地验证阶段的完整 Dockerfile 构建在解析 `golang:1.25.1-bookworm` 基础镜像 metadata 时被 Docker Hub HTTP 429 限制，当时未验证完整 builder；离线 runtime 验证不能替代该检查。现有 CI 已接入新测试，v0.2.0 的发布门禁要求确切提交完成完整 Dockerfile 构建和 runtime 检查，再按发布 digest 拉取并重复验证。旧 v0.1.0 仍使用 `/data`，不可视为新路径镜像。上述结果不改变 Windows/macOS 和真实生产上游的既有未验证边界。

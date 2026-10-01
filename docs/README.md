@@ -71,7 +71,7 @@ docker run -d --name redapp --read-only \
   -e REDAPP_PUBLIC_URL=http://localhost:8080 redapp:local
 ```
 
-The current Docker image runs as UID/GID 65532 and needs a writable local data volume at `/var/lib/redapp`. The binary and host services use the same default; `--data` overrides nonempty `REDAPP_DATA`, which overrides that default. Provision the host directory for the service user before startup. There is no environment detection, permission-failure fallback, or automatic migration from `/data`. For local development, explicitly use `--data ./data`, as above. New empty named volumes inherit the prepared directory ownership and mode, so first startup needs no manual permission changes. Existing host bind mounts must already be writable by UID/GID 65532; the nonroot image does not repair their permissions. This follows the build-time filesystem preparation and fixed nonroot user pattern in the official [Loki Dockerfile](https://github.com/grafana/loki/blob/main/cmd/loki/Dockerfile). The previously published v0.1.0 image still uses `/data`; build the current source to use the new path contract. The binary statically links SQLite through CGO, disables SQLite extension loading, and uses Go DNS/user lookup implementations; no separate database service is required.
+The current Docker image runs as UID/GID 65532 and needs a writable local data volume at `/var/lib/redapp`. The binary and host services use the same default; `--data` overrides nonempty `REDAPP_DATA`, which overrides that default. Provision the host directory for the service user before startup. There is no environment detection, permission-failure fallback, or automatic migration from `/data`. For local development, explicitly use `--data ./data`, as above. New empty named volumes inherit the prepared directory ownership and mode, so first startup needs no manual permission changes. Existing host bind mounts must already be writable by UID/GID 65532; the nonroot image does not repair their permissions. This follows the build-time filesystem preparation and fixed nonroot user pattern in the official [Loki Dockerfile](https://github.com/grafana/loki/blob/main/cmd/loki/Dockerfile). v0.2.0 uses this path contract; the older v0.1.0 image still uses `/data`. The binary statically links SQLite through CGO, disables SQLite extension loading, and uses Go DNS/user lookup implementations; no separate database service is required.
 
 ## Design and development
 
@@ -103,7 +103,7 @@ The updater's default mode checks without modifying published assets. To update 
 
 ```sh
 ./bin/redapp version
-docker run --rm ghcr.io/pmextra/redapp:v0.1.0 version
+docker run --rm ghcr.io/pmextra/redapp:v0.2.0 version
 ```
 
 `make build` embeds `VERSION` and the Git revision. Container build arguments provide the same information; OCI labels include source, version, revision, and the original-code MIT license. For the released v0.1.0 image, full build and digest-pull/runtime verification passed in [CI](https://github.com/PMExtra/RedApp/actions/runs/36788207268) and [publication](https://github.com/PMExtra/RedApp/actions/runs/36788716836). Windows/macOS real-machine installation, real upstream download chains, and bundled artifact license reviews remain separate validation gates.
