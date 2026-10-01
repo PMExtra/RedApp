@@ -15,7 +15,7 @@ func PublicURL(s string) (string, error) {
 		return "", nil
 	}
 	u, err := url.Parse(s)
-	if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawPath != "" || (u.Path != "" && u.Path != "/") || (u.Scheme != "http" && u.Scheme != "https") || !validHost(u.Host) {
+	if err != nil || strings.ContainsAny(s, "?#") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawPath != "" || (u.Path != "" && u.Path != "/") || (u.Scheme != "http" && u.Scheme != "https") || !validHost(u.Host) {
 		return "", errors.New("Public base URL must be a safe HTTP(S) origin; subpaths are not supported")
 	}
 	return strings.TrimSuffix(s, "/"), nil
