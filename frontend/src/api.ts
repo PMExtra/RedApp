@@ -26,4 +26,9 @@ export async function api<T>(path:string,body?:unknown,signal?:AbortSignal):Prom
   if(!response.ok)throw new ApiError(data.error || 'Request failed',response.status)
   return data as T
 }
-export const bytes=(value:number)=>`${((value||0)/1048576).toFixed(2)} MiB`
+export function bytes(value:number|null|undefined):string {
+  if(value===null||value===undefined||!Number.isFinite(value)||value<0)return '—'
+  const units=['B','KiB','MiB','GiB','TiB']
+  const index=value===0?0:Math.min(Math.floor(Math.log(value)/Math.log(1024)),units.length-1)
+  return `${(value/1024**Math.max(0,index)).toFixed(2)} ${units[Math.max(0,index)]}`
+}
