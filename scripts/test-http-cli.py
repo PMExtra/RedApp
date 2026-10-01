@@ -41,7 +41,7 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         log.flush()
         log.seek(0)
         text = log.read()
-        password_match = re.search(r"首次初始化管理员密码：([0-9a-f]+)", text)
+        password_match = re.search(r"Initial admin password: ([0-9a-f]+)", text)
         assert password_match, "未输出初始密码"
         password = password_match.group(1)
         opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
@@ -72,7 +72,7 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         assert process.wait(timeout=20) == 0
         log.flush()
         log.seek(0)
-        assert "首次初始化管理员密码" not in log.read(), "重启再次输出密码"
+        assert "Initial admin password" not in log.read(), "重启再次输出密码"
     finally:
         if process.poll() is None:
             process.kill()

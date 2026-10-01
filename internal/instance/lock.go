@@ -32,11 +32,11 @@ func Acquire(dir string) (*Guard, error) {
 	st, err := f.Stat()
 	if err != nil || !st.Mode().IsRegular() {
 		f.Close()
-		return nil, fmt.Errorf("独占锁必须是普通文件")
+		return nil, fmt.Errorf("Instance lock must be a regular file")
 	}
 	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
-		return nil, fmt.Errorf("数据目录已被另一个实例占用: %w", err)
+		return nil, fmt.Errorf("Data directory is already owned by another instance: %w", err)
 	}
 	return &Guard{f, real}, nil
 }

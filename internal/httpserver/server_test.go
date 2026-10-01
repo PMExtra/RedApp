@@ -91,6 +91,27 @@ func TestAdminHTTPDownloadMetricsAndCSRF(t *testing.T) {
 		}
 		return resp.StatusCode, b
 	}
+	for _, tc := range []struct {
+		method, path string
+		status       int
+		message      string
+	}{
+		{"GET", "/", 404, "Route not found"},
+		{"POST", "/", 405, "Method not allowed"},
+		{"GET", "/?unexpected=1", 400, "Noncanonical request path"},
+		{"GET", "/admin/unknown", 404, "Page not found"},
+		{"GET", "/admin/api/status", 401, "Sign in required"},
+		{"POST", "/health/live", 405, "Method not allowed"},
+	} {
+		code, body := request(tc.method, tc.path, nil, false)
+		var errorBody map[string]string
+		if err := json.Unmarshal(body, &errorBody); err != nil || code != tc.status || errorBody["error"] != tc.message {
+			t.Fatalf("%s %s: status=%d body=%s", tc.method, tc.path, code, body)
+		}
+	}
+	if code, body := request("GET", "/admin/", nil, false); code != 200 || !bytes.Contains(body, []byte(`<html lang="en">`)) || !bytes.Contains(body, []byte("Admin sign-in")) {
+		t.Fatalf("English admin page unavailable: status=%d", code)
+	}
 	if code, _ := request("GET", "/admin/api/status", nil, false); code != 401 {
 		t.Fatal(code)
 	}

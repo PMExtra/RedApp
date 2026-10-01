@@ -72,17 +72,17 @@ func (a *Auth) Login(ip, password string) (string, Session, error) {
 	v := a.attempts[ip]
 	if v.Start.IsZero() {
 		if len(a.attempts) >= 4096 {
-			return "", Session{}, errors.New("登录限流")
+			return "", Session{}, errors.New("Login rate limit exceeded")
 		}
 		v.Start = now
 	}
 	v.Count++
 	a.attempts[ip] = v
 	if v.Count > 10 || len(password) > 72 {
-		return "", Session{}, errors.New("登录限流")
+		return "", Session{}, errors.New("Login rate limit exceeded")
 	}
 	if e := bcrypt.CompareHashAndPassword(a.hash, []byte(password)); e != nil {
-		return "", Session{}, errors.New("登录失败")
+		return "", Session{}, errors.New("Login failed")
 	}
 	for k, s := range a.sessions {
 		if now.After(s.Until) {
@@ -90,7 +90,7 @@ func (a *Auth) Login(ip, password string) (string, Session, error) {
 		}
 	}
 	if len(a.sessions) >= 128 {
-		return "", Session{}, errors.New("会话数超限")
+		return "", Session{}, errors.New("Session limit exceeded")
 	}
 	t := token()
 	s := Session{token(), now.Add(8 * time.Hour), a.revision}
@@ -117,12 +117,12 @@ func (a *Auth) CSRF(r *http.Request, s Session) bool {
 }
 func (a *Auth) Password(old, next string) error {
 	if len(next) < 12 || len(next) > 72 {
-		return errors.New("密码长度须为 12–72 字节")
+		return errors.New("Password must be between 12 and 72 bytes")
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if bcrypt.CompareHashAndPassword(a.hash, []byte(old)) != nil {
-		return errors.New("密码无效")
+		return errors.New("Invalid password")
 	}
 	hash, e := bcrypt.GenerateFromPassword([]byte(next), 12)
 	if e != nil {

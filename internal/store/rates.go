@@ -19,7 +19,7 @@ func (s *Store) Rates() map[string]any {
 	s.rates.mu.Lock()
 	defer s.rates.mu.Unlock()
 	now := time.Now()
-	out := map[string]any{"sampled_at": now.UTC(), "scope": "当前进程最近五秒实际传输字节"}
+	out := map[string]any{"sampled_at": now.UTC(), "scope": "Actual bytes transferred by this process over the last five seconds"}
 	for _, name := range []string{"upstream_bytes", "downstream_bytes"} {
 		samples := s.rates.samples[name]
 		var bps float64

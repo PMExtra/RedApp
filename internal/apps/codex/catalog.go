@@ -26,11 +26,11 @@ var assetPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$`)
 func Normalize(v string) (string, error) {
 	v = strings.TrimPrefix(strings.TrimPrefix(v, "rust-v"), "v")
 	if !versionPattern.MatchString(v) {
-		return "", errors.New("版本格式无效")
+		return "", errors.New("Invalid version format")
 	}
 	for _, n := range regexp.MustCompile(`[0-9]+`).FindAllString(v, -1) {
 		if _, e := strconv.ParseUint(n, 10, 64); e != nil {
-			return "", errors.New("版本数字超限")
+			return "", errors.New("Version number exceeds limit")
 		}
 	}
 	return v, nil
@@ -136,7 +136,7 @@ func New(db *store.Store, c *distributor.Client) *Catalog {
 }
 func (c *Catalog) SetTTL(seconds int) error {
 	if seconds < 1 || seconds > 86400 {
-		return errors.New("TTL 允许 1–86400 秒")
+		return errors.New("TTL must be between 1 and 86400 seconds")
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -164,7 +164,7 @@ func (c *Catalog) Get(ctx context.Context, v string) (Metadata, error) {
 	if f == nil {
 		if len(c.flights) >= 32 {
 			c.mu.Unlock()
-			return Metadata{}, errors.New("元数据并发达到上限")
+			return Metadata{}, errors.New("Metadata concurrency limit exceeded")
 		}
 		f = &flight{done: make(chan struct{})}
 		c.flights[v] = f
@@ -190,12 +190,12 @@ func (c *Catalog) fetch(v string, f *flight) {
 	if e == nil {
 		defer resp.Body.Close()
 		if resp.StatusCode != 200 {
-			e = fmt.Errorf("元数据 HTTP %d", resp.StatusCode)
+			e = fmt.Errorf("Metadata HTTP %d", resp.StatusCode)
 		} else {
 			var body []byte
 			body, e = io.ReadAll(io.LimitReader(resp.Body, (4<<20)+1))
 			if e == nil && len(body) > 4<<20 {
-				e = errors.New("元数据过大")
+				e = errors.New("Metadata size exceeds limit")
 			}
 			if e == nil {
 				m, e = c.Parse(body, v)
@@ -235,36 +235,36 @@ func (c *Catalog) Parse(body []byte, requested string) (Metadata, error) {
 	}
 	var r Release
 	if e := json.Unmarshal(body, &r); e != nil {
-		return Metadata{}, errors.New("无效 JSON 元数据")
+		return Metadata{}, errors.New("Invalid JSON metadata")
 	}
 	v, e := Normalize(r.Tag)
 	if e != nil || r.Tag != "rust-v"+v {
-		return Metadata{}, errors.New("无效 release tag")
+		return Metadata{}, errors.New("Invalid release tag")
 	}
 	if requested != "latest" && requested != v {
-		return Metadata{}, errors.New("release tag 与请求不一致")
+		return Metadata{}, errors.New("Release tag does not match request")
 	}
 	if len(r.Assets) == 0 || len(r.Assets) > 1024 {
-		return Metadata{}, errors.New("资产数超限")
+		return Metadata{}, errors.New("Asset count exceeds limit")
 	}
 	seen := map[string]bool{}
 	for _, a := range r.Assets {
 		if !assetPattern.MatchString(a.Name) || a.Name == "." || a.Name == ".." || seen[a.Name] {
-			return Metadata{}, errors.New("无效或重复资产名")
+			return Metadata{}, errors.New("Invalid or duplicate asset name")
 		}
 		seen[a.Name] = true
 		if !strings.HasPrefix(a.Digest, "sha256:") || len(a.Digest) != 71 {
-			return Metadata{}, errors.New("缺少可信 SHA256")
+			return Metadata{}, errors.New("Missing trusted SHA256")
 		}
 		if _, e := hex.DecodeString(a.Digest[7:]); e != nil {
-			return Metadata{}, errors.New("无效 SHA256")
+			return Metadata{}, errors.New("Invalid SHA256")
 		}
 		if a.Size != nil && (*a.Size < 0 || *a.Size > 4<<30) {
-			return Metadata{}, errors.New("无效资产长度")
+			return Metadata{}, errors.New("Invalid asset length")
 		}
 		u, e := url.Parse(a.URL)
 		if e != nil || c.upstream.Validate(u) != nil || a.URL != c.upstream.URL("releases/"+v+"/"+a.Name) {
-			return Metadata{}, errors.New("资产 URL 未授权")
+			return Metadata{}, errors.New("Asset URL is not authorized")
 		}
 	}
 	return Metadata{Raw: append(json.RawMessage(nil), body...), Release: r}, nil
@@ -277,7 +277,7 @@ func uniqueJSON(body []byte) error {
 	var value func(int) error
 	value = func(depth int) error {
 		if depth > 32 {
-			return errors.New("JSON 层级超限")
+			return errors.New("JSON nesting limit exceeded")
 		}
 		t, e := d.Token()
 		if e != nil {
@@ -293,7 +293,7 @@ func uniqueJSON(body []byte) error {
 				}
 				k, ok := key.(string)
 				if !ok || seen[k] {
-					return errors.New("JSON 重复字段")
+					return errors.New("Duplicate JSON field")
 				}
 				seen[k] = true
 				if e = value(depth + 1); e != nil {
@@ -318,13 +318,13 @@ func uniqueJSON(body []byte) error {
 		return e
 	}
 	if _, e := d.Token(); e != io.EOF {
-		return errors.New("JSON 尾部异常")
+		return errors.New("Unexpected trailing JSON data")
 	}
 	return nil
 }
 func (c *Catalog) Authorize(ctx context.Context, v, name string) (download.Resource, error) {
 	if !assetPattern.MatchString(name) {
-		return download.Resource{}, errors.New("资产名无效")
+		return download.Resource{}, errors.New("Invalid asset name")
 	}
 	m, e := c.Get(ctx, v)
 	if e != nil {
@@ -337,7 +337,7 @@ func (c *Catalog) Authorize(ctx context.Context, v, name string) (download.Resou
 			return download.Resource{ID: download.Identity(a.URL, hash), Source: a.URL, Hash: hash, Size: a.Size, Labels: map[string]string{"app": "codex", "version": v, "name": name}}, nil
 		}
 	}
-	return download.Resource{}, errors.New("资源不在可信清单中")
+	return download.Resource{}, errors.New("Resource is not in the trusted manifest")
 }
 func (m Metadata) Public(base string) Release {
 	r := m.Release

@@ -47,7 +47,7 @@ func parseIP(s string) net.IP {
 }
 func splitHeader(s string, delimiter byte) ([]string, error) {
 	if len(s) > 8192 {
-		return nil, errors.New("头部超限")
+		return nil, errors.New("Header limit exceeded")
 	}
 	parts := []string{}
 	quoted, escaped := false, false
@@ -55,7 +55,7 @@ func splitHeader(s string, delimiter byte) ([]string, error) {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		if c == '\r' || c == '\n' {
-			return nil, errors.New("无效换行")
+			return nil, errors.New("Invalid newline")
 		}
 		if escaped {
 			escaped = false
@@ -74,11 +74,11 @@ func splitHeader(s string, delimiter byte) ([]string, error) {
 		}
 	}
 	if quoted || escaped {
-		return nil, errors.New("无效引号")
+		return nil, errors.New("Invalid quoting")
 	}
 	parts = append(parts, strings.TrimSpace(s[start:]))
 	if len(parts) > 32 {
-		return nil, errors.New("代理跳数超限")
+		return nil, errors.New("Proxy hop limit exceeded")
 	}
 	return parts, nil
 }
@@ -100,7 +100,7 @@ func forwarded(s string) ([]net.IP, error) {
 			v = strings.TrimSpace(v)
 			_, duplicate := fields[k]
 			if !ok || duplicate || !headerToken(k) {
-				return nil, errors.New("无效 Forwarded 参数")
+				return nil, errors.New("Invalid Forwarded parameter")
 			}
 			if strings.HasPrefix(v, "\"") {
 				v, e = unquoteForwarded(v)
@@ -109,19 +109,19 @@ func forwarded(s string) ([]net.IP, error) {
 				}
 			}
 			if v == "" {
-				return nil, errors.New("空 Forwarded 参数")
+				return nil, errors.New("Empty Forwarded parameter")
 			}
 			fields[k] = v
 		}
 		ip := parseIP(fields["for"])
 		if ip == nil {
-			return nil, errors.New("无效 Forwarded for")
+			return nil, errors.New("Invalid Forwarded for")
 		}
 		if proto := fields["proto"]; proto != "" && proto != "http" && proto != "https" {
-			return nil, errors.New("无效 proto")
+			return nil, errors.New("Invalid proto")
 		}
 		if h := fields["host"]; strings.ContainsAny(h, "/\\@?# \t") {
-			return nil, errors.New("无效 host")
+			return nil, errors.New("Invalid host")
 		}
 		ips = append(ips, ip)
 	}
@@ -147,7 +147,7 @@ func (p Proxy) ClientIP(r *http.Request) string {
 		for _, s := range parts {
 			ip := parseIP(s)
 			if ip == nil {
-				e = errors.New("无效 XFF")
+				e = errors.New("Invalid X-Forwarded-For")
 				break
 			}
 			ips = append(ips, ip)
@@ -165,7 +165,7 @@ func (p Proxy) ClientIP(r *http.Request) string {
 // RFC quoted-pair removes the backslash; Go string escapes must not reinterpret IPs.
 func unquoteForwarded(s string) (string, error) {
 	if len(s) < 2 || s[len(s)-1] != '"' {
-		return "", errors.New("无效引号")
+		return "", errors.New("Invalid quoting")
 	}
 	var out strings.Builder
 	for i := 1; i < len(s)-1; i++ {
@@ -173,14 +173,14 @@ func unquoteForwarded(s string) (string, error) {
 		if c == '\\' {
 			i++
 			if i >= len(s)-1 {
-				return "", errors.New("无效转义")
+				return "", errors.New("Invalid escape")
 			}
 			c = s[i]
 		} else if c == '"' {
-			return "", errors.New("无效引号")
+			return "", errors.New("Invalid quoting")
 		}
 		if c < 32 || c == 127 {
-			return "", errors.New("无效控制字符")
+			return "", errors.New("Invalid control character")
 		}
 		out.WriteByte(c)
 	}

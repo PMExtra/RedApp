@@ -36,7 +36,7 @@ func Open(dir string) (*Store, error) {
 	err = db.QueryRow("SELECT version FROM schema_version").Scan(&version)
 	if err != nil || version != 1 {
 		db.Close()
-		return nil, fmt.Errorf("不支持数据库 schema %d", version)
+		return nil, fmt.Errorf("Unsupported database schema %d", version)
 	}
 	return &Store{DB: db}, nil
 }
@@ -122,7 +122,10 @@ func (s *Store) Events() ([]map[string]any, error) {
 			return nil, e
 		}
 		var status int
-		fmt.Sscanf(m, "上游 HTTP %d", &status)
+		fmt.Sscanf(m, "Upstream HTTP %d", &status)
+		if status == 0 {
+			fmt.Sscanf(m, "\u4e0a\u6e38 HTTP %d", &status)
+		}
 		out = append(out, map[string]any{"time": t, "resource": r, "category": c, "message": m, "status_code": status})
 	}
 	return out, rows.Err()

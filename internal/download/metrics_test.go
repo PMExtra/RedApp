@@ -54,3 +54,24 @@ func TestHangingUpstreamHasBoundedFailure(t *testing.T) {
 		t.Fatal("挂起上游未按请求重试边界终止", e)
 	}
 }
+
+func TestEnglishFailureCategories(t *testing.T) {
+	for message, want := range map[string]string{
+		"Complete file SHA256 does not match":                  "hash",
+		"Unsafe upstream resume; a new generation is required": "range",
+		"Unsafe upstream Content-Encoding":                     "encoding",
+		"Disk write failed":                                    "disk",
+		"File fsync failed":                                    "disk",
+		"Artifact length does not match":                       "length",
+		"Artifact truncated":                                   "length",
+		"Upstream HTTP 503":                                    "http",
+		"DNS returned no addresses":                            "dns",
+		"TLS handshake failed":                                 "tls",
+		"request timeout":                                      "timeout",
+		"Cache state commit failed":                            "database",
+	} {
+		if got := failureCategory(message); got != want {
+			t.Errorf("%q: got %s want %s", message, got, want)
+		}
+	}
+}

@@ -38,7 +38,7 @@ type Server struct {
 func PublicURL(s string) (string, error) {
 	u, e := url.Parse(s)
 	if e != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") || (u.Scheme != "https" && u.Scheme != "http") || strings.ContainsAny(s, "'\"`$\\ \t\r\n") {
-		return "", errors.New("public base URL 必须是安全的 HTTP(S) origin；首版不支持子路径")
+		return "", errors.New("Public base URL must be a safe HTTP(S) origin; subpaths are not supported")
 	}
 	return strings.TrimRight(s, "/"), nil
 }
@@ -52,7 +52,7 @@ func fail(w http.ResponseWriter, status int, msg string) {
 }
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-		return errors.New("需要 JSON 请求")
+		return errors.New("JSON request required")
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 8192)
 	d := json.NewDecoder(r.Body)
@@ -62,7 +62,7 @@ func decode(w http.ResponseWriter, r *http.Request, v any) error {
 	}
 	var tail any
 	if e := d.Decode(&tail); e != io.EOF {
-		return errors.New("请求尾部异常")
+		return errors.New("Unexpected trailing request data")
 	}
 	return nil
 }
@@ -71,26 +71,26 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "same-origin")
 	w.Header().Set("X-Frame-Options", "DENY")
 	if r.Host != strings.TrimPrefix(strings.TrimPrefix(s.Public, "https://"), "http://") {
-		fail(w, 400, "Host 与 public base URL 不匹配")
+		fail(w, 400, "Host does not match public base URL")
 		return
 	}
 	if r.URL.RawPath != "" || r.URL.RawQuery != "" || strings.Contains(r.URL.Path, "\\") || strings.Contains(r.URL.Path, "//") {
-		fail(w, 400, "请求路径不规范")
+		fail(w, 400, "Noncanonical request path")
 		return
 	}
 	if r.URL.Path == "/health/live" || r.URL.Path == "/health/ready" {
 		if r.Method != "GET" {
-			fail(w, 405, "方法不支持")
+			fail(w, 405, "Method not allowed")
 			return
 		}
 		if r.URL.Path == "/health/ready" {
 			if e := s.DB.DB.PingContext(r.Context()); e != nil {
-				fail(w, 503, "本地存储未就绪")
+				fail(w, 503, "Local storage is not ready")
 				return
 			}
 			f, e := os.CreateTemp(s.Dir, ".health-")
 			if e != nil {
-				fail(w, 503, "数据目录不可写")
+				fail(w, 503, "Data directory is not writable")
 				return
 			}
 			name := f.Name()
@@ -106,13 +106,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.DB.Add("requests", 1)
 	if r.Method != "GET" {
-		fail(w, 405, "方法不支持")
+		fail(w, 405, "Method not allowed")
 		return
 	}
 	if r.URL.Path == "/install.sh" || r.URL.Path == "/install.ps1" {
 		body, e := codex.Installer(strings.TrimPrefix(r.URL.Path, "/"), s.Public)
 		if e != nil {
-			fail(w, 503, "安装器尚未通过生成验证")
+			fail(w, 503, "Installer generation verification has not passed")
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -122,7 +122,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/licenses/LICENSE" || r.URL.Path == "/licenses/NOTICE" {
 		b, e := codex.License(strings.TrimPrefix(r.URL.Path, "/licenses/"))
 		if e != nil {
-			fail(w, 404, "许可文件不存在")
+			fail(w, 404, "License file not found")
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -135,13 +135,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !isMetadata {
 		parts := strings.Split(r.URL.Path, "/")
 		if len(parts) != 4 || parts[1] != "releases" {
-			fail(w, 404, "路由不存在")
+			fail(w, 404, "Route not found")
 			return
 		}
 		var e error
 		v, e = app.Normalize(parts[2])
 		if e != nil || v != parts[2] {
-			fail(w, 400, "版本必须使用规范形式")
+			fail(w, 400, "Version must use canonical form")
 			return
 		}
 		name = parts[3]
@@ -150,7 +150,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if isMetadata {
 		m, e := s.Catalog.Get(r.Context(), v)
 		if e != nil {
-			fail(w, 502, "可信元数据获取失败")
+			fail(w, 502, "Failed to fetch trusted metadata")
 			return
 		}
 		reply(w, 200, m.Public(s.Public))
@@ -158,14 +158,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	resource, e := s.Catalog.Authorize(r.Context(), v, name)
 	if e != nil {
-		fail(w, 404, "资源未授权或元数据不可用")
+		fail(w, 404, "Resource is not authorized or metadata is unavailable")
 		return
 	}
 	s.DB.Add("artifact_requests", 1)
 	s.DB.Add("version:"+v+":requests", 1)
 	rd, hit, e := s.Downloads.Acquire(r.Context(), resource)
 	if e != nil {
-		fail(w, 503, "下载容量不足或本地存储不可用")
+		fail(w, 503, "Download capacity exceeded or local storage unavailable")
 		return
 	}
 	defer rd.Close()
@@ -210,24 +210,24 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'")
 	if !s.sameOrigin(r) {
-		fail(w, 403, "来源不允许")
+		fail(w, 403, "Origin not allowed")
 		return
 	}
 	if r.URL.Path == "/admin/api/login" {
 		if r.Method != "POST" {
-			fail(w, 405, "方法不支持")
+			fail(w, 405, "Method not allowed")
 			return
 		}
 		var input struct {
 			Password string `json:"password"`
 		}
 		if decode(w, r, &input) != nil {
-			fail(w, 400, "请求无效")
+			fail(w, 400, "Invalid request")
 			return
 		}
 		token, session, e := s.Auth.Login(s.Proxy.ClientIP(r), input.Password)
 		if e != nil {
-			fail(w, 429, "登录失败或达到限速")
+			fail(w, 429, "Login failed or rate limit exceeded")
 			return
 		}
 		s.Auth.Cookie(w, token)
@@ -236,7 +236,7 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request) {
 	}
 	if !strings.HasPrefix(r.URL.Path, "/admin/api/") {
 		if r.Method != "GET" {
-			fail(w, 405, "方法不支持")
+			fail(w, 405, "Method not allowed")
 			return
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/admin/")
@@ -244,13 +244,13 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request) {
 			path = "index.html"
 		}
 		if path != "index.html" && path != "app.js" && path != "style.css" {
-			fail(w, 404, "页面不存在")
+			fail(w, 404, "Page not found")
 			return
 		}
 		assets, _ := fs.Sub(web, "web")
 		b, e := fs.ReadFile(assets, path)
 		if e != nil {
-			fail(w, 404, "页面不存在")
+			fail(w, 404, "Page not found")
 			return
 		}
 		contentType := map[string]string{"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8"}
@@ -260,11 +260,11 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request) {
 	}
 	session, ok := s.Auth.Session(r)
 	if !ok {
-		fail(w, 401, "请先登录")
+		fail(w, 401, "Sign in required")
 		return
 	}
 	if r.Method != "GET" && !s.Auth.CSRF(r, session) {
-		fail(w, 403, "CSRF 验证失败")
+		fail(w, 403, "CSRF validation failed")
 		return
 	}
 	if r.Method == "GET" {
@@ -274,17 +274,17 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request) {
 		case "/admin/api/status":
 			status, e := s.status()
 			if e != nil {
-				fail(w, 503, "状态读取失败")
+				fail(w, 503, "Failed to read status")
 				return
 			}
 			reply(w, 200, status)
 		default:
-			fail(w, 404, "接口不存在")
+			fail(w, 404, "API endpoint not found")
 		}
 		return
 	}
 	if r.Method != "POST" {
-		fail(w, 405, "方法不支持")
+		fail(w, 405, "Method not allowed")
 		return
 	}
 	switch r.URL.Path {
@@ -298,11 +298,11 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request) {
 			New string `json:"new"`
 		}
 		if decode(w, r, &input) != nil {
-			fail(w, 400, "请求无效")
+			fail(w, 400, "Invalid request")
 			return
 		}
 		if e := s.Auth.Password(input.Old, input.New); e != nil {
-			fail(w, 400, "密码修改失败，请检查当前密码及长度")
+			fail(w, 400, "Password change failed; check the current password and new password length")
 			return
 		}
 		reply(w, 200, map[string]bool{"ok": true})
@@ -311,11 +311,11 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request) {
 			TTL int `json:"latest_ttl_seconds"`
 		}
 		if decode(w, r, &input) != nil {
-			fail(w, 400, "请求无效")
+			fail(w, 400, "Invalid request")
 			return
 		}
 		if e := s.Catalog.SetTTL(input.TTL); e != nil {
-			fail(w, 400, "TTL 允许 1–86400 秒")
+			fail(w, 400, "TTL must be between 1 and 86400 seconds")
 			return
 		}
 		reply(w, 200, map[string]bool{"ok": true})
@@ -324,18 +324,18 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request) {
 			Minimum string `json:"minimum_version"`
 		}
 		if decode(w, r, &input) != nil {
-			fail(w, 400, "请求无效")
+			fail(w, 400, "Invalid request")
 			return
 		}
 		views := s.Downloads.Snapshot()
 		ids, unknown, e := s.Catalog.Candidates(input.Minimum, views)
 		if e != nil {
-			fail(w, 400, "最小版本无效")
+			fail(w, 400, "Invalid minimum version")
 			return
 		}
 		job, e := s.Downloads.Preview(ids)
 		if e != nil {
-			fail(w, 503, "预览持久化失败")
+			fail(w, 503, "Failed to persist cleanup preview")
 			return
 		}
 		var size int64
@@ -356,16 +356,16 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request) {
 			ID string `json:"cleanup_id"`
 		}
 		if decode(w, r, &input) != nil {
-			fail(w, 400, "请求无效")
+			fail(w, 400, "Invalid request")
 			return
 		}
 		if e := s.Downloads.Cleanup(input.ID); e != nil {
-			fail(w, 409, "清理任务无效或执行失败")
+			fail(w, 409, "Cleanup task is invalid or execution failed")
 			return
 		}
 		reply(w, 200, map[string]bool{"ok": true})
 	default:
-		fail(w, 404, "接口不存在")
+		fail(w, 404, "API endpoint not found")
 	}
 }
 func (s *Server) status() (map[string]any, error) {
@@ -434,5 +434,5 @@ func (s *Server) status() (map[string]any, error) {
 	}
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
-	return map[string]any{"name": "RedApp", "started": s.Started, "os": runtime.GOOS, "arch": runtime.GOARCH, "go": runtime.Version(), "goroutines": runtime.NumGoroutine(), "memory_bytes": mem.Alloc, "sampled_at": time.Now().UTC(), "resources": views, "versions": versions, "events": events, "counters": counters, "disk": map[string]any{"used_bytes": total, "logical_bytes": logical, "allocated_cache_bytes": allocatedCache, "allocated_temporary_bytes": allocatedTemp, "allocated_pending_bytes": allocatedPending, "cache_bytes": complete, "temporary_bytes": temp, "pending_bytes": pending, "other_bytes": total - allocatedCache - allocatedTemp - allocatedPending, "free_bytes": disk.Bavail * uint64(disk.Bsize)}, "public_base_url": s.Public, "rates": s.DB.Rates(), "client_runtime_update_policy": "企业安装器删除自动更新标记；CLI 二进制原样，运行期公网更新检查由企业出口控制。"}, nil
+	return map[string]any{"name": "RedApp", "started": s.Started, "os": runtime.GOOS, "arch": runtime.GOARCH, "go": runtime.Version(), "goroutines": runtime.NumGoroutine(), "memory_bytes": mem.Alloc, "sampled_at": time.Now().UTC(), "resources": views, "versions": versions, "events": events, "counters": counters, "disk": map[string]any{"used_bytes": total, "logical_bytes": logical, "allocated_cache_bytes": allocatedCache, "allocated_temporary_bytes": allocatedTemp, "allocated_pending_bytes": allocatedPending, "cache_bytes": complete, "temporary_bytes": temp, "pending_bytes": pending, "other_bytes": total - allocatedCache - allocatedTemp - allocatedPending, "free_bytes": disk.Bavail * uint64(disk.Bsize)}, "public_base_url": s.Public, "rates": s.DB.Rates(), "client_runtime_update_policy": "The enterprise installer suppresses the automatic-update marker; the CLI binary is unchanged. Control runtime public update checks through enterprise egress policy."}, nil
 }

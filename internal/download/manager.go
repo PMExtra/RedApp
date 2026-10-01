@@ -115,12 +115,12 @@ func New(dir string, db *store.Store, c *distributor.Client) (*Manager, error) {
 		}
 		if !validID(g.ID) || !validID(g.Resource.ID) {
 			cancel()
-			return nil, errors.New("无效持久缓存身份")
+			return nil, errors.New("Invalid persisted cache identity")
 		}
 		expected := filepath.Join(dir, "objects", g.Resource.ID, g.ID)
 		if g.Path != expected+".part" && g.Path != expected+".blob" {
 			cancel()
-			return nil, errors.New("无效持久缓存路径")
+			return nil, errors.New("Invalid persisted cache path")
 		}
 		g.changed = make(chan struct{})
 		m.all[g.ID] = g
@@ -260,10 +260,10 @@ func verified(f *os.File, n int64, expected string) bool {
 }
 func (m *Manager) createLocked(r Resource, fullRetry bool) (*Generation, error) {
 	if !validID(r.ID) || len(r.Hash) != 64 {
-		return nil, errors.New("无效资源身份")
+		return nil, errors.New("Invalid resource identity")
 	}
 	if m.jobs >= m.maxWriters {
-		return nil, errors.New("活动下载达到上限")
+		return nil, errors.New("Active download limit exceeded")
 	}
 	if e := os.MkdirAll(filepath.Join(m.dir, "objects", r.ID), 0700); e != nil {
 		return nil, e
@@ -306,14 +306,14 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
-		return nil, false, errors.New("服务关闭中")
+		return nil, false, errors.New("Server is shutting down")
 	}
 	readers := 0
 	for _, g := range m.all {
 		readers += g.readers
 	}
 	if readers >= m.maxReaders {
-		return nil, false, errors.New("客户端达到上限")
+		return nil, false, errors.New("Client limit exceeded")
 	}
 	g := m.current[r.ID]
 	if g != nil && g.Retired {
@@ -328,7 +328,7 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 		st, err := os.Stat(g.Path)
 		if err != nil || st.Size() != g.Bytes {
 			g.Retired = true
-			g.Error = "完成缓存文件缺失或长度改变"
+			g.Error = "Completed cache file is missing or its length changed"
 			m.save(g)
 			if err := m.db.Delete("current", r.ID); err != nil {
 				return nil, false, err
@@ -362,7 +362,7 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 	}
 	if !g.done && !g.running {
 		if m.jobs >= m.maxWriters {
-			return nil, false, errors.New("活动下载达到上限")
+			return nil, false, errors.New("Active download limit exceeded")
 		}
 		g.running = true
 		m.jobs++
@@ -391,7 +391,7 @@ func (r *Reader) Read(p []byte) (int, error) {
 		// Failure must not become a successful EOF, even after all bytes were streamed.
 		if done && state != "complete" {
 			r.m.mu.Unlock()
-			return 0, fmt.Errorf("下载未验证: %s", errMsg)
+			return 0, fmt.Errorf("Download is not verified: %s", errMsg)
 		}
 		if available > 0 {
 			if int64(len(p)) > available {
@@ -477,7 +477,7 @@ func (m *Manager) removeLocked(g *Generation) error {
 	return nil
 }
 
-var unsafeResume = errors.New("上游续传不安全，必须创建新代")
+var unsafeResume = errors.New("Unsafe upstream resume; a new generation is required")
 
 func (m *Manager) attempt(g *Generation) error {
 	m.mu.Lock()
@@ -527,12 +527,12 @@ func (m *Manager) attempt(g *Generation) error {
 		total = n
 	} else {
 		if resp.StatusCode != 200 {
-			return fmt.Errorf("上游 HTTP %d", resp.StatusCode)
+			return fmt.Errorf("Upstream HTTP %d", resp.StatusCode)
 		}
 		total = resp.ContentLength
 	}
 	if total > m.maxBytes || (g.Resource.Size != nil && total >= 0 && *g.Resource.Size != total) {
-		return errors.New("制品长度超出限制或不匹配")
+		return errors.New("Artifact length exceeds limit or does not match")
 	}
 	m.mu.Lock()
 	g.Total = total
@@ -551,11 +551,11 @@ func (m *Manager) attempt(g *Generation) error {
 		n, re := resp.Body.Read(buf)
 		if n > 0 {
 			if offset+int64(n) > m.maxBytes || (total >= 0 && offset+int64(n) > total) {
-				return errors.New("制品超长")
+				return errors.New("Artifact length exceeds limit")
 			}
 			written, we := g.file.WriteAt(buf[:n], offset)
 			if we != nil {
-				return errors.New("磁盘写入失败")
+				return errors.New("Disk write failed")
 			}
 			if written != n {
 				return io.ErrShortWrite
@@ -593,16 +593,16 @@ func (m *Manager) attempt(g *Generation) error {
 		}
 		if re != nil {
 			if re != io.EOF {
-				return errors.New("上游下载中断")
+				return errors.New("Upstream download interrupted")
 			}
 			break
 		}
 	}
 	if total >= 0 && offset != total {
-		return errors.New("制品截断")
+		return errors.New("Artifact truncated")
 	}
 	if g.Resource.Size != nil && offset != *g.Resource.Size {
-		return errors.New("制品长度不匹配")
+		return errors.New("Artifact length does not match")
 	}
 	return nil
 }
@@ -653,7 +653,7 @@ func (m *Manager) run(g *Generation) {
 		m.mu.Unlock()
 		start := time.Now()
 		if !verified(g.file, g.Bytes, g.Resource.Hash) {
-			err = errors.New("完整文件 SHA256 不匹配")
+			err = errors.New("Complete file SHA256 does not match")
 		}
 		m.mu.Lock()
 		g.VerificationNS = time.Since(start).Nanoseconds()
@@ -668,12 +668,12 @@ func (m *Manager) run(g *Generation) {
 	g.Error = ""
 	if err == nil {
 		if e := g.file.Sync(); e != nil {
-			err = errors.New("文件 fsync 失败")
+			err = errors.New("File fsync failed")
 		}
 		if err == nil && !g.Retired && m.current[g.Resource.ID] == g {
 			newPath := strings.TrimSuffix(g.Path, ".part") + ".blob"
 			if e := os.Rename(g.Path, newPath); e != nil {
-				err = errors.New("缓存发布失败")
+				err = errors.New("Cache publication failed")
 			} else {
 				g.Path = newPath
 				if dir, e := os.Open(filepath.Dir(newPath)); e == nil {
@@ -689,7 +689,7 @@ func (m *Manager) run(g *Generation) {
 	if err == nil {
 		g.State = "complete"
 		if e := m.save(g); e != nil {
-			err = errors.New("缓存状态提交失败")
+			err = errors.New("Cache state commit failed")
 		}
 	}
 	if err != nil {
@@ -772,13 +772,13 @@ func (m *Manager) Cleanup(jobID string) error {
 	defer m.mu.Unlock()
 	var job Cleanup
 	if !validID(jobID) {
-		return errors.New("无效清理 ID")
+		return errors.New("Invalid cleanup ID")
 	}
 	if e := m.db.Get("cleanup", jobID, &job); e != nil {
 		return e
 	}
 	if time.Since(job.Created) > 10*time.Minute {
-		return errors.New("预览已过期")
+		return errors.New("Cleanup preview expired")
 	}
 	for _, s := range job.Selected {
 		g := m.all[s.Generation]
@@ -829,7 +829,7 @@ func (m *Manager) Close() error {
 }
 
 func failureCategory(message string) string {
-	for _, c := range []struct{ pattern, category string }{{"SHA256", "hash"}, {"续传", "range"}, {"Content-Encoding", "encoding"}, {"磁盘", "disk"}, {"fsync", "disk"}, {"长度", "length"}, {"截断", "length"}, {"HTTP", "http"}, {"DNS", "dns"}, {"TLS", "tls"}, {"超时", "timeout"}, {"提交", "database"}} {
+	for _, c := range []struct{ pattern, category string }{{"SHA256", "hash"}, {"resume", "range"}, {"Content-Encoding", "encoding"}, {"Disk", "disk"}, {"fsync", "disk"}, {"length", "length"}, {"truncated", "length"}, {"HTTP", "http"}, {"DNS", "dns"}, {"TLS", "tls"}, {"timeout", "timeout"}, {"commit", "database"}} {
 		if strings.Contains(message, c.pattern) {
 			return c.category
 		}

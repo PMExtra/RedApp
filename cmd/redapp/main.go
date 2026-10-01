@@ -67,11 +67,11 @@ func main() {
 	}
 }
 func run() error {
-	data := flag.String("data", env("REDAPP_DATA", "/var/lib/redapp"), "本地持久化目录")
-	listen := flag.String("listen", env("REDAPP_LISTEN", ":8080"), "监听地址")
-	public := flag.String("public-url", env("REDAPP_PUBLIC_URL", "http://localhost:8080"), "企业对外 origin")
-	upstream := flag.String("base-url", env("REDAPP_BASE_URL", "https://releases.openai.com/codex"), "固定上游根地址")
-	proxies := flag.String("trusted-proxies", env("REDAPP_TRUSTED_PROXIES", ""), "可信代理 CIDR，逗号分隔")
+	data := flag.String("data", env("REDAPP_DATA", "/var/lib/redapp"), "Local persistent data directory")
+	listen := flag.String("listen", env("REDAPP_LISTEN", ":8080"), "Listen address")
+	public := flag.String("public-url", env("REDAPP_PUBLIC_URL", "http://localhost:8080"), "Public service origin")
+	upstream := flag.String("base-url", env("REDAPP_BASE_URL", "https://releases.openai.com/codex"), "Fixed upstream base URL")
+	proxies := flag.String("trusted-proxies", env("REDAPP_TRUSTED_PROXIES", ""), "Trusted proxy CIDRs, comma-separated")
 	flag.Parse()
 	base, e := httpserver.PublicURL(*public)
 	if e != nil {
@@ -101,7 +101,7 @@ func run() error {
 	}
 	defer manager.Close()
 	a, e := auth.New(db, strings.HasPrefix(base, "https://"), func(password string) {
-		log.Printf("首次初始化管理员密码：%s；请登录后立即修改并保护日志。", password)
+		log.Printf("Initial admin password: %s; change it after signing in and protect these logs.", password)
 	})
 	if e != nil {
 		return e
@@ -112,7 +112,7 @@ func run() error {
 	defer stop()
 	result := make(chan error, 1)
 	go func() { result <- server.ListenAndServe() }()
-	log.Printf("RedApp 已启动：%s，数据目录 %s", base, guard.Directory)
+	log.Printf("RedApp started: %s, data directory %s", base, guard.Directory)
 	select {
 	case e := <-result:
 		if e != http.ErrServerClosed {
@@ -126,6 +126,6 @@ func run() error {
 		}
 		manager.Close()
 	}
-	fmt.Println("RedApp 已停止")
+	fmt.Println("RedApp stopped")
 	return nil
 }

@@ -60,13 +60,13 @@ test "$(docker inspect --format '{{range .Mounts}}{{if eq .Type "volume"}}{{.Des
 docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$task_name" | grep -qx 'REDAPP_DATA=/var/lib/redapp'
 # Capture bootstrap logs privately; never print credentials to a report.
 docker logs "$task_name" >"$task_temp/first.log" 2>&1
-grep -q '数据目录 /var/lib/redapp' "$task_temp/first.log"
-test "$(grep -c '首次初始化管理员密码' "$task_temp/first.log")" = 1
+grep -q 'data directory /var/lib/redapp' "$task_temp/first.log"
+test "$(grep -c 'Initial admin password' "$task_temp/first.log")" = 1
 if docker_run --name "$task_name-second" --read-only -v "$task_volume:/var/lib/redapp" "$task_image" >"$task_temp/second.log" 2>&1; then
   echo '第二实例错误地取得独占目录' >&2
   exit 1
 fi
-grep -q '数据目录已被另一个实例占用' "$task_temp/second.log"
+grep -q 'Data directory is already owned by another instance' "$task_temp/second.log"
 docker kill "$task_name" >/dev/null
 docker start "$task_name" >/dev/null
 task_try=0
@@ -77,7 +77,7 @@ while [ "$task_try" -lt 20 ]; do
 done
 docker exec "$task_name" /redapp healthcheck
 docker logs "$task_name" >"$task_temp/after.log" 2>&1
-test "$(grep -c '首次初始化管理员密码' "$task_temp/after.log")" = 1
+test "$(grep -c 'Initial admin password' "$task_temp/after.log")" = 1
 docker stop --time 20 "$task_name" >/dev/null
 docker rm "$task_name" >/dev/null
 # Empty REDAPP_DATA verifies the binary default, independently of image ENV.
@@ -90,7 +90,7 @@ while [ "$task_try" -lt 20 ]; do
 done
 docker exec "$task_name" /redapp healthcheck
 docker logs "$task_name" >"$task_temp/recreated.log" 2>&1
-if grep -q '首次初始化管理员密码' "$task_temp/recreated.log"; then
+if grep -q 'Initial admin password' "$task_temp/recreated.log"; then
   echo '重建容器后数据库未保持' >&2
   exit 1
 fi

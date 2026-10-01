@@ -20,7 +20,7 @@ type Client struct {
 func New(base string) (*Client, error) {
 	u, e := url.Parse(base)
 	if e != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Hostname() == "" || u.Port() != "" {
-		return nil, errors.New("BASE_URL 必须是无端口、查询和凭据的 HTTPS 根地址")
+		return nil, errors.New("BASE_URL must be an HTTPS base URL without port, query, or credentials")
 	}
 	u.Path = strings.TrimRight(u.Path, "/")
 	u.RawPath = ""
@@ -36,11 +36,11 @@ func New(base string) (*Client, error) {
 			return nil, e
 		}
 		if len(ips) == 0 {
-			return nil, errors.New("DNS 无地址")
+			return nil, errors.New("DNS returned no addresses")
 		}
 		for _, ip := range ips {
 			if !publicIP(ip.IP) {
-				return nil, errors.New("上游 DNS 指向非公开地址")
+				return nil, errors.New("Upstream DNS resolves to a nonpublic address")
 			}
 		}
 		var last error
@@ -55,7 +55,7 @@ func New(base string) (*Client, error) {
 	}
 	c.HTTP = &http.Client{Transport: tr, Timeout: 5 * time.Minute, CheckRedirect: func(r *http.Request, via []*http.Request) error {
 		if len(via) >= 4 {
-			return errors.New("过多重定向")
+			return errors.New("Too many redirects")
 		}
 		return c.Validate(r.URL)
 	}}
@@ -75,14 +75,14 @@ func publicIP(ip net.IP) bool {
 }
 func (c *Client) Validate(u *url.URL) error {
 	if u.Scheme != c.Base.Scheme || u.Host != c.Base.Host || u.User != nil || u.Fragment != "" || u.RawQuery != "" {
-		return errors.New("禁止非固定上游或带查询的地址")
+		return errors.New("Only the fixed upstream without query parameters is allowed")
 	}
 	if u.RawPath != "" || strings.Contains(u.Path, "\\") || strings.Contains(u.Path, "//") || !strings.HasPrefix(u.Path, c.Base.Path+"/") {
-		return errors.New("禁止异常上游路径")
+		return errors.New("Invalid upstream path")
 	}
 	for _, p := range strings.Split(u.Path, "/") {
 		if p == ".." || p == "." {
-			return errors.New("禁止上游路径遍历")
+			return errors.New("Upstream path traversal is not allowed")
 		}
 	}
 	return nil
@@ -110,11 +110,11 @@ func (c *Client) Get(ctx context.Context, source string, headers http.Header) (*
 	}
 	resp, e := c.HTTP.Do(r)
 	if e != nil {
-		return nil, errors.New("上游连接失败")
+		return nil, errors.New("Upstream connection failed")
 	}
 	if resp.Header.Get("Content-Encoding") != "" && resp.Header.Get("Content-Encoding") != "identity" {
 		resp.Body.Close()
-		return nil, fmt.Errorf("上游 Content-Encoding 不安全")
+		return nil, fmt.Errorf("Unsafe upstream Content-Encoding")
 	}
 	return resp, nil
 }
