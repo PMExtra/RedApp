@@ -6,6 +6,7 @@ Use the quick starts to run the service and install Codex on clients. The refere
 
 ## Administrator references
 
+- [Release notes](releases.md): upgrade guidance and changes by version.
 - [Operations](operations.md): CLI/environment configuration, latest TTL, reverse proxy and trusted headers, access controls, persistent volumes, backups, recovery, health checks, cleanup, and metrics.
 - [Global metric history](metrics-history.md): fixed metric catalog, minute observations, UTC hourly aggregates, retention, gaps, and chart semantics.
 - [Validation and limitations](acceptance.md): the acceptance matrix, concurrency/failure tests, crash windows, and remaining platform/upstream verification gates.
@@ -102,7 +103,7 @@ make check test build
 python3 scripts/test-data-cli.py
 python3 scripts/test-http-cli.py
 sh scripts/test-docker-local.sh
-node --check internal/httpserver/web/app.js
+make frontend-test
 python3 scripts/update-installers.py --source installers/codex/upstream
 ```
 
@@ -116,7 +117,7 @@ The updater's default mode checks without modifying published assets. To update 
 
 ```sh
 ./bin/redapp version
-docker run --rm ghcr.io/pmextra/redapp:v0.2.1 version
+docker run --rm ghcr.io/pmextra/redapp:latest version
 ```
 
 `make build` embeds `VERSION` and the Git revision. Container build arguments provide the same information; OCI labels include source, version, revision, and the original-code MIT license. For the released v0.1.0 image, full build and digest-pull/runtime verification passed in [CI](https://github.com/PMExtra/RedApp/actions/runs/36788207268) and [publication](https://github.com/PMExtra/RedApp/actions/runs/36788716836). Windows/macOS real-machine installation, real upstream download chains, and bundled artifact license reviews remain separate validation gates.

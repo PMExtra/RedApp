@@ -6,23 +6,21 @@ RedApp 帮助 IT 管理员通过内网下载入口分发 **Codex CLI**。按需�
 
 ## 快速上手
 
-使用能够拉取 v0.2.1 镜像的 Linux/amd64 或 Linux/arm64（aarch64）主机，或[从源码构建](docs/README.md#build-from-source)。尚未验证 GHCR 匿名访问。v0.2.1 使用 `/var/lib/redapp`；旧 v0.1.0 镜像使用 `/data`，不能搭配下面的卷路径。
+使用能够拉取镜像的 Linux/amd64 或 Linux/arm64（aarch64）主机，或[从源码构建](docs/README.md#build-from-source)。尚未验证 GHCR 匿名访问。当前镜像使用 `/var/lib/redapp`；旧 v0.1.0 镜像使用 `/data`，不能搭配下面的卷路径。
 
 ```sh
 docker run -d --name redapp --read-only \
   -p 127.0.0.1:8080:8080 -v redapp-data:/var/lib/redapp \
   -e REDAPP_PUBLIC_URL=http://localhost:8080 \
-  ghcr.io/pmextra/redapp:v0.2.1
+  ghcr.io/pmextra/redapp:latest
 docker logs redapp
 ```
 
 打开 **http://localhost:8080/admin/**。初始管理员密码仅出现在首次启动日志中；登录后请修改密码并保护日志。命名卷会在更换容器后保留数据。
 
-逐请求推导 origin 已在当前源码实现；已发布的 v0.2.1 镜像仍须显式配置 public URL。
-
 企业访问应通过 HTTPS 反向代理。`REDAPP_PUBLIC_URL` 可选：显式设置可固定对外 origin，否则按请求推导。使用转发头前配置可信代理 CIDR，并通过代理或网络策略限制访问。详见[部署与配置](docs/operations.md)。
 
-v0.2.1 面向 Linux/amd64 和 Linux/arm64（aarch64）。Docker 会自动选择主机架构；旧 v0.2.0 仍仅支持 amd64。
+Docker 自动选择 Linux/amd64 或 Linux/arm64（aarch64）。需要固定服务版本时，可使用 `v0.3.0` 等版本标签。
 
 ## 客户端安装
 

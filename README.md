@@ -6,23 +6,21 @@ RedApp helps IT administrators distribute **Codex CLI** through an internal down
 
 ## Quick start
 
-Use a Linux/amd64 or Linux/arm64 (aarch64) host that can pull the v0.2.1 image, or [build from source](docs/README.md#build-from-source). Anonymous GHCR access has not been verified. v0.2.1 uses `/var/lib/redapp`; the older v0.1.0 image uses `/data` and must not be used with the volume path below.
+Use a Linux/amd64 or Linux/arm64 (aarch64) host that can pull the image, or [build from source](docs/README.md#build-from-source). Anonymous GHCR access has not been verified. Current images use `/var/lib/redapp`; the older v0.1.0 image uses `/data` and must not be used with the volume path below.
 
 ```sh
 docker run -d --name redapp --read-only \
   -p 127.0.0.1:8080:8080 -v redapp-data:/var/lib/redapp \
   -e REDAPP_PUBLIC_URL=http://localhost:8080 \
-  ghcr.io/pmextra/redapp:v0.2.1
+  ghcr.io/pmextra/redapp:latest
 docker logs redapp
 ```
 
 Open **http://localhost:8080/admin/**. The initial admin password appears in the first-start logs only; change it after signing in and protect those logs. The named volume keeps data across container replacements.
 
-Request-derived origin is available in current source builds; the published v0.2.1 image still requires an explicit public URL.
-
 For enterprise access, put RedApp behind an HTTPS reverse proxy. `REDAPP_PUBLIC_URL` is optional: an explicit value fixes the external origin; otherwise RedApp derives it from each request. Configure trusted proxy CIDRs before using forwarded headers and restrict access through your proxy or network policy. See [deployment and configuration](docs/operations.md).
 
-v0.2.1 targets Linux/amd64 and Linux/arm64 (aarch64). Docker selects the host architecture automatically; v0.2.0 remains amd64-only.
+Docker selects Linux/amd64 or Linux/arm64 (aarch64) automatically. Use a version tag such as `v0.3.0` when you need a fixed server version.
 
 ## Install on clients
 
