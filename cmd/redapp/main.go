@@ -67,7 +67,7 @@ func main() {
 	}
 }
 func run() error {
-	data := flag.String("data", env("REDAPP_DATA", "./data"), "本地持久化目录")
+	data := flag.String("data", env("REDAPP_DATA", "/var/lib/redapp"), "本地持久化目录")
 	listen := flag.String("listen", env("REDAPP_LISTEN", ":8080"), "监听地址")
 	public := flag.String("public-url", env("REDAPP_PUBLIC_URL", "http://localhost:8080"), "企业对外 origin")
 	upstream := flag.String("base-url", env("REDAPP_BASE_URL", "https://releases.openai.com/codex"), "固定上游根地址")

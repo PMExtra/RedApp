@@ -6,13 +6,13 @@ RedApp helps IT administrators distribute **Codex CLI** through an internal down
 
 ## Quick start
 
-Use a Linux/amd64 host that can pull the published image. Anonymous GHCR access has not been verified; [building from source](docs/README.md#build-from-source) is also available.
+On Linux/amd64, [build the current source](docs/README.md#build-from-source) as `redapp:local`, then run it below. The current source uses `/var/lib/redapp`; the previously published v0.1.0 image uses `/data` and does not implement this new path contract.
 
 ```sh
 docker run -d --name redapp --read-only \
-  -p 127.0.0.1:8080:8080 -v redapp-data:/data \
+  -p 127.0.0.1:8080:8080 -v redapp-data:/var/lib/redapp \
   -e REDAPP_PUBLIC_URL=http://localhost:8080 \
-  ghcr.io/pmextra/redapp:v0.1.0
+  redapp:local
 docker logs redapp
 ```
 

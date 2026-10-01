@@ -2,11 +2,11 @@
 
 ## 配置
 
-命令行参数优先于对应环境变量。
+命令行参数优先于对应环境变量。数据目录优先级固定为 `--data` > 非空 `REDAPP_DATA` > `/var/lib/redapp`，程序、Docker 和宿主系统服务统一使用该默认目录。不会探测运行环境、在权限失败后回退或自动迁移旧 `/data`；目录不可写时启动失败。宿主部署应由管理员提前创建目录并赋予服务用户所有权，本地开发显式使用 `--data ./data`。
 
 | 参数 | 环境变量 | 默认值 | 含义 |
 | --- | --- | --- | --- |
-| `--data` | `REDAPP_DATA` | `./data` | SQLite 与缓存所在本地目录 |
+| `--data` | `REDAPP_DATA` | `/var/lib/redapp` | SQLite 与缓存所在本地目录 |
 | `--listen` | `REDAPP_LISTEN` | `:8080` | HTTP 监听地址 |
 | `--public-url` | `REDAPP_PUBLIC_URL` | `http://localhost:8080` | 企业对外 HTTP(S) origin，必须明确配置 |
 | `--base-url` | `REDAPP_BASE_URL` | `https://releases.openai.com/codex` | 服务端固定上游 HTTPS 根，客户端不能覆盖 |
@@ -42,6 +42,7 @@ location / {
 - 续传采用落盘实际大小，强 ETag 使用 If-Range，严格验证 206 起点/终点/总量/validator/编码。416 仅在文件完整且 hash 已通过时接受；弱 ETag 不用于 If-Range，最终 hash 仍必需。
 - 清理预览保存精确资源/代际集合，有效 10 分钟。执行先持久化 retiring，再摘除当前指针；新请求用新代，旧读者/写入者排空后删除。旧写入者不能发布成当前缓存。first_seen、清单和历史保留。
 - 数据盘不支持 NFS/SMB 共享挂载。只读根文件系统配合可写本地持久卷运行。
+- Docker 构建阶段预建 `/var/lib/redapp`，以 UID/GID `65532:65532`、模式 `0700` 复制到运行镜像；新建空命名卷由 Docker 初始化并继承目录权限，无需首次启动手工授权。任意已有宿主 bind mount 会覆盖镜像目录，其权限必须由管理员预先设置，非 root 镜像不会自动修正或递归 chown。此前发布的 v0.1.0 镜像仍预建 `/data`，必须使用新构建镜像才能应用新路径。
 
 备份时先正常停止服务，再复制整个数据目录（包括可能存在的 WAL/SHM）；恢复时确认无服务持锁，完整恢复后启动。不要在线只复制 `state.sqlite`。本版本不提供在线备份端点。跨 schema 降级启动会拒绝未知版本。
 

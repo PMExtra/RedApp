@@ -6,7 +6,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=1 go build -tags netgo,osusergo,sqlite_omit_load_extension -trimpath -ldflags="-linkmode external -extldflags '-static' -X main.version=${VERSION} -X main.revision=${REVISION}" -o /redapp ./cmd/redapp \
-    && mkdir -p /image-data && chmod 0700 /image-data
+    && mkdir -p /var/lib/redapp && chmod 0700 /var/lib/redapp
 
 FROM scratch AS runtime
 ARG VERSION=dev
@@ -18,10 +18,10 @@ LABEL org.opencontainers.image.title="RedApp" \
       org.opencontainers.image.licenses="MIT"
 COPY --from=build /redapp /redapp
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=build --chown=65532:65532 /image-data /data
+COPY --from=build --chown=65532:65532 /var/lib/redapp /var/lib/redapp
 USER 65532:65532
-ENV REDAPP_DATA=/data REDAPP_LISTEN=:8080 REDAPP_PUBLIC_URL=http://localhost:8080
-VOLUME ["/data"]
+ENV REDAPP_DATA=/var/lib/redapp REDAPP_LISTEN=:8080 REDAPP_PUBLIC_URL=http://localhost:8080
+VOLUME ["/var/lib/redapp"]
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 CMD ["/redapp", "healthcheck"]
 ENTRYPOINT ["/redapp"]

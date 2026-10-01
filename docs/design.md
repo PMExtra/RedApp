@@ -135,6 +135,8 @@ app_id 在 MVP 固定为 codex，仅作为低成本缓存键/数据索引命名�
     docs/{design,operations,upstream-contract}.md
     Dockerfile
 
+数据目录默认统一为 `/var/lib/redapp`（程序、Docker 和宿主系统服务），固定优先级为 `--data` > 非空 `REDAPP_DATA` > 默认值。本地开发显式 `--data ./data`；不探测环境、不在权限失败后回退，也不迁移或兼容旧 `/data`。Docker 预建目录由固定非 root 用户拥有，新空命名卷继承权限；已有 bind mount 权限由管理员配置。
+
 数据目录：
 
     instance.lock

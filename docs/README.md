@@ -67,11 +67,11 @@ Open `http://localhost:8080/admin/` and use the first-start password from the pr
 docker build --build-arg VERSION="$(cat VERSION)" \
   --build-arg REVISION="$(git rev-parse HEAD)" -t redapp:local .
 docker run -d --name redapp --read-only \
-  -p 127.0.0.1:8080:8080 -v redapp-data:/data \
+  -p 127.0.0.1:8080:8080 -v redapp-data:/var/lib/redapp \
   -e REDAPP_PUBLIC_URL=http://localhost:8080 redapp:local
 ```
 
-The Docker image runs as UID/GID 65532 and needs a writable local data volume. The binary statically links SQLite through CGO, disables SQLite extension loading, and uses Go DNS/user lookup implementations; no separate database service is required.
+The current Docker image runs as UID/GID 65532 and needs a writable local data volume at `/var/lib/redapp`. The binary and host services use the same default; `--data` overrides nonempty `REDAPP_DATA`, which overrides that default. Provision the host directory for the service user before startup. There is no environment detection, permission-failure fallback, or automatic migration from `/data`. For local development, explicitly use `--data ./data`, as above. New empty named volumes inherit the prepared directory ownership and mode, so first startup needs no manual permission changes. Existing host bind mounts must already be writable by UID/GID 65532; the nonroot image does not repair their permissions. This follows the build-time filesystem preparation and fixed nonroot user pattern in the official [Loki Dockerfile](https://github.com/grafana/loki/blob/main/cmd/loki/Dockerfile). The previously published v0.1.0 image still uses `/data`; build the current source to use the new path contract. The binary statically links SQLite through CGO, disables SQLite extension loading, and uses Go DNS/user lookup implementations; no separate database service is required.
 
 ## Design and development
 
@@ -86,6 +86,7 @@ From the repository root:
 
 ```sh
 make check test build
+python3 scripts/test-data-cli.py
 python3 scripts/test-http-cli.py
 sh scripts/test-docker-local.sh
 node --check internal/httpserver/web/app.js

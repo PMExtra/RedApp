@@ -39,6 +39,7 @@ jobs:
           PY
       - name: CLI HTTP and frontend syntax
         run: |
+          python3 scripts/test-data-cli.py
           python3 scripts/test-http-cli.py
           node --check internal/httpserver/web/app.js
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
