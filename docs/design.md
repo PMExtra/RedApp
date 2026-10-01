@@ -74,7 +74,7 @@ RedApp 采用通用分发底层与静态应用模块的划分。明确不实现�
 
 ### 2.2 建议工程默认值
 
-- 服务运行于 Linux/Docker 为首要交付；客户端脚本兼容官方支持的 shell/PowerShell 平台
+- 服务镜像覆盖 Linux/amd64 和 Linux/arm64（aarch64），以原生 CI 和发布后实际容器运行作为验证门禁；不扩展未经验证的架构。服务运行于 Linux/Docker 为首要交付；客户端脚本兼容官方支持的 shell/PowerShell 平台
 - SQLite 使用 WAL、短事务；应用状态与文件操作通过可恢复日志协调
 - 管理页内嵌到 Go 二进制；不用 Node 作为运行依赖
 - 默认不信任任何反向代理头；部署时显式配置 trusted proxy CIDR 和对外 public base URL

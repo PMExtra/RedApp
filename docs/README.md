@@ -52,7 +52,7 @@ For PowerShell, set `$env:CODEX_NON_INTERACTIVE = '1'` before running the chosen
 
 ## Build from source
 
-Use Linux/amd64 with Go 1.25.1, GCC, static libc development libraries, and Make. Docker builds require Docker and access to the builder image and Go modules.
+Use Linux/amd64 or Linux/arm64 (aarch64) with Go 1.25.1, GCC, static libc development libraries, and Make. Docker builds require Docker and access to the builder image and Go modules.
 
 ```sh
 git clone https://github.com/PMExtra/RedApp.git
@@ -72,6 +72,8 @@ docker run -d --name redapp --read-only \
 ```
 
 The current Docker image runs as UID/GID 65532 and needs a writable local data volume at `/var/lib/redapp`. The binary and host services use the same default; `--data` overrides nonempty `REDAPP_DATA`, which overrides that default. Provision the host directory for the service user before startup. There is no environment detection, permission-failure fallback, or automatic migration from `/data`. For local development, explicitly use `--data ./data`, as above. New empty named volumes inherit the prepared directory ownership and mode, so first startup needs no manual permission changes. Existing host bind mounts must already be writable by UID/GID 65532; the nonroot image does not repair their permissions. This follows the build-time filesystem preparation and fixed nonroot user pattern in the official [Loki Dockerfile](https://github.com/grafana/loki/blob/main/cmd/loki/Dockerfile). v0.2.0 uses this path contract; the older v0.1.0 image still uses `/data`. The binary statically links SQLite through CGO, disables SQLite extension loading, and uses Go DNS/user lookup implementations; no separate database service is required.
+
+Docker builds run the Go toolchain on `BUILDPLATFORM` and explicitly set `TARGETOS`/`TARGETARCH`. SQLite uses CGO: native builds use GCC, while cross builds install the matching Debian GCC and static libc development libraries. `CGO_ENABLED=0` is not a supported substitute. CI uses the native `ubuntu-24.04` and `ubuntu-24.04-arm` runners for race/CLI tests, full builds, and real container lifecycle checks. Only Linux/amd64 and Linux/arm64 are accepted; ordinary client runs need no `--platform` setting. See [Docker multi-platform builds](https://docs.docker.com/build/building/multi-platform/) and [GitHub runner specifications](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
 
 ## Design and development
 
@@ -97,9 +99,9 @@ The updater's default mode checks without modifying published assets. To update 
 
 ## CI, versions, and container publication
 
-[CI](../.github/workflows/ci.yml) runs on PRs and main pushes: formatting, vet, race, installer/CLI tests, full Linux/amd64 Docker builds, and container persistence/recovery checks. PRs do not log in to or publish to a registry.
+[CI](../.github/workflows/ci.yml) runs on PRs and main pushes: formatting, vet, race, installer/CLI tests, full native Linux/amd64 and Linux/arm64 Docker builds, and container persistence/recovery checks. PRs do not log in to or publish to a registry.
 
-[Publication](../.github/workflows/publish.yml) runs only for this repository's stable `v0.x.y` tags. A tag must match `VERSION`, and its exact commit must have passed main CI. Actions uses its temporary `GITHUB_TOKEN` to publish `ghcr.io/pmextra/redapp` tags `v0.x.y`, `0.x.y`, `0.x`, and `latest`, then pulls the digest and verifies the running container. ARM64 images are not published. The workflow does not change GHCR package visibility or persistent account permissions; anonymous access has not been verified.
+[Publication](../.github/workflows/publish.yml) runs only for this repository's stable `v0.x.y` tags. A tag must match `VERSION`, and its exact commit must have passed main CI. Actions uses its temporary `GITHUB_TOKEN` to publish `ghcr.io/pmextra/redapp` tags `v0.x.y`, `0.x.y`, `0.x`, and `latest`, then pulls the digest and verifies the running container. New releases publish a manifest for Linux/amd64 and Linux/arm64, then verify both digest-selected variants (amd64 natively and arm64 under QEMU); v0.2.0 remains amd64-only. The workflow does not change GHCR package visibility or persistent account permissions; anonymous access has not been verified.
 
 ```sh
 ./bin/redapp version

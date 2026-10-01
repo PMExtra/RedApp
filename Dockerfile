@@ -1,11 +1,22 @@
-FROM golang:1.25.1-bookworm AS build
+FROM --platform=$BUILDPLATFORM golang:1.25.1-bookworm AS build
 ARG VERSION=dev
 ARG REVISION=unknown
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=1 go build -tags netgo,osusergo,sqlite_omit_load_extension -trimpath -ldflags="-linkmode external -extldflags '-static' -X main.version=${VERSION} -X main.revision=${REVISION}" -o /redapp ./cmd/redapp \
+ARG TARGETOS
+ARG TARGETARCH
+ARG BUILDARCH
+RUN set -eu; \
+    case "$TARGETOS/$TARGETARCH" in linux/amd64|linux/arm64) ;; *) echo "Unsupported target: $TARGETOS/$TARGETARCH" >&2; exit 1 ;; esac; \
+    compiler=gcc; \
+    if [ "$BUILDARCH" != "$TARGETARCH" ]; then \
+      case "$TARGETARCH" in amd64) compiler=x86_64-linux-gnu-gcc ;; arm64) compiler=aarch64-linux-gnu-gcc ;; esac; \
+      apt-get update && apt-get install -y --no-install-recommends "gcc-${compiler%-gcc}" libc6-dev-${TARGETARCH}-cross; \
+      rm -rf /var/lib/apt/lists/*; \
+    fi; \
+    CGO_ENABLED=1 GOOS=$TARGETOS GOARCH=$TARGETARCH CC=$compiler go build -tags netgo,osusergo,sqlite_omit_load_extension -trimpath -ldflags="-linkmode external -extldflags '-static' -X main.version=${VERSION} -X main.revision=${REVISION}" -o /redapp ./cmd/redapp \
     && mkdir -p /var/lib/redapp && chmod 0700 /var/lib/redapp
 
 FROM scratch AS runtime

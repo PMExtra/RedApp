@@ -20,6 +20,8 @@ Open **http://localhost:8080/admin/**. The initial admin password appears in the
 
 For enterprise access, put RedApp behind an HTTPS reverse proxy and set `REDAPP_PUBLIC_URL` to its external origin. Preserve the configured Host and restrict download access through your proxy or network policy. See [deployment and configuration](docs/operations.md).
 
+Current-source builds target Linux/amd64 and Linux/arm64 (aarch64); the published v0.2.0 image supports amd64 only. Multi-architecture publication is pending. Docker selects the host architecture automatically.
+
 ## Install on clients
 
 Replace `codex.example.internal` with your service address:

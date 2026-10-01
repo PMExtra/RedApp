@@ -140,3 +140,12 @@ v0.1.0 的完整多阶段 Dockerfile 已在干净的 Linux/amd64 托管 runner �
 `sh scripts/test-docker-local.sh` 使用本地静态二进制离线重建 runtime，已验证 `/var/lib/redapp` 的新空命名卷首次启动与数据库初始化、非 root/只读根、健康检查、双实例拒绝、SIGKILL 恢复、容器重建后数据库保持；重建时清空 `REDAPP_DATA`，独立验证程序默认路径。目录以 UID/GID 65532、0700 预建，不使用 root 入口修正 bind mount。
 
 本地验证阶段的完整 Dockerfile 构建在解析 `golang:1.25.1-bookworm` 基础镜像 metadata 时被 Docker Hub HTTP 429 限制，当时未验证完整 builder；离线 runtime 验证不能替代该检查。现有 CI 已接入新测试，v0.2.0 的发布门禁要求确切提交完成完整 Dockerfile 构建和 runtime 检查，再按发布 digest 拉取并重复验证。旧 v0.1.0 仍使用 `/data`，不可视为新路径镜像。上述结果不改变 Windows/macOS 和真实生产上游的既有未验证边界。
+
+
+## 双架构镜像修订（本地验证，待 CI）
+
+目标仅 Linux/amd64 与 Linux/arm64（aarch64）。Dockerfile 使用 `BUILDPLATFORM` 原生 Go 编译器，明确 `TARGETOS/TARGETARCH`，保留 CGO SQLite 并按需安装目标 GCC/static libc；拒绝其它目标。CI 增加 `ubuntu-24.04` 与 `ubuntu-24.04-arm` 原生矩阵，两者都执行 race/CLI、完整镜像构建和 runtime；发布构建双架构 manifest，并按同一 index digest 分别拉取和运行两种变体（arm64 使用 QEMU）。这些门禁尚未运行，不当作通过。
+
+本地 `REDAPP_TEST_PLATFORM=linux/amd64 sh scripts/test-docker-local.sh` 通过，涵盖版本、架构检查、非 root/只读根、`/var/lib/redapp` 新空卷、数据库初始化/重建持久性、健康、双实例拒绝与 SIGKILL 恢复。actionlint、shell 语法、双语命令与文档链接检查通过。此次 amd64 runtime 使用既有本地静态二进制重建 scratch runtime，不是新的完整 builder 结果。
+
+ARM64 完整 Dockerfile 构建已尝试：官方 Go 基础镜像可拉取，但 `RUN go mod download` 在构建容器中解析 `proxy.golang.org` 的 DNS 返回 connection refused；尚未进入目标 C 编译器安装/编译。改用 host network 后同样失败。已取得用户态 QEMU，但尚无构建成功的 ARM64 制品，因此 **ARM64 编译与实际 runtime 仍未验证**，必须待原生 ARM64 CI 和发布后同 digest 测试通过。建议下一版本 v0.2.1；已发布 v0.2.0 仍仅 amd64，没有修改旧 tag 或发布新镜像。

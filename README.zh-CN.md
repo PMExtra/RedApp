@@ -20,6 +20,8 @@ docker logs redapp
 
 企业访问应通过 HTTPS 反向代理，并将 `REDAPP_PUBLIC_URL` 设置为对外 origin。代理须使用配置的 Host，并通过代理或网络策略限制下载访问。详见[部署与配置](docs/operations.md)。
 
+当前源码支持构建 Linux/amd64 和 Linux/arm64（aarch64）；已发布 v0.2.0 镜像仅支持 amd64，多架构版本尚待发布。Docker 会自动选择主机架构。
+
 ## 客户端安装
 
 将 `codex.example.internal` 替换为服务地址：
