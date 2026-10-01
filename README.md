@@ -18,7 +18,9 @@ docker logs redapp
 
 Open **http://localhost:8080/admin/**. The initial admin password appears in the first-start logs only; change it after signing in and protect those logs. The named volume keeps data across container replacements.
 
-For enterprise access, put RedApp behind an HTTPS reverse proxy and set `REDAPP_PUBLIC_URL` to its external origin. Preserve the configured Host and restrict download access through your proxy or network policy. See [deployment and configuration](docs/operations.md).
+Request-derived origin is available in current source builds; the published v0.2.1 image still requires an explicit public URL.
+
+For enterprise access, put RedApp behind an HTTPS reverse proxy. `REDAPP_PUBLIC_URL` is optional: an explicit value fixes the external origin; otherwise RedApp derives it from each request. Configure trusted proxy CIDRs before using forwarded headers and restrict access through your proxy or network policy. See [deployment and configuration](docs/operations.md).
 
 v0.2.1 targets Linux/amd64 and Linux/arm64 (aarch64). Docker selects the host architecture automatically; v0.2.0 remains amd64-only.
 
@@ -27,14 +29,14 @@ v0.2.1 targets Linux/amd64 and Linux/arm64 (aarch64). Docker selects the host ar
 Replace `codex.example.internal` with your service address:
 
 ```sh
-curl -fsS https://codex.example.internal/install.sh | sh -s -- --release 0.159.2
+curl -fsSL https://codex.example.internal/install.sh | sh
 ```
 
 ```powershell
-& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing 'https://codex.example.internal/install.ps1' -ErrorAction Stop).Content)) -Release 0.159.2
+irm 'https://codex.example.internal/install.ps1' | iex
 ```
 
-These commands download and execute the installer immediately. For unattended shell installation, put `CODEX_NON_INTERACTIVE=1` before `sh` in the pipeline. To review the script first, see [client installation details](docs/README.md#review-before-installing).
+These commands download and execute the installer immediately, using `CODEX_RELEASE` if set or `latest` otherwise. Version-pinned commands are in the installation details. For unattended shell installation, put `CODEX_NON_INTERACTIVE=1` before `sh` in the pipeline. To review the script first, see [client installation details](docs/README.md#review-before-installing).
 
 ## Before rollout
 

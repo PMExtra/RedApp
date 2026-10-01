@@ -9,7 +9,7 @@ Use the quick starts to run the service and install Codex on clients. The refere
 - [Operations](operations.md): CLI/environment configuration, latest TTL, reverse proxy and trusted headers, access controls, persistent volumes, backups, recovery, health checks, cleanup, and metrics.
 - [Validation and limitations](acceptance.md): the acceptance matrix, concurrency/failure tests, crash windows, and remaining platform/upstream verification gates.
 
-`REDAPP_PUBLIC_URL` must be an origin without a subpath, query, or credentials. Requests must use its exact Host. For production, use HTTPS at the reverse proxy; download endpoints do not require an admin session, so network access controls remain necessary. See the operations reference for configuration details rather than copying its configuration table here.
+`REDAPP_PUBLIC_URL` is optional and defaults to empty. An explicit value must be an origin without a subpath, query, or credentials, and requests must use its exact Host. Otherwise the origin is derived per request; only configured trusted proxies can supply forwarded host/scheme. Host syntax validation does not establish domain trust. For production, use HTTPS at the reverse proxy; download endpoints do not require an admin session, so network access controls remain necessary. See the operations reference for configuration details rather than copying its configuration table here.
 
 ## Review before installing
 
@@ -40,7 +40,17 @@ After a successful download and review:
 ./install.ps1 -Release 0.159.2
 ```
 
-Both methods preserve the installer's release arguments. Omit `--release 0.159.2` / `-Release 0.159.2` to use `CODEX_RELEASE`, or `latest` when that environment variable is unset. The PowerShell quick start invokes a script block so `-Release` reaches the installer without piping script text to its standard input.
+Both methods preserve the installer's release arguments. Omit `--release 0.159.2` / `-Release 0.159.2` to use `CODEX_RELEASE`, or `latest` when that environment variable is unset. For a version-pinned one-line installation, pass parameters to the shell or PowerShell script block explicitly:
+
+```sh
+curl -fsSL https://codex.example.internal/install.sh | sh -s -- --release 0.159.2
+```
+
+```powershell
+& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing 'https://codex.example.internal/install.ps1' -ErrorAction Stop).Content)) -Release 0.159.2
+```
+
+The quick-start `irm ... | iex` command is for the default release; do not append `-Release` to `iex`.
 
 Shell confirmation prompts use the controlling terminal (`/dev/tty`) when available, including with piped execution. Without an interactive terminal, optional confirmations are declined without consuming the downloaded script. PowerShell prompts use `Read-Host` when console input and output are not redirected; optional confirmations are declined when they are redirected. To explicitly decline optional confirmations for unattended installation, set `CODEX_NON_INTERACTIVE=1` on the installer process. For piped shell execution:
 

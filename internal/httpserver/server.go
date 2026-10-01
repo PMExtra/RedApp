@@ -12,7 +12,6 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -35,13 +34,6 @@ type Server struct {
 	Started   time.Time
 }
 
-func PublicURL(s string) (string, error) {
-	u, e := url.Parse(s)
-	if e != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") || (u.Scheme != "https" && u.Scheme != "http") || strings.ContainsAny(s, "'\"`$\\ \t\r\n") {
-		return "", errors.New("Public base URL must be a safe HTTP(S) origin; subpaths are not supported")
-	}
-	return strings.TrimRight(s, "/"), nil
-}
 func reply(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -70,8 +62,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "same-origin")
 	w.Header().Set("X-Frame-Options", "DENY")
-	if r.Host != strings.TrimPrefix(strings.TrimPrefix(s.Public, "https://"), "http://") {
-		fail(w, 400, "Host does not match public base URL")
+	public, err := s.origin(r)
+	if err != nil {
+		fail(w, 400, err.Error())
 		return
 	}
 	if r.URL.RawPath != "" || r.URL.RawQuery != "" || strings.Contains(r.URL.Path, "\\") || strings.Contains(r.URL.Path, "//") {
@@ -101,7 +94,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/admin") {
-		s.admin(w, r)
+		s.admin(w, r, public)
 		return
 	}
 	s.DB.Add("requests", 1)
@@ -110,12 +103,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/install.sh" || r.URL.Path == "/install.ps1" {
-		body, e := codex.Installer(strings.TrimPrefix(r.URL.Path, "/"), s.Public)
+		body, e := codex.Installer(strings.TrimPrefix(r.URL.Path, "/"), public)
 		if e != nil {
 			fail(w, 503, "Installer generation verification has not passed")
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
 		w.Write(body)
 		return
 	}
@@ -153,7 +147,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, 502, "Failed to fetch trusted metadata")
 			return
 		}
-		reply(w, 200, m.Public(s.Public))
+		w.Header().Set("Cache-Control", "no-store")
+		reply(w, 200, m.Public(public))
 		return
 	}
 	resource, e := s.Catalog.Authorize(r.Context(), v, name)
@@ -203,13 +198,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
-func (s *Server) sameOrigin(r *http.Request) bool {
-	return r.Header.Get("Origin") == "" || r.Header.Get("Origin") == s.Public
+func (s *Server) sameOrigin(r *http.Request, public string) bool {
+	return r.Header.Get("Origin") == "" || r.Header.Get("Origin") == public
 }
-func (s *Server) admin(w http.ResponseWriter, r *http.Request) {
+func (s *Server) admin(w http.ResponseWriter, r *http.Request, public string) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'")
-	if !s.sameOrigin(r) {
+	if !s.sameOrigin(r, public) {
 		fail(w, 403, "Origin not allowed")
 		return
 	}
@@ -230,7 +225,7 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request) {
 			fail(w, 429, "Login failed or rate limit exceeded")
 			return
 		}
-		s.Auth.Cookie(w, token)
+		s.Auth.Cookie(w, token, strings.HasPrefix(public, "https://"))
 		reply(w, 200, map[string]string{"csrf": session.CSRF})
 		return
 	}
@@ -272,7 +267,7 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request) {
 		case "/admin/api/session":
 			reply(w, 200, map[string]string{"csrf": session.CSRF})
 		case "/admin/api/status":
-			status, e := s.status()
+			status, e := s.status(public)
 			if e != nil {
 				fail(w, 503, "Failed to read status")
 				return
@@ -290,7 +285,7 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/admin/api/logout":
 		s.Auth.Logout(r)
-		s.Auth.Cookie(w, "")
+		s.Auth.Cookie(w, "", strings.HasPrefix(public, "https://"))
 		reply(w, 200, map[string]bool{"ok": true})
 	case "/admin/api/password":
 		var input struct {
@@ -368,7 +363,7 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "API endpoint not found")
 	}
 }
-func (s *Server) status() (map[string]any, error) {
+func (s *Server) status(public string) (map[string]any, error) {
 	views := s.Downloads.Snapshot()
 	var complete, temp, pending, total, logical, allocatedCache, allocatedTemp, allocatedPending int64
 	classes := map[string]string{}
@@ -434,5 +429,5 @@ func (s *Server) status() (map[string]any, error) {
 	}
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
-	return map[string]any{"name": "RedApp", "started": s.Started, "os": runtime.GOOS, "arch": runtime.GOARCH, "go": runtime.Version(), "goroutines": runtime.NumGoroutine(), "memory_bytes": mem.Alloc, "sampled_at": time.Now().UTC(), "resources": views, "versions": versions, "events": events, "counters": counters, "disk": map[string]any{"used_bytes": total, "logical_bytes": logical, "allocated_cache_bytes": allocatedCache, "allocated_temporary_bytes": allocatedTemp, "allocated_pending_bytes": allocatedPending, "cache_bytes": complete, "temporary_bytes": temp, "pending_bytes": pending, "other_bytes": total - allocatedCache - allocatedTemp - allocatedPending, "free_bytes": disk.Bavail * uint64(disk.Bsize)}, "public_base_url": s.Public, "rates": s.DB.Rates(), "client_runtime_update_policy": "The enterprise installer suppresses the automatic-update marker; the CLI binary is unchanged. Control runtime public update checks through enterprise egress policy."}, nil
+	return map[string]any{"name": "RedApp", "started": s.Started, "os": runtime.GOOS, "arch": runtime.GOARCH, "go": runtime.Version(), "goroutines": runtime.NumGoroutine(), "memory_bytes": mem.Alloc, "sampled_at": time.Now().UTC(), "resources": views, "versions": versions, "events": events, "counters": counters, "disk": map[string]any{"used_bytes": total, "logical_bytes": logical, "allocated_cache_bytes": allocatedCache, "allocated_temporary_bytes": allocatedTemp, "allocated_pending_bytes": allocatedPending, "cache_bytes": complete, "temporary_bytes": temp, "pending_bytes": pending, "other_bytes": total - allocatedCache - allocatedTemp - allocatedPending, "free_bytes": disk.Bavail * uint64(disk.Bsize)}, "public_base_url": public, "rates": s.DB.Rates(), "client_runtime_update_policy": "The enterprise installer suppresses the automatic-update marker; the CLI binary is unchanged. Control runtime public update checks through enterprise egress policy."}, nil
 }

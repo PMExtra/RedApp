@@ -36,7 +36,7 @@ func main() {
 		return
 	}
 	if len(os.Args) == 2 && os.Args[1] == "healthcheck" {
-		base := env("REDAPP_PUBLIC_URL", "http://localhost:8080")
+		base := env("REDAPP_PUBLIC_URL", "")
 		u, err := httpserver.PublicURL(base)
 		if err != nil {
 			os.Exit(1)
@@ -49,7 +49,9 @@ func main() {
 		if err != nil {
 			os.Exit(1)
 		}
-		r.Host = strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
+		if u != "" {
+			r.Host = strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
+		}
 		client := &http.Client{Timeout: 3 * time.Second}
 		resp, err := client.Do(r)
 		if err != nil {
@@ -69,7 +71,7 @@ func main() {
 func run() error {
 	data := flag.String("data", env("REDAPP_DATA", "/var/lib/redapp"), "Local persistent data directory")
 	listen := flag.String("listen", env("REDAPP_LISTEN", ":8080"), "Listen address")
-	public := flag.String("public-url", env("REDAPP_PUBLIC_URL", "http://localhost:8080"), "Public service origin")
+	public := flag.String("public-url", env("REDAPP_PUBLIC_URL", ""), "Public service origin (empty: derive from request)")
 	upstream := flag.String("base-url", env("REDAPP_BASE_URL", "https://releases.openai.com/codex"), "Fixed upstream base URL")
 	proxies := flag.String("trusted-proxies", env("REDAPP_TRUSTED_PROXIES", ""), "Trusted proxy CIDRs, comma-separated")
 	flag.Parse()

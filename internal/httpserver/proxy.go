@@ -82,12 +82,12 @@ func splitHeader(s string, delimiter byte) ([]string, error) {
 	}
 	return parts, nil
 }
-func forwarded(s string) ([]net.IP, error) {
+func forwardedFields(s string) ([]map[string]string, error) {
 	elements, e := splitHeader(s, ',')
 	if e != nil {
 		return nil, e
 	}
-	ips := []net.IP{}
+	fieldsList := []map[string]string{}
 	for _, element := range elements {
 		params, e := splitHeader(element, ';')
 		if e != nil {
@@ -113,8 +113,7 @@ func forwarded(s string) ([]net.IP, error) {
 			}
 			fields[k] = v
 		}
-		ip := parseIP(fields["for"])
-		if ip == nil {
+		if fields["for"] != "" && parseIP(fields["for"]) == nil {
 			return nil, errors.New("Invalid Forwarded for")
 		}
 		if proto := fields["proto"]; proto != "" && proto != "http" && proto != "https" {
@@ -123,12 +122,28 @@ func forwarded(s string) ([]net.IP, error) {
 		if h := fields["host"]; strings.ContainsAny(h, "/\\@?# \t") {
 			return nil, errors.New("Invalid host")
 		}
+		fieldsList = append(fieldsList, fields)
+	}
+	return fieldsList, nil
+}
+
+func forwarded(s string) ([]net.IP, error) {
+	fields, err := forwardedFields(s)
+	if err != nil {
+		return nil, err
+	}
+	ips := make([]net.IP, 0, len(fields))
+	for _, f := range fields {
+		ip := parseIP(f["for"])
+		if ip == nil {
+			return nil, errors.New("Invalid Forwarded for")
+		}
 		ips = append(ips, ip)
 	}
 	return ips, nil
 }
 
-// Host and proto are always sourced from configured public URL. Only IP walks the trusted chain.
+// ClientIP walks from the directly connected peer to the first untrusted hop.
 func (p Proxy) ClientIP(r *http.Request) string {
 	peer := parseIP(r.RemoteAddr)
 	if peer == nil {

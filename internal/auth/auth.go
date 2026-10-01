@@ -144,6 +144,10 @@ func (a *Auth) Logout(r *http.Request) {
 		a.mu.Unlock()
 	}
 }
-func (a *Auth) Cookie(w http.ResponseWriter, t string) {
-	http.SetCookie(w, &http.Cookie{Name: "redapp_session", Value: t, Path: "/admin", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: a.Secure, MaxAge: 8 * 3600})
+func (a *Auth) Cookie(w http.ResponseWriter, t string, requestSecure ...bool) {
+	secure := a.Secure
+	if len(requestSecure) > 0 {
+		secure = requestSecure[0]
+	}
+	http.SetCookie(w, &http.Cookie{Name: "redapp_session", Value: t, Path: "/admin", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: secure, MaxAge: 8 * 3600})
 }

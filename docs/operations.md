@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | `--data` | `REDAPP_DATA` | `/var/lib/redapp` | SQLite 与缓存所在本地目录 |
 | `--listen` | `REDAPP_LISTEN` | `:8080` | HTTP 监听地址 |
-| `--public-url` | `REDAPP_PUBLIC_URL` | `http://localhost:8080` | 企业对外 HTTP(S) origin，必须明确配置 |
+| `--public-url` | `REDAPP_PUBLIC_URL` | 空 | 可选企业对外 HTTP(S) origin；空时逐请求推导 |
 | `--base-url` | `REDAPP_BASE_URL` | `https://releases.openai.com/codex` | 服务端固定上游 HTTPS 根，客户端不能覆盖 |
 | `--trusted-proxies` | `REDAPP_TRUSTED_PROXIES` | 空 | 可信代理 CIDR，逗号分隔 |
 
@@ -16,7 +16,7 @@ latest 默认 TTL 为 60 秒，管理员通过设置 API 可调整为 1–86400 
 
 当前保守边界：最多 16 个活动写入、512 个制品读者、32 个 metadata flight、每资源最大 4 GiB、清单最大 4 MiB/1024 资产、JSON 深度 32。上游总请求超时 5 分钟，响应头 30 秒、连接/TLS 10 秒；每代最多 3 次顺序尝试。不安全续传至多自动创建一个完整重试的新代；原响应失败，不能把新文件拼接到旧前缀。服务器请求头 10 秒、请求读取 30 秒、写响应 10 分钟，正常停止最多等待 15 秒。SQLite busy timeout 为 5 秒。失败事件最多 1000 条/30 天，管理接口展示最近 100 条。
 
-首次随机密码仅输出一次，bcrypt cost=12；会话有效期 8 小时，最多 128 个，修改密码注销全部会话。每来源 IP 每 5 分钟最多 10 次登录尝试，限流表最多 4096 个来源。会话 Cookie 使用 HttpOnly/SameSite=Strict，public URL 为 HTTPS 时 Secure。变更 API 要求会话和 `X-CSRF-Token`，所有管理请求拒绝跨 origin 来源。
+首次随机密码仅输出一次，bcrypt cost=12；会话有效期 8 小时，最多 128 个，修改密码注销全部会话。每来源 IP 每 5 分钟最多 10 次登录尝试，限流表最多 4096 个来源。会话 Cookie 使用 HttpOnly/SameSite=Strict，本次请求的对外 origin 为 HTTPS 时 Secure。变更 API 要求会话和 `X-CSRF-Token`，所有管理请求拒绝跨 origin 来源。
 
 ## 反向代理
 
@@ -30,7 +30,9 @@ location / {
 }
 ```
 
-只在直连 peer 命中可信 CIDR 时解析转发头。合法 Forwarded 优先于 X-Forwarded-For；从右往左剥离可信节点，停在首个不可信 IP。畸形 Forwarded 不转而拼接 XFF 链，回退至 peer。支持引号、IPv6 和多跳。host/proto 始终以 public URL 配置为准，不能由请求头决定安装命令、资源 URL 或 Cookie 安全性。请求 Host 必须与配置的 origin host 完全一致；反代需要覆盖外来转发头并设置正确 Host。不要信任覆盖公网客户端的 CIDR。
+只在直连 peer 命中可信 CIDR 时解析转发头。合法 Forwarded 优先于 X-Forwarded-For；从右往左剥离可信节点，停在首个不可信 IP。畸形 Forwarded 不转而拼接 XFF 链，回退至 peer。支持引号、IPv6 和多跳。显式 public URL 优先，且请求 Host 必须与配置的 origin host 完全一致。未配置时，使用合法请求 Host 与 TLS/HTTP scheme；仅可信直连 peer 可以通过 Forwarded 或 X-Forwarded-Host/Proto 提供对外 origin。Forwarded 从右向左选择信任边界对应节点；多值 X-Forwarded-Host/Proto 必须与 XFF 长度一致，单值要求直连可信代理覆盖设置。畸形的可信 origin 头返回 400，不混用两套头。反代必须删除/覆盖客户端传入的转发头，不要信任覆盖公网客户端的 CIDR。
+
+安装器、metadata、管理状态和 Cookie 按本次请求使用同一 origin，不修改全局配置或上游 metadata 缓存；安装器与 metadata 响应禁用缓存。合法 Host 仅说明格式可安全使用，并不证明域名可信；自动模式允许不同合法 Host，严格域名边界请显式设置 public URL 并在反代限制 Host。管理请求仍进行同源和 CSRF 检查。管理页默认提供 `curl ... | sh` 与 `irm ... | iex` 命令；复制按钮需要 HTTPS 或 localhost 的浏览器剪贴板权限，否则手动复制。
 
 ## 数据与恢复
 

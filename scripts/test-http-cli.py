@@ -61,6 +61,7 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         assert process.wait(timeout=20) == 0, "正常停止失败"
         log.close()
         log = (directory / "restart.log").open("w+")
+        env["REDAPP_PUBLIC_URL"] = ""
         process = subprocess.Popen([str(root / "bin/redapp")], env=env, stdout=log, stderr=log)
         for _ in range(100):
             try:
@@ -68,6 +69,9 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
                     break
             except OSError:
                 time.sleep(0.05)
+        subprocess.run([str(root / "bin/redapp"), "healthcheck"], env=env, check=True)
+        with urllib.request.urlopen(base + "/install.sh") as response:
+            assert base in response.read().decode(), "自动 origin 未写入安装器"
         process.terminate()
         assert process.wait(timeout=20) == 0
         log.flush()

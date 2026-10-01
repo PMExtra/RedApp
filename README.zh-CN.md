@@ -18,7 +18,9 @@ docker logs redapp
 
 打开 **http://localhost:8080/admin/**。初始管理员密码仅出现在首次启动日志中；登录后请修改密码并保护日志。命名卷会在更换容器后保留数据。
 
-企业访问应通过 HTTPS 反向代理，并将 `REDAPP_PUBLIC_URL` 设置为对外 origin。代理须使用配置的 Host，并通过代理或网络策略限制下载访问。详见[部署与配置](docs/operations.md)。
+逐请求推导 origin 已在当前源码实现；已发布的 v0.2.1 镜像仍须显式配置 public URL。
+
+企业访问应通过 HTTPS 反向代理。`REDAPP_PUBLIC_URL` 可选：显式设置可固定对外 origin，否则按请求推导。使用转发头前配置可信代理 CIDR，并通过代理或网络策略限制访问。详见[部署与配置](docs/operations.md)。
 
 v0.2.1 面向 Linux/amd64 和 Linux/arm64（aarch64）。Docker 会自动选择主机架构；旧 v0.2.0 仍仅支持 amd64。
 
@@ -27,14 +29,14 @@ v0.2.1 面向 Linux/amd64 和 Linux/arm64（aarch64）。Docker 会自动选择�
 将 `codex.example.internal` 替换为服务地址：
 
 ```sh
-curl -fsS https://codex.example.internal/install.sh | sh -s -- --release 0.159.2
+curl -fsSL https://codex.example.internal/install.sh | sh
 ```
 
 ```powershell
-& ([scriptblock]::Create((Invoke-WebRequest -UseBasicParsing 'https://codex.example.internal/install.ps1' -ErrorAction Stop).Content)) -Release 0.159.2
+irm 'https://codex.example.internal/install.ps1' | iex
 ```
 
-上述命令会立即下载并执行安装器。无人值守 shell 安装时，将 `CODEX_NON_INTERACTIVE=1` 放在管道中 `sh` 的前面。如需先审查脚本，见[客户端安装详解](docs/README.md#review-before-installing)。
+上述命令会立即下载并执行安装器，使用已设置的 `CODEX_RELEASE`，否则使用 `latest`。指定版本的命令见安装详解。无人值守 shell 安装时，将 `CODEX_NON_INTERACTIVE=1` 放在管道中 `sh` 的前面。如需先审查脚本，见[客户端安装详解](docs/README.md#review-before-installing)。
 
 ## 上线前确认
 
