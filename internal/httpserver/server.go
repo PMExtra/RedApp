@@ -9,6 +9,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/auth"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/download"
+	"github.com/PMExtra/RedApp/internal/history"
 	"github.com/PMExtra/RedApp/internal/store"
 	"io"
 	"io/fs"
@@ -31,6 +32,7 @@ type Server struct {
 	Auth      *auth.Auth
 	Proxy     Proxy
 	Upstream  *distributor.Client
+	History   *history.History
 	Public    string
 	Dir       string
 	Started   time.Time
@@ -169,8 +171,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.DB.Add(rd.Kind+"_requests", 1)
 	if hit {
 		s.DB.Add("reuse_requests", 1)
-	} else {
-		s.DB.Add("miss_requests", 1)
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Cache-Control", "no-store")
@@ -270,6 +270,22 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, public string) {
 		switch r.URL.Path {
 		case "/admin/api/session":
 			reply(w, 200, map[string]string{"csrf": session.CSRF})
+		case "/admin/api/history":
+			if s.History == nil {
+				fail(w, 503, "Metric history is unavailable")
+				return
+			}
+			metric, window := r.Header.Get("X-History-Metric"), r.Header.Get("X-History-Range")
+			series, err := s.History.Query(metric, window, time.Now().UTC())
+			if err != nil {
+				if _, ok := history.Find(metric); !ok || (window != "24h" && window != "7d" && window != "30d") {
+					fail(w, 400, "Invalid history metric or range")
+				} else {
+					fail(w, 503, "Failed to read metric history")
+				}
+				return
+			}
+			reply(w, 200, series)
 		case "/admin/api/proxy":
 			if s.Upstream == nil {
 				fail(w, 503, "Upstream proxy settings are unavailable")
@@ -454,5 +470,7 @@ func (s *Server) status(public string) (map[string]any, error) {
 	}
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
-	return map[string]any{"name": "RedApp", "started": s.Started, "os": runtime.GOOS, "arch": runtime.GOARCH, "go": runtime.Version(), "goroutines": runtime.NumGoroutine(), "memory_bytes": mem.Alloc, "sampled_at": time.Now().UTC(), "resources": views, "versions": versions, "events": events, "counters": counters, "disk": map[string]any{"used_bytes": total, "logical_bytes": logical, "allocated_cache_bytes": allocatedCache, "allocated_temporary_bytes": allocatedTemp, "allocated_pending_bytes": allocatedPending, "cache_bytes": complete, "temporary_bytes": temp, "pending_bytes": pending, "other_bytes": total - allocatedCache - allocatedTemp - allocatedPending, "free_bytes": disk.Bavail * uint64(disk.Bsize)}, "public_base_url": public, "rates": s.DB.Rates(), "client_runtime_update_policy": "The enterprise installer suppresses the automatic-update marker; the CLI binary is unchanged. Control runtime public update checks through enterprise egress policy."}, nil
+	status := map[string]any{"name": "RedApp", "started": s.Started, "os": runtime.GOOS, "arch": runtime.GOARCH, "go": runtime.Version(), "goroutines": runtime.NumGoroutine(), "memory_bytes": mem.Alloc, "sampled_at": time.Now().UTC(), "resources": views, "versions": versions, "events": events, "counters": counters, "disk": map[string]any{"used_bytes": total, "logical_bytes": logical, "allocated_cache_bytes": allocatedCache, "allocated_temporary_bytes": allocatedTemp, "allocated_pending_bytes": allocatedPending, "cache_bytes": complete, "temporary_bytes": temp, "pending_bytes": pending, "other_bytes": total - allocatedCache - allocatedTemp - allocatedPending, "free_bytes": disk.Bavail * uint64(disk.Bsize)}, "public_base_url": public, "rates": s.DB.Rates(), "client_runtime_update_policy": "The enterprise installer suppresses the automatic-update marker; the CLI binary is unchanged. Control runtime public update checks through enterprise egress policy."}
+	status["metrics"] = globalMetrics(status, s.Started)
+	return status, nil
 }

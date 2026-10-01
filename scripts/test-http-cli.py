@@ -51,6 +51,12 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         with opener.open(base + "/admin/api/status") as response:
             status = json.load(response)
             assert status["name"] == "RedApp" and status["disk"]["free_bytes"] > 0
+            assert len(status["metrics"]) == 43
+        for window, resolution in [("24h", 60), ("7d", 3600), ("30d", 3600)]:
+            history = urllib.request.Request(base + "/admin/api/history", headers={"X-History-Metric": "disk.cache_bytes", "X-History-Range": window})
+            with opener.open(history) as response:
+                series = json.load(response)
+                assert series["resolution_seconds"] == resolution and series["points"][-1]["partial"]
         with opener.open(base + "/admin/") as response:
             html = response.read().decode()
             assert '<html lang="en">' in html and 'http-equiv' not in html

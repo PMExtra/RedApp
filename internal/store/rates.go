@@ -12,28 +12,38 @@ type rateSample struct {
 type rates struct {
 	mu      sync.Mutex
 	samples map[string][]rateSample
-	totals  map[string]int64
+	started time.Time
 }
 
-func (s *Store) Rates() map[string]any {
+func (s *Store) Rates() map[string]any { return s.ratesAt(time.Now()) }
+func (s *Store) ratesAt(now time.Time) map[string]any {
 	s.rates.mu.Lock()
 	defer s.rates.mu.Unlock()
-	now := time.Now()
-	out := map[string]any{"sampled_at": now.UTC(), "scope": "Actual bytes transferred by this process over the last five seconds"}
+	observed := now.Sub(s.rates.started).Seconds()
+	if observed > 5 {
+		observed = 5
+	}
+	if observed < 0 {
+		observed = 0
+	}
+	out := map[string]any{"sampled_at": now.UTC(), "scope": "Actual bytes in this process over an observed window of up to five seconds", "window_seconds": observed, "valid": observed == 5}
 	for _, name := range []string{"upstream_bytes", "downstream_bytes"} {
-		samples := s.rates.samples[name]
-		var bps float64
-		if len(samples) > 0 {
-			first := samples[0]
-			if now.Sub(first.Time) > 0 && now.Sub(samples[len(samples)-1].Time) < 5*time.Second {
-				bps = float64(s.rates.totals[name]-first.Bytes) / now.Sub(first.Time).Seconds()
+		var total int64
+		for _, sample := range s.rates.samples[name] {
+			if sample.Time.After(now.Add(-5*time.Second)) && !sample.Time.After(now) {
+				total += sample.Bytes
 			}
+		}
+		var bps float64
+		if observed > 0 {
+			bps = float64(total) / observed
 		}
 		out[name+"_per_second"] = bps
 	}
 	return out
 }
-func (s *Store) sample(name string, n int64) {
+func (s *Store) sample(name string, n int64) { s.sampleAt(name, n, time.Now()) }
+func (s *Store) sampleAt(name string, n int64, now time.Time) {
 	if name != "upstream_bytes" && name != "downstream_bytes" {
 		return
 	}
@@ -41,20 +51,10 @@ func (s *Store) sample(name string, n int64) {
 	defer s.rates.mu.Unlock()
 	if s.rates.samples == nil {
 		s.rates.samples = map[string][]rateSample{}
-		s.rates.totals = map[string]int64{}
 	}
-	now := time.Now()
 	samples := s.rates.samples[name]
-	if len(samples) == 0 {
-		samples = append(samples, rateSample{now, 0})
-	}
-	s.rates.totals[name] += n
-	if len(samples) < 2 || now.Sub(samples[len(samples)-1].Time) > 200*time.Millisecond {
-		samples = append(samples, rateSample{now, s.rates.totals[name]})
-	} else {
-		samples[len(samples)-1] = rateSample{now, s.rates.totals[name]}
-	}
-	for len(samples) > 2 && now.Sub(samples[1].Time) > 5*time.Second {
+	samples = append(samples, rateSample{now, n})
+	for len(samples) > 0 && !samples[0].Time.After(now.Add(-5*time.Second)) {
 		samples = samples[1:]
 	}
 	s.rates.samples[name] = samples

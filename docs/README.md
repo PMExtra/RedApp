@@ -7,6 +7,7 @@ Use the quick starts to run the service and install Codex on clients. The refere
 ## Administrator references
 
 - [Operations](operations.md): CLI/environment configuration, latest TTL, reverse proxy and trusted headers, access controls, persistent volumes, backups, recovery, health checks, cleanup, and metrics.
+- [Global metric history](metrics-history.md): fixed metric catalog, minute observations, UTC hourly aggregates, retention, gaps, and chart semantics.
 - [Validation and limitations](acceptance.md): the acceptance matrix, concurrency/failure tests, crash windows, and remaining platform/upstream verification gates.
 
 `REDAPP_PUBLIC_URL` is optional and defaults to empty. An explicit value must be an origin without a subpath, query, or credentials, and requests must use its exact Host. Otherwise the origin is derived per request; only configured trusted proxies can supply forwarded host/scheme. Host syntax validation does not establish domain trust. For production, use HTTPS at the reverse proxy; download endpoints do not require an admin session, so network access controls remain necessary. See the operations reference for configuration details rather than copying its configuration table here.

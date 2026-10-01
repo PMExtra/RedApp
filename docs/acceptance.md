@@ -149,3 +149,24 @@ v0.1.0 的完整多阶段 Dockerfile 已在干净的 Linux/amd64 托管 runner �
 本地 `REDAPP_TEST_PLATFORM=linux/amd64 sh scripts/test-docker-local.sh` 通过，涵盖版本、架构检查、非 root/只读根、`/var/lib/redapp` 新空卷、数据库初始化/重建持久性、健康、双实例拒绝与 SIGKILL 恢复。actionlint、shell 语法、双语命令与文档链接检查通过。此次 amd64 runtime 使用既有本地静态二进制重建 scratch runtime，不是新的完整 builder 结果。
 
 ARM64 完整 Dockerfile 构建已尝试：官方 Go 基础镜像可拉取，但 `RUN go mod download` 在构建容器中解析 `proxy.golang.org` 的 DNS 返回 connection refused；尚未进入目标 C 编译器安装/编译。改用 host network 后同样失败。已取得用户态 QEMU，但尚无构建成功的 ARM64 制品，因此 **ARM64 编译与实际 runtime 仍未验证**，必须待原生 ARM64 CI 和发布后同 digest 测试通过。建议下一版本 v0.2.1；已发布 v0.2.0 仍仅 amd64，没有修改旧 tag 或发布新镜像。
+
+## 当前源码增量：全局指标历史与 Vue 无头验收（2026-10-01）
+
+前述章节保留各次历史验证记录。当前源码已改用 Go 1.27.1、target-platform `golang:1.27.1-trixie`、`node:24.19.0-trixie-slim` 前端构建阶段以及 Ubuntu 26.04 原生 runner；不再使用此前的跨平台编译器安装分支。Vue/TypeScript 管理页全部本地 embed，运行镜像仍为 scratch。
+
+新增 43 项固定全局指标，目录、每分钟采样/UTC 每小时聚合、24h/7d/30d 分辨率及保留期、缺失/计数器/速率语义见[指标历史](metrics-history.md)。版本/单资源保持当前状态及速度。新增 schema 为可重复创建的附加 metric 表，不改既有缓存/授权表。小时边界尚未提交时读 API 临时做小时聚合；持久维护始终先聚合后删除，失败事务回滚。修正 miss 新请求重复累加，不改写既有累计值。
+
+| 增量检查 | 结果 | 证据 |
+| --- | --- | --- |
+| UTC、gauge min/max/avg/last/count、当前 partial | PASS | `internal/history/history_test.go` |
+| counter 不平均、重启/下降/断档与缺失分钟不算已知增量 | PASS | 相邻分钟、实际时间与进程 boot 检查 |
+| rate 完整五秒窗口、覆盖秒数、观测加权平均 | PASS | history 和 store 的确定性测试 |
+| 24h raw / 30d aggregate 保留、幂等、重新打开恢复、删除失败原子回滚 | PASS | SQLite trigger 注入删除失败，raw/aggregate/watermark 全部回滚 |
+| 三个 API 分辨率、固定目录拒绝任意维度、既有 session/CSRF | PASS | HTTP/race 及真实 CLI 测试 |
+| 前端历史默认7d/三个窗口/空/错误重试/请求取消/未知counter增量 | PASS | 12 个前端 DOM 测试，类型检查和生产构建 |
+| 真实桌面/手机交互与视觉审阅 | PASS | Chromium 151.0.7922.173、Playwright 1.57.0，1366×900 / 390×844，本地 fixture；15 组交互检查，无意外 console/network/CSP 错误，已审阅代表截图并修正手机导航间距 |
+| 完整新 Dockerfile 双架构 builder | UNVERIFIED | 官方 Node/Go 镜像正常拉取仍受 Docker Hub 匿名限流，未绕过；本地 scratch/静态二进制验证不能代替完整 builder |
+
+无头验收覆盖登录、概览全部卡片、版本资源、事件、设置、两种真实剪贴板复制、清理确认/取消、代理凭据替换/保留/清除不回显、历史打开/窗口/表格/关闭焦点返回、空与错误恢复、登录过期停止轮询。截图仅测试数据，登录密码框为空，无真实凭据；脚本删除运行数据库后退出。图表使用 uPlot 1.6.32，额外约 57 KB JS，不引入 CDN/外部服务，也不放宽 CSP。
+
+本次不推送、打 tag 或发布镜像；Windows/macOS Codex 实机安装、真实生产上游链、其它浏览器与新代码 ARM64 运行保持未验证，不从 Chromium 后台验收推断这些结果。

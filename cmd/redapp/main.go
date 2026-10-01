@@ -8,6 +8,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/auth"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/download"
+	"github.com/PMExtra/RedApp/internal/history"
 	"github.com/PMExtra/RedApp/internal/httpserver"
 	"github.com/PMExtra/RedApp/internal/instance"
 	"github.com/PMExtra/RedApp/internal/store"
@@ -111,10 +112,21 @@ func run() error {
 	if e != nil {
 		return e
 	}
-	handler := &httpserver.Server{DB: db, Catalog: codex.New(db, client), Downloads: manager, Auth: a, Proxy: proxy, Upstream: client, Public: base, Dir: guard.Directory, Started: time.Now().UTC()}
+	metricHistory, e := history.Open(db)
+	if e != nil {
+		return e
+	}
+	handler := &httpserver.Server{DB: db, Catalog: codex.New(db, client), Downloads: manager, Auth: a, Proxy: proxy, Upstream: client, History: metricHistory, Public: base, Dir: guard.Directory, Started: time.Now().UTC()}
 	server := &http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 10 * time.Minute, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	metricCtx, cancelMetrics := context.WithCancel(ctx)
+	metricDone := make(chan struct{})
+	go func() {
+		defer close(metricDone)
+		handler.SampleHistory(metricCtx, func(err error) { log.Printf("Metric history sampling failed: %v", err) })
+	}()
+	defer func() { cancelMetrics(); <-metricDone }()
 	result := make(chan error, 1)
 	go func() { result <- server.ListenAndServe() }()
 	log.Printf("RedApp started: %s, data directory %s", base, guard.Directory)

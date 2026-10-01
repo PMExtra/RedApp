@@ -28,3 +28,19 @@ API mutations retain session cookies, same-origin enforcement and CSRF tokens. L
 Proxy settings never display saved usernames/passwords. Administrators explicitly preserve, replace or clear credentials. Server-side validation and persistence remain authoritative. All user/upstream values render as text, not HTML; production assets comply with the existing self-only CSP without inline scripts/styles or eval.
 
 Tests run through CLI using Vitest and happy-dom, including copying, clipboard failure, session/CSRF behavior, failed refresh recovery, polling cancellation, cleanup preview invalidation and proxy credential actions. This is DOM interaction verification, not browser/visual or Windows/macOS installer execution.
+
+## Metric history and local browser acceptance
+
+The fixed global metric catalog arrives with status. Cards open a native dialog with a default seven-day window, UTC charts, null gaps, hourly/minute resolution and an accessible observation table. uPlot 1.6.32 adds approximately 57 KB of local production JavaScript and no runtime service. Counter last values and observed increments remain separate; gauge/rate min/max/averages and observation coverage are explicit. See [metric semantics](../docs/metrics-history.md).
+
+The optional fixture-only browser test needs Chromium and Playwright (or playwright-core) installed locally:
+
+```sh
+make build
+REDAPP_PLAYWRIGHT_MODULE=/absolute/path/to/playwright-core \
+REDAPP_CHROMIUM=/usr/bin/chromium \
+REDAPP_TEST_ARTIFACT_DIR=/tmp/redapp-ui-artifacts \
+node scripts/test-admin-headless.cjs
+```
+
+It starts a temporary loopback server, privately captures its bootstrap password, seeds fake cache/history, checks desktop/mobile interactions and records screenshots plus a JSON report. It blocks external page requests, never installs Codex, deletes its runtime data on exit and never saves the password in artifacts. Review screenshots separately; passing DOM tests or simply producing screenshots is not visual acceptance. The script is optional rather than expanding every architecture CI runner to install a browser.

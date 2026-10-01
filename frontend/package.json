@@ -10,6 +10,7 @@
     "build": "npm run typecheck && vite build"
   },
   "dependencies": {
+    "uplot": "1.6.32",
     "vue": "3.5.43"
   },
   "devDependencies": {

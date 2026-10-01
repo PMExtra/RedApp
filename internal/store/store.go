@@ -38,7 +38,7 @@ func Open(dir string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("Unsupported database schema %d", version)
 	}
-	return &Store{DB: db}, nil
+	return &Store{DB: db, rates: rates{started: time.Now()}}, nil
 }
 func (s *Store) Put(kind, id string, v any) error {
 	b, e := json.Marshal(v)

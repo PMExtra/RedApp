@@ -9,6 +9,7 @@ import (
 	app "github.com/PMExtra/RedApp/internal/apps/codex"
 	"github.com/PMExtra/RedApp/internal/auth"
 	"github.com/PMExtra/RedApp/internal/download"
+	"github.com/PMExtra/RedApp/internal/history"
 	"github.com/PMExtra/RedApp/internal/store"
 	"github.com/PMExtra/RedApp/internal/testutil"
 	"io"
@@ -58,7 +59,11 @@ func TestAdminHTTPDownloadMetricsAndCSRF(t *testing.T) {
 	if bytes.Contains(stored, []byte(password)) || !strings.HasPrefix(string(stored), "$2a$") {
 		t.Fatal("未安全保存密码")
 	}
-	handler := &Server{DB: db, Catalog: app.New(db, c), Downloads: manager, Auth: a, Dir: dir, Started: time.Now()}
+	metricHistory, e := history.Open(db)
+	if e != nil {
+		t.Fatal(e)
+	}
+	handler := &Server{History: metricHistory, DB: db, Catalog: app.New(db, c), Downloads: manager, Auth: a, Dir: dir, Started: time.Now()}
 	httpServer := httptest.NewServer(handler)
 	defer httpServer.Close()
 	handler.Public = httpServer.URL
@@ -152,12 +157,56 @@ func TestAdminHTTPDownloadMetricsAndCSRF(t *testing.T) {
 	if e = json.Unmarshal(b, &status); e != nil {
 		t.Fatal(e)
 	}
-	if status.Counters["upstream_bytes"] != int64(len(data)) || status.Counters["downstream_bytes"] != int64(2*len(data)) || status.Counters["reuse_requests"] != 1 {
+	if status.Counters["upstream_bytes"] != int64(len(data)) || status.Counters["downstream_bytes"] != int64(2*len(data)) || status.Counters["reuse_requests"] != 1 || status.Counters["miss_requests"] != 1 {
 		t.Fatal(status.Counters)
 	}
 	if status.Disk["used_bytes"] < status.Disk["cache_bytes"] || status.Versions["0.159.2"] == "" {
 		t.Fatal(status)
 	}
+	metricStatus, err := handler.status(handler.Public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metrics := metricStatus["metrics"].([]history.Metric)
+	if len(metrics) != 43 {
+		t.Fatal("missing global metrics")
+	}
+	if err = handler.History.Record(time.Now(), metrics); err != nil {
+		t.Fatal(err)
+	}
+	for _, window := range []string{"24h", "7d", "30d"} {
+		req, _ := http.NewRequest("GET", httpServer.URL+"/admin/api/history", nil)
+		req.Header.Set("X-History-Metric", "disk.cache_bytes")
+		req.Header.Set("X-History-Range", window)
+		response, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var series history.Series
+		err = json.NewDecoder(response.Body).Decode(&series)
+		response.Body.Close()
+		resolution := int64(3600)
+		if window == "24h" {
+			resolution = 60
+		}
+		if err != nil || response.StatusCode != 200 || series.ResolutionSeconds != resolution || len(series.Points) == 0 {
+			t.Fatalf("history response %s status=%d err=%v", window, response.StatusCode, err)
+		}
+	}
+	badHistory, _ := http.NewRequest("GET", httpServer.URL+"/admin/api/history", nil)
+	badHistory.Header.Set("X-History-Metric", "resource:any")
+	badHistory.Header.Set("X-History-Range", "7d")
+	rejected, err := client.Do(badHistory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejected.Body.Close()
+	if rejected.StatusCode != 400 {
+		t.Fatal("unbounded metric accepted")
+	}
+	sampleCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	handler.SampleHistory(sampleCtx, func(err error) { t.Error(err) })
 	code, b = request("POST", "/admin/api/cleanup/preview", map[string]string{"minimum_version": "0.160.0"}, true)
 	if code != 200 {
 		t.Fatal(code, string(b))

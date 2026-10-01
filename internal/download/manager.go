@@ -69,12 +69,13 @@ type Cleanup struct {
 }
 type View struct {
 	Generation
-	Readers    int
-	Current    bool
-	RecentBPS  float64
-	AverageBPS float64
-	DownloadNS int64
-	SampledAt  time.Time
+	ActiveWriter bool
+	Readers      int
+	Current      bool
+	RecentBPS    float64
+	AverageBPS   float64
+	DownloadNS   int64
+	SampledAt    time.Time
 }
 type Manager struct {
 	mu         sync.Mutex
@@ -735,7 +736,7 @@ func (m *Manager) Snapshot() []View {
 		if g.State == "deleted" {
 			continue
 		}
-		v := View{Generation: *g, Readers: g.readers, Current: m.current[g.Resource.ID] == g, SampledAt: now}
+		v := View{Generation: *g, ActiveWriter: g.running, Readers: g.readers, Current: m.current[g.Resource.ID] == g, SampledAt: now}
 		if !g.Received.IsZero() {
 			v.DownloadNS = g.Received.Sub(g.Started).Nanoseconds()
 			if v.DownloadNS > 0 && g.State == "complete" {
