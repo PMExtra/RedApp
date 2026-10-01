@@ -34,6 +34,14 @@ location / {
 
 安装器、metadata、管理状态和 Cookie 按本次请求使用同一 origin，不修改全局配置或上游 metadata 缓存；安装器与 metadata 响应禁用缓存。合法 Host 仅说明格式可安全使用，并不证明域名可信；自动模式允许不同合法 Host，严格域名边界请显式设置 public URL 并在反代限制 Host。管理请求仍进行同源和 CSRF 检查。管理页默认提供 `curl ... | sh` 与 `irm ... | iex` 命令；复制按钮需要 HTTPS 或 localhost 的浏览器剪贴板权限，否则手动复制。
 
+## 回源代理
+
+管理员可通过 `GET /admin/api/proxy` 和带会话/CSRF 的 `POST /admin/api/proxy` 配置统一回源代理。`server` 使用带明确端口的 `http://host:port`、`https://host:port` 或 `socks5://host:port`，禁止在 URL 中包含用户名、密码、路径或查询；空值直连，不继承 HTTP_PROXY/HTTPS_PROXY 等环境变量。HTTP 代理通过 CONNECT 访问 HTTPS 上游。SOCKS5 由代理端解析目标域名；本服务无法校验代理最终解析出的 IP，代理本身须可信。仍保留固定上游 URL/路径、逐跳重定向限制和端到端 TLS 证书校验，不提供任意 URL 代理。
+
+请求包含 `password_action`：`keep` 保留已存用户名和密码（不得提交 username/password）；`replace` 使用此次 username/password；`clear` 清除全部凭据。更换代理地址时不能将已有凭据静默保留，须显式替换/清除；空 server 清除凭据。查询只返回 server、has_credentials、has_password、dns，不回显用户名/密码。凭据保存在本地 SQLite，并由数据目录权限保护，未做额外存储加密；数据库备份应作为敏感材料保护。
+
+配置先成功持久化，再原子切换 transport。新 HTTP 请求（含 metadata、制品、重试/续传和重定向下一跳）采用新配置；已在传输的响应不被取消，旧空闲连接关闭。此设置不强制刷新已缓存 metadata/制品，也不会改写既有代际完整性校验。上游连接错误对客户端和事件使用通用消息，不输出代理 URL 凭据。
+
 ## 数据与恢复
 
 - `instance.lock` 是永久保留的内核锁文件。进程始终持有 fd，退出或崩溃由内核释放；**禁止删除锁文件**。目录先解析符号链接，第二实例非阻塞失败。

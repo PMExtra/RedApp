@@ -97,6 +97,9 @@ func run() error {
 		return e
 	}
 	defer db.DB.Close()
+	if err := client.LoadProxy(db); err != nil {
+		return err
+	}
 	manager, e := download.New(guard.Directory, db, client)
 	if e != nil {
 		return e
@@ -108,7 +111,7 @@ func run() error {
 	if e != nil {
 		return e
 	}
-	handler := &httpserver.Server{DB: db, Catalog: codex.New(db, client), Downloads: manager, Auth: a, Proxy: proxy, Public: base, Dir: guard.Directory, Started: time.Now().UTC()}
+	handler := &httpserver.Server{DB: db, Catalog: codex.New(db, client), Downloads: manager, Auth: a, Proxy: proxy, Upstream: client, Public: base, Dir: guard.Directory, Started: time.Now().UTC()}
 	server := &http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 10 * time.Minute, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

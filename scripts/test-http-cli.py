@@ -54,6 +54,18 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         settings = urllib.request.Request(base + "/admin/api/settings", data=b'{"latest_ttl_seconds":120}', headers={"Content-Type": "application/json", "X-CSRF-Token": csrf})
         with opener.open(settings) as response:
             assert json.load(response)["ok"]
+        with opener.open(base + "/admin/api/proxy") as response:
+            assert json.load(response)["server"] == ""
+        proxy_body = {"server": "http://127.0.0.1:3128", "username": "fixture-user", "password": "fixture-only-password", "password_action": "replace"}
+        proxy_request = urllib.request.Request(base + "/admin/api/proxy", data=json.dumps(proxy_body).encode(), headers={"Content-Type": "application/json", "X-CSRF-Token": csrf})
+        with opener.open(proxy_request) as response:
+            saved = response.read().decode()
+            assert "fixture-user" not in saved and "fixture-only-password" not in saved
+            assert json.loads(saved)["has_credentials"]
+        proxy_body = {"server": "", "password_action": "clear"}
+        proxy_request = urllib.request.Request(base + "/admin/api/proxy", data=json.dumps(proxy_body).encode(), headers={"Content-Type": "application/json", "X-CSRF-Token": csrf})
+        with opener.open(proxy_request) as response:
+            assert not json.load(response)["has_credentials"]
         with opener.open(base + "/install.sh") as response:
             script = response.read().decode()
             assert base in script and "https://github.com" not in script

@@ -7,6 +7,7 @@ import (
 	"github.com/PMExtra/RedApp/installers/codex"
 	app "github.com/PMExtra/RedApp/internal/apps/codex"
 	"github.com/PMExtra/RedApp/internal/auth"
+	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/store"
 	"io"
@@ -29,6 +30,7 @@ type Server struct {
 	Downloads *download.Manager
 	Auth      *auth.Auth
 	Proxy     Proxy
+	Upstream  *distributor.Client
 	Public    string
 	Dir       string
 	Started   time.Time
@@ -266,6 +268,12 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, public string) {
 		switch r.URL.Path {
 		case "/admin/api/session":
 			reply(w, 200, map[string]string{"csrf": session.CSRF})
+		case "/admin/api/proxy":
+			if s.Upstream == nil {
+				fail(w, 503, "Upstream proxy settings are unavailable")
+				return
+			}
+			reply(w, 200, s.Upstream.Proxy())
 		case "/admin/api/status":
 			status, e := s.status(public)
 			if e != nil {
@@ -301,6 +309,21 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, public string) {
 			return
 		}
 		reply(w, 200, map[string]bool{"ok": true})
+	case "/admin/api/proxy":
+		if s.Upstream == nil {
+			fail(w, 503, "Upstream proxy settings are unavailable")
+			return
+		}
+		var input distributor.ProxyUpdate
+		if decode(w, r, &input) != nil {
+			fail(w, 400, "Invalid request")
+			return
+		}
+		if err := s.Upstream.SetProxy(input); err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
+		reply(w, 200, s.Upstream.Proxy())
 	case "/admin/api/settings":
 		var input struct {
 			TTL int `json:"latest_ttl_seconds"`

@@ -5,16 +5,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/PMExtra/RedApp/internal/store"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Client struct {
-	Base *url.URL
-	HTTP *http.Client
+	Base        *url.URL
+	HTTP        *http.Client
+	proxyMu     sync.Mutex
+	proxyConfig proxyConfig
+	proxyStore  *store.Store
+	transports  *transportSwitch
 }
 
 func New(base string) (*Client, error) {
@@ -25,35 +31,10 @@ func New(base string) (*Client, error) {
 	u.Path = strings.TrimRight(u.Path, "/")
 	u.RawPath = ""
 	c := &Client{Base: u}
-	tr := &http.Transport{Proxy: nil, DisableCompression: true, MaxIdleConns: 16, MaxConnsPerHost: 16, ResponseHeaderTimeout: 30 * time.Second, TLSHandshakeTimeout: 10 * time.Second}
-	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		host, port, e := net.SplitHostPort(addr)
-		if e != nil {
-			return nil, e
-		}
-		ips, e := net.DefaultResolver.LookupIPAddr(ctx, host)
-		if e != nil {
-			return nil, e
-		}
-		if len(ips) == 0 {
-			return nil, errors.New("DNS returned no addresses")
-		}
-		for _, ip := range ips {
-			if !publicIP(ip.IP) {
-				return nil, errors.New("Upstream DNS resolves to a nonpublic address")
-			}
-		}
-		var last error
-		for _, ip := range ips {
-			conn, e := (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
-			if e == nil {
-				return conn, nil
-			}
-			last = e
-		}
-		return nil, last
-	}
-	c.HTTP = &http.Client{Transport: tr, Timeout: 5 * time.Minute, CheckRedirect: func(r *http.Request, via []*http.Request) error {
+	tr, _ := transportFor(proxyConfig{})
+	c.transports = &transportSwitch{}
+	c.transports.current.Store(tr)
+	c.HTTP = &http.Client{Transport: c.transports, Timeout: 5 * time.Minute, CheckRedirect: func(r *http.Request, via []*http.Request) error {
 		if len(via) >= 4 {
 			return errors.New("Too many redirects")
 		}
