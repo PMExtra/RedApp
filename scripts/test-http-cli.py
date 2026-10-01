@@ -51,6 +51,16 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         with opener.open(base + "/admin/api/status") as response:
             status = json.load(response)
             assert status["name"] == "RedApp" and status["disk"]["free_bytes"] > 0
+        with opener.open(base + "/admin/") as response:
+            html = response.read().decode()
+            assert '<html lang="en">' in html and 'http-equiv' not in html
+            assert "default-src 'self'" in response.headers["Content-Security-Policy"]
+            assets = re.findall(r'(?:src|href)="(/admin/assets/[^" ]+)"', html)
+            assert len(assets) >= 2
+        for asset in assets:
+            with opener.open(base + asset) as response:
+                assert response.status == 200 and response.read()
+                assert "text/javascript" in response.headers["Content-Type"] or "text/css" in response.headers["Content-Type"]
         settings = urllib.request.Request(base + "/admin/api/settings", data=b'{"latest_ttl_seconds":120}', headers={"Content-Type": "application/json", "X-CSRF-Token": csrf})
         with opener.open(settings) as response:
             assert json.load(response)["ok"]

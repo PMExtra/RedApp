@@ -62,7 +62,7 @@ For PowerShell, set `$env:CODEX_NON_INTERACTIVE = '1'` before running the chosen
 
 ## Build from source
 
-Use Linux/amd64 or Linux/arm64 (aarch64) with Go 1.27.1, GCC, static libc development libraries, and Make. Docker builds require Docker and access to the builder image and Go modules.
+Use Linux/amd64 or Linux/arm64 (aarch64) with Go 1.27.1, Node.js 24.19.0, npm, GCC, static libc development libraries, and Make. Docker builds require Docker and access to the builder image and Go modules.
 
 ```sh
 git clone https://github.com/PMExtra/RedApp.git
@@ -119,3 +119,7 @@ docker run --rm ghcr.io/pmextra/redapp:v0.2.1 version
 ```
 
 `make build` embeds `VERSION` and the Git revision. Container build arguments provide the same information; OCI labels include source, version, revision, and the original-code MIT license. For the released v0.1.0 image, full build and digest-pull/runtime verification passed in [CI](https://github.com/PMExtra/RedApp/actions/runs/36788207268) and [publication](https://github.com/PMExtra/RedApp/actions/runs/36788716836). Windows/macOS real-machine installation, real upstream download chains, and bundled artifact license reviews remain separate validation gates.
+
+## Admin frontend development
+
+See [frontend](../frontend/README.md) for Vue components, typed API, locked dependencies, CLI tests and embedded build assets. `make build` compiles the frontend before Go; Node is needed only for development/building, never at runtime.

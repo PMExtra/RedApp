@@ -54,10 +54,16 @@ func TestApplicationMessagesAndAdminAssetsUseEnglish(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, name := range []string{"web/index.html", "web/app.js"} {
+	err := filepath.WalkDir("web", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
 		data, err := os.ReadFile(name)
 		if err != nil {
-			t.Fatal(err)
+			return err
 		}
 		for _, r := range string(data) {
 			if unicode.Is(unicode.Han, r) {
@@ -65,5 +71,9 @@ func TestApplicationMessagesAndAdminAssetsUseEnglish(t *testing.T) {
 				break
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

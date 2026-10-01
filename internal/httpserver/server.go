@@ -240,7 +240,9 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, public string) {
 		if path == "/admin" || path == "" {
 			path = "index.html"
 		}
-		if path != "index.html" && path != "app.js" && path != "style.css" {
+		asset := strings.TrimPrefix(path, "assets/")
+		bundled := strings.HasPrefix(path, "assets/") && !strings.Contains(asset, "/") && (strings.HasSuffix(asset, ".js") || strings.HasSuffix(asset, ".css"))
+		if path != "index.html" && !bundled {
 			fail(w, 404, "Page not found")
 			return
 		}
@@ -250,8 +252,8 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, public string) {
 			fail(w, 404, "Page not found")
 			return
 		}
-		contentType := map[string]string{"index.html": "text/html; charset=utf-8", "app.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8"}
-		w.Header().Set("Content-Type", contentType[path])
+		contentType := map[string]string{".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
+		w.Header().Set("Content-Type", contentType[filepath.Ext(path)])
 		w.Write(b)
 		return
 	}

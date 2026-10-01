@@ -109,7 +109,7 @@ func TestAdminHTTPDownloadMetricsAndCSRF(t *testing.T) {
 			t.Fatalf("%s %s: status=%d body=%s", tc.method, tc.path, code, body)
 		}
 	}
-	if code, body := request("GET", "/admin/", nil, false); code != 200 || !bytes.Contains(body, []byte(`<html lang="en">`)) || !bytes.Contains(body, []byte("Admin sign-in")) {
+	if code, body := request("GET", "/admin/", nil, false); code != 200 || !bytes.Contains(body, []byte(`<html lang="en">`)) || !bytes.Contains(body, []byte("/admin/assets/")) {
 		t.Fatalf("English admin page unavailable: status=%d", code)
 	}
 	if code, _ := request("GET", "/admin/api/status", nil, false); code != 401 {

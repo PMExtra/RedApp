@@ -3,3 +3,4 @@
 *.sqlite*
 *.part
 *.blob
+/frontend/node_modules/
