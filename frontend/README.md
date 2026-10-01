@@ -13,7 +13,7 @@ npm test
 npm run build
 ```
 
-From the repository root, `make frontend-test` and `make build` perform these steps as appropriate. Vite writes production files to `internal/httpserver/web`; those files are committed and embedded by Go. Rebuild after source changes. CI compares generated assets with the committed files. Docker rebuilds them in a Node build stage before compiling Go and retains a scratch runtime.
+From the repository root, `make frontend-test` and `make build` perform these steps as appropriate. Vite writes production files to `internal/httpserver/web`; those files are committed and embedded by Go. Rebuild after source changes. CI compares generated assets with the committed files. Docker rebuilds them in a Node build stage before compiling Go and retains a scratch runtime. The builder uses `node:24.19.0-trixie-slim` (Debian 13); its amd64/arm64 variants are listed in the [official pinned image manifest](https://github.com/docker-library/official-images/blob/71f9a0b560e919eb6398d4a5115cf3702c7ca7d5/library/node).
 
 `npm run dev` serves UI source on loopback for developer use. API calls remain same-origin; use the embedded Go build for end-to-end tests rather than treating the development server as an authenticated deployment.
 
