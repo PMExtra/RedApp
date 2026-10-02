@@ -14,6 +14,10 @@ import threading
 ROOT=Path(__file__).resolve().parents[1]
 
 def run(command,**kwargs):
+    if Path(command[0]).name.lower()=='powershell.exe':
+        # Python does not apply pwsh's WinPSModulePath conversion when starting WinPS.
+        # Let Windows PowerShell reconstruct its own standard module paths.
+        kwargs['env']={k:v for k,v in kwargs.get('env',os.environ).items() if k.upper()!='PSMODULEPATH'}
     return subprocess.run(command,capture_output=True,text=True,timeout=40,**kwargs)
 
 def main():
@@ -47,6 +51,14 @@ def main():
         with tempfile.TemporaryDirectory(prefix='redapp-windows-installer-') as temp:
             root=Path(temp);binary=root/'fixture.exe';source=root/'fixture.cs'
             source.write_text('using System; class Fixture { static int Main(string[] args) { Console.WriteLine(Environment.GetEnvironmentVariable("DISABLE_UPDATES")); foreach (string arg in args) Console.WriteLine(arg); if (args.Length > 0 && args[0] == "hold") System.Threading.Thread.Sleep(15000); return 23; } }')
+            probe=['powershell.exe','-NoProfile','-NonInteractive','-Command',"$ErrorActionPreference='Stop'; (Get-FileHash -LiteralPath $env:FIXTURE_SOURCE -Algorithm SHA256).Hash"]
+            probe_env={**os.environ,'FIXTURE_SOURCE':str(source)}
+            inherited=subprocess.run(probe,env=probe_env,capture_output=True,text=True,timeout=40)
+            isolated=run(probe,env=probe_env)
+            expected=hashlib.sha256(source.read_bytes()).hexdigest()
+            assert isolated.returncode==0 and isolated.stdout.strip().lower()==expected,isolated.stdout+isolated.stderr
+            inherited_ok=inherited.returncode==0 and inherited.stdout.strip().lower()==expected
+            print(f'Windows PowerShell Get-FileHash: inherited module paths={"PASS" if inherited_ok else "FAIL"}; host defaults=PASS',flush=True)
             compile_command="Add-Type -Path $env:FIXTURE_SOURCE -OutputAssembly $env:FIXTURE_BINARY -OutputType ConsoleApplication"
             compile_result=run(['powershell.exe','-NoProfile','-NonInteractive','-Command',compile_command],env={**os.environ,'FIXTURE_SOURCE':str(source),'FIXTURE_BINARY':str(binary)})
             assert compile_result.returncode==0 and binary.is_file(),compile_result.stderr
