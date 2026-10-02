@@ -11,6 +11,10 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import http.server
+import ssl
+import threading
+import socket
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -54,21 +58,55 @@ class CheckTests(unittest.TestCase):
             self.assertEqual(len(rows),4)
 
     def test_redirects_and_shape_fail_closed(self):
-        with self.assertRaises(ValueError):m.NoRedirect().redirect_request(None,None,None,None,None,None)
+        with self.assertRaises(ValueError):m.HTTPSRedirect('https://official.example/install.sh').redirect_request(m.urllib.request.Request('https://official.example/install.sh'),None,302,'Found',{},'http://example.org/install.sh')
         for name,raw in [('install.sh',b'x'* (m.MAX_SCRIPT+1)),('install.sh',b'#! /bin/sh\0'),('install.ps1',b'<html>failure</html>')]:
             with self.assertRaises(ValueError):m.script_shape(name,raw)
-    def test_only_the_reviewed_single_https_redirect_is_allowed(self):
-        for source,target in m.REVIEWED_REDIRECTS.items():
-            request=m.urllib.request.Request(source)
-            handler=m.ReviewedRedirect(source)
-            redirected=handler.redirect_request(request,None,302,'Found',{},target)
-            self.assertEqual(redirected.full_url,target)
-            with self.assertRaises(ValueError):handler.redirect_request(redirected,None,302,'Found',{},target)
-            for rejected in (target+'?token=unexpected',target+'#fragment',target.replace('https:','http:'),target.replace('downloads.claude.ai','downloads.claude.ai.evil.example'),target.replace('/bootstrap.','/%62ootstrap.'),target.replace('downloads.claude.ai','user@downloads.claude.ai')):
-                with self.assertRaises(ValueError):m.ReviewedRedirect(source).redirect_request(request,None,302,'Found',{},rejected)
-            with self.assertRaises(ValueError):m.ReviewedRedirect(source).redirect_request(m.urllib.request.Request(target),None,302,'Found',{},target)
-        source='https://releases.openai.com/codex/install.sh'
-        with self.assertRaises(ValueError):m.ReviewedRedirect(source).redirect_request(m.urllib.request.Request(source),None,302,'Found',{},source)
+    def test_https_redirects_allow_cross_host_and_reject_unsafe_destinations(self):
+        source='https://official.example/install.sh'
+        public=[(socket.AF_INET,socket.SOCK_STREAM,6,'',('93.184.215.14',443))]
+        with patch.object(m.socket,'getaddrinfo',return_value=public):
+            handler=m.HTTPSRedirect(source);request=m.urllib.request.Request(source)
+            for i in range(m.MAX_REDIRECTS):
+                target=f'https://cdn{i}.example/install.sh'
+                request=handler.redirect_request(request,None,302,'Found',{},target)
+                self.assertEqual(request.full_url,target)
+            with self.assertRaisesRegex(ValueError,'limit or loop'):handler.redirect_request(request,None,302,'Found',{},'https://another.example/file')
+            with self.assertRaises(ValueError):m.HTTPSRedirect(source).redirect_request(request,None,302,'Found',{},source)
+            for target in ('http://cdn.example/file','file:///tmp/file','ftp://cdn.example/file','https://user:password@cdn.example/file','https://cdn.example/file#fragment'):
+                with self.assertRaises(ValueError):m.validate_https_url(target)
+        for address in ('127.0.0.1','169.254.169.254','10.0.0.1','192.168.1.1','100.64.0.1','::1','fe80::1','fc00::1'):
+            with patch.object(m.socket,'getaddrinfo',return_value=[(socket.AF_INET,socket.SOCK_STREAM,6,'',(address,443))]),self.assertRaisesRegex(ValueError,'non-public'):
+                m.validate_https_url('https://unexpected.example/install.sh')
+
+    def test_real_tls_redirect_chain_and_bad_certificate(self):
+        # Test-only loopback allowance keeps this deterministic without weakening production address checks.
+        with tempfile.TemporaryDirectory() as temp:
+            temp=Path(temp);cert=temp/'cert.pem';key=temp/'key.pem'
+            subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(key),'-out',str(cert),'-days','1','-subj','/CN=localhost','-addext','subjectAltName=IP:127.0.0.1'],check=True,capture_output=True)
+            class Handler(http.server.BaseHTTPRequestHandler):
+                def log_message(self,*_):pass
+                def do_GET(self):
+                    redirects={'/start':'/middle','/middle':'/script','/loop':'/loop','/downgrade':'http://127.0.0.1/no-tls'}
+                    if self.path in redirects:
+                        self.send_response(302);self.send_header('Location',redirects[self.path]);self.end_headers();return
+                    body=b'#!/bin/sh\necho fixture\n';self.send_response(200);self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
+            server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler)
+            server_context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);server_context.load_cert_chain(cert,key)
+            server.socket=server_context.wrap_socket(server.socket,server_side=True)
+            thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+            base=f'https://127.0.0.1:{server.server_port}'
+            trusted=ssl.create_default_context(cafile=str(cert))
+            def allow_fixture(url):
+                if not url.startswith(base+'/'):raise ValueError('Fixture rejected non-HTTPS/non-loopback destination')
+            try:
+                with patch.object(m,'validate_https_url',side_effect=allow_fixture):
+                    with self.assertRaises(m.urllib.error.URLError) as caught:m.download(base+'/start')
+                    self.assertIsInstance(caught.exception.reason,ssl.SSLCertVerificationError)
+                    with patch.object(m.ssl,'create_default_context',return_value=trusted):
+                        self.assertEqual(m.download(base+'/start'),b'#!/bin/sh\necho fixture\n')
+                        for path in ('/loop','/downgrade'):
+                            with self.assertRaises(ValueError):m.download(base+path)
+            finally:server.shutdown();server.server_close();thread.join()
 
     def test_strict_patch_generation_and_conflict(self):
         for app in m.APPS:

@@ -50,7 +50,7 @@ python3 scripts/test-update-claude-installers.py
 
 `.github/workflows/installer-updates.yml` 每日 **06:23 UTC**、手动触发或 main 中本工作流文件变更时运行，明确检出 main 并固定当次提交。同一维护任务串行运行。工作流的实际运行与结果以 Actions 为准；第三方脚本的许可和来源仍独立保留，不视为已取得额外再分发授权。
 
-检测源固定在 `installers/upstream-scripts.json`：Codex 的 `https://releases.openai.com/codex/install.sh` / `.ps1`，Claude 的 `https://claude.ai/install.sh` / `.ps1`。逐一验证 main 原文字节与 provenance 一致，获取官方当前脚本。Claude 官方入口允许一次精确 HTTPS 跳转到 `https://downloads.claude.ai/claude-code-releases/bootstrap.sh` / `bootstrap.ps1`：该路径来自官方入口真实响应，域名是既有官方发行源。目标完整 URL 必须匹配 inventory 中经审查的配置；其它主机、HTTP、查询/片段、编码别名及第二跳仍拒绝，Codex 不新增跳转权限。异常状态、编码、HTML、空响应和超限失败，成功后计算当前摘要。这里的新脚本 SHA256 是经 HTTPS 获取后的观测值，不宣称是上游签名；Claude manifest 的二进制签名验证是独立流程。
+检测源固定在 `installers/upstream-scripts.json`：Codex 的 `https://releases.openai.com/codex/install.sh` / `.ps1`，Claude 的 `https://claude.ai/install.sh` / `.ps1`。逐一验证 main 原文字节与 provenance 一致，获取官方当前脚本。维护下载器允许经有效证书验证的 HTTPS→HTTPS 跨域跳转，最多 5 次，不逐个维护目标白名单。拒绝 HTTP 降级、非 HTTPS 协议、URL 凭据/片段、重复 URL 和超限；请求前及每个目标检查 DNS，拒绝回环、私网、链路本地和 metadata 地址。仍使用系统 TLS 信任及既有代理设置，不关闭证书校验。此检查防止意外内部目标，不作为隔离恶意 DNS 重绑定的网络防火墙；写凭据任务仍不执行下载内容。终端安装器的仅 RedApp 下载边界不受此策略调整影响。异常状态、编码、HTML、空响应和超限失败，成功后计算当前摘要。这里的新脚本 SHA256 是经 HTTPS 获取后的观测值，不宣称是上游签名；Claude manifest 的二进制签名验证是独立流程。
 
 四份检测结果统一记录在 Actions summary。全部不变时成功结束。下载或完整性检查失败仍报告其它脚本的结果，然后任务失败，不能记作无变化。有变化时依次：
 

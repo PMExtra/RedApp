@@ -3,6 +3,9 @@
 import argparse
 from datetime import datetime, timezone
 import hashlib
+import ipaddress
+import socket
+import ssl
 import json
 import os
 from pathlib import Path
@@ -20,10 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APPS = ('codex', 'claude-code')
 NAMES = ('install.sh', 'install.ps1')
 MAX_SCRIPT = 256 * 1024
-REVIEWED_REDIRECTS = {
-    'https://claude.ai/install.sh': 'https://downloads.claude.ai/claude-code-releases/bootstrap.sh',
-    'https://claude.ai/install.ps1': 'https://downloads.claude.ai/claude-code-releases/bootstrap.ps1',
-}
+MAX_REDIRECTS = 5
 
 def digest(data): return hashlib.sha256(data).hexdigest()
 def run(args, **kwargs):
@@ -36,32 +36,41 @@ def inventory(root=ROOT):
     for x in items:
         expected_url=('https://releases.openai.com/codex/' if x['application']=='codex' else 'https://claude.ai/')+x['name']
         if x['url']!=expected_url: raise ValueError('Unreviewed official installer URL')
-        if x.get('reviewed_redirect')!=REVIEWED_REDIRECTS.get(expected_url): raise ValueError('Unreviewed installer redirect destination')
     return items
 
-class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self,req,fp,code,msg,headers,newurl):
-        target=urllib.parse.urlsplit(newurl or '')
-        safe=(target.scheme+'://'+(target.hostname or '')+target.path)[:512]
-        suffix=' (query/fragment present)' if target.query or target.fragment else ''
-        raise ValueError('Unreviewed upstream redirect to '+safe+suffix+'; inspect the official destination before changing the inventory')
+def validate_https_url(url):
+    target=urllib.parse.urlsplit(url)
+    if target.scheme!='https' or not target.hostname or target.username is not None or target.password is not None or target.fragment:
+        raise ValueError('Installer URL must use HTTPS without credentials or a fragment')
+    try:
+        addresses=socket.getaddrinfo(target.hostname,target.port or 443,type=socket.SOCK_STREAM)
+    except (OSError,ValueError) as error:
+        raise ValueError('Cannot validate the installer destination address') from error
+    if not addresses:raise ValueError('Installer destination has no addresses')
+    for address in addresses:
+        ip=ipaddress.ip_address(address[4][0].split('%',1)[0])
+        if not ip.is_global or ip.is_multicast or ip.is_reserved:
+            raise ValueError('Installer destination resolves to a non-public address')
 
-class ReviewedRedirect(NoRedirect):
+class HTTPSRedirect(urllib.request.HTTPRedirectHandler):
     def __init__(self, original):
-        self.original=original
-        self.followed=False
+        self.visited={original}
+        self.count=0
     def redirect_request(self,req,fp,code,msg,headers,newurl):
-        if not self.followed and req.full_url==self.original and REVIEWED_REDIRECTS.get(self.original)==newurl:
-            self.followed=True
-            return urllib.request.HTTPRedirectHandler.redirect_request(self,req,fp,code,msg,headers,newurl)
+        if self.count>=MAX_REDIRECTS or newurl in self.visited:
+            raise ValueError('Installer redirect limit or loop detected')
+        validate_https_url(newurl)
+        self.count+=1;self.visited.add(newurl)
         return super().redirect_request(req,fp,code,msg,headers,newurl)
 
 def download(url):
-    opener=urllib.request.build_opener(ReviewedRedirect(url))
+    validate_https_url(url)
+    opener=urllib.request.build_opener(HTTPSRedirect(url),urllib.request.HTTPSHandler(context=ssl.create_default_context()))
     request=urllib.request.Request(url,headers={'User-Agent':'RedApp-installer-maintenance','Accept-Encoding':'identity'})
     start=time.monotonic()
     with opener.open(request,timeout=25) as response:
-        if response.status!=200 or response.url not in {url,REVIEWED_REDIRECTS.get(url)}: raise ValueError('Unexpected upstream response or redirect')
+        if response.status!=200: raise ValueError('Unexpected upstream response')
+        validate_https_url(response.url)
         if response.headers.get('Content-Encoding','identity')!='identity': raise ValueError('Unexpected upstream content encoding')
         chunks=[];size=0
         while True:

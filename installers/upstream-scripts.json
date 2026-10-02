@@ -13,14 +13,12 @@
     {
       "application": "claude-code",
       "name": "install.sh",
-      "url": "https://claude.ai/install.sh",
-      "reviewed_redirect": "https://downloads.claude.ai/claude-code-releases/bootstrap.sh"
+      "url": "https://claude.ai/install.sh"
     },
     {
       "application": "claude-code",
       "name": "install.ps1",
-      "url": "https://claude.ai/install.ps1",
-      "reviewed_redirect": "https://downloads.claude.ai/claude-code-releases/bootstrap.ps1"
+      "url": "https://claude.ai/install.ps1"
     }
   ]
 }
