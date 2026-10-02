@@ -57,6 +57,19 @@ class CheckTests(unittest.TestCase):
         with self.assertRaises(ValueError):m.NoRedirect().redirect_request(None,None,None,None,None,None)
         for name,raw in [('install.sh',b'x'* (m.MAX_SCRIPT+1)),('install.sh',b'#! /bin/sh\0'),('install.ps1',b'<html>failure</html>')]:
             with self.assertRaises(ValueError):m.script_shape(name,raw)
+    def test_only_the_reviewed_single_https_redirect_is_allowed(self):
+        for source,target in m.REVIEWED_REDIRECTS.items():
+            request=m.urllib.request.Request(source)
+            handler=m.ReviewedRedirect(source)
+            redirected=handler.redirect_request(request,None,302,'Found',{},target)
+            self.assertEqual(redirected.full_url,target)
+            with self.assertRaises(ValueError):handler.redirect_request(redirected,None,302,'Found',{},target)
+            for rejected in (target+'?token=unexpected',target+'#fragment',target.replace('https:','http:'),target.replace('downloads.claude.ai','downloads.claude.ai.evil.example'),target.replace('/bootstrap.','/%62ootstrap.'),target.replace('downloads.claude.ai','user@downloads.claude.ai')):
+                with self.assertRaises(ValueError):m.ReviewedRedirect(source).redirect_request(request,None,302,'Found',{},rejected)
+            with self.assertRaises(ValueError):m.ReviewedRedirect(source).redirect_request(m.urllib.request.Request(target),None,302,'Found',{},target)
+        source='https://releases.openai.com/codex/install.sh'
+        with self.assertRaises(ValueError):m.ReviewedRedirect(source).redirect_request(m.urllib.request.Request(source),None,302,'Found',{},source)
+
     def test_strict_patch_generation_and_conflict(self):
         for app in m.APPS:
             for name in m.NAMES:
