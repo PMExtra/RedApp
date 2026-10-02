@@ -2,7 +2,7 @@
 
 [Chinese](README.zh-CN.md)
 
-RedApp helps IT administrators distribute **Codex CLI** through an internal download endpoint. The unreleased v0.5.0 working tree also adds [Claude Code](docs/claude-code-v0.5.0.md); released v0.4.1 images support Codex only. It caches downloads on demand and provides an admin page for managing cached versions, disk usage, and traffic.
+RedApp helps IT administrators distribute **Codex CLI and Claude Code** through an internal download endpoint. It caches downloads on demand and provides an admin page for managing cached versions, disk usage, and traffic.
 
 ## Quick start
 
@@ -16,11 +16,11 @@ docker run -d --name redapp --read-only \
 docker logs redapp
 ```
 
-Open **http://localhost:8080/** for the application catalog and Codex installation instructions. Administrators sign in at **http://localhost:8080/admin/**. The initial admin password appears in the first-start logs only; change it after signing in and protect those logs. The named volume keeps data across container replacements.
+Open **http://localhost:8080/** for the application catalog and installation instructions. Administrators sign in at **http://localhost:8080/admin/**. The initial admin password appears in the first-start logs only; change it after signing in and protect those logs. The named volume keeps data across container replacements.
 
 For enterprise access, put RedApp behind an HTTPS reverse proxy. `REDAPP_PUBLIC_URL` is optional: an explicit value fixes the external origin; otherwise RedApp derives it from each request. Configure trusted proxy CIDRs before using forwarded headers and restrict access through your proxy or network policy. See [deployment and configuration](docs/operations.md).
 
-Docker selects Linux/amd64 or Linux/arm64 (aarch64) automatically. Use a version tag such as `v0.4.1` when you need a fixed server version.
+Docker selects Linux/amd64 or Linux/arm64 (aarch64) automatically. Use a version tag such as `v0.5.0` when you need a fixed server version.
 
 ## Install on clients
 
@@ -33,6 +33,8 @@ curl -fsSL https://codex.example.internal/install.sh | sh
 ```powershell
 irm 'https://codex.example.internal/install.ps1' | iex
 ```
+
+These commands install Codex. For Claude Code, use the commands on your service’s application page or the [Claude installation guide](docs/claude-code-v0.5.0.md).
 
 These commands download and execute the installer immediately, using `CODEX_RELEASE` if set or `latest` otherwise. Version-pinned commands are in the installation details. For unattended shell installation, put `CODEX_NON_INTERACTIVE=1` before `sh` in the pipeline. To review the script first, see [client installation details](docs/README.md#review-before-installing).
 

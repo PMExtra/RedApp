@@ -48,7 +48,7 @@ python3 scripts/test-update-claude-installers.py
 
 ## 每日官方脚本检查与草稿 PR
 
-`.github/workflows/installer-updates.yml` 每日 **06:23 UTC** 或手动触发，明确检出 main 并固定当次提交。同一维护任务串行运行。此工作流尚未上线；安装器许可、工作流测试和发布审批仍需在推送前确认。
+`.github/workflows/installer-updates.yml` 每日 **06:23 UTC**、手动触发或 main 中本工作流文件变更时运行，明确检出 main 并固定当次提交。同一维护任务串行运行。工作流的实际运行与结果以 Actions 为准；第三方脚本的许可和来源仍独立保留，不视为已取得额外再分发授权。
 
 检测源固定在 `installers/upstream-scripts.json`：Codex 的 `https://releases.openai.com/codex/install.sh` / `.ps1`，Claude 的 `https://claude.ai/install.sh` / `.ps1`。逐一验证 main 原文字节与 provenance 一致，获取官方当前脚本，拒绝重定向、异常状态、编码、HTML、空响应和超限，计算当前摘要。这里的新脚本 SHA256 是经 HTTPS 获取后的观测值，不宣称是上游签名；Claude manifest 的二进制签名验证是独立流程。
 
