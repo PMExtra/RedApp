@@ -66,7 +66,11 @@ describe("Admin session and requests", () => {
     await flushPromises();
     expect(wrapper.text()).toContain("Service temporarily unavailable");
     expect(wrapper.text()).toContain("Showing the last successful snapshot");
-    await wrapper.find(".language-control select").setValue("zh-CN");
+    await wrapper.find(".language-control button").trigger("click");
+    await wrapper
+      .findAll("[role=option]")
+      .find((o) => o.text().includes("简体中文"))!
+      .trigger("click");
     expect(wrapper.text()).toContain("服务暂时不可用");
     expect(wrapper.find("time").text()).toBe(localDate(status.sampled_at));
     phase = "ready";

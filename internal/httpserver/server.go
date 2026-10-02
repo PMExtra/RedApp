@@ -10,6 +10,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/history"
+	"github.com/PMExtra/RedApp/internal/site"
 	"github.com/PMExtra/RedApp/internal/store"
 	"io"
 	"io/fs"
@@ -273,6 +274,13 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, public string) {
 	}
 	if r.Method == "GET" {
 		switch r.URL.Path {
+		case "/admin/api/site":
+			settings, e := site.Load(s.DB)
+			if e != nil {
+				fail(w, 503, "Site settings are unavailable")
+				return
+			}
+			reply(w, 200, settings)
 		case "/admin/api/settings":
 			reply(w, 200, map[string]int{"latest_ttl_seconds": s.Catalog.LatestTTLSeconds()})
 		case "/admin/api/session":
@@ -349,6 +357,21 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, public string) {
 			return
 		}
 		reply(w, 200, s.Upstream.Proxy())
+	case "/admin/api/site":
+		var input site.Settings
+		if decode(w, r, &input) != nil {
+			fail(w, 400, "Invalid site settings")
+			return
+		}
+		if err := input.Validate(); err != nil {
+			fail(w, 400, "Invalid site settings")
+			return
+		}
+		if err := site.Save(s.DB, input); err != nil {
+			fail(w, 503, "Unable to save site settings")
+			return
+		}
+		reply(w, 200, input)
 	case "/admin/api/settings":
 		var input struct {
 			TTL int `json:"latest_ttl_seconds"`

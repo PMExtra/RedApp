@@ -93,7 +93,7 @@ func (c *Client) Get(ctx context.Context, source string, headers http.Header) (*
 	if e != nil {
 		return nil, errors.New("Upstream connection failed")
 	}
-	if resp.Header.Get("Content-Encoding") != "" && resp.Header.Get("Content-Encoding") != "identity" {
+	if resp.Uncompressed || (resp.Header.Get("Content-Encoding") != "" && resp.Header.Get("Content-Encoding") != "identity") {
 		resp.Body.Close()
 		return nil, fmt.Errorf("Unsafe upstream Content-Encoding")
 	}

@@ -20,7 +20,7 @@ Open **http://localhost:8080/** for the application catalog and Codex installati
 
 For enterprise access, put RedApp behind an HTTPS reverse proxy. `REDAPP_PUBLIC_URL` is optional: an explicit value fixes the external origin; otherwise RedApp derives it from each request. Configure trusted proxy CIDRs before using forwarded headers and restrict access through your proxy or network policy. See [deployment and configuration](docs/operations.md).
 
-Docker selects Linux/amd64 or Linux/arm64 (aarch64) automatically. Use a version tag such as `v0.4.0` when you need a fixed server version.
+Docker selects Linux/amd64 or Linux/arm64 (aarch64) automatically. Use a version tag such as `v0.4.1` when you need a fixed server version.
 
 ## Install on clients
 

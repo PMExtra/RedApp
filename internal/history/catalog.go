@@ -25,11 +25,11 @@ func Definitions() []Definition {
 	for _, item := range [][2]string{{"used_bytes", "Service disk usage"}, {"logical_bytes", "Total logical file bytes"}, {"allocated_cache_bytes", "Allocated cache"}, {"allocated_temporary_bytes", "Allocated temporary files"}, {"allocated_pending_bytes", "Allocated pending deletion"}, {"cache_bytes", "Cache"}, {"temporary_bytes", "Temporary"}, {"pending_bytes", "Pending deletion"}, {"other_bytes", "Other allocated disk usage"}, {"free_bytes", "Filesystem available"}} {
 		add("disk."+item[0], item[1], "gauge", "bytes", "Disk")
 	}
-	for _, item := range [][3]string{{"requests", "Public requests", "count"}, {"artifact_requests", "Artifact requests", "count"}, {"cache_hit_requests", "Cache-hit requests", "count"}, {"shared_follower_requests", "Shared-follower requests", "count"}, {"miss_requests", "Miss requests", "count"}, {"reuse_requests", "Reused requests", "count"}, {"download_success", "Successful downloads", "count"}, {"download_errors", "Download errors", "count"}, {"upstream_errors", "Artifact upstream errors", "count"}, {"upstream_bytes", "Artifact upstream traffic", "bytes"}, {"downstream_bytes", "Artifact downstream traffic", "bytes"}, {"cleanup_freed_bytes", "Logical bytes reclaimed", "bytes"}} {
+	for _, item := range [][3]string{{"requests", "Public requests", "count"}, {"artifact_requests", "Artifact requests", "count"}, {"cache_hit_requests", "Cache-hit requests", "count"}, {"shared_follower_requests", "Shared-follower requests", "count"}, {"miss_requests", "Miss requests", "count"}, {"reuse_requests", "Reused requests", "count"}, {"download_success", "Successful downloads", "count"}, {"download_errors", "Download errors", "count"}, {"upstream_errors", "Artifact upstream errors", "count"}, {"upstream_bytes", "Artifact upstream traffic (HTTP payload)", "bytes"}, {"downstream_bytes", "Artifact downstream traffic (before compression)", "bytes"}, {"cleanup_freed_bytes", "Logical bytes reclaimed", "bytes"}} {
 		add("counters."+item[0], item[1], "counter", item[2], "Traffic and requests")
 	}
-	add("rates.upstream_bytes_per_second", "Artifact upstream · recent", "rate", "bytes_per_second", "Speed")
-	add("rates.downstream_bytes_per_second", "Artifact downstream · recent", "rate", "bytes_per_second", "Speed")
+	add("rates.upstream_bytes_per_second", "Artifact upstream · recent (HTTP payload)", "rate", "bytes_per_second", "Speed")
+	add("rates.downstream_bytes_per_second", "Artifact downstream · recent (before compression)", "rate", "bytes_per_second", "Speed")
 	add("runtime.memory_bytes", "Memory allocated", "gauge", "bytes", "Runtime")
 	add("runtime.goroutines", "Goroutines", "gauge", "count", "Runtime")
 	add("runtime.uptime_seconds", "Process uptime", "gauge", "seconds", "Runtime")

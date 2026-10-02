@@ -30,12 +30,14 @@ a {
 }
 button,
 input,
+textarea,
 select {
   font: inherit;
 }
 button,
 a,
 input,
+textarea,
 select,
 summary {
   -webkit-tap-highlight-color: transparent;
@@ -82,6 +84,7 @@ svg {
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
+textarea:focus-visible,
 select:focus-visible,
 summary:focus-visible,
 pre:focus-visible,
@@ -90,6 +93,7 @@ pre:focus-visible,
   outline-offset: 3px;
 }
 input,
+textarea,
 select {
   min-width: 0;
   width: 100%;
@@ -101,6 +105,7 @@ select {
   min-height: 42px;
 }
 input:disabled,
+textarea:disabled,
 select:disabled {
   background: #f5f7f9;
 }
@@ -1303,5 +1308,146 @@ dialog::backdrop {
   }
   .application-identity .application-logo {
     padding: 8px;
+  }
+}
+
+/* Public chrome shares the content width and side padding. */
+.public-shell {
+  --public-width: 1200px;
+  --public-gutter: 1.5rem;
+}
+.public-shell .topbar,
+.public-shell .app-footer {
+  padding-inline: max(
+    var(--public-gutter),
+    calc((100% - var(--public-width)) / 2 + var(--public-gutter))
+  );
+}
+.public-shell .public-main {
+  max-width: var(--public-width);
+  padding-inline: var(--public-gutter);
+}
+.brand {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.topbar-actions {
+  flex-shrink: 0;
+}
+.footer-notice {
+  max-width: 65rem;
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.project-version {
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+.project-version a {
+  color: inherit;
+}
+.select-menu {
+  position: relative;
+  min-width: 0;
+}
+.select-trigger {
+  width: 100%;
+  justify-content: space-between;
+  text-align: start;
+  min-height: 42px;
+}
+.select-trigger > span {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.select-options {
+  position: absolute;
+  z-index: 80;
+  inset-inline-start: 0;
+  top: calc(100% + 0.4rem);
+  min-width: 100%;
+  width: max-content;
+  max-width: min(24rem, calc(100vw - 2rem));
+  max-height: min(20rem, 50vh);
+  overflow: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+  box-shadow: 0 12px 28px #18344420;
+}
+.select-options li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 6px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.select-options li.active {
+  background: var(--soft);
+  outline: 2px solid #80bdd8;
+  outline-offset: -2px;
+}
+.select-options li.chosen {
+  font-weight: 650;
+}
+.language-control .select-trigger {
+  border-color: transparent;
+  background: transparent;
+  font-size: 0.88rem;
+  padding-inline: 0.35rem;
+}
+.language-control .select-options {
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+}
+.select-field {
+  display: grid;
+  gap: 0.45rem;
+  font-weight: 600;
+  font-size: 0.93rem;
+}
+.site-locale {
+  align-content: start;
+  gap: 1rem;
+}
+.site-locale legend {
+  font-weight: 700;
+  margin-bottom: 1rem;
+}
+textarea {
+  resize: vertical;
+}
+.site-settings .form-actions {
+  margin-top: 1.25rem;
+}
+@media (max-width: 760px) {
+  .public-shell {
+    --public-gutter: 1rem;
+  }
+  .topbar {
+    flex-wrap: wrap;
+  }
+  .brand {
+    flex: 1 1 160px;
+  }
+  .topbar-actions {
+    margin-inline-start: auto;
+  }
+  .language-control .select-trigger {
+    font-size: 0.8rem;
+  }
+  .language-control .select-trigger > svg:first-child {
+    display: none;
+  }
+  .brand span {
+    font-size: 0.65rem;
   }
 }

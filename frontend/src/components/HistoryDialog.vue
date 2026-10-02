@@ -10,6 +10,7 @@ import {
 } from "vue";
 import { errorText, label, language, t, utcDate } from "../i18n";
 import Icon from "./Icon.vue";
+import SelectMenu from "./SelectMenu.vue";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import {
@@ -221,13 +222,18 @@ onUnmounted(() => {
           {{ windowName(option) }}
         </button>
       </div>
-      <label v-if="metric.kind === 'counter'"
-        >{{ t("Counter view")
-        }}<select v-model="mode" @change="selectMode">
-          <option value="value">{{ t("Cumulative last value") }}</option>
-          <option value="delta">{{ t("Observed increment") }}</option>
-        </select></label
-      >
+      <div v-if="metric.kind === 'counter'" class="select-field">
+        <span>{{ t("Counter view") }}</span>
+        <SelectMenu
+          v-model="mode"
+          @update:model-value="selectMode"
+          :label="t('Counter view')"
+          :options="[
+            { value: 'value', label: t('Cumulative last value') },
+            { value: 'delta', label: t('Observed increment') },
+          ]"
+        />
+      </div>
     </div>
     <p v-if="loading" class="empty" role="status">
       {{ t("Loading history…") }}

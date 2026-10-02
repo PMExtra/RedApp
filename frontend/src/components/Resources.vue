@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 import { bytes, type Status } from "../api";
 import { localDate, stateLabel, t } from "../i18n";
+import SelectMenu from "./SelectMenu.vue";
 const props = defineProps<{ status: Status }>();
 const version = ref("");
 const resources = computed(() =>
@@ -14,19 +15,20 @@ const resources = computed(() =>
   <section class="panel">
     <div class="section-heading">
       <h2>{{ t("Versions and resources") }}</h2>
-      <label class="inline-label"
-        >{{ t("Version")
-        }}<select v-model="version">
-          <option value="">{{ t("All versions") }}</option>
-          <option
-            v-for="(_, name) in status.versions"
-            :key="name"
-            :value="name"
-          >
-            {{ name }}
-          </option>
-        </select></label
-      >
+      <div class="inline-label">
+        <span>{{ t("Version") }}</span
+        ><SelectMenu
+          v-model="version"
+          :label="t('Version')"
+          :options="[
+            { value: '', label: t('All versions') },
+            ...Object.keys(status.versions).map((name) => ({
+              value: name,
+              label: name,
+            })),
+          ]"
+        />
+      </div>
     </div>
     <div class="version-list">
       <article v-for="(firstSeen, name) in status.versions" :key="name">

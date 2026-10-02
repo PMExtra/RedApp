@@ -4,7 +4,8 @@
 
 Use the quick starts to run the service and install Codex on clients. The references below cover advanced operation and development; the existing detailed reference documents are in Chinese.
 
-- [Roadmap](roadmap.md): v0.4.0 scope and the release gate before v0.5.0.
+- [Roadmap](roadmap.md): current v0.4.1 scope and paused v0.5.0 work.
+- [v0.4.1 site and interaction changes](frontend-v0.4.1.md): bilingual site settings, dropdown accessibility, footer behavior, and traffic accounting boundaries.
 - [v0.4.0 frontend design](frontend-v0.4.0.md): unified layout, localization and interaction requirements.
 
 ## Administrator references

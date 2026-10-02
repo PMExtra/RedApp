@@ -43,12 +43,16 @@ describe("Anonymous applications", () => {
       "/api/apps",
       "/api/info",
     ]);
-    await wrapper.find("select").setValue("zh-CN");
+    await wrapper.find(".language-control button").trigger("click");
+    await wrapper
+      .findAll("[role=option]")
+      .find((o) => o.text().includes("简体中文"))!
+      .trigger("click");
     expect(wrapper.find("h1").text()).toBe("应用");
     expect(wrapper.text()).toContain("管理后台");
-    expect(wrapper.text()).toContain("架构");
+    expect(wrapper.find("footer").text()).not.toContain("架构");
     expect(wrapper.find("footer").text()).toContain("v0.4.0");
-    expect(wrapper.find("footer").text()).toContain("linux / arm64");
+    expect(wrapper.find("footer").text()).not.toContain("arm64");
     expect(document.documentElement.lang).toBe("zh-CN");
     expect(localStorage.getItem("redapp-language")).toBe("zh-CN");
     wrapper.unmount();
@@ -59,6 +63,7 @@ describe("Anonymous applications", () => {
       "fetch",
       vi.fn(async (url: string) => response(url === "/api/info" ? info : apps)),
     );
+    vi.stubGlobal("isSecureContext", true);
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText },
@@ -75,7 +80,11 @@ describe("Anonymous applications", () => {
       "irm 'https://downloads.example:8443/install.ps1' | iex",
     ];
     for (const lang of ["en", "zh-CN"]) {
-      await wrapper.find("select").setValue(lang);
+      await wrapper.find(".language-control button").trigger("click");
+      await wrapper
+        .findAll("[role=option]")
+        .find((o) => o.text().includes(lang === "en" ? "English" : "简体中文"))!
+        .trigger("click");
       expect(
         wrapper.findAll(".command code").map((item) => item.text()),
       ).toEqual(commands);
@@ -94,7 +103,11 @@ describe("Anonymous applications", () => {
     );
     expect(wrapper.text()).toContain("否则使用 latest");
     expect(wrapper.find(".back-link").attributes("href")).toBe("/");
-    expect(wrapper.text()).toContain("未获得其背书");
+    expect(wrapper.findAll(".footer-notice")).toHaveLength(1);
+    expect(wrapper.find(".independent-notice").exists()).toBe(false);
+    expect(wrapper.find(".review-scripts").exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("推广");
+    expect(wrapper.text()).not.toContain("Clipboard access requires");
     wrapper.unmount();
   });
   it("retries failure once and aborts pending anonymous requests on unmount", async () => {
@@ -117,7 +130,7 @@ describe("Anonymous applications", () => {
     await flushPromises();
     expect(wrapper.find("[role=alert]").exists()).toBe(true);
     fail = false;
-    await wrapper.find("button").trigger("click");
+    await wrapper.find("[role=alert] button").trigger("click");
     expect(wrapper.text()).toContain("Loading applications");
     wrapper.unmount();
     await flushPromises();

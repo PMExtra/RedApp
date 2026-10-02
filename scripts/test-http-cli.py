@@ -52,7 +52,7 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
                 assert "/admin/assets/" in response.read().decode()
         with urllib.request.urlopen(base + "/api/info") as response:
             public_info = json.load(response)
-            assert set(public_info) == {"version", "os", "arch"}
+            assert set(public_info) == {"version", "os", "arch", "site"}
             assert public_info["version"] == version_output.split()[1]
         with urllib.request.urlopen(base + "/api/apps") as response:
             applications = json.load(response)
@@ -97,6 +97,16 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
             assert json.load(response)["ok"]
         with opener.open(base + "/admin/api/settings") as response:
             assert json.load(response)["latest_ttl_seconds"] == 120
+        site_settings = public_info["site"]
+        assert site_settings["subtitle"]["en"] == "Application Redistribution Platform"
+        assert site_settings["subtitle"]["zh-CN"] == "应用再分发平台"
+        site_settings["title"]["en"] = "Fixture tools"
+        site_settings["disclaimer"]["zh-CN"] = "测试声明 <script>文本</script>"
+        site_request = urllib.request.Request(base + "/admin/api/site", data=json.dumps(site_settings).encode(), headers={"Content-Type": "application/json", "X-CSRF-Token": csrf})
+        with opener.open(site_request) as response:
+            assert json.load(response) == site_settings
+        with urllib.request.urlopen(base + "/api/info") as response:
+            assert json.load(response)["site"] == site_settings
         with opener.open(base + "/admin/api/proxy") as response:
             assert json.load(response)["server"] == ""
         proxy_body = {"server": "http://127.0.0.1:3128", "username": "fixture-user", "password": "fixture-only-password", "password_action": "replace"}
@@ -127,6 +137,8 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         subprocess.run([str(root / "bin/redapp"), "healthcheck"], env=env, check=True)
         with urllib.request.urlopen(base + "/install.sh") as response:
             assert base in response.read().decode(), "自动 origin 未写入安装器"
+        with urllib.request.urlopen(base + "/api/info") as response:
+            assert json.load(response)["site"] == site_settings, "站点设置未持久化"
         process.terminate()
         assert process.wait(timeout=20) == 0
         log.flush()

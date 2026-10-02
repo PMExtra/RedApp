@@ -32,7 +32,13 @@ location / {
 
 只在直连 peer 命中可信 CIDR 时解析转发头。合法 Forwarded 优先于 X-Forwarded-For；从右往左剥离可信节点，停在首个不可信 IP。畸形 Forwarded 不转而拼接 XFF 链，回退至 peer。支持引号、IPv6 和多跳。显式 public URL 优先，且请求 Host 必须与配置的 origin host 完全一致。未配置时，使用合法请求 Host 与 TLS/HTTP scheme；仅可信直连 peer 可以通过 Forwarded 或 X-Forwarded-Host/Proto 提供对外 origin。Forwarded 从右向左选择信任边界对应节点；多值 X-Forwarded-Host/Proto 必须与 XFF 长度一致，单值要求直连可信代理覆盖设置。畸形的可信 origin 头返回 400，不混用两套头。反代必须删除/覆盖客户端传入的转发头，不要信任覆盖公网客户端的 CIDR。
 
-安装器、metadata、管理状态和 Cookie 按本次请求使用同一 origin，不修改全局配置或上游 metadata 缓存；安装器与 metadata 响应禁用缓存。合法 Host 仅说明格式可安全使用，并不证明域名可信；自动模式允许不同合法 Host，严格域名边界请显式设置 public URL 并在反代限制 Host。管理请求仍进行同源和 CSRF 检查。管理页默认提供 `curl ... | sh` 与 `irm ... | iex` 命令；复制按钮需要 HTTPS 或 localhost 的浏览器剪贴板权限，否则手动复制。
+安装器、metadata、管理状态和 Cookie 按本次请求使用同一 origin，不修改全局配置或上游 metadata 缓存；安装器与 metadata 响应禁用缓存。合法 Host 仅说明格式可安全使用，并不证明域名可信；自动模式允许不同合法 Host，严格域名边界请显式设置 public URL 并在反代限制 Host。管理请求仍进行同源和 CSRF 检查。安装页默认提供 `curl ... | sh` 与 `irm ... | iex` 命令；仅安全上下文（通常为 HTTPS 或 localhost）且存在 Clipboard API 时显示复制按钮，实际权限失败提供行内提示，也可直接选择命令手动复制。
+
+## 站点文案与客户端推广
+
+管理员在设置页的“站点外观”同时编辑 English / 简体中文标题、副标题和通用页脚声明，保存到本地 SQLite，重启后保留。默认标题为 RedApp，副标题分别为 `Application Redistribution Platform` / `应用再分发平台`。标题必填（每语言最多 80 字符），副标题 160、声明 500，可留空；仅接受纯文本，不解析 HTML/Markdown。公开页面和后台共用文案，页脚的 RedApp 源码链接始终固定。详细 API、兼容与并发编辑语义见[站点设置契约](frontend-v0.4.1.md#设置契约与兼容)。
+
+公共安装页面聚焦终端用户，管理员应在推广前从本服务下载并审查脚本，按[安装详解](README.md#review-before-installing)选择版本与无人值守参数；Windows/macOS 实机安装、权限/失败路径和生产上游链路仍需独立验证。安装器会校验包摘要，仍保留正常确认交互；抑制自动更新标记不等于禁用或改写 CLI 的全部运行期更新/联网行为。请结合企业出口策略完成验证，不从页面提供命令推断所有平台已经验收。
 
 ## 回源代理
 
@@ -58,13 +64,13 @@ location / {
 
 ## 管理 API 与指标
 
-公共入口：`GET /channels/latest`、`GET /releases/{version}/release.json`、精确清单授权的 `/releases/{version}/{asset}`、`/install.sh`、`/install.ps1`、`/licenses/{LICENSE|NOTICE}`。任意 URL、编码别名、查询参数、遍历与未授权资产拒绝。浏览器安装页面为 `/admin/`。
+公共入口：`GET /channels/latest`、`GET /releases/{version}/release.json`、精确清单授权的 `/releases/{version}/{asset}`、`/install.sh`、`/install.ps1`、`/licenses/{LICENSE|NOTICE}`。任意 URL、编码别名、查询参数、遍历与未授权资产拒绝。浏览器应用目录为 `/`，安装详情为 `/apps/codex`，后台为 `/admin/`。公开的 `/api/info` 提供版本、平台与公开站点文案，`/api/apps` 仅提供固定应用信息。
 
-管理 API：`POST /admin/api/login` → Cookie 和 csrf；`GET /admin/api/session`、`GET /admin/api/status`；带 csrf 的 `POST /admin/api/settings`（latest_ttl_seconds）、`password`（old/new）、`logout`、`cleanup/preview`（minimum_version）、`cleanup/execute`（cleanup_id）。请求体为 JSON，最大 8 KiB。下载无需管理员登录；企业网络访问控制在反代/网络层实施。
+管理 API：`POST /admin/api/login` → Cookie 和 csrf；`GET /admin/api/session`、`GET /admin/api/status`、`GET /admin/api/site`；带 csrf 的 `POST /admin/api/site`（双语站点文案）、`settings`（latest_ttl_seconds）、`password`（old/new）、`logout`、`cleanup/preview`（minimum_version）、`cleanup/execute`（cleanup_id）。请求体为 JSON，最大 8 KiB。下载无需管理员登录；企业网络访问控制在反代/网络层实施。
 
 `/health/live` 不依赖上游，`/health/ready` 检查 SQLite 和目录可写，不要求外网在线；健康请求不计入业务访问。`redapp healthcheck` 使用环境配置的监听端口和 public Host。
 
-持久统计包括上下游实际字节、访问次数、命中/共享跟随/未命中、成功/失败、版本访问和清理释放字节。进程最近五秒速率另附采样时间。成功资源平均有效速度为最终大小/回源开始至收齐字节耗时，包含重试/退避，排除完整文件验证耗时。数据库计数与文件系统并非每字节原子事务，崩溃边界可能有少量统计偏差；完整性与发布不依赖统计。
+持久统计包括制品回源 HTTP 载荷字节、外部压缩前分发字节、访问次数、命中/共享跟随/未命中、成功/失败、版本访问和清理释放字节，不代表 TLS/线路实际流量。进程最近五秒速率另附采样时间。成功资源平均有效速度为最终大小/回源开始至收齐字节耗时，包含重试/退避，排除完整文件验证耗时。数据库计数与文件系统并非每字节原子事务，崩溃边界可能有统计偏差；完整性与发布不依赖统计。完整压缩、错误、重试及旧历史数据边界见[流量口径](metrics-history.md#制品流量与压缩口径)。
 
 磁盘 used 按数据树文件与目录的已分配块计算，包含 SQLite/WAL/SHM；另提供 logical 总字节和缓存/临时/待释放的逻辑量与已分配块分类，free 是文件系统 `bavail`。释放累计统计为逻辑字节，不能当作包含块舍入、稀疏文件和文件系统保留块的物理释放量。并发快照可能有短暂差异，待旧租约结束后归零。
 

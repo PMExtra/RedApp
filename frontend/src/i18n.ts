@@ -26,6 +26,17 @@ watch(
   { immediate: true },
 );
 export const messages = {
+  "Site appearance": "站点外观",
+  "Public text for each language. Plain text only; the project link always points to RedApp.":
+    "分别设置中英文公开文案。仅支持纯文本；项目来源链接固定指向 RedApp。",
+  "Site settings saved.": "站点设置已保存。",
+  "Site title": "站点标题",
+  "Site subtitle": "站点副标题",
+  "Footer notice": "页脚声明",
+  "Save site settings": "保存站点设置",
+  "This command downloads and runs an installer that verifies package hashes. Use a service you trust. Signing in and using Codex still requires its provider’s services.":
+    "此命令会下载并运行安装器，并校验安装包摘要。请使用可信的下载服务；登录和使用 Codex 仍需要访问其开发商的服务。",
+
   "OpenAI brand mark": "OpenAI 品牌标志",
   Language: "语言",
   Applications: "应用",
@@ -129,11 +140,11 @@ export const messages = {
   "Successful downloads": "成功下载",
   "Download errors": "下载错误",
   "Artifact upstream errors": "制品回源错误",
-  "Artifact upstream traffic": "制品回源流量",
-  "Artifact downstream traffic": "制品分发流量",
+  "Artifact upstream traffic (HTTP payload)": "制品回源流量（HTTP 载荷）",
+  "Artifact downstream traffic (before compression)": "制品分发流量（压缩前）",
   "Logical bytes reclaimed": "已回收逻辑空间",
-  "Artifact upstream · recent": "近期回源速率",
-  "Artifact downstream · recent": "近期分发速率",
+  "Artifact upstream · recent (HTTP payload)": "近期回源速率（HTTP 载荷）",
+  "Artifact downstream · recent (before compression)": "近期分发速率（压缩前）",
   "Memory allocated": "已分配内存",
   Goroutines: "Go 协程数",
   "Process uptime": "进程运行时间",

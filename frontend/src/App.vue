@@ -11,6 +11,8 @@ import Resources from "./components/Resources.vue";
 import Events from "./components/Events.vue";
 import Maintenance from "./components/Maintenance.vue";
 import ProxySettings from "./components/ProxySettings.vue";
+import SiteSettings from "./components/SiteSettings.vue";
+import { siteTitle } from "./site";
 import HistoryDialog from "./components/HistoryDialog.vue";
 const activeMetric = ref<Metric>(),
   status = ref<Status>(),
@@ -148,7 +150,7 @@ function polling() {
   else clearTimeout(timer);
 }
 watchEffect(() => {
-  document.title = `${t("Administration")} · RedApp`;
+  document.title = `${t("Administration")} · ${siteTitle.value}`;
 });
 onMounted(async () => {
   authController = new AbortController();
@@ -178,7 +180,7 @@ onUnmounted(() => {
 });
 </script>
 <template>
-  <AppShell>
+  <AppShell admin>
     <template #actions
       ><AccountMenu
         v-if="signedIn"
@@ -319,9 +321,10 @@ onUnmounted(() => {
               v-if="tab === 'Events'"
               :events="status.events || []" />
             <div v-if="tab === 'Settings'" class="settings-stack">
-              <Maintenance @error="failed" @changed="refresh" /><ProxySettings
+              <SiteSettings @error="failed" /><Maintenance
                 @error="failed"
-              /></div
+                @changed="refresh"
+              /><ProxySettings @error="failed" /></div
           ></template>
         </template>
       </main>

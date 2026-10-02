@@ -7,6 +7,9 @@ const commands = computed(() => [
   { name: "Shell", command: `curl -fsSL '${props.origin}/install.sh' | sh` },
   { name: "PowerShell", command: `irm '${props.origin}/install.ps1' | iex` },
 ]);
+const canCopy =
+  window.isSecureContext === true &&
+  typeof navigator.clipboard?.writeText === "function";
 const result = ref<"success" | "error">(),
   copying = ref(false);
 async function copy(command: string) {
@@ -38,6 +41,7 @@ async function copy(command: string) {
         <div class="section-heading">
           <h3>{{ item.name }}</h3>
           <button
+            v-if="canCopy"
             class="secondary copy-button"
             type="button"
             :disabled="copying"
@@ -67,7 +71,7 @@ async function copy(command: string) {
     <p class="muted small-text">
       {{
         t(
-          "Installers verify hashes and suppress the automatic-update marker. The CLI binary is unchanged; runtime/API traffic requires your enterprise egress policy.",
+          "This command downloads and runs an installer that verifies package hashes. Use a service you trust. Signing in and using Codex still requires its provider’s services.",
         )
       }}
     </p>

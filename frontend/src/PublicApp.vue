@@ -4,6 +4,7 @@ import { t } from "./i18n";
 import AppShell from "./components/AppShell.vue";
 import InstallCommands from "./components/InstallCommands.vue";
 import Icon from "./components/Icon.vue";
+import { siteTitle } from "./site";
 type Application = {
   id: string;
   name: string;
@@ -43,7 +44,7 @@ async function load() {
   }
 }
 watchEffect(() => {
-  document.title = `${detail ? t("Install Codex CLI") : t("Applications")} · RedApp`;
+  document.title = `${detail ? t("Install Codex CLI") : t("Applications")} · ${siteTitle.value}`;
 });
 onMounted(load);
 onUnmounted(() => {
@@ -120,40 +121,7 @@ onUnmounted(() => {
                 </li>
               </ol>
             </section>
-            <section class="panel review-scripts">
-              <h2>{{ t("Review before installing") }}</h2>
-              <p class="muted">
-                {{
-                  t(
-                    "These commands download and execute the installer immediately. Download and review the script first if your policy requires it.",
-                  )
-                }}
-              </p>
-              <a href="/install.sh"
-                >{{ t("Download Shell script")
-                }}<Icon name="arrow" :size="16" /></a
-              ><a href="/install.ps1"
-                >{{ t("Download PowerShell script")
-                }}<Icon name="arrow" :size="16"
-              /></a>
-            </section>
           </aside>
-        </div>
-        <div class="installation-notes">
-          <p>
-            {{
-              t(
-                "Clipboard access requires HTTPS or localhost. You can also select the command manually.",
-              )
-            }}
-          </p>
-          <p>
-            {{
-              t(
-                "Windows/macOS installation should be validated by your IT administrator before rollout.",
-              )
-            }}
-          </p>
         </div>
       </template>
       <template v-else
@@ -190,13 +158,6 @@ onUnmounted(() => {
           {{ t("No applications are available.") }}
         </p></template
       >
-      <p class="independent-notice">
-        {{
-          t(
-            "Independent distribution service. Not affiliated with or endorsed by OpenAI.",
-          )
-        }}
-      </p>
     </main></AppShell
   >
 </template>

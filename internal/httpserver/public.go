@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	app "github.com/PMExtra/RedApp/internal/apps/codex"
+	"github.com/PMExtra/RedApp/internal/site"
 	"io"
 	"io/fs"
 	"net/http"
@@ -20,7 +21,12 @@ func (s *Server) publicPage(w http.ResponseWriter, r *http.Request, origin strin
 		if version == "" {
 			version = "dev"
 		}
-		reply(w, http.StatusOK, map[string]string{"version": version, "os": runtime.GOOS, "arch": runtime.GOARCH})
+		settings, err := site.Load(s.DB)
+		if err != nil {
+			fail(w, 503, "Site settings are unavailable")
+			return
+		}
+		reply(w, http.StatusOK, map[string]any{"version": version, "os": runtime.GOOS, "arch": runtime.GOARCH, "site": settings})
 		return
 	}
 	if r.URL.Path == "/api/apps" {

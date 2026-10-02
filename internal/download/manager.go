@@ -551,19 +551,8 @@ func (m *Manager) attempt(g *Generation) error {
 	for {
 		n, re := resp.Body.Read(buf)
 		if n > 0 {
-			if offset+int64(n) > m.maxBytes || (total >= 0 && offset+int64(n) > total) {
-				return errors.New("Artifact length exceeds limit")
-			}
-			written, we := g.file.WriteAt(buf[:n], offset)
-			if we != nil {
-				return errors.New("Disk write failed")
-			}
-			if written != n {
-				return io.ErrShortWrite
-			}
-			offset += int64(n)
+			// Count bytes consumed from the identity HTTP body, even if validation or disk writes fail.
 			m.mu.Lock()
-			g.Bytes = offset
 			g.SourceBytes += int64(n)
 			now := time.Now()
 			if len(g.samples) == 0 {
@@ -577,11 +566,25 @@ func (m *Manager) attempt(g *Generation) error {
 			for len(g.samples) > 2 && now.Sub(g.samples[1].time) > 5*time.Second {
 				g.samples = g.samples[1:]
 			}
-			signal(g)
 			m.mu.Unlock()
 			if e = m.db.Add("upstream_bytes", int64(n)); e != nil {
 				return e
 			}
+			if offset+int64(n) > m.maxBytes || (total >= 0 && offset+int64(n) > total) {
+				return errors.New("Artifact length exceeds limit")
+			}
+			written, we := g.file.WriteAt(buf[:n], offset)
+			if we != nil {
+				return errors.New("Disk write failed")
+			}
+			if written != n {
+				return io.ErrShortWrite
+			}
+			offset += int64(n)
+			m.mu.Lock()
+			g.Bytes = offset
+			signal(g)
+			m.mu.Unlock()
 			if offset-checkpoint >= 1<<20 {
 				m.mu.Lock()
 				e = m.save(g)

@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref, watch } from "vue";
 import { api, type ProxySettings } from "../api";
 import { t } from "../i18n";
+import SelectMenu from "./SelectMenu.vue";
 const emit = defineEmits<{ error: [unknown] }>();
 const server = ref(""),
   username = ref(""),
@@ -111,15 +112,21 @@ onUnmounted(() => {
             }}<input
               v-model="server"
               placeholder="http://proxy.example:3128"
-              autocomplete="off" /></label
-          ><label
-            >{{ t("Saved credentials")
-            }}<select v-model="action">
-              <option value="keep">{{ t("Keep saved credentials") }}</option>
-              <option value="replace">{{ t("Replace credentials") }}</option>
-              <option value="clear">{{ t("Clear credentials") }}</option>
-            </select></label
-          >
+              autocomplete="off"
+          /></label>
+          <div class="select-field">
+            <span>{{ t("Saved credentials") }}</span
+            ><SelectMenu
+              v-model="action"
+              :disabled="busy || !saved"
+              :label="t('Saved credentials')"
+              :options="[
+                { value: 'keep', label: t('Keep saved credentials') },
+                { value: 'replace', label: t('Replace credentials') },
+                { value: 'clear', label: t('Clear credentials') },
+              ]"
+            />
+          </div>
         </div>
         <p class="muted small-text">
           {{

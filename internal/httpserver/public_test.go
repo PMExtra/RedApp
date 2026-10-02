@@ -96,12 +96,12 @@ func TestPublicBuildInfo(t *testing.T) {
 		s := Server{Version: version}
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, httptest.NewRequest("GET", "http://internal/api/info", nil))
-		var info map[string]string
+		var info map[string]any
 		want := version
 		if want == "" {
 			want = "dev"
 		}
-		if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil || w.Code != 200 || len(info) != 3 || info["version"] != want || info["os"] != runtime.GOOS || info["arch"] != runtime.GOARCH {
+		if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil || w.Code != 200 || len(info) != 4 || info["version"] != want || info["os"] != runtime.GOOS || info["arch"] != runtime.GOARCH {
 			t.Fatalf("unexpected public info: %d %s", w.Code, w.Body.String())
 		}
 		if w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("Set-Cookie") != "" {

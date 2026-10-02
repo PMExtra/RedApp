@@ -205,7 +205,16 @@ describe("History dialog", () => {
     });
     await flushPromises();
     expect(wrapper.text()).toContain("Cumulative counters are never averaged");
-    await wrapper.find("select").setValue("delta");
+    expect(wrapper.find("select").exists()).toBe(false);
+    const chooser = wrapper.get('[role="combobox"]');
+    await chooser.trigger("keydown", { key: "ArrowDown" });
+    await chooser.trigger("keydown", { key: "End" });
+    await chooser.trigger("keydown", { key: "Escape" });
+    expect(wrapper.emitted("close")).toBeUndefined();
+    expect(wrapper.text()).not.toContain("No observations available");
+    await chooser.trigger("keydown", { key: "ArrowDown" });
+    await chooser.trigger("keydown", { key: "End" });
+    await chooser.trigger("keydown", { key: "Enter" });
     await flushPromises();
     expect(wrapper.text()).toContain("No observations available");
     wrapper.unmount();

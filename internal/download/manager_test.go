@@ -77,7 +77,7 @@ func TestSharedStreaming100LateSlowAndCancelled(t *testing.T) {
 		<-release
 		w.Write(data[len(prefix):])
 	}))
-	m, _, _ := setup(t, c)
+	m, db, _ := setup(t, c)
 	r := resource(c, data)
 	first, _, e := m.Acquire(context.Background(), r)
 	if e != nil {
@@ -147,6 +147,10 @@ func TestSharedStreaming100LateSlowAndCancelled(t *testing.T) {
 	if !bytes.Equal(collect(t, m, r), data) || requests.Load() != 1 {
 		t.Fatal("永久缓存未复用")
 	}
+	counters, err := db.Counters()
+	if err != nil || counters["upstream_bytes"] != int64(len(data)) {
+		t.Fatal("shared readers and cache hits must not duplicate upstream payload", counters, err)
+	}
 }
 func TestHashInvalidStartsNewGeneration(t *testing.T) {
 	var bad atomic.Bool
@@ -161,7 +165,7 @@ func TestHashInvalidStartsNewGeneration(t *testing.T) {
 			w.Write(data)
 		}
 	}))
-	m, _, _ := setup(t, c)
+	m, db, _ := setup(t, c)
 	r := resource(c, data)
 	rd, _, e := m.Acquire(context.Background(), r)
 	if e != nil {
@@ -182,6 +186,10 @@ func TestHashInvalidStartsNewGeneration(t *testing.T) {
 	m.mu.Unlock()
 	if g.ID == old || count.Load() != 2 {
 		t.Fatal("未建立新代")
+	}
+	counters, err := db.Counters()
+	if err != nil || counters["upstream_bytes"] != int64(len("invalid-data")+len(data)) {
+		t.Fatal("invalid hashes still consumed upstream payload", counters, err)
 	}
 }
 func TestValidatedResumeAndRejectedBranches(t *testing.T) {
@@ -234,7 +242,7 @@ func TestValidatedResumeAndRejectedBranches(t *testing.T) {
 				}
 				w.Write(data)
 			}))
-			m, _, _ := setup(t, c)
+			m, db, _ := setup(t, c)
 			r := resource(c, data)
 			rd, _, e := m.Acquire(context.Background(), r)
 			if e != nil {
@@ -259,6 +267,15 @@ func TestValidatedResumeAndRejectedBranches(t *testing.T) {
 				if last != "" {
 					t.Fatal("新代不是完整重下")
 				}
+			}
+			want := int64(len(data))
+			if mode != "valid" {
+				// Rejected response bodies are closed before application reads; only the old prefix and full retry count.
+				want += int64(cut)
+			}
+			counters, err := db.Counters()
+			if err != nil || counters["upstream_bytes"] != want {
+				t.Fatal("resume payload accounting", counters, want, err)
 			}
 		})
 	}

@@ -26,7 +26,7 @@ func (s *Store) ratesAt(now time.Time) map[string]any {
 	if observed < 0 {
 		observed = 0
 	}
-	out := map[string]any{"sampled_at": now.UTC(), "scope": "Actual bytes in this process over an observed window of up to five seconds", "window_seconds": observed, "valid": observed == 5}
+	out := map[string]any{"sampled_at": now.UTC(), "scope": "Artifact HTTP body bytes in this process over up to five seconds: upstream identity payload consumed, downstream payload accepted before external compression; excludes HTTP/TLS overhead", "window_seconds": observed, "valid": observed == 5}
 	for _, name := range []string{"upstream_bytes", "downstream_bytes"} {
 		var total int64
 		for _, sample := range s.rates.samples[name] {

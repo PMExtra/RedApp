@@ -8,14 +8,28 @@
 | --- | --- | --- |
 | 磁盘 / gauge（10） | `disk.used_bytes`、`disk.logical_bytes`、`disk.allocated_cache_bytes`、`disk.allocated_temporary_bytes`、`disk.allocated_pending_bytes`、`disk.cache_bytes`、`disk.temporary_bytes`、`disk.pending_bytes`、`disk.other_bytes`、`disk.free_bytes` | 字节；allocated/used/other 为分配块用量，cache/temporary/pending/logical 为逻辑量，free 为文件系统可用空间 |
 | 请求与结果 / counter（9） | `counters.requests`、`counters.artifact_requests`、`counters.cache_hit_requests`、`counters.shared_follower_requests`、`counters.miss_requests`、`counters.reuse_requests`、`counters.download_success`、`counters.download_errors`、`counters.upstream_errors` | 累计次数；requests 包括公共业务入口、不含健康和管理 API，其它是制品下载/回源指标 |
-| 流量与清理 / counter（3） | `counters.upstream_bytes`、`counters.downstream_bytes`、`counters.cleanup_freed_bytes` | 累计字节；上下游计数来自制品流，不含 metadata、安装器或管理 JSON；cleanup 是逻辑释放字节 |
-| 速率 / rate（2） | `rates.upstream_bytes_per_second`、`rates.downstream_bytes_per_second` | 制品实际字节的最近五秒观测速率，单位 B/s |
+| 流量与清理 / counter（3） | `counters.upstream_bytes`、`counters.downstream_bytes`、`counters.cleanup_freed_bytes` | 累计字节；回源 HTTP 载荷、外部压缩前分发载荷，不含 metadata、安装器或管理 JSON；cleanup 是逻辑释放字节 |
+| 速率 / rate（2） | `rates.upstream_bytes_per_second`、`rates.downstream_bytes_per_second` | 按上述字节口径的最近五秒观测速率，单位 B/s |
 | 运行 / gauge（3） | `runtime.memory_bytes`、`runtime.goroutines`、`runtime.uptime_seconds` | Go 当前分配内存字节、goroutine 数、本次进程运行秒数 |
 | 资源总量 / gauge（5） | `resources.total`、`resources.current`、`resources.retired`、`resources.readers`、`resources.active_writers` | 未删除代际总数、当前代际、退役代际、读者租约、活动写入者；retired 与状态计数可能重叠 |
 | 资源状态 / gauge（9） | `resources.queued`、`resources.downloading`、`resources.resuming`、`resources.retry_wait`、`resources.verifying`、`resources.complete`、`resources.failed`、`resources.invalid`、`resources.interrupted` | 各状态代际数；不包含已删除代际 |
 | 发现与失败 / gauge（2） | `versions.total`、`events.recent_total` | 持久 first_seen 的版本总数、管理页近期失败列表条数（最多 100），不是失败累计总数 |
 
-本次修正新增 miss 请求的重复计数：过去分类分支和 miss 分支各增加一次，现每个 miss 仅增加一次；不会改写已有持久累计值。
+历史版本已修正新增 miss 请求的重复计数：过去分类分支和 miss 分支各增加一次，现每个 miss 仅增加一次；不会改写已有持久累计值。
+
+## 制品流量与压缩口径
+
+- **回源流量（HTTP 载荷）**：`internal/distributor/http.go` 请求 `Accept-Encoding: identity`，生产 Transport 的 `DisableCompression=true`；拒绝非 identity Content-Encoding 和意外透明解压响应。`internal/download/manager.go` 在每次响应体 Read 后累计返回的字节，再进行长度检查和写盘。因此 `.tgz`/`.zip` 等安装包按压缩包本身计数，不按解包大小计数。HTTP 内容编码与归档格式压缩是两回事。
+- **分发流量（压缩前）**：`internal/httpserver/server.go` 累计 ResponseWriter.Write 返回的已接受字节，包括错误前接受的部分。不保证客户端最终收到全部字节；反向代理可再次压缩、缓冲或中止，RedApp 不观测该层的实际流量。
+- 两者均不包含 HTTP 头、分块帧、TLS、TCP/IP 或重传开销，也不包含 metadata、安装脚本、管理接口、被拒绝且未读取的响应体、Transport 预读但未交给应用的数据。它们不是链路带宽或出口账单计量。
+- 合法 Range 续传仅累计续传响应实际读取的后缀；失败前读到的前缀保留计数。续传响应表示不安全时在读取其响应体前拒绝，再从零下载新代，新读取的字节另计。读取、写盘、长度或最终哈希失败均不抹掉已读取字节。
+- 同代并发读者共享一个回源任务，因此回源只计一次；缓存命中不增加回源。每位下游读者分别累计其写入接受的字节，取消/慢读者不取消共享写入者。测试以本地确定性上游及失败注入验证这些边界。
+
+v0.4.1 将回源计数从写盘后移到响应体读取后，补上失败写盘/长度验证时的漏计。43 项指标键、单位、历史表、采样与保留规则保持不变，只更新显示名称及后续计数；不回写旧样本或累计值，旧版漏掉的字节无法可靠重建。升级前后的失败场景存在这一精度差异。正常完成下载的统计口径不变。
+
+全局近期速率从相同流量事件观察最近五秒；资源近期速率取该代读取字节的时间样本。成功资源的平均有效速率仍为最终完整包大小除以从开始到收齐的耗时，包含重试/退避，排除完整文件验证时间；它不是累计重试流量除以时间。流量事件、SQLite 累计和磁盘写入不能成为一个原子操作，数据库故障或进程崩溃可能造成差异；统计不参与完整性或授权决策。
+
+Go 的可选透明解压行为见官方 [Transport 源码](https://go.dev/src/net/http/transport.go) 与 [Response.Uncompressed 定义](https://go.dev/src/net/http/response.go)；本项目显式禁用并检查该行为，以保持 Range 偏移、缓存内容与可信 SHA256 的字节表示一致。
 
 ## 采样、聚合和断档
 
