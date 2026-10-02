@@ -246,7 +246,7 @@ Chromium 151.0.7922.173 / Playwright 1.62.1，English / 简体中文 × 1366×90
 
 ## v0.5.0 Claude Code 与每日安装器维护
 
-2026-10-02 本地 CLI 验证，尚未推送或发布；v0.4.1 的镜像/浏览器结果不作为本轮通过证据。下表为新增验收范围，原 A1–A24 及历史版本记录保持原样。共 **20 项：14 PASS，5 UNVERIFIED，1 EXEMPT，0 已知 FAIL**。
+2026-10-02 本地 CLI 与发布前 Actions 验证；v0.4.1 的镜像/浏览器结果不作为本轮通过证据。下表为新增验收范围，原 A1–A24 及历史版本记录保持原样。共 **20 项：15 PASS，4 UNVERIFIED，1 EXEMPT，0 已知 FAIL**；UNVERIFIED 中包含已取得部分证据但未覆盖完整范围的项目。发布仍须最终精确提交 CI 与标签镜像门禁通过。
 
 | 编号 | 验收项 | 结果 | 证据与边界 |
 | --- | --- | --- | --- |
@@ -262,14 +262,14 @@ Chromium 151.0.7922.173 / Playwright 1.62.1，English / 简体中文 × 1366×90
 | V510 | 中英文公共页与管理筛选 | PASS（DOM） | 前端 13 个文件/33 项测试；Claude 无 Codex 图标、命令/更新边界双语一致；同版本历史/资源/计数隔离，切应用清空旧清理预览 |
 | V511 | Claude Shell 安装行为 | PASS（无害桩） | 64 场景：模拟 7 种平台/架构，默认/latest/stable/指定版本、jq/内置解析、正常/重复/升级；新终端设置环境、参数/退出码透传；摘要失败保留旧入口，无重定向和公网回退，冲突/临时清理通过 |
 | V512 | 原文、patch、generated 与 CLI 更新失败保护 | PASS | 两应用逐字节严格 patch 一致；Codex 25 场景回归；Claude 检查模式不改目录，错误摘要和上下文冲突拒绝 apply；隔离副本成功执行原子 apply 并保留文件集合；官方原文保持不变 |
-| V513 | 每日检测/隔离/发布失败门禁 | PASS（本地 fixture） | 13 个维护测试：无变化/变化、四源错误汇总、基线身份、HTML/重定向/格式、严格 patch、测试/解析器失败、输出篡改、包摘要/白名单、人工分支/非草稿/main 前进拒绝、普通快进与幂等；本地 bare git + 假 PR API |
+| V513 | 每日检测/隔离/发布失败门禁 | PASS（本地 fixture） | 15 个维护测试：无变化/变化、四源错误汇总、基线身份、HTML/重定向/格式、真实本地 TLS 多跳/错误证书、降级/私网/超限拒绝、严格 patch、测试/解析器失败、输出篡改、包摘要/白名单、人工分支/非草稿/main 前进拒绝、普通快进与幂等；本地 bare git + 假 PR API |
 | V514 | 全量格式、静态检查、race 与构建 | PASS | gofmt、vet、全量 race 10 个含测试包、前端类型与生产构建、Linux/amd64 静态二进制、数据目录 CLI；新增 workflow actionlint 通过 |
-| V515 | PowerShell 解析与 Windows 原生安装 | UNVERIFIED | 静态出口/入口检查通过；本地无 pwsh；已加入 Windows CI 的 pwsh / Windows PowerShell 5.1 原生离线安装测试，尚待实际运行，不提前标记通过 |
+| V515 | PowerShell 解析与 Windows 原生安装 | PASS（无害桩） | Windows Server 2022 上 pwsh / Windows PowerShell 5.1 各 16 场景，解析、正常/重复/升级、参数/退出码/环境恢复、坏摘要/渠道/清单/下载/跳转/冲突/重解析点与临时清理；实际 AMD64，ARM64 仅路径模拟；未执行官方二进制或注入入口替换间崩溃 |
 | V516 | 真实 Claude 二进制与生产分发链 | UNVERIFIED | 未取得/执行官方二进制，未验证其实际 install/update/doctor、版本/渠道实时状态和生产端到端；无害桩只证明安装器控制流和环境传递 |
 | V517 | macOS 原生运行、权限和签名 | UNVERIFIED | 平台模拟不代表 macOS 实机通过；未改变二进制，未执行真实原生签名/权限验证 |
-| V518 | 新容器/双架构及自动维护线上运行 | UNVERIFIED | 本轮未完成新 Docker/ARM64 镜像验证；维护容器未构建成功，线上 schedule/draft PR 权限未运行；验证器强制要求 PowerShell，不能静默跳过 |
+| V518 | 新容器/双架构及自动维护线上运行 | UNVERIFIED（部分通过） | Linux amd64/arm64 原生 CI、完整 Dockerfile 构建和容器运行已通过；真实官方维护检测四份无变化并成功。无变化分支跳过维护容器与草稿 PR，不能证明真实变化分支的容器构建/隔离执行和 PR 写权限；标签镜像另由发布 Actions 按 digest 验证 |
 | V519 | 截图与视觉验收 | EXEMPT | 从本轮起按项目决定免除截图/视觉发布门禁；继续非 GUI DOM/CLI 自动化，不声称通过真实辅助技术认证 |
-| V520 | Claude 材料公开再分发许可 | UNVERIFIED | 原商业许可说明和来源已保留；不是 RedApp MIT，未代用户接受条款，公开发布前仍需确认边界 |
+| V520 | Claude 材料公开再分发许可 | UNVERIFIED | 原商业许可说明和来源已保留；不是 RedApp MIT，未代用户接受条款，未核实额外再分发授权；不捆绑 Claude 二进制 |
 
 实际执行（通过）：
 
@@ -292,4 +292,12 @@ actionlint .github/workflows/installer-updates.yml
 git diff --check
 ```
 
-首次构建仍读取未修改的 VERSION=0.4.1，随后以 `make VERSION=0.5.0-dev REVISION=<本地基线>-dirty build` 标识本地开发二进制；发布准备已将 VERSION 更新为 0.5.0，标签与镜像须等待精确提交 CI 通过。CLI 假服务只监听 loopback，临时凭据/数据库不入库。缺乏上述实机、真实二进制、许可与线上验证证据时，不把工作树视为已发布或生产验收完成。
+首次构建仍读取未修改的 VERSION=0.4.1，随后以 `make VERSION=0.5.0-dev REVISION=<本地基线>-dirty build` 标识本地开发二进制；发布准备已将 VERSION 更新为 0.5.0，标签与镜像须等待精确提交 CI 通过。CLI 假服务只监听 loopback，临时凭据/数据库不入库。上述有限平台/无害桩验证不代表真实 Claude、许可或生产环境验收完成。
+
+### v0.5.0 发布前 Actions 证据
+
+- [Linux 双架构 CI](https://github.com/PMExtra/RedApp/actions/runs/37035726711)：两个原生 Linux job 的格式、vet、race、安装器、DOM、CLI、完整 Docker 构建和容器运行均成功。该次整体 CI 因 Windows 测试夹具失败而失败，不据此发布。
+- [Windows 修复验证](https://github.com/PMExtra/RedApp/actions/runs/37036873066/job/110937133973)：两种 PowerShell 各 16 场景通过。实际对照发现 Python 中转继承 PowerShell 7 模块路径时 `Get-FileHash` 无法加载，移除子进程的 `PSModulePath` 让 Windows PowerShell 重建默认路径后正常；对应[官方模块路径说明](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_psmodulepath?view=powershell-7.6)。只隔离测试环境，安装器仍强制校验 SHA256。另已修正 PowerShell 入口替换的 .NET 空值参数，并通过上述重复安装/升级测试。
+- [真实官方维护检测](https://github.com/PMExtra/RedApp/actions/runs/37035726735)：四份脚本均无变化，检测成功，容器和草稿任务按设计跳过。已启用每日检测；未人为改动官方文件来制造 PR。
+
+最终标签必须指向通过完整 main CI 的精确提交，发布工作流还须校验双架构 manifest、按 digest 拉取并运行健康/持久化测试。公开匿名拉取、真实 Claude 与维护变化分支的缺口仍单列，不用旧版本或其他分支结果代替。

@@ -2,10 +2,10 @@
 
 [English quick start](../README.md) · [Chinese quick start](../README.zh-CN.md)
 
-Use the quick starts to run the service and install Codex on clients. The references below cover advanced operation and development; the existing detailed reference documents are in Chinese.
+Use the quick starts to run the service and install Codex or Claude Code on clients. The references below cover advanced operation and development; the existing detailed reference documents are in Chinese.
 
-- [Roadmap](roadmap.md): released v0.4.1 scope and unreleased v0.5.0 implementation.
-- [Claude Code unreleased v0.5.0 implementation](claude-code-v0.5.0.md): administrator installation, signed metadata, application isolation, and verification gates.
+- [Roadmap](roadmap.md): version scope and implementation boundaries.
+- [Claude Code v0.5.0 implementation](claude-code-v0.5.0.md): administrator installation, signed metadata, application isolation, and verification gates.
 - [v0.4.1 site and interaction changes](frontend-v0.4.1.md): bilingual site settings, dropdown accessibility, footer behavior, and traffic accounting boundaries.
 - [v0.4.0 frontend design](frontend-v0.4.0.md): unified layout, localization and interaction requirements.
 
@@ -19,7 +19,7 @@ Use the quick starts to run the service and install Codex on clients. The refere
 
 `REDAPP_PUBLIC_URL` is optional and defaults to empty. An explicit value must be an origin without a subpath, query, or credentials, and requests must use its exact Host. Otherwise the origin is derived per request; only configured trusted proxies can supply forwarded host/scheme. Host syntax validation does not establish domain trust. For production, use HTTPS at the reverse proxy; download endpoints do not require an admin session, so network access controls remain necessary. See the operations reference for configuration details rather than copying its configuration table here.
 
-Claude Code installation and update control: [unreleased v0.5.0 guide](claude-code-v0.5.0.md). Daily official-script checks and draft PRs: [installer maintenance](installers-maintenance.md#每日官方脚本检查与草稿-pr).
+Claude Code installation and update control: [v0.5.0 guide](claude-code-v0.5.0.md). Daily official-script checks and draft PRs: [installer maintenance](installers-maintenance.md#每日官方脚本检查与草稿-pr).
 
 ## Review before installing
 
@@ -102,7 +102,7 @@ Docker uses the target-platform `golang:1.27.1-trixie` builder (Debian 13), incl
 - [Installer maintenance](installers-maintenance.md): minimal patch policy, provenance, generated-asset consistency, failure checks, and atomic updater behavior.
 - [Third-party licenses](../third_party/README.md): dependency and vendored installer notices; these do not replace the project's [MIT License](../LICENSE).
 
-The server embeds admin assets, enterprise installers, and Codex license materials. Changes to those assets require rebuilding the binary. Keep the fixed-upstream distributor/cache separate from the statically linked Codex module; this version supports one application and one owning process.
+The server embeds admin assets, enterprise installers, and their license materials. Changes to those assets require rebuilding the binary. The fixed-upstream distributor/cache is separate from the statically linked Codex and Claude modules; both applications share one owning process.
 
 From the repository root:
 

@@ -28,7 +28,7 @@ irm 'https://redapp.example.internal/claude-code/install.ps1' | iex
 | Unix | `~/.local/share/claude/versions/<version>` | `~/.local/bin/claude` |
 | Windows | `%USERPROFILE%\.local\share\claude\versions\<version>.exe` | `%USERPROFILE%\.local\bin\claude.ps1` / `claude.cmd` |
 
-入口缺少 PATH 时仅给出指引，不修改 shell profile 或系统环境。拒绝符号链接/重解析点、危险目录及非本安装拥有的现存入口，管理员须先自行迁移既有安装。重复安装验证已存在版本的摘要；升级不截断旧文件，入口单独原子替换，保留旧版本，不自动清理客户机版本或配置。Windows 两个入口分别替换，不构成跨文件原子事务；原生 Windows 的文件占用、失败和命令解析仍须实机验证。
+入口缺少 PATH 时仅给出指引，不修改 shell profile 或系统环境。拒绝符号链接/重解析点、危险目录及非本安装拥有的现存入口，管理员须先自行迁移既有安装。重复安装验证已存在版本的摘要；升级不截断旧文件，入口单独原子替换，保留旧版本，不自动清理客户机版本或配置。Windows 两个入口分别替换，不构成跨文件原子事务。Windows CI 已验证两种 PowerShell 的参数、退出码、重复安装与摘要失败保护；仍未覆盖真实 Claude 进程占用文件或替换两个入口之间崩溃的窗口。
 
 正常经入口启动时，每次为子进程设置 `DISABLE_UPDATES=1`；PowerShell 恢复调用者原环境，CMD 使用 setlocal，Unix 设置仅作用于 exec 子进程。直接运行版本二进制会绕过入口。依据[官方环境变量说明](https://code.claude.com/docs/en/env-vars)，该变量用于阻止自动及手动更新；本轮没有执行真实 Claude 二进制，不能将无害桩测试当作运行期更新控制的证明。用户设置、启动方式及实际版本仍需上线验收。认证、模型、插件和其它运行流量不由 RedApp 改写，不能据此保证完全离线；[官方企业网络说明](https://code.claude.com/docs/en/network-config)区分原生分发与其它服务用途。
 
@@ -46,7 +46,7 @@ irm 'https://redapp.example.internal/claude-code/install.ps1' | iex
 
 原始安装器和公钥位于 `installers/claude-code/upstream/`；可信清单样本在 `internal/apps/claude/testdata/`。来源、长度和摘要见 [provenance.json](../installers/claude-code/provenance.json)。原脚本固定官方发行地址，总先取 latest，再运行二进制的 install 子命令；因此仅替换 BASE_URL 不足以约束安装回源。patch 保留平台识别、摘要和原有有用注释，仅适配必要下载和安装行为，见[维护文档](installers-maintenance.md)。
 
-官方仓库的 [LICENSE.md](../installers/claude-code/upstream/LICENSE.md) 原文独立保留，适用 Anthropic 商业条款，不受 RedApp MIT 覆盖。技术上支持企业自管分发不等于取得公开再分发授权。公开发布这些第三方安装材料前，仍须确认适用许可；没有代用户接受条款，也未捆绑 Claude 二进制。
+官方仓库的 [LICENSE.md](../installers/claude-code/upstream/LICENSE.md) 原文独立保留，适用 Anthropic 商业条款，不受 RedApp MIT 覆盖。技术上支持企业自管分发不等于取得公开再分发授权。本仓库保留原文、企业修改版和补丁，镜像嵌入企业脚本，但不捆绑 Claude 二进制。额外再分发授权尚未核实；使用或继续分发这些第三方材料时须自行核对适用条款。
 
 ## 信任与授权
 
@@ -73,4 +73,4 @@ manifest 和签名以原字节持久化、原字节返回，读取缓存时重�
 
 完整命令、结果和限制集中记录于[验收矩阵](acceptance.md#v050-claude-code-与每日安装器维护)，每日检测/草稿 PR 的权限与失败语义见[自动维护](installers-maintenance.md#每日官方脚本检查与草稿-pr)。
 
-已用官方签名样本、两个本地假上游、无害二进制桩及 DOM 测试验证信任边界、惰性获取、应用隔离、安装参数、更新环境、摘要失败与升级保留。模拟的平台检测不等于对应实机通过。仍缺真实 Claude 运行期、原生 Windows/macOS、生产上游端到端验证；自动维护容器与线上 Actions/PR 权限尚未实跑。发布改用必要非 GUI 自动化门禁，截图/视觉不作为发布条件；不执行生产部署。
+已用官方签名样本、两个本地假上游、无害二进制桩及 DOM 测试验证信任边界、惰性获取、应用隔离、安装参数、更新环境、摘要失败与升级保留。模拟的平台检测不等于对应实机通过。Windows Server 2022 上 PowerShell 7 和 Windows PowerShell 5.1 各 16 个无害桩离线场景已通过；AMD64 为实际主机，ARM64 仅模拟路径选择。Linux amd64/arm64 的原生 CI、完整 Docker 构建和容器运行通过。每日维护首次真实检测四份脚本无变化，故未执行有变化分支的容器或真实 PR 写入。仍缺真实 Claude 运行期、原生 macOS/Windows ARM64、生产上游端到端验证，以及维护变化分支的真实容器与 PR 权限证据。发布改用必要非 GUI 自动化门禁，截图/视觉不作为发布条件；不执行生产部署。
