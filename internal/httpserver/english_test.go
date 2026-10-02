@@ -5,7 +5,6 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -13,7 +12,7 @@ import (
 	"unicode"
 )
 
-func TestApplicationMessagesAndAdminAssetsUseEnglish(t *testing.T) {
+func TestBackendApplicationMessagesUseEnglish(t *testing.T) {
 	// Check application-owned literals, not user input, upstream metadata, or old persisted events.
 	for _, dir := range []string{"../../cmd", "../../internal"} {
 		err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
@@ -53,27 +52,5 @@ func TestApplicationMessagesAndAdminAssetsUseEnglish(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	}
-	err := filepath.WalkDir("web", func(name string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		data, err := os.ReadFile(name)
-		if err != nil {
-			return err
-		}
-		for _, r := range string(data) {
-			if unicode.Is(unicode.Han, r) {
-				t.Errorf("non-English admin asset: %s", name)
-				break
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 }

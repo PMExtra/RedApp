@@ -134,6 +134,12 @@ func New(db *store.Store, c *distributor.Client) *Catalog {
 	}
 	return cat
 }
+func (c *Catalog) LatestTTLSeconds() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return int(c.TTL / time.Second)
+}
+
 func (c *Catalog) SetTTL(seconds int) error {
 	if seconds < 1 || seconds > 86400 {
 		return errors.New("TTL must be between 1 and 86400 seconds")

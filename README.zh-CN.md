@@ -16,11 +16,11 @@ docker run -d --name redapp --read-only \
 docker logs redapp
 ```
 
-打开 **http://localhost:8080/admin/**。初始管理员密码仅出现在首次启动日志中；登录后请修改密码并保护日志。命名卷会在更换容器后保留数据。
+打开 **http://localhost:8080/** 浏览应用及 Codex 安装说明。管理员在 **http://localhost:8080/admin/** 登录。初始管理员密码仅出现在首次启动日志中；登录后请修改密码并保护日志。命名卷会在更换容器后保留数据。
 
 企业访问应通过 HTTPS 反向代理。`REDAPP_PUBLIC_URL` 可选：显式设置可固定对外 origin，否则按请求推导。使用转发头前配置可信代理 CIDR，并通过代理或网络策略限制访问。详见[部署与配置](docs/operations.md)。
 
-Docker 自动选择 Linux/amd64 或 Linux/arm64（aarch64）。需要固定服务版本时，可使用 `v0.3.0` 等版本标签。
+Docker 自动选择 Linux/amd64 或 Linux/arm64（aarch64）。需要固定服务版本时，可使用 `v0.4.0` 等版本标签。
 
 ## 客户端安装
 

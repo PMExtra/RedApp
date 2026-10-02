@@ -1,3 +1,4 @@
+import { language } from "./i18n";
 export interface Resource {
   ID: string;
   State: string;
@@ -161,8 +162,10 @@ export function formatMetric(
   if (unit === "bytes") return bytes(value);
   if (unit === "bytes_per_second") return bytes(value) + "/s";
   if (unit === "seconds")
-    return value.toLocaleString(undefined, { maximumFractionDigits: 2 }) + " s";
-  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    return (
+      value.toLocaleString(language.value, { maximumFractionDigits: 2 }) + " s"
+    );
+  return value.toLocaleString(language.value, { maximumFractionDigits: 2 });
 }
 export function getHistory(key: string, range: string, signal?: AbortSignal) {
   return api<HistorySeries>("history", undefined, signal, {

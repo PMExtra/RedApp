@@ -1,35 +1,65 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watchEffect } from "vue";
 import { api, ApiError, setCSRF, type Metric, type Status } from "./api";
-import InstallCommands from "./components/InstallCommands.vue";
+import { errorText, localDate, t, type Message } from "./i18n";
+import AppShell from "./components/AppShell.vue";
+import AccountMenu from "./components/AccountMenu.vue";
+import PasswordDialog from "./components/PasswordDialog.vue";
+import Icon from "./components/Icon.vue";
 import Overview from "./components/Overview.vue";
 import Resources from "./components/Resources.vue";
 import Events from "./components/Events.vue";
 import Maintenance from "./components/Maintenance.vue";
 import ProxySettings from "./components/ProxySettings.vue";
 import HistoryDialog from "./components/HistoryDialog.vue";
-const activeMetric = ref<Metric>();
-const status = ref<Status>(),
+const activeMetric = ref<Metric>(),
+  status = ref<Status>(),
   signedIn = ref(false),
   password = ref(""),
+  checking = ref(true),
   loading = ref(false),
-  error = ref(""),
-  notice = ref(""),
+  authBusy = ref(false),
+  error = ref<unknown>(),
+  notice = ref<Message>(),
   tab = ref("Overview"),
-  automatic = ref(true);
+  automatic = ref(true),
+  passwordOpen = ref(false);
+const tabs: { name: Message; icon: string; description: Message }[] = [
+  {
+    name: "Overview",
+    icon: "grid",
+    description: "Monitor downloads, storage and service activity.",
+  },
+  {
+    name: "Versions",
+    icon: "box",
+    description: "Inspect cached versions and active resource generations.",
+  },
+  {
+    name: "Events",
+    icon: "activity",
+    description: "Review recent download and upstream failures.",
+  },
+  {
+    name: "Settings",
+    icon: "settings",
+    description: "Configure upstream access and maintain your cache.",
+  },
+];
+const current = computed(() => tabs.find((item) => item.name === tab.value)!);
 let timer: ReturnType<typeof setTimeout> | undefined,
   controller: AbortController | undefined,
-  disposed = false;
-const tabs = ["Overview", "Versions", "Events", "Settings"];
-const title = computed(() =>
-  tab.value === "Overview" ? "Distribution overview" : tab.value,
-);
+  authController: AbortController | undefined,
+  disposed = false,
+  epoch = 0;
 function stop() {
   clearTimeout(timer);
   controller?.abort();
   controller = undefined;
+  loading.value = false;
+  epoch++;
 }
-function expire(message = "Your session expired. Sign in again.") {
+function expire(message: Message = "Your session expired. Sign in again.") {
   stop();
   setCSRF("");
   signedIn.value = false;
@@ -37,6 +67,8 @@ function expire(message = "Your session expired. Sign in again.") {
   notice.value = message;
   password.value = "";
   activeMetric.value = undefined;
+  passwordOpen.value = false;
+  error.value = undefined;
 }
 function failed(reason: unknown) {
   if (reason instanceof ApiError && reason.status === 401) {
@@ -44,173 +76,267 @@ function failed(reason: unknown) {
     return;
   }
   if (reason instanceof Error && reason.name === "AbortError") return;
-  error.value = reason instanceof Error ? reason.message : "Request failed";
+  error.value = reason;
 }
 function schedule() {
   clearTimeout(timer);
-  if (!disposed && signedIn.value && automatic.value)
+  if (!disposed && signedIn.value && automatic.value && !authBusy.value)
     timer = setTimeout(() => void refresh(), 5000);
 }
 async function refresh() {
-  if (loading.value) return;
+  if (loading.value || disposed || !signedIn.value) return;
+  clearTimeout(timer);
   loading.value = true;
-  error.value = "";
+  error.value = undefined;
   controller = new AbortController();
+  const ticket = epoch;
   try {
-    status.value = await api<Status>("status", undefined, controller.signal);
+    const next = await api<Status>("status", undefined, controller.signal);
+    if (!disposed && ticket === epoch) status.value = next;
   } catch (reason) {
-    failed(reason);
+    if (!disposed && ticket === epoch) failed(reason);
   } finally {
-    loading.value = false;
-    controller = undefined;
-    schedule();
+    if (ticket === epoch) {
+      loading.value = false;
+      controller = undefined;
+      schedule();
+    }
   }
 }
 async function login() {
-  loading.value = true;
-  error.value = "";
+  if (authBusy.value || checking.value || signedIn.value) return;
+  authBusy.value = true;
+  error.value = undefined;
+  authController = new AbortController();
   try {
-    const session = await api<{ csrf: string }>("login", {
-      password: password.value,
-    });
+    const session = await api<{ csrf: string }>(
+      "login",
+      { password: password.value },
+      authController.signal,
+    );
+    if (disposed) return;
     setCSRF(session.csrf);
     password.value = "";
     signedIn.value = true;
-    notice.value = "";
-    loading.value = false;
+    notice.value = undefined;
+    authBusy.value = false;
     await refresh();
   } catch (reason) {
-    failed(reason);
+    if (!disposed) failed(reason);
   } finally {
-    loading.value = false;
+    authBusy.value = false;
   }
 }
 async function logout() {
+  if (authBusy.value) return;
+  authBusy.value = true;
+  stop();
+  authController = new AbortController();
   try {
-    await api("logout", {});
-    expire("Signed out");
+    await api("logout", {}, authController.signal);
+    if (!disposed) expire("Signed out");
   } catch (reason) {
-    failed(reason);
+    if (!disposed) failed(reason);
+  } finally {
+    authBusy.value = false;
+    schedule();
   }
 }
 function polling() {
+  automatic.value = !automatic.value;
   if (automatic.value) schedule();
   else clearTimeout(timer);
 }
+watchEffect(() => {
+  document.title = `${t("Administration")} · RedApp`;
+});
 onMounted(async () => {
-  loading.value = true;
+  authController = new AbortController();
   try {
-    const session = await api<{ csrf: string }>("session");
+    const session = await api<{ csrf: string }>(
+      "session",
+      undefined,
+      authController.signal,
+    );
     if (disposed) return;
     setCSRF(session.csrf);
     signedIn.value = true;
-    loading.value = false;
+    checking.value = false;
     await refresh();
   } catch (reason) {
-    if (!(reason instanceof ApiError && reason.status === 401)) failed(reason);
+    if (!disposed && !(reason instanceof ApiError && reason.status === 401))
+      failed(reason);
   } finally {
-    loading.value = false;
+    checking.value = false;
   }
 });
 onUnmounted(() => {
   disposed = true;
   stop();
+  authController?.abort();
+  password.value = "";
 });
 </script>
 <template>
-  <div class="app-shell">
-    <header>
-      <a class="brand" href="/admin/">RedApp<span>Codex distribution</span></a>
-      <div v-if="signedIn" class="header-actions">
-        <label
-          ><input v-model="automatic" type="checkbox" @change="polling" /> Auto
-          refresh</label
-        ><button class="secondary" @click="refresh" :disabled="loading">
-          {{ loading ? "Refreshing…" : "Refresh" }}</button
-        ><button class="secondary" @click="logout">Sign out</button>
-      </div>
-    </header>
-    <main>
-      <p v-if="notice" class="notice" role="status">{{ notice }}</p>
-      <div v-if="error" class="error" role="alert">
-        {{ error }}
-        <button v-if="signedIn" @click="refresh" :disabled="loading">
-          Retry
-        </button>
-      </div>
-      <section v-if="!signedIn" class="login">
-        <span class="eyebrow">Administrator access</span>
-        <h1>Sign in to RedApp</h1>
-        <p class="muted">
-          Use the password from the first initialization logs. Change it after
-          signing in.
-        </p>
-        <form @submit.prevent="login">
-          <label
-            >Password<input
-              v-model="password"
-              type="password"
-              autocomplete="current-password"
-              required /></label
-          ><button :disabled="loading">
-            {{ loading ? "Signing in…" : "Sign in" }}
-          </button>
-        </form>
-      </section>
-      <template v-else
-        ><nav aria-label="Admin sections">
+  <AppShell>
+    <template #actions
+      ><AccountMenu
+        v-if="signedIn"
+        :busy="authBusy"
+        @password="passwordOpen = true"
+        @logout="logout" /><a v-else class="header-link" href="/"
+        >{{ t("Applications") }}<Icon name="arrow" :size="16" /></a
+    ></template>
+    <div :class="['admin-layout', { 'is-signed-out': !signedIn }]">
+      <aside v-if="signedIn" class="sidebar">
+        <span class="eyebrow">{{ t("Administration") }}</span>
+        <nav :aria-label="t('Administration')">
           <button
             v-for="item in tabs"
-            :key="item"
-            :aria-current="tab === item ? 'page' : undefined"
-            @click="tab = item"
+            :key="item.name"
+            :aria-current="tab === item.name ? 'page' : undefined"
+            @click="tab = item.name"
           >
-            {{ item }}
+            <Icon :name="item.icon" /><span>{{ t(item.name) }}</span>
           </button>
         </nav>
-        <div class="page-heading">
-          <div>
-            <span class="eyebrow">Enterprise distribution</span>
-            <h1>{{ title }}</h1>
-          </div>
-          <span v-if="status" class="muted"
-            >{{ status.os }} / {{ status.arch }}</span
-          >
-        </div>
-        <p v-if="!status" role="status">
-          {{
-            loading
-              ? "Loading service status…"
-              : "Status unavailable. Retry to reconnect."
-          }}
-        </p>
-        <template v-if="status"
-          ><template v-if="tab === 'Overview'"
-            ><Overview
-              :status="status"
-              @history="activeMetric = $event" /><InstallCommands
-              :origin="status.public_base_url" /></template
-          ><Resources v-if="tab === 'Versions'" :status="status" /><Events
-            v-if="tab === 'Events'"
-            :events="status.events || []"
-          /><ProxySettings
-            v-if="tab === 'Settings'"
-            @error="failed"
-          /><Maintenance
-            v-if="tab === 'Settings'"
-            @error="failed"
-            @expired="expire('Password changed. Sign in again.')"
-            @changed="refresh"
-          />
-          <footer>{{ status.go }} · {{ status.sampled_at }}</footer></template
-        ></template
+        <a href="/" class="sidebar-public"
+          ><Icon name="arrow" :size="16" />{{
+            t("Public installation page")
+          }}</a
+        >
+      </aside>
+      <main
+        id="main-content"
+        :class="['admin-main', { 'auth-main': !signedIn }]"
+        tabindex="-1"
       >
-    </main>
-    <HistoryDialog
-      v-if="activeMetric && signedIn"
-      :metric="activeMetric"
-      @close="activeMetric = undefined"
-      @error="failed"
-    />
-  </div>
+        <p v-if="notice" class="notice" role="status">{{ t(notice) }}</p>
+        <div v-if="error" class="error" role="alert">
+          <Icon name="alert" />
+          <div>
+            {{ errorText(error)
+            }}<small v-if="status">{{
+              t("Showing the last successful snapshot.")
+            }}</small>
+          </div>
+          <button
+            v-if="signedIn"
+            class="secondary"
+            @click="refresh"
+            :disabled="loading"
+          >
+            {{ t("Retry") }}
+          </button>
+        </div>
+        <section v-if="!signedIn" class="login panel">
+          <div class="login-mark"><Icon name="lock" :size="24" /></div>
+          <span class="eyebrow">{{ t("Administrator access") }}</span>
+          <h1>{{ t("Sign in to RedApp") }}</h1>
+          <p class="muted">
+            {{
+              t(
+                "Use the password from the first initialization logs. Change it after signing in.",
+              )
+            }}
+          </p>
+          <form @submit.prevent="login">
+            <label
+              >{{ t("Password")
+              }}<input
+                v-model="password"
+                type="password"
+                autocomplete="current-password"
+                :disabled="checking || authBusy"
+                required /></label
+            ><button :disabled="checking || authBusy">
+              {{
+                checking
+                  ? t("Loading…")
+                  : authBusy
+                    ? t("Signing in…")
+                    : t("Sign in")
+              }}<Icon name="arrow" />
+            </button>
+          </form>
+        </section>
+        <template v-else>
+          <div class="page-heading">
+            <div>
+              <h1>
+                {{
+                  tab === "Overview"
+                    ? t("Distribution overview")
+                    : t(current.name)
+                }}
+              </h1>
+              <p class="muted">{{ t(current.description) }}</p>
+            </div>
+          </div>
+          <div class="snapshot-toolbar">
+            <span class="snapshot"
+              ><Icon name="clock" :size="16" />{{ t("Snapshot") }}
+              <time
+                v-if="status"
+                :datetime="status.sampled_at"
+                :title="t('Local time')"
+                >{{ localDate(status.sampled_at) }}</time
+              ><span v-else>—</span></span
+            >
+            <div class="refresh-actions">
+              <button
+                class="secondary auto-refresh"
+                :aria-pressed="automatic"
+                :title="t('Refresh every 5 seconds')"
+                @click="polling"
+              >
+                <Icon name="refresh" /><span>{{ t("Auto refresh") }}</span
+                ><span class="toggle-state">{{
+                  automatic ? t("On") : t("Off")
+                }}</span></button
+              ><button class="secondary" @click="refresh" :disabled="loading">
+                <Icon
+                  name="refresh"
+                  :class="{ 'is-spinning': loading }"
+                /><span>{{ loading ? t("Refreshing…") : t("Refresh") }}</span>
+              </button>
+            </div>
+          </div>
+          <div v-if="!status" class="empty panel" role="status">
+            {{
+              loading
+                ? t("Loading service status…")
+                : t("Status unavailable. Retry to reconnect.")
+            }}
+          </div>
+          <template v-else
+            ><Overview
+              v-if="tab === 'Overview'"
+              :status="status"
+              @history="activeMetric = $event" /><Resources
+              v-if="tab === 'Versions'"
+              :status="status" /><Events
+              v-if="tab === 'Events'"
+              :events="status.events || []" />
+            <div v-if="tab === 'Settings'" class="settings-stack">
+              <Maintenance @error="failed" @changed="refresh" /><ProxySettings
+                @error="failed"
+              /></div
+          ></template>
+        </template>
+      </main>
+    </div>
+  </AppShell>
+  <HistoryDialog
+    v-if="activeMetric && signedIn"
+    :metric="activeMetric"
+    @close="activeMetric = undefined"
+    @error="failed"
+  />
+  <PasswordDialog
+    v-if="passwordOpen && signedIn"
+    @close="passwordOpen = false"
+    @changed="expire('Password changed. Sign in again.')"
+    @error="failed"
+  />
 </template>

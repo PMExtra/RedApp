@@ -4,9 +4,13 @@
 
 Use the quick starts to run the service and install Codex on clients. The references below cover advanced operation and development; the existing detailed reference documents are in Chinese.
 
+- [Roadmap](roadmap.md): v0.4.0 scope and the release gate before v0.5.0.
+- [v0.4.0 frontend design](frontend-v0.4.0.md): unified layout, localization and interaction requirements.
+
 ## Administrator references
 
 - [Release notes](releases.md): upgrade guidance and changes by version.
+- [Public installation pages](public-frontend.md): anonymous application list, installation details and public metadata boundaries.
 - [Operations](operations.md): CLI/environment configuration, latest TTL, reverse proxy and trusted headers, access controls, persistent volumes, backups, recovery, health checks, cleanup, and metrics.
 - [Global metric history](metrics-history.md): fixed metric catalog, minute observations, UTC hourly aggregates, retention, gaps, and chart semantics.
 - [Validation and limitations](acceptance.md): the acceptance matrix, concurrency/failure tests, crash windows, and remaining platform/upstream verification gates.

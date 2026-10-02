@@ -116,7 +116,7 @@ func run() error {
 	if e != nil {
 		return e
 	}
-	handler := &httpserver.Server{DB: db, Catalog: codex.New(db, client), Downloads: manager, Auth: a, Proxy: proxy, Upstream: client, History: metricHistory, Public: base, Dir: guard.Directory, Started: time.Now().UTC()}
+	handler := &httpserver.Server{Version: version, DB: db, Catalog: codex.New(db, client), Downloads: manager, Auth: a, Proxy: proxy, Upstream: client, History: metricHistory, Public: base, Dir: guard.Directory, Started: time.Now().UTC()}
 	server := &http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 10 * time.Minute, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

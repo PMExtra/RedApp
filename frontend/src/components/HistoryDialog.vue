@@ -6,7 +6,10 @@ import {
   onMounted,
   onUnmounted,
   ref,
+  watch,
 } from "vue";
+import { errorText, label, language, t, utcDate } from "../i18n";
+import Icon from "./Icon.vue";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import {
@@ -23,7 +26,7 @@ const dialog = ref<HTMLDialogElement>(),
   range = ref("7d"),
   series = ref<HistorySeries>(),
   loading = ref(false),
-  error = ref(""),
+  error = ref<unknown>(),
   mode = ref("value");
 let controller: AbortController | undefined,
   plot: uPlot | undefined,
@@ -46,7 +49,7 @@ function destroy() {
 }
 function chart() {
   destroy();
-  if (!host.value || !series.value || !hasValues.value) return;
+  if (disposed || !host.value || !series.value || !hasValues.value) return;
   const data: uPlot.AlignedData = [
     points.value.map((point) => point.time),
     points.value.map((point) =>
@@ -62,10 +65,10 @@ function chart() {
       {
         label:
           mode.value === "delta"
-            ? "Observed increment"
+            ? t("Observed increment")
             : props.metric.kind === "counter"
-              ? "Last cumulative value"
-              : "Observed average / value",
+              ? t("Last cumulative value")
+              : t("Observed average / value"),
         stroke: "#146b56",
         width: 2,
         spanGaps: false,
@@ -92,13 +95,13 @@ function chart() {
     );
     options.series.push(
       {
-        label: "Observed minimum",
+        label: t("Observed minimum"),
         stroke: "#7598b4",
         width: 1,
         spanGaps: false,
       },
       {
-        label: "Observed maximum",
+        label: t("Observed maximum"),
         stroke: "#a5773e",
         width: 1,
         spanGaps: false,
@@ -120,7 +123,7 @@ async function load() {
   controller?.abort();
   controller = new AbortController();
   loading.value = true;
-  error.value = "";
+  error.value = undefined;
   series.value = undefined;
   destroy();
   try {
@@ -141,8 +144,7 @@ async function load() {
       (reason instanceof Error && reason.name === "AbortError")
     )
       return;
-    error.value =
-      reason instanceof Error ? reason.message : "History request failed";
+    error.value = reason;
     if (reason instanceof ApiError && reason.status === 401)
       emit("error", reason);
   } finally {
@@ -153,12 +155,25 @@ async function selectMode() {
   await nextTick();
   chart();
 }
+const previous = document.activeElement as HTMLElement | null;
+watch(language, async () => {
+  await nextTick();
+  chart();
+});
+function windowName(value: string) {
+  return value === "24h"
+    ? t("24 hours")
+    : value === "7d"
+      ? t("7 days")
+      : t("30 days");
+}
 onMounted(() => {
   dialog.value?.showModal();
   void load();
 });
 onBeforeUnmount(() => {
   dialog.value?.close();
+  previous?.focus();
 });
 onUnmounted(() => {
   disposed = true;
@@ -173,21 +188,27 @@ onUnmounted(() => {
     aria-labelledby="history-title"
     @cancel.prevent="emit('close')"
   >
-    <div class="section-heading">
+    <div class="dialog-heading">
       <div>
-        <span class="eyebrow">Metric history · UTC</span>
-        <h2 id="history-title">{{ metric.label }}</h2>
+        <span class="eyebrow">{{ t("Metric history · UTC") }}</span>
+        <h2 id="history-title">{{ label(metric.label) }}</h2>
       </div>
-      <button class="secondary" type="button" @click="emit('close')" autofocus>
-        Close history
+      <button
+        class="icon-button secondary"
+        type="button"
+        @click="emit('close')"
+        :aria-label="t('Close history')"
+        autofocus
+      >
+        <Icon name="close" />
       </button>
     </div>
-    <p>
-      Current value:
+    <p class="history-current">
+      {{ t("Current value") }}
       <strong>{{ formatMetric(metric.value, metric.unit) }}</strong>
     </p>
     <div class="history-controls">
-      <div role="group" aria-label="History window">
+      <div class="segmented" role="group" :aria-label="t('History window')">
         <button
           v-for="option in ['24h', '7d', '30d']"
           :key="option"
@@ -197,85 +218,111 @@ onUnmounted(() => {
             load();
           "
         >
-          {{
-            option === "24h"
-              ? "24 hours"
-              : option === "7d"
-                ? "7 days"
-                : "30 days"
-          }}
+          {{ windowName(option) }}
         </button>
       </div>
       <label v-if="metric.kind === 'counter'"
-        >Counter view<select v-model="mode" @change="selectMode">
-          <option value="value">Cumulative last value</option>
-          <option value="delta">Observed increment</option>
+        >{{ t("Counter view")
+        }}<select v-model="mode" @change="selectMode">
+          <option value="value">{{ t("Cumulative last value") }}</option>
+          <option value="delta">{{ t("Observed increment") }}</option>
         </select></label
       >
     </div>
-    <p v-if="loading" role="status">Loading history…</p>
+    <p v-if="loading" class="empty" role="status">
+      {{ t("Loading history…") }}
+    </p>
     <div v-else-if="error" class="error" role="alert">
-      {{ error }} <button @click="load">Retry history</button>
+      {{ errorText(error)
+      }}<button class="secondary" @click="load">
+        {{ t("Retry history") }}
+      </button>
     </div>
     <template v-else-if="series"
-      ><p class="muted">
+      ><p class="muted small-text">
         {{
           series.resolution_seconds === 60
-            ? "Minute observations · last 24 hours"
-            : "Hourly aggregates"
+            ? t("Minute observations · last 24 hours")
+            : t("Hourly aggregates")
         }}
-        · UTC buckets. Missing observations remain gaps.
+        · {{ t("UTC buckets. Missing observations remain gaps.") }}
       </p>
       <p v-if="!hasValues" class="empty" role="status">
-        No observations available for this window.
+        {{ t("No observations available for this window.") }}
       </p>
       <div
         v-else
         ref="host"
         class="history-chart"
         role="img"
-        :aria-label="`${metric.label} over ${range}. Values and coverage are also available in the table below.`"
+        :aria-label="
+          t(
+            '{name} over {range}. Values and coverage are available in the table below.',
+            { name: label(metric.label), range: windowName(range) },
+          )
+        "
       ></div>
-      <p v-if="metric.kind === 'counter'" class="muted">
-        Cumulative counters are never averaged. Increments cover only adjacent
-        valid samples; restart, reset and long gaps have unknown increments.
+      <p class="muted small-text">
+        {{
+          metric.kind === "counter"
+            ? t(
+                "Cumulative counters are never averaged. Increments cover only adjacent valid samples; restart, reset and long gaps have unknown increments.",
+              )
+            : metric.kind === "rate"
+              ? t(
+                  "Each observation covers five seconds, sampled once per minute. Hourly average weights those observed windows; it is not the whole-hour transfer rate.",
+                )
+              : t(
+                  "Green: observed average/value. Blue: minimum. Brown: maximum. Hourly values summarize available samples, not missing intervals.",
+                )
+        }}
       </p>
-      <p v-else-if="metric.kind === 'rate'" class="muted">
-        Each observation covers five seconds, sampled once per minute. Hourly
-        average weights those observed windows; it is not the whole-hour
-        transfer rate.
-      </p>
-      <p v-else class="muted">
-        Green: observed average/value. Blue: minimum. Brown: maximum. Hourly
-        values summarize available samples, not missing intervals.
-      </p>
-      <p v-if="current?.partial" class="muted">
-        Current {{ series.resolution_seconds === 60 ? "minute" : "hour" }} is
-        partial: {{ current.count }} observations<span
-          v-if="metric.kind === 'rate'"
+      <p v-if="current?.partial" class="notice small-text">
+        {{
+          t("Current bucket is partial: {count} observations.", {
+            count: current.count,
+            seconds: current.observed_seconds,
+          })
+        }}
+        <span v-if="metric.kind === 'rate'">
+          {{
+            t("Observed duration: {seconds} seconds.", {
+              seconds: current.observed_seconds,
+            })
+          }}</span
         >
-          / {{ current.observed_seconds }} seconds observed</span
-        >.
       </p>
-      <details>
+      <details class="history-table">
         <summary>
-          Observation values and coverage ({{ filled.length }} buckets)
+          {{
+            t("Observation values and coverage ({count} buckets)", {
+              count: filled.length,
+            })
+          }}
         </summary>
-        <div class="table-wrap">
+        <div
+          class="table-wrap"
+          tabindex="0"
+          :aria-label="
+            t('Observation values and coverage ({count} buckets)', {
+              count: filled.length,
+            })
+          "
+        >
           <table>
             <thead>
               <tr>
-                <th>UTC bucket</th>
-                <th>Value / last</th>
-                <th>Min / max / average</th>
-                <th>Samples</th>
-                <th>Increment / valid intervals</th>
-                <th>Observed seconds / coverage</th>
+                <th>{{ t("UTC bucket") }}</th>
+                <th>{{ t("Value / last") }}</th>
+                <th>{{ t("Min / max / average") }}</th>
+                <th>{{ t("Samples") }}</th>
+                <th>{{ t("Increment / valid intervals") }}</th>
+                <th>{{ t("Observed seconds / coverage") }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="point in filled" :key="point.time">
-                <td>{{ new Date(point.time * 1000).toISOString() }}</td>
+                <td>{{ utcDate(point.time) }}</td>
                 <td>
                   {{ formatMetric(point.value, metric.unit) }} /
                   {{ formatMetric(point.last, metric.unit) }}
@@ -294,17 +341,17 @@ onUnmounted(() => {
                   {{ point.observed_seconds }} s ·
                   {{
                     point.partial
-                      ? "Partial current bucket"
+                      ? t("Partial current bucket")
                       : point.incomplete
-                        ? "Incomplete observations"
-                        : "Complete observations"
+                        ? t("Incomplete observations")
+                        : t("Complete observations")
                   }}
                 </td>
               </tr>
             </tbody>
           </table>
         </div>
-      </details></template
-    >
+      </details>
+    </template>
   </dialog>
 </template>

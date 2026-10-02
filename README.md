@@ -16,11 +16,11 @@ docker run -d --name redapp --read-only \
 docker logs redapp
 ```
 
-Open **http://localhost:8080/admin/**. The initial admin password appears in the first-start logs only; change it after signing in and protect those logs. The named volume keeps data across container replacements.
+Open **http://localhost:8080/** for the application catalog and Codex installation instructions. Administrators sign in at **http://localhost:8080/admin/**. The initial admin password appears in the first-start logs only; change it after signing in and protect those logs. The named volume keeps data across container replacements.
 
 For enterprise access, put RedApp behind an HTTPS reverse proxy. `REDAPP_PUBLIC_URL` is optional: an explicit value fixes the external origin; otherwise RedApp derives it from each request. Configure trusted proxy CIDRs before using forwarded headers and restrict access through your proxy or network policy. See [deployment and configuration](docs/operations.md).
 
-Docker selects Linux/amd64 or Linux/arm64 (aarch64) automatically. Use a version tag such as `v0.3.0` when you need a fixed server version.
+Docker selects Linux/amd64 or Linux/arm64 (aarch64) automatically. Use a version tag such as `v0.4.0` when you need a fixed server version.
 
 ## Install on clients
 

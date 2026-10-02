@@ -101,7 +101,7 @@ func TestAdminHTTPDownloadMetricsAndCSRF(t *testing.T) {
 		status       int
 		message      string
 	}{
-		{"GET", "/", 404, "Route not found"},
+		{"GET", "/unknown", 404, "Route not found"},
 		{"POST", "/", 405, "Method not allowed"},
 		{"GET", "/?unexpected=1", 400, "Noncanonical request path"},
 		{"GET", "/admin/unknown", 404, "Page not found"},

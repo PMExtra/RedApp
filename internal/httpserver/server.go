@@ -26,6 +26,7 @@ import (
 var web embed.FS
 
 type Server struct {
+	Version   string
 	DB        *store.Store
 	Catalog   *app.Catalog
 	Downloads *download.Manager
@@ -99,6 +100,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasPrefix(r.URL.Path, "/admin") {
 		s.admin(w, r, public)
+		return
+	}
+	if r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/apps/") || strings.HasPrefix(r.URL.Path, "/api/") {
+		s.publicPage(w, r, public)
 		return
 	}
 	s.DB.Add("requests", 1)
@@ -268,6 +273,8 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, public string) {
 	}
 	if r.Method == "GET" {
 		switch r.URL.Path {
+		case "/admin/api/settings":
+			reply(w, 200, map[string]int{"latest_ttl_seconds": s.Catalog.LatestTTLSeconds()})
 		case "/admin/api/session":
 			reply(w, 200, map[string]string{"csrf": session.CSRF})
 		case "/admin/api/history":

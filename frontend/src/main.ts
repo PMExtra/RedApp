@@ -1,4 +1,6 @@
-import { createApp } from 'vue'
-import App from './App.vue'
-import './style.css'
-createApp(App).mount('#app')
+import { createApp } from "vue";
+import "./style.css";
+const page = window.location.pathname.startsWith("/admin")
+  ? import("./App.vue")
+  : import("./PublicApp.vue");
+void page.then(({ default: App }) => createApp(App).mount("#app"));

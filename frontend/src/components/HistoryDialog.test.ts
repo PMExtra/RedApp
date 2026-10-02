@@ -104,13 +104,10 @@ describe("History dialog", () => {
       .map((call) => (call[1] as RequestInit).headers as Record<string, string>)
       .map((headers) => headers["X-History-Range"]);
     expect(ranges).toEqual(["7d", "24h", "30d", "7d"]);
-    expect(wrapper.text()).toContain("Current hour is partial");
+    expect(wrapper.text()).toContain("Current bucket is partial");
     await wrapper.find("summary").trigger("click");
-    expect(wrapper.text()).toContain("1970-01-01T00:00:00.000Z");
-    await wrapper
-      .findAll("button")
-      .find((button) => button.text() === "Close history")!
-      .trigger("click");
+    expect(wrapper.text()).toContain("01/01/1970");
+    await wrapper.find('[aria-label="Close history"]').trigger("click");
     expect(wrapper.emitted("close")).toHaveLength(1);
     wrapper.unmount();
     expect(charts.destroy).toHaveBeenCalled();
@@ -130,7 +127,9 @@ describe("History dialog", () => {
       attachTo: document.body,
     });
     await flushPromises();
-    expect(wrapper.find("[role=alert]").text()).toContain("Read failed");
+    expect(wrapper.find("[role=alert]").text()).toContain(
+      "Service temporarily unavailable",
+    );
     expect(wrapper.emitted("error")).toBeUndefined();
     fail = false;
     await wrapper

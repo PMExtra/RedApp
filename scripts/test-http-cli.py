@@ -44,6 +44,30 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         password_match = re.search(r"Initial admin password: ([0-9a-f]+)", text)
         assert password_match, "未输出初始密码"
         password = password_match.group(1)
+        for path in ["/", "/apps/codex"]:
+            with urllib.request.urlopen(base + path) as response:
+                assert response.status == 200 and "text/html" in response.headers["Content-Type"]
+                assert "script-src 'self'" in response.headers["Content-Security-Policy"]
+                assert response.headers["Cache-Control"] == "no-store"
+                assert "/admin/assets/" in response.read().decode()
+        with urllib.request.urlopen(base + "/api/info") as response:
+            public_info = json.load(response)
+            assert set(public_info) == {"version", "os", "arch"}
+            assert public_info["version"] == version_output.split()[1]
+        with urllib.request.urlopen(base + "/api/apps") as response:
+            applications = json.load(response)
+            assert len(applications) == 1 and applications[0]["id"] == "codex"
+            assert applications[0]["origin"] == base
+            assert set(applications[0]) == {"id", "name", "summary", "origin", "icon"}
+        with urllib.request.urlopen(base + applications[0]["icon"]) as response:
+            assert response.headers["Content-Type"] == "image/svg+xml; charset=utf-8"
+            assert response.headers["Content-Security-Policy"] == "sandbox; default-src 'none'"
+            assert response.read() == (root / "internal/apps/codex/assets/openai-symbol.svg").read_bytes()
+        try:
+            urllib.request.urlopen(base + "/admin/api/status")
+            raise AssertionError("匿名页面开放了管理 API")
+        except urllib.error.HTTPError as error:
+            assert error.code == 401
         opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
         login = urllib.request.Request(base + "/admin/api/login", data=json.dumps({"password": password}).encode(), headers={"Content-Type": "application/json"})
         with opener.open(login) as response:
@@ -63,6 +87,7 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
             assert "default-src 'self'" in response.headers["Content-Security-Policy"]
             assets = re.findall(r'(?:src|href)="(/admin/assets/[^" ]+)"', html)
             assert len(assets) >= 2
+        assets = sorted(set(assets) | {"/admin/assets/" + path.name for path in (root / "internal/httpserver/web/assets").iterdir()})
         for asset in assets:
             with opener.open(base + asset) as response:
                 assert response.status == 200 and response.read()
@@ -70,6 +95,8 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         settings = urllib.request.Request(base + "/admin/api/settings", data=b'{"latest_ttl_seconds":120}', headers={"Content-Type": "application/json", "X-CSRF-Token": csrf})
         with opener.open(settings) as response:
             assert json.load(response)["ok"]
+        with opener.open(base + "/admin/api/settings") as response:
+            assert json.load(response)["latest_ttl_seconds"] == 120
         with opener.open(base + "/admin/api/proxy") as response:
             assert json.load(response)["server"] == ""
         proxy_body = {"server": "http://127.0.0.1:3128", "username": "fixture-user", "password": "fixture-only-password", "password_action": "replace"}

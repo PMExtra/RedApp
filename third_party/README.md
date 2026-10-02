@@ -11,3 +11,5 @@
 | golang.org/x/crypto | 0.42.0 | [x-crypto.LICENSE](x-crypto.LICENSE) |
 
 Codex 固定安装器的 LICENSE/NOTICE 在 `installers/codex/upstream/`，同时嵌入服务并通过 `/licenses/LICENSE` 与 `/licenses/NOTICE` 提供。该目录不代表已完成六平台 Codex 二进制捆绑组件许可核查；对应门禁见验收记录。
+
+OpenAI 品牌标志由用户提供，来源指向 Wikimedia Commons；原文、摘要和来源页许可/商标标签见 [模块素材说明](../internal/apps/codex/assets/README.md)。该标志不是 Codex 专属图标，也不属于 RedApp 原创代码的 MIT 授权范围。
