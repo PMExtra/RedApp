@@ -6,7 +6,11 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['.github/workflows/installer-updates.yml']
+    paths:
+      - '.github/workflows/installer-updates.yml'
+      - '.github/installer-check/Dockerfile'
+      - 'scripts/installer_maintenance.py'
+      - 'installers/upstream-scripts.json'
 
 permissions:
   contents: read

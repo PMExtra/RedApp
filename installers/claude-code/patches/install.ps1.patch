@@ -118,7 +118,7 @@
 +        $stage = Join-Path $bin ([guid]::NewGuid().ToString('N') + '.tmp')
 +        try {
 +            [IO.File]::WriteAllText($stage, $entry[1].Replace('@VERSION@', $version), [Text.Encoding]::ASCII)
-+            if (Test-Path -LiteralPath $launcher) { [IO.File]::Replace($stage, $launcher, $null) }
++            if (Test-Path -LiteralPath $launcher) { [IO.File]::Replace($stage, $launcher, [NullString]::Value) }
 +            else { [IO.File]::Move($stage, $launcher) }
 +        } finally { if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Force } }
 +    }

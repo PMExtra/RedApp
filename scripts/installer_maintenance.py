@@ -13,6 +13,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+import urllib.parse
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,7 +35,11 @@ def inventory(root=ROOT):
     return items
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self,*_): raise ValueError('Unreviewed upstream redirect; inspect the official destination before changing the inventory')
+    def redirect_request(self,req,fp,code,msg,headers,newurl):
+        target=urllib.parse.urlsplit(newurl or '')
+        safe=(target.scheme+'://'+(target.hostname or '')+target.path)[:512]
+        suffix=' (query/fragment present)' if target.query or target.fragment else ''
+        raise ValueError('Unreviewed upstream redirect to '+safe+suffix+'; inspect the official destination before changing the inventory')
 
 def download(url):
     opener=urllib.request.build_opener(NoRedirect())
