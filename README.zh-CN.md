@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-RedApp 帮助 IT 管理员通过内网下载入口分发 **Codex CLI**。按需缓存下载，并提供管理页面查看和管理缓存版本、磁盘用量及流量。
+RedApp 帮助 IT 管理员通过内网下载入口分发 **Codex CLI**。尚未发布的 v0.5.0 工作树还加入 [Claude Code](docs/claude-code-v0.5.0.md)；已发布 v0.4.1 镜像仅支持 Codex。按需缓存下载，并提供管理页面查看和管理缓存版本、磁盘用量及流量。
 
 ## 快速上手
 

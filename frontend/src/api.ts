@@ -12,7 +12,7 @@ export interface Resource {
   Started: string;
   Finished: string;
   Error: string;
-  Resource: { Labels: { version: string; name: string } };
+  Resource: { Labels: { app?: string; version: string; name: string } };
 }
 export interface Status {
   metrics?: Metric[];
@@ -37,6 +37,7 @@ export interface Status {
     downstream_bytes_per_second: number;
   };
   versions: Record<string, string>;
+  application_versions?: Record<string, Record<string, string>>;
   counters: Record<string, number>;
   resources: Resource[];
   events: Array<{

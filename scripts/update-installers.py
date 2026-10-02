@@ -45,11 +45,12 @@ def exchange(a, b):
     fn.restype = ctypes.c_int
     if fn(-100, os.fsencode(a), -100, os.fsencode(b), 2):
         raise OSError(ctypes.get_errno(), "安装器目录原子交换失败")
-    fd = os.open(a.parent, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+    for parent in {a.parent, b.parent}:
+        fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -116,4 +117,4 @@ if __name__ == "__main__":
     try:
         main()
     except (OSError, ValueError, subprocess.SubprocessError) as error:
-        raise SystemExit("安装器更新失败，已发布目录保持不变：" + str(error))
+        raise SystemExit("安装器更新失败，请核对目录与 provenance：" + str(error))

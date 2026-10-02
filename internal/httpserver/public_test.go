@@ -32,7 +32,7 @@ func TestPublicOpenAISymbol(t *testing.T) {
 func TestPublicPagesAndApplicationIsolation(t *testing.T) {
 	// Nil database/catalog/auth prove that these routes never need privileged state or upstream I/O.
 	s := &Server{}
-	for _, path := range []string{"/", "/apps/codex", "/api/apps"} {
+	for _, path := range []string{"/", "/apps/codex", "/apps/claude-code", "/api/apps"} {
 		r := httptest.NewRequest("GET", "http://internal:8080"+path, nil)
 		r.Header.Set("Forwarded", "host=attacker.example;proto=https")
 		w := httptest.NewRecorder()
@@ -45,7 +45,7 @@ func TestPublicPagesAndApplicationIsolation(t *testing.T) {
 		}
 		if path == "/api/apps" {
 			var apps []map[string]string
-			if err := json.Unmarshal(w.Body.Bytes(), &apps); err != nil || len(apps) != 1 || len(apps[0]) != 5 || apps[0]["id"] != "codex" || apps[0]["icon"] != "/apps/codex/icon.svg" || apps[0]["origin"] != "http://internal:8080" {
+			if err := json.Unmarshal(w.Body.Bytes(), &apps); err != nil || len(apps) != 2 || len(apps[0]) != 5 || len(apps[1]) != 5 || apps[1]["id"] != "claude-code" || apps[0]["id"] != "codex" || apps[0]["icon"] != "/apps/codex/icon.svg" || apps[0]["origin"] != "http://internal:8080" {
 				t.Fatalf("public app data leaked state or trusted spoofed origin: %s %v", w.Body.String(), err)
 			}
 		} else if !strings.Contains(w.Body.String(), "/admin/assets/") || !strings.Contains(w.Header().Get("Content-Type"), "text/html") {

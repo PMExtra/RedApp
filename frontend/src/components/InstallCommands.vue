@@ -2,10 +2,23 @@
 import { computed, ref } from "vue";
 import { t } from "../i18n";
 import Icon from "./Icon.vue";
-const props = defineProps<{ origin: string }>();
+const props = withDefaults(
+  defineProps<{ origin: string; application?: string }>(),
+  { application: "codex" },
+);
+const isClaude = computed(() => props.application === "claude-code");
+const installerBase = computed(
+  () => props.origin + (isClaude.value ? "/claude-code" : ""),
+);
 const commands = computed(() => [
-  { name: "Shell", command: `curl -fsSL '${props.origin}/install.sh' | sh` },
-  { name: "PowerShell", command: `irm '${props.origin}/install.ps1' | iex` },
+  {
+    name: "Shell",
+    command: `curl -fsSL '${installerBase.value}/install.sh' | ${isClaude.value ? "bash" : "sh"}`,
+  },
+  {
+    name: "PowerShell",
+    command: `irm '${installerBase.value}/install.ps1' | iex`,
+  },
 ]);
 const canCopy =
   window.isSecureContext === true &&
@@ -32,10 +45,20 @@ async function copy(command: string) {
     <div class="section-heading">
       <div>
         <span class="eyebrow">{{ t("Run in your terminal") }}</span>
-        <h2 id="install-title">{{ t("Install Codex") }}</h2>
+        <h2 id="install-title">
+          {{ isClaude ? t("Install Claude Code") : t("Install Codex") }}
+        </h2>
       </div>
     </div>
-    <p class="muted">{{ t("Uses CODEX_RELEASE if set, otherwise latest.") }}</p>
+    <p class="muted">
+      {{
+        isClaude
+          ? t(
+              "Installs latest. Use stable or a version to pin your installation.",
+            )
+          : t("Uses CODEX_RELEASE if set, otherwise latest.")
+      }}
+    </p>
     <div class="command-stack">
       <article v-for="item in commands" :key="item.name" class="command">
         <div class="section-heading">
@@ -70,8 +93,19 @@ async function copy(command: string) {
     </p>
     <p class="muted small-text">
       {{
+        isClaude
+          ? t(
+              "The service verifies Anthropic’s signed manifest; the installer verifies the binary hash. The managed launcher disables official updates. Signing in and using Claude Code still requires its provider’s services.",
+            )
+          : t(
+              "This command downloads and runs an installer that verifies package hashes. Use a service you trust. Signing in and using Codex still requires its provider’s services.",
+            )
+      }}
+    </p>
+    <p v-if="isClaude" class="muted small-text">
+      {{
         t(
-          "This command downloads and runs an installer that verifies package hashes. Use a service you trust. Signing in and using Codex still requires its provider’s services.",
+          "Trust this HTTPS service. Run claude through its managed launcher; executing the version binary directly bypasses update control. Upgrade by rerunning this installer.",
         )
       }}
     </p>

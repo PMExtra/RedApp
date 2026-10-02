@@ -250,3 +250,33 @@ func TestProxySwapDoesNotCancelActiveResponse(t *testing.T) {
 	next.Body.Close()
 	c.transports.current.Load().CloseIdleConnections()
 }
+
+func TestSiblingSharesProxyUpdatesButKeepsOriginBoundary(t *testing.T) {
+	c, _, upstream := proxyFixture(t)
+	sibling, err := c.Sibling("https://example.com/claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		proxy := connectProxy(t, upstream, nil, nil)
+		if err = c.SetProxy(ProxyUpdate{Server: proxy.URL, PasswordAction: "clear"}); err != nil {
+			t.Fatal(err)
+		}
+		trustFixture(c, upstream)
+		for _, client := range []*Client{c, sibling} {
+			resp, err := client.Get(context.Background(), client.URL("manifest.json"), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if string(body) != "trusted bytes" {
+				t.Fatal("shared proxy not applied")
+			}
+		}
+		if _, err = sibling.Get(context.Background(), c.URL("manifest.json"), nil); err == nil {
+			t.Fatal("sibling accepted foreign path")
+		}
+		proxy.Close()
+	}
+}

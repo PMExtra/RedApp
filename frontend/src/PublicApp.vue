@@ -15,9 +15,16 @@ type Application = {
 const applications = ref<Application[]>([]),
   loading = ref(true),
   error = ref(false);
-const detail = window.location.pathname === "/apps/codex";
+const detail = window.location.pathname.startsWith("/apps/");
+const selectedID = window.location.pathname.split("/")[2];
+const description = (id: string) =>
+  id === "claude-code"
+    ? t("Anthropic’s coding agent for your terminal.")
+    : t("OpenAI’s coding agent for your terminal.");
+const publisher = (id: string) =>
+  id === "claude-code" ? "Anthropic" : "OpenAI";
 const selected = computed(() =>
-  applications.value.find((app) => app.id === "codex"),
+  applications.value.find((app) => app.id === selectedID),
 );
 let controller: AbortController | undefined,
   disposed = false;
@@ -44,7 +51,7 @@ async function load() {
   }
 }
 watchEffect(() => {
-  document.title = `${detail ? t("Install Codex CLI") : t("Applications")} · ${siteTitle.value}`;
+  document.title = `${detail ? t("Install {name}", { name: selected.value?.name || "" }) : t("Applications")} · ${siteTitle.value}`;
 });
 onMounted(load);
 onUnmounted(() => {
@@ -78,22 +85,26 @@ onUnmounted(() => {
         <div class="application-identity">
           <div class="application-logo">
             <img
+              v-if="selected.icon"
               :src="selected.icon"
               :alt="t('OpenAI brand mark')"
               width="48"
               height="48"
-            />
+            /><Icon v-else name="box" :size="48" />
           </div>
           <div class="public-heading">
             <span class="eyebrow">{{ t("Installation instructions") }}</span>
             <h1>{{ selected.name }}</h1>
             <p class="public-lead">
-              {{ t("OpenAI’s coding agent for your terminal.") }}
+              {{ description(selected.id) }}
             </p>
           </div>
         </div>
         <div class="installation-layout">
-          <InstallCommands :origin="selected.origin" />
+          <InstallCommands
+            :origin="selected.origin"
+            :application="selected.id"
+          />
           <aside class="install-guide">
             <section class="panel">
               <h2>{{ t("Getting started") }}</h2>
@@ -114,9 +125,13 @@ onUnmounted(() => {
                 </li>
                 <li>
                   {{
-                    t(
-                      "Start codex and follow your organization’s sign-in instructions.",
-                    )
+                    selected.id === "claude-code"
+                      ? t(
+                          "Start claude through its managed launcher and follow your organization’s sign-in instructions.",
+                        )
+                      : t(
+                          "Start codex and follow your organization’s sign-in instructions.",
+                        )
                   }}
                 </li>
               </ol>
@@ -140,16 +155,17 @@ onUnmounted(() => {
             ><div class="application-card-brand">
               <div class="application-logo">
                 <img
+                  v-if="app.icon"
                   :src="app.icon"
                   :alt="t('OpenAI brand mark')"
                   width="40"
                   height="40"
-                />
+                /><Icon v-else name="box" :size="40" />
               </div>
-              <span class="app-publisher">OpenAI</span>
+              <span class="app-publisher">{{ publisher(app.id) }}</span>
             </div>
             <h2>{{ app.name }}</h2>
-            <p>{{ t("OpenAI’s coding agent for your terminal.") }}</p>
+            <p>{{ description(app.id) }}</p>
             <span class="card-action"
               >{{ t("Installation instructions") }}<Icon name="arrow" /></span
           ></a>

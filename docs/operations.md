@@ -10,9 +10,10 @@
 | `--listen` | `REDAPP_LISTEN` | `:8080` | HTTP 监听地址 |
 | `--public-url` | `REDAPP_PUBLIC_URL` | 空 | 可选企业对外 HTTP(S) origin；空时逐请求推导 |
 | `--base-url` | `REDAPP_BASE_URL` | `https://releases.openai.com/codex` | 服务端固定上游 HTTPS 根，客户端不能覆盖 |
+| `--claude-base-url` | `REDAPP_CLAUDE_BASE_URL` | `https://downloads.claude.ai/claude-code-releases` | Claude 服务端固定 HTTPS 上游，不能由客户端覆盖 |
 | `--trusted-proxies` | `REDAPP_TRUSTED_PROXIES` | 空 | 可信代理 CIDR，逗号分隔 |
 
-latest 默认 TTL 为 60 秒，管理员通过设置 API 可调整为 1–86400 秒；配置保存至 SQLite，按原成功 fetched 时间重新计算有效期。release 和完成制品不自动过期。过期 latest 刷新失败返回 502，不把旧值伪装为新值。
+Codex latest 与 Claude latest/stable 各自维护渠道缓存。各应用 TTL 默认值为 60 秒，管理员通过设置 API 可调整为 1–86400 秒；配置保存至 SQLite，按原成功 fetched 时间重新计算有效期。release 和完成制品不自动过期。过期 latest 刷新失败返回 502，不把旧值伪装为新值。
 
 当前保守边界：最多 16 个活动写入、512 个制品读者、32 个 metadata flight、每资源最大 4 GiB、清单最大 4 MiB/1024 资产、JSON 深度 32。上游总请求超时 5 分钟，响应头 30 秒、连接/TLS 10 秒；每代最多 3 次顺序尝试。不安全续传至多自动创建一个完整重试的新代；原响应失败，不能把新文件拼接到旧前缀。服务器请求头 10 秒、请求读取 30 秒、写响应 10 分钟，正常停止最多等待 15 秒。SQLite busy timeout 为 5 秒。失败事件最多 1000 条/30 天，管理接口展示最近 100 条。
 
@@ -51,7 +52,7 @@ location / {
 ## 数据与恢复
 
 - `instance.lock` 是永久保留的内核锁文件。进程始终持有 fd，退出或崩溃由内核释放；**禁止删除锁文件**。目录先解析符号链接，第二实例非阻塞失败。
-- `state.sqlite` / WAL / SHM 存放 schema=1、授权清单原文与解析索引、首次发现历史、代际状态、当前指针、管理员 hash、设置、统计、事件和清理快照。
+- `state.sqlite` / WAL / SHM 存放 schema=2（旧 schema=1 自动事务迁移）、授权清单原文与解析索引、首次发现历史、代际状态、当前指针、管理员 hash、设置、统计、事件和清理快照。
 - `objects/<SHA256 身份>/<随机代际>.part|.blob` 由程序产生；URL 不直接映射本地路径。
 - 每代共享一个顺序写入和增长文件。读者从零维护独立 offset；慢读者/客户端退出不会取消任务。无读者的完成缓存不长期占用文件描述符。
 - 完成后计算完整 SHA-256，再 fsync、rename、目录 fsync 和提交 SQLite。启动重新核对文件与 hash，处理 rename 尚未提交、缺文件、坏 blob、遗留 part 和 tombstone/orphan；缺失或未验证文件不能作为 complete 返回。
@@ -64,7 +65,9 @@ location / {
 
 ## 管理 API 与指标
 
-公共入口：`GET /channels/latest`、`GET /releases/{version}/release.json`、精确清单授权的 `/releases/{version}/{asset}`、`/install.sh`、`/install.ps1`、`/licenses/{LICENSE|NOTICE}`。任意 URL、编码别名、查询参数、遍历与未授权资产拒绝。浏览器应用目录为 `/`，安装详情为 `/apps/codex`，后台为 `/admin/`。公开的 `/api/info` 提供版本、平台与公开站点文案，`/api/apps` 仅提供固定应用信息。
+公共入口：`GET /channels/latest`、`GET /releases/{version}/release.json`、精确清单授权的 `/releases/{version}/{asset}`、`/install.sh`、`/install.ps1`、`/licenses/{LICENSE|NOTICE}`。任意 URL、编码别名、查询参数、遍历与未授权资产拒绝。浏览器应用目录为 `/`，安装详情为 `/apps/codex` / `/apps/claude-code`，后台为 `/admin/`。公开的 `/api/info` 提供版本、平台与公开站点文案，`/api/apps` 仅提供固定应用信息。
+
+Claude 公共协议位于 `/claude-code/`：安装器、公钥、许可、latest/stable、版本 manifest 及其分离签名、白名单原始二进制；详细信任和客户端升级边界见 [Claude 说明](claude-code-v0.5.0.md)。管理 settings / cleanup preview 可用 `X-RedApp-Application` 选择应用，缺省 Codex，未知应用拒绝。共享磁盘、并发额度与代理保持全局口径。schema 2 不能由旧版本程序读取，回退须恢复升级前的完整备份。
 
 管理 API：`POST /admin/api/login` → Cookie 和 csrf；`GET /admin/api/session`、`GET /admin/api/status`、`GET /admin/api/site`；带 csrf 的 `POST /admin/api/site`（双语站点文案）、`settings`（latest_ttl_seconds）、`password`（old/new）、`logout`、`cleanup/preview`（minimum_version）、`cleanup/execute`（cleanup_id）。请求体为 JSON，最大 8 KiB。下载无需管理员登录；企业网络访问控制在反代/网络层实施。
 

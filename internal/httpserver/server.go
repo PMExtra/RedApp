@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/PMExtra/RedApp/installers/codex"
+	claude "github.com/PMExtra/RedApp/internal/apps/claude"
 	app "github.com/PMExtra/RedApp/internal/apps/codex"
 	"github.com/PMExtra/RedApp/internal/auth"
 	"github.com/PMExtra/RedApp/internal/distributor"
@@ -30,6 +31,7 @@ type Server struct {
 	Version   string
 	DB        *store.Store
 	Catalog   *app.Catalog
+	Claude    *claude.Catalog
 	Downloads *download.Manager
 	Auth      *auth.Auth
 	Proxy     Proxy
@@ -112,6 +114,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, 405, "Method not allowed")
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/claude-code/") {
+		s.claudeDownload(w, r, public)
+		return
+	}
 	if r.URL.Path == "/install.sh" || r.URL.Path == "/install.ps1" {
 		body, e := codex.Installer(strings.TrimPrefix(r.URL.Path, "/"), public)
 		if e != nil {
@@ -166,8 +172,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "Resource is not authorized or metadata is unavailable")
 		return
 	}
+	s.serveResource(w, r, resource)
+}
+func (s *Server) serveResource(w http.ResponseWriter, r *http.Request, resource download.Resource) {
+	counterPrefix := "version:" + resource.Labels["version"]
+	if resource.Labels["app"] != "codex" {
+		counterPrefix = "app:" + resource.Labels["app"] + ":" + counterPrefix
+	}
 	s.DB.Add("artifact_requests", 1)
-	s.DB.Add("version:"+v+":requests", 1)
+	s.DB.Add(counterPrefix+":requests", 1)
 	rd, hit, e := s.Downloads.Acquire(r.Context(), resource)
 	if e != nil {
 		fail(w, 503, "Download capacity exceeded or local storage unavailable")
@@ -187,7 +200,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if n > 0 {
 			written, we := w.Write(buf[:n])
 			s.DB.Add("downstream_bytes", int64(written))
-			s.DB.Add("version:"+v+":downstream_bytes", int64(written))
+			s.DB.Add(counterPrefix+":downstream_bytes", int64(written))
 			if we != nil {
 				s.DB.Add("download_errors", 1)
 				return
@@ -282,7 +295,16 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, public string) {
 			}
 			reply(w, 200, settings)
 		case "/admin/api/settings":
-			reply(w, 200, map[string]int{"latest_ttl_seconds": s.Catalog.LatestTTLSeconds()})
+			application, ok := s.application(r.Header.Get("X-RedApp-Application"))
+			if !ok {
+				fail(w, 400, "Unknown application")
+				return
+			}
+			ttl := s.Catalog.LatestTTLSeconds()
+			if application == claude.ID {
+				ttl = s.Claude.LatestTTLSeconds()
+			}
+			reply(w, 200, map[string]int{"latest_ttl_seconds": ttl})
 		case "/admin/api/session":
 			reply(w, 200, map[string]string{"csrf": session.CSRF})
 		case "/admin/api/history":
@@ -380,7 +402,18 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, public string) {
 			fail(w, 400, "Invalid request")
 			return
 		}
-		if e := s.Catalog.SetTTL(input.TTL); e != nil {
+		application, ok := s.application(r.Header.Get("X-RedApp-Application"))
+		if !ok {
+			fail(w, 400, "Unknown application")
+			return
+		}
+		var e error
+		if application == claude.ID {
+			e = s.Claude.SetTTL(input.TTL)
+		} else {
+			e = s.Catalog.SetTTL(input.TTL)
+		}
+		if e != nil {
 			fail(w, 400, "TTL must be between 1 and 86400 seconds")
 			return
 		}
@@ -394,7 +427,19 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, public string) {
 			return
 		}
 		views := s.Downloads.Snapshot()
-		ids, unknown, e := s.Catalog.Candidates(input.Minimum, views)
+		application, ok := s.application(r.Header.Get("X-RedApp-Application"))
+		if !ok {
+			fail(w, 400, "Unknown application")
+			return
+		}
+		var ids map[string]bool
+		var unknown []string
+		var e error
+		if application == claude.ID {
+			ids, unknown, e = s.Claude.Candidates(input.Minimum, views)
+		} else {
+			ids, unknown, e = s.Catalog.Candidates(input.Minimum, views)
+		}
 		if e != nil {
 			fail(w, 400, "Invalid minimum version")
 			return
@@ -501,6 +546,11 @@ func (s *Server) status(public string) (map[string]any, error) {
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 	status := map[string]any{"name": "RedApp", "started": s.Started, "os": runtime.GOOS, "arch": runtime.GOARCH, "go": runtime.Version(), "goroutines": runtime.NumGoroutine(), "memory_bytes": mem.Alloc, "sampled_at": time.Now().UTC(), "resources": views, "versions": versions, "events": events, "counters": counters, "disk": map[string]any{"used_bytes": total, "logical_bytes": logical, "allocated_cache_bytes": allocatedCache, "allocated_temporary_bytes": allocatedTemp, "allocated_pending_bytes": allocatedPending, "cache_bytes": complete, "temporary_bytes": temp, "pending_bytes": pending, "other_bytes": total - allocatedCache - allocatedTemp - allocatedPending, "free_bytes": disk.Bavail * uint64(disk.Bsize)}, "public_base_url": public, "rates": s.DB.Rates(), "client_runtime_update_policy": "The enterprise installer suppresses the automatic-update marker; the CLI binary is unchanged. Control runtime public update checks through enterprise egress policy."}
+	claudeVersions, e := s.DB.VersionsFor(claude.ID)
+	if e != nil {
+		return nil, e
+	}
+	status["application_versions"] = map[string]map[string]string{"codex": versions, claude.ID: claudeVersions}
 	status["metrics"] = globalMetrics(status, s.Started)
 	return status, nil
 }

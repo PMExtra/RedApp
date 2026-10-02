@@ -1,7 +1,6 @@
 package codex
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -9,6 +8,7 @@ import (
 	"fmt"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/download"
+	"github.com/PMExtra/RedApp/internal/jsoncheck"
 	"github.com/PMExtra/RedApp/internal/store"
 	"io"
 	"net/http"
@@ -217,12 +217,8 @@ func (c *Catalog) fetch(v string, f *flight) {
 		if v != "latest" && c.db.Get("metadata", canonical, &prior) == nil {
 			m.Raw = prior.Raw
 			m.Release = prior.Release
-		} else {
-			e = c.db.Put("metadata", canonical, m)
 		}
-		if e == nil {
-			e = c.db.Seen(canonical)
-		}
+		e = c.db.PutVersion("metadata", canonical, m, "codex", canonical)
 		if e == nil && v == "latest" {
 			e = c.db.Put("metadata", "latest", m)
 		}
@@ -236,7 +232,7 @@ func (c *Catalog) fetch(v string, f *flight) {
 	close(f.done)
 }
 func (c *Catalog) Parse(body []byte, requested string) (Metadata, error) {
-	if e := uniqueJSON(body); e != nil {
+	if e := jsoncheck.Unique(body); e != nil {
 		return Metadata{}, e
 	}
 	var r Release
@@ -276,58 +272,6 @@ func (c *Catalog) Parse(body []byte, requested string) (Metadata, error) {
 	return Metadata{Raw: append(json.RawMessage(nil), body...), Release: r}, nil
 }
 
-// Reject duplicate keys at every object depth; encoding/json otherwise silently accepts the last value.
-func uniqueJSON(body []byte) error {
-	d := json.NewDecoder(bytes.NewReader(body))
-	d.UseNumber()
-	var value func(int) error
-	value = func(depth int) error {
-		if depth > 32 {
-			return errors.New("JSON nesting limit exceeded")
-		}
-		t, e := d.Token()
-		if e != nil {
-			return e
-		}
-		switch t {
-		case json.Delim('{'):
-			seen := map[string]bool{}
-			for d.More() {
-				key, e := d.Token()
-				if e != nil {
-					return e
-				}
-				k, ok := key.(string)
-				if !ok || seen[k] {
-					return errors.New("Duplicate JSON field")
-				}
-				seen[k] = true
-				if e = value(depth + 1); e != nil {
-					return e
-				}
-			}
-			_, e = d.Token()
-			return e
-		case json.Delim('['):
-			for d.More() {
-				if e = value(depth + 1); e != nil {
-					return e
-				}
-			}
-			_, e = d.Token()
-			return e
-		default:
-			return nil
-		}
-	}
-	if e := value(0); e != nil {
-		return e
-	}
-	if _, e := d.Token(); e != io.EOF {
-		return errors.New("Unexpected trailing JSON data")
-	}
-	return nil
-}
 func (c *Catalog) Authorize(ctx context.Context, v, name string) (download.Resource, error) {
 	if !assetPattern.MatchString(name) {
 		return download.Resource{}, errors.New("Invalid asset name")
@@ -362,6 +306,9 @@ func (c *Catalog) Candidates(min string, views []download.View) (map[string]bool
 	ids := map[string]bool{}
 	unknown := []string{}
 	for _, v := range views {
+		if v.Resource.Labels["app"] != "codex" {
+			continue
+		}
 		n, e := Compare(v.Resource.Labels["version"], min)
 		if e != nil {
 			unknown = append(unknown, v.Resource.Labels["version"])

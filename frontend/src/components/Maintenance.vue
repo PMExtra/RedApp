@@ -1,8 +1,17 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from "vue";
 import { api, bytes, type CleanupPreview } from "../api";
+import SelectMenu from "./SelectMenu.vue";
 import { t, type Message } from "../i18n";
 const emit = defineEmits<{ error: [unknown]; changed: [] }>();
+const application = ref("codex");
+const headers = () => ({ "X-RedApp-Application": application.value });
+watch(application, () => {
+  preview.value = undefined;
+  minimum.value = "";
+  message.value = undefined;
+  void load();
+});
 const ttl = ref<number>(),
   minimum = ref(""),
   preview = ref<CleanupPreview>(),
@@ -24,6 +33,7 @@ async function load() {
       "settings",
       undefined,
       controller.signal,
+      headers(),
     );
     if (!disposed) ttl.value = data.latest_ttl_seconds;
   } catch (error) {
@@ -49,7 +59,7 @@ async function run(action: (signal: AbortSignal) => Promise<void>) {
 }
 async function save() {
   await run(async (signal) => {
-    await api("settings", { latest_ttl_seconds: ttl.value }, signal);
+    await api("settings", { latest_ttl_seconds: ttl.value }, signal, headers());
     if (!disposed) message.value = "latest TTL saved";
   });
 }
@@ -62,6 +72,7 @@ async function plan() {
       "cleanup/preview",
       { minimum_version: requested },
       signal,
+      headers(),
     );
     if (!disposed && requested === minimum.value) {
       preview.value = result;
@@ -91,14 +102,27 @@ onUnmounted(() => {
 </script>
 <template>
   <div class="maintenance-stack">
+    <SelectMenu
+      v-model="application"
+      :label="t('Application')"
+      :disabled="busy || loading"
+      :options="[
+        { value: 'codex', label: 'Codex CLI' },
+        { value: 'claude-code', label: 'Claude Code' },
+      ]"
+    />
     <p v-if="message" class="notice" role="status">{{ t(message) }}</p>
     <section class="panel">
       <h2>{{ t("Metadata freshness") }}</h2>
       <p class="muted">
         {{
-          t(
-            "Only latest metadata expires automatically. Other valid versions remain cached.",
-          )
+          application === "claude-code"
+            ? t(
+                "latest and stable channels expire automatically. Signed version manifests remain cached.",
+              )
+            : t(
+                "Only latest metadata expires automatically. Other valid versions remain cached.",
+              )
         }}
       </p>
       <p v-if="loading" role="status">{{ t("Loading…") }}</p>
@@ -141,7 +165,7 @@ onUnmounted(() => {
           >{{ t("Minimum version to keep")
           }}<input
             v-model="minimum"
-            placeholder="0.150.0"
+            :placeholder="application === 'codex' ? '0.150.0' : '2.1.285'"
             required
             :disabled="busy && !!preview"
             @input="preview = undefined" /></label

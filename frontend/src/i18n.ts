@@ -26,6 +26,20 @@ watch(
   { immediate: true },
 );
 export const messages = {
+  Application: "应用",
+  "Install {name}": "安装 {name}",
+  "Install Claude Code": "安装 Claude Code",
+  "Anthropic’s coding agent for your terminal.": "Anthropic 的终端编程助手。",
+  "Installs latest. Use stable or a version to pin your installation.":
+    "默认安装 latest；可选择 stable 或指定版本。",
+  "Start claude through its managed launcher and follow your organization’s sign-in instructions.":
+    "通过受管理的启动入口运行 claude，并按组织要求登录。",
+  "The service verifies Anthropic’s signed manifest; the installer verifies the binary hash. The managed launcher disables official updates. Signing in and using Claude Code still requires its provider’s services.":
+    "服务验证 Anthropic 签名清单，安装器验证二进制摘要。受管理的启动入口会禁用官方更新；登录和使用 Claude Code 仍需访问其开发商服务。",
+  "Trust this HTTPS service. Run claude through its managed launcher; executing the version binary directly bypasses update control. Upgrade by rerunning this installer.":
+    "请使用可信的 HTTPS 服务，通过受管理的入口启动 claude；直接运行版本二进制会绕过更新控制。重新运行安装器即可升级。",
+  "latest and stable channels expire automatically. Signed version manifests remain cached.":
+    "latest 与 stable 渠道自动过期；签名版本清单持续缓存。",
   "Site appearance": "站点外观",
   "Public text for each language. Plain text only; the project link always points to RedApp.":
     "分别设置中英文公开文案。仅支持纯文本；项目来源链接固定指向 RedApp。",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/PMExtra/RedApp/internal/apps/claude"
 	"github.com/PMExtra/RedApp/internal/apps/codex"
 	"github.com/PMExtra/RedApp/internal/auth"
 	"github.com/PMExtra/RedApp/internal/distributor"
@@ -74,6 +75,7 @@ func run() error {
 	listen := flag.String("listen", env("REDAPP_LISTEN", ":8080"), "Listen address")
 	public := flag.String("public-url", env("REDAPP_PUBLIC_URL", ""), "Public service origin (empty: derive from request)")
 	upstream := flag.String("base-url", env("REDAPP_BASE_URL", "https://releases.openai.com/codex"), "Fixed upstream base URL")
+	claudeBase := flag.String("claude-base-url", env("REDAPP_CLAUDE_BASE_URL", claude.BaseURL), "Fixed Claude upstream base URL")
 	proxies := flag.String("trusted-proxies", env("REDAPP_TRUSTED_PROXIES", ""), "Trusted proxy CIDRs, comma-separated")
 	flag.Parse()
 	base, e := httpserver.PublicURL(*public)
@@ -101,7 +103,11 @@ func run() error {
 	if err := client.LoadProxy(db); err != nil {
 		return err
 	}
-	manager, e := download.New(guard.Directory, db, client)
+	claudeClient, e := client.Sibling(*claudeBase)
+	if e != nil {
+		return e
+	}
+	manager, e := download.NewApplications(guard.Directory, db, map[string]*distributor.Client{"codex": client, claude.ID: claudeClient})
 	if e != nil {
 		return e
 	}
@@ -116,7 +122,7 @@ func run() error {
 	if e != nil {
 		return e
 	}
-	handler := &httpserver.Server{Version: version, DB: db, Catalog: codex.New(db, client), Downloads: manager, Auth: a, Proxy: proxy, Upstream: client, History: metricHistory, Public: base, Dir: guard.Directory, Started: time.Now().UTC()}
+	handler := &httpserver.Server{Version: version, DB: db, Catalog: codex.New(db, client), Claude: claude.New(db, claudeClient), Downloads: manager, Auth: a, Proxy: proxy, Upstream: client, History: metricHistory, Public: base, Dir: guard.Directory, Started: time.Now().UTC()}
 	server := &http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 10 * time.Minute, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

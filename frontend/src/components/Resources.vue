@@ -1,13 +1,29 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { bytes, type Status } from "../api";
 import { localDate, stateLabel, t } from "../i18n";
 import SelectMenu from "./SelectMenu.vue";
 const props = defineProps<{ status: Status }>();
+const application = ref("codex");
 const version = ref("");
+const versions = computed(
+  () =>
+    props.status.application_versions?.[application.value] ||
+    (application.value === "codex" ? props.status.versions : {}),
+);
+const counterPrefix = computed(() =>
+  application.value === "codex"
+    ? "version:"
+    : "app:" + application.value + ":version:",
+);
+watch(application, () => {
+  version.value = "";
+});
 const resources = computed(() =>
   props.status.resources.filter(
-    (item) => !version.value || item.Resource.Labels.version === version.value,
+    (item) =>
+      (item.Resource.Labels.app || "codex") === application.value &&
+      (!version.value || item.Resource.Labels.version === version.value),
   ),
 );
 </script>
@@ -15,6 +31,14 @@ const resources = computed(() =>
   <section class="panel">
     <div class="section-heading">
       <h2>{{ t("Versions and resources") }}</h2>
+      <SelectMenu
+        v-model="application"
+        :label="t('Application')"
+        :options="[
+          { value: 'codex', label: 'Codex CLI' },
+          { value: 'claude-code', label: 'Claude Code' },
+        ]"
+      />
       <div class="inline-label">
         <span>{{ t("Version") }}</span
         ><SelectMenu
@@ -22,7 +46,7 @@ const resources = computed(() =>
           :label="t('Version')"
           :options="[
             { value: '', label: t('All versions') },
-            ...Object.keys(status.versions).map((name) => ({
+            ...Object.keys(versions).map((name) => ({
               value: name,
               label: name,
             })),
@@ -31,7 +55,7 @@ const resources = computed(() =>
       </div>
     </div>
     <div class="version-list">
-      <article v-for="(firstSeen, name) in status.versions" :key="name">
+      <article v-for="(firstSeen, name) in versions" :key="name">
         <button
           class="version-button secondary"
           :aria-pressed="version === name"
@@ -43,12 +67,12 @@ const resources = computed(() =>
           <span>{{ t("First seen") }} {{ localDate(firstSeen) }}</span
           ><small class="muted">{{
             t("{count} artifact requests", {
-              count: status.counters["version:" + name + ":requests"] || 0,
+              count: status.counters[counterPrefix + name + ":requests"] || 0,
             })
           }}</small>
         </div>
       </article>
-      <p v-if="!Object.keys(status.versions).length" class="empty">
+      <p v-if="!Object.keys(versions).length" class="empty">
         {{ t("No versions discovered yet. Downloads are fetched on demand.") }}
       </p>
     </div>

@@ -44,7 +44,7 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         password_match = re.search(r"Initial admin password: ([0-9a-f]+)", text)
         assert password_match, "未输出初始密码"
         password = password_match.group(1)
-        for path in ["/", "/apps/codex"]:
+        for path in ["/", "/apps/codex", "/apps/claude-code"]:
             with urllib.request.urlopen(base + path) as response:
                 assert response.status == 200 and "text/html" in response.headers["Content-Type"]
                 assert "script-src 'self'" in response.headers["Content-Security-Policy"]
@@ -56,7 +56,8 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
             assert public_info["version"] == version_output.split()[1]
         with urllib.request.urlopen(base + "/api/apps") as response:
             applications = json.load(response)
-            assert len(applications) == 1 and applications[0]["id"] == "codex"
+            assert [app["id"] for app in applications] == ["codex", "claude-code"]
+            assert all(set(app) == {"id", "name", "summary", "origin", "icon"} for app in applications)
             assert applications[0]["origin"] == base
             assert set(applications[0]) == {"id", "name", "summary", "origin", "icon"}
         with urllib.request.urlopen(base + applications[0]["icon"]) as response:
@@ -97,6 +98,21 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
             assert json.load(response)["ok"]
         with opener.open(base + "/admin/api/settings") as response:
             assert json.load(response)["latest_ttl_seconds"] == 120
+        claude_settings = urllib.request.Request(base + "/admin/api/settings", data=b'{"latest_ttl_seconds":180}', headers={"Content-Type": "application/json", "X-CSRF-Token": csrf, "X-RedApp-Application": "claude-code"})
+        with opener.open(claude_settings) as response:
+            assert json.load(response)["ok"]
+        for app, expected in [("codex", 120), ("claude-code", 180)]:
+            request = urllib.request.Request(base + "/admin/api/settings", headers={"X-RedApp-Application": app})
+            with opener.open(request) as response:
+                assert json.load(response)["latest_ttl_seconds"] == expected
+            request = urllib.request.Request(base + "/admin/api/cleanup/preview", data=b'{"minimum_version":"2.1.285"}', headers={"Content-Type":"application/json", "X-CSRF-Token":csrf, "X-RedApp-Application":app})
+            with opener.open(request) as response:
+                assert response.status == 200
+        try:
+            opener.open(urllib.request.Request(base + "/admin/api/settings", headers={"X-RedApp-Application":"unknown"}))
+            raise AssertionError("unknown application accepted")
+        except urllib.error.HTTPError as error:
+            assert error.code == 400
         site_settings = public_info["site"]
         assert site_settings["subtitle"]["en"] == "Application Redistribution Platform"
         assert site_settings["subtitle"]["zh-CN"] == "应用再分发平台"
@@ -122,6 +138,11 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         with opener.open(base + "/install.sh") as response:
             script = response.read().decode()
             assert base in script and "https://github.com" not in script
+        for name in ["install.sh", "install.ps1"]:
+            with opener.open(base + "/claude-code/" + name) as response:
+                script = response.read().decode()
+                assert base + "/claude-code" in script and "@REDAPP_BASE_URL@" not in script
+                assert "https://downloads.claude.ai" not in script
         process.terminate()
         assert process.wait(timeout=20) == 0, "正常停止失败"
         log.close()

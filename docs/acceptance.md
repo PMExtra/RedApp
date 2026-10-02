@@ -243,3 +243,53 @@ Chromium 151.0.7922.173 / Playwright 1.62.1，English / 简体中文 × 1366×90
 覆盖公共目录/安装页、登录/概览/资源/事件/设置、账号和密码交互、历史图表、四处下拉框键盘焦点/重复开关/外部关闭、弹窗内 Escape 分层关闭、精确剪贴板命令、非安全上下文隐藏复制、流量压缩标签与固定源码链接。双语标题/副标题/声明通过设置页保存，重复提交只发送一次；HTML 形状文本按字面显示，真实服务进程重启后保持。公共顶栏/正文/页脚对齐测量和整页无横向溢出检查均通过。
 
 已审阅中英公共页，以及后台概览、站点设置、资源、事件、下拉框和历史弹窗的代表截图。仅使用测试数据，截图前检查密码输入为空；临时数据库随脚本退出删除。全页截图先回到页面顶部，避免滚动时固定元素的捕获残影。验证范围是 Chromium 与窄屏视口，不等同于真实移动设备/触屏或屏幕阅读器认证；生产上游、制品许可和 Windows/macOS 安装限制保持不变。
+
+## v0.5.0 Claude Code 与每日安装器维护
+
+2026-10-02 本地 CLI 验证，尚未推送或发布；v0.4.1 的镜像/浏览器结果不作为本轮通过证据。下表为新增验收范围，原 A1–A24 及历史版本记录保持原样。共 **20 项：14 PASS，5 UNVERIFIED，1 EXEMPT，0 已知 FAIL**。
+
+| 编号 | 验收项 | 结果 | 证据与边界 |
+| --- | --- | --- | --- |
+| V501 | 五份原始材料身份及分离签名 | PASS | 逐份字节数/SHA256 和仓库副本一致；独立 GPG 验签、固定指纹；Go 验签接受真实 2.1.285 fixture |
+| V502 | 签名先于授权、算法/密钥边界 | PASS | 原文变动、签名篡改、空签名、不同公钥、SHA256 算法及额外签名包拒绝，不回源制品 |
+| V503 | 清单资源白名单 | PASS | 版本、平台、文件名、大小、摘要、重复 JSON 键、遍历/查询拒绝；未签名压缩资源返回 404 |
+| V504 | 渠道 TTL、惰性加载及原字节持久化 | PASS | 并发 singleflight、latest/stable 独立、TTL 保存、过期渠道失败不提供旧值；规范版本不自动过期；损坏清单重新验签 |
+| V505 | 双应用共享下载及资源隔离 | PASS | 两假上游同名版本、各 20 并发读者各一次回源；缓存身份、来源/应用核对、共享读者限额；全量既有 Range/哈希/代际测试保持通过 |
+| V506 | 清理、重启及旧快照保护 | PASS | 一个应用旧读者排空、新代与另一应用不受影响；重启仍复用两应用完整缓存；已完成旧任务重放被拒绝 |
+| V507 | 旧 SQLite 兼容及 first_seen 原子性 | PASS | schema 1→2 保留 Codex 历史/资源 ID，重复打开不重写首次时间；迁移失败回滚；历史插入故障后重启无半份清单 |
+| V508 | 两应用共享代理且边界独立 | PASS | 两轮代理切换都被 sibling 使用；固定 origin/path 交叉访问拒绝，既有 TLS/代理凭据测试通过 |
+| V509 | HTTP 与真实进程管理 API | PASS | 原始 signed manifest/signature 原样返回；两个安装器注入请求 origin；未知应用拒绝，两个 TTL/清理预览隔离；真实启动、登录/CSRF、全部静态资源、重启与健康检查通过 |
+| V510 | 中英文公共页与管理筛选 | PASS（DOM） | 前端 13 个文件/33 项测试；Claude 无 Codex 图标、命令/更新边界双语一致；同版本历史/资源/计数隔离，切应用清空旧清理预览 |
+| V511 | Claude Shell 安装行为 | PASS（无害桩） | 64 场景：模拟 7 种平台/架构，默认/latest/stable/指定版本、jq/内置解析、正常/重复/升级；新终端设置环境、参数/退出码透传；摘要失败保留旧入口，无重定向和公网回退，冲突/临时清理通过 |
+| V512 | 原文、patch、generated 与 CLI 更新失败保护 | PASS | 两应用逐字节严格 patch 一致；Codex 25 场景回归；Claude 检查模式不改目录，错误摘要和上下文冲突拒绝 apply；隔离副本成功执行原子 apply 并保留文件集合；官方原文保持不变 |
+| V513 | 每日检测/隔离/发布失败门禁 | PASS（本地 fixture） | 13 个维护测试：无变化/变化、四源错误汇总、基线身份、HTML/重定向/格式、严格 patch、测试/解析器失败、输出篡改、包摘要/白名单、人工分支/非草稿/main 前进拒绝、普通快进与幂等；本地 bare git + 假 PR API |
+| V514 | 全量格式、静态检查、race 与构建 | PASS | gofmt、vet、全量 race 10 个含测试包、前端类型与生产构建、Linux/amd64 静态二进制、数据目录 CLI；新增 workflow actionlint 通过 |
+| V515 | PowerShell 解析与 Windows 原生安装 | UNVERIFIED | 静态出口/入口检查通过；本地无 pwsh；已加入 Windows CI 的 pwsh / Windows PowerShell 5.1 原生离线安装测试，尚待实际运行，不提前标记通过 |
+| V516 | 真实 Claude 二进制与生产分发链 | UNVERIFIED | 未取得/执行官方二进制，未验证其实际 install/update/doctor、版本/渠道实时状态和生产端到端；无害桩只证明安装器控制流和环境传递 |
+| V517 | macOS 原生运行、权限和签名 | UNVERIFIED | 平台模拟不代表 macOS 实机通过；未改变二进制，未执行真实原生签名/权限验证 |
+| V518 | 新容器/双架构及自动维护线上运行 | UNVERIFIED | 本轮未完成新 Docker/ARM64 镜像验证；维护容器未构建成功，线上 schedule/draft PR 权限未运行；验证器强制要求 PowerShell，不能静默跳过 |
+| V519 | 截图与视觉验收 | EXEMPT | 从本轮起按项目决定免除截图/视觉发布门禁；继续非 GUI DOM/CLI 自动化，不声称通过真实辅助技术认证 |
+| V520 | Claude 材料公开再分发许可 | UNVERIFIED | 原商业许可说明和来源已保留；不是 RedApp MIT，未代用户接受条款，公开发布前仍需确认边界 |
+
+实际执行（通过）：
+
+```sh
+make check test build frontend-test
+# gofmt / vet / 全量 go test -race ./... -count=1 -timeout=120s
+# Codex 25 场景与失败保护，Claude 64 场景，维护工具测试
+# Vue 类型检查、13 文件 / 33 DOM 测试、嵌入资源与静态二进制
+python3 scripts/test-update-claude-installers.py
+python3 scripts/test-installer-maintenance.py
+python3 scripts/test-data-cli.py
+python3 scripts/test-http-cli.py
+# 补充故障/签名/重启用例后重跑受影响包：
+go test -race ./internal/apps/claude ./internal/download -count=1 -timeout=120s
+make check
+# 安装器生成一致性包含于上述维护测试，不访问官方源
+bash -n installers/claude-code/generated/install.sh
+sh -n installers/codex/generated/install.sh
+actionlint .github/workflows/installer-updates.yml
+git diff --check
+```
+
+首次构建仍读取未修改的 VERSION=0.4.1，随后以 `make VERSION=0.5.0-dev REVISION=<本地基线>-dirty build` 标识本地开发二进制；发布准备已将 VERSION 更新为 0.5.0，标签与镜像须等待精确提交 CI 通过。CLI 假服务只监听 loopback，临时凭据/数据库不入库。缺乏上述实机、真实二进制、许可与线上验证证据时，不把工作树视为已发布或生产验收完成。

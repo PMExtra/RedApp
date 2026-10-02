@@ -1,6 +1,8 @@
 package httpserver
 
 import (
+	"github.com/PMExtra/RedApp/internal/apps"
+	"github.com/PMExtra/RedApp/internal/apps/claude"
 	app "github.com/PMExtra/RedApp/internal/apps/codex"
 	"github.com/PMExtra/RedApp/internal/site"
 	"io"
@@ -30,7 +32,7 @@ func (s *Server) publicPage(w http.ResponseWriter, r *http.Request, origin strin
 		return
 	}
 	if r.URL.Path == "/api/apps" {
-		reply(w, http.StatusOK, []app.PublicInfo{app.PublicApplication(origin)})
+		reply(w, http.StatusOK, []apps.PublicInfo{app.PublicApplication(origin), claude.PublicApplication(origin)})
 		return
 	}
 	if r.URL.Path == "/apps/codex/icon.svg" {
@@ -39,7 +41,7 @@ func (s *Server) publicPage(w http.ResponseWriter, r *http.Request, origin strin
 		io.WriteString(w, app.OpenAISymbol())
 		return
 	}
-	if r.URL.Path != "/" && r.URL.Path != "/apps/codex" {
+	if r.URL.Path != "/" && r.URL.Path != "/apps/codex" && r.URL.Path != "/apps/claude-code" {
 		fail(w, http.StatusNotFound, "Page not found")
 		return
 	}

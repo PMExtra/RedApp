@@ -34,9 +34,27 @@ func Open(dir string) (*Store, error) {
 	}
 	var version int
 	err = db.QueryRow("SELECT version FROM schema_version").Scan(&version)
-	if err != nil || version != 1 {
+	if err != nil || (version != 1 && version != 2) {
 		db.Close()
 		return nil, fmt.Errorf("Unsupported database schema %d", version)
+	}
+	if version == 1 {
+		tx, e := db.Begin()
+		if e == nil {
+			_, e = tx.Exec(`ALTER TABLE versions RENAME TO versions_v1;
+CREATE TABLE versions(app TEXT NOT NULL,version TEXT NOT NULL,first_seen TEXT NOT NULL,PRIMARY KEY(app,version));
+INSERT INTO versions SELECT 'codex',version,first_seen FROM versions_v1;
+DROP TABLE versions_v1;
+UPDATE schema_version SET version=2;`)
+			if e == nil {
+				e = tx.Commit()
+			}
+			tx.Rollback()
+		}
+		if e != nil {
+			db.Close()
+			return nil, fmt.Errorf("Migrate application history: %w", e)
+		}
 	}
 	return &Store{DB: db, rates: rates{started: time.Now()}}, nil
 }
@@ -54,6 +72,29 @@ func (s *Store) Get(kind, id string, v any) error {
 		return e
 	}
 	return json.Unmarshal(b, v)
+}
+
+// PutVersion commits trusted metadata and its first-seen history together.
+func (s *Store) PutVersion(kind, id string, v any, app, version string) error {
+	if app == "" || version == "" {
+		return fmt.Errorf("Application and version are required")
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("INSERT INTO records VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET body=excluded.body", kind, id, b); err != nil {
+		return err
+	}
+	if _, err = tx.Exec("INSERT OR IGNORE INTO versions VALUES(?,?,?)", app, version, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Store) Delete(kind, id string) error {
 	_, e := s.DB.Exec("DELETE FROM records WHERE kind=? AND id=?", kind, id)
@@ -76,11 +117,20 @@ func (s *Store) List(kind string) ([]json.RawMessage, error) {
 	return out, rows.Err()
 }
 func (s *Store) Seen(v string) error {
-	_, e := s.DB.Exec("INSERT OR IGNORE INTO versions VALUES(?,?)", v, time.Now().UTC().Format(time.RFC3339Nano))
+	return s.SeenFor("codex", v)
+}
+func (s *Store) SeenFor(app, v string) error {
+	if app == "" || v == "" {
+		return fmt.Errorf("Application and version are required")
+	}
+	_, e := s.DB.Exec("INSERT OR IGNORE INTO versions VALUES(?,?,?)", app, v, time.Now().UTC().Format(time.RFC3339Nano))
 	return e
 }
 func (s *Store) Versions() (map[string]string, error) {
-	rows, e := s.DB.Query("SELECT version,first_seen FROM versions")
+	return s.VersionsFor("codex")
+}
+func (s *Store) VersionsFor(app string) (map[string]string, error) {
+	rows, e := s.DB.Query("SELECT version,first_seen FROM versions WHERE app=?", app)
 	if e != nil {
 		return nil, e
 	}

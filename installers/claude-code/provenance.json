@@ -1,0 +1,29 @@
+{
+  "retrieved_at": "2026-10-02",
+  "source": "User-supplied original official installer materials; byte identity verified locally",
+  "verified_manifest_version": "2.1.285",
+  "signing_fingerprint": "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE",
+  "auto_update_policy": "unmodified_binary_managed_launcher_DISABLE_UPDATES_1",
+  "files": {
+    "install.sh": {
+      "bytes": 9704,
+      "sha256": "3a68d3406cf674e17bed1733a4dcf37805e2e47d87417700007d7e1aa766a944",
+      "source": "https://claude.ai/install.sh"
+    },
+    "install.ps1": {
+      "bytes": 3189,
+      "sha256": "cd17c6b555f761d60373659824bf805e1510538226e4c7028e19d7494937a333",
+      "source": "https://claude.ai/install.ps1"
+    },
+    "claude-code.asc": {
+      "bytes": 1688,
+      "sha256": "bd70a5e4a268002704024ceba7f8446024114e94f3f0bdd11c23a9e592be81c6",
+      "source": "https://downloads.claude.ai/keys/claude-code.asc"
+    },
+    "LICENSE.md": {
+      "bytes": 150,
+      "sha256": "728158fd1037143fad6907e8fa34804177e598b7326519503fe83cafdef849e6",
+      "source": "https://github.com/anthropics/claude-code/blob/main/LICENSE.md"
+    }
+  }
+}

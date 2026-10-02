@@ -1,0 +1,83 @@
+name: Check official installers
+
+on:
+  schedule:
+    - cron: '23 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: official-installer-update
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    if: github.repository == 'PMExtra/RedApp'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+      baseline: ${{ steps.check.outputs.baseline }}
+      sha256: ${{ steps.bundle.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Compare all official originals with main
+        id: check
+        run: python3 scripts/installer_maintenance.py prepare .installer-prepared
+      - name: Build trusted validation tools
+        if: steps.check.outputs.changed == 'true'
+        run: docker build --pull -t installer-validator -f .github/installer-check/Dockerfile .github/installer-check
+      - name: Apply patches and test without network or credentials
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/installer-validated"
+          guard=$(cat /proc/sys/kernel/random/uuid)
+          echo "::stop-commands::$guard"
+          trap 'echo "::$guard::"' EXIT
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 256 --memory 1g \
+            --user "$(id -u):$(id -g)" --tmpfs /tmp:rw,exec,size=512m \
+            -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 \
+            -v "$GITHUB_WORKSPACE:/src:ro" -v "$RUNNER_TEMP/installer-validated:/out:rw" \
+            installer-validator python3 /src/scripts/installer_maintenance.py validate /src/.installer-prepared /out
+      - name: Independently check and package allowed files
+        id: bundle
+        if: steps.check.outputs.changed == 'true'
+        run: python3 scripts/installer_maintenance.py package .installer-prepared "$RUNNER_TEMP/installer-validated" installer-update.zip
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.check.outputs.changed == 'true'
+        with:
+          name: installer-update
+          path: installer-update.zip
+          retention-days: 3
+          if-no-files-found: error
+
+  draft-pr:
+    needs: validate
+    if: needs.validate.outputs.changed == 'true' && github.repository == 'PMExtra/RedApp'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.validate.outputs.baseline }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: installer-update
+          path: ${{ runner.temp }}/installer-bundle
+      - name: Publish allowed files as an idempotent draft PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE_SHA256: ${{ needs.validate.outputs.sha256 }}
+          BASELINE_SHA: ${{ needs.validate.outputs.baseline }}
+        run: python3 scripts/publish-installer-update.py "$RUNNER_TEMP/installer-bundle/installer-update.zip" --sha256 "$BUNDLE_SHA256" --baseline "$BASELINE_SHA"

@@ -4,3 +4,8 @@
 *.part
 *.blob
 /frontend/node_modules/
+
+# Local installer validation work
+__pycache__/
+.installer-prepared/
+installer-update.zip

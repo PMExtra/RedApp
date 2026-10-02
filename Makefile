@@ -9,11 +9,15 @@ test:
 	go test -race ./... -count=1 -timeout=120s
 	python3 scripts/test-installers.py
 	python3 scripts/test-update-installers.py
+	python3 scripts/test-claude-installers.py
+	python3 scripts/test-update-claude-installers.py
+	python3 scripts/test-installer-maintenance.py
 check:
-	test -z "$$(gofmt -l cmd internal installers/codex/assets.go)"
+	test -z "$$(gofmt -l cmd internal installers)"
 	go vet ./...
 installers:
 	python3 scripts/update-installers.py --source installers/codex/upstream
+	python3 scripts/update-claude-installers.py --source installers/claude-code/upstream
 docker:
 	docker build -t redapp:local .
 

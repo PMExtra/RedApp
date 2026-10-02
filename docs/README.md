@@ -4,7 +4,8 @@
 
 Use the quick starts to run the service and install Codex on clients. The references below cover advanced operation and development; the existing detailed reference documents are in Chinese.
 
-- [Roadmap](roadmap.md): current v0.4.1 scope and paused v0.5.0 work.
+- [Roadmap](roadmap.md): released v0.4.1 scope and unreleased v0.5.0 implementation.
+- [Claude Code unreleased v0.5.0 implementation](claude-code-v0.5.0.md): administrator installation, signed metadata, application isolation, and verification gates.
 - [v0.4.1 site and interaction changes](frontend-v0.4.1.md): bilingual site settings, dropdown accessibility, footer behavior, and traffic accounting boundaries.
 - [v0.4.0 frontend design](frontend-v0.4.0.md): unified layout, localization and interaction requirements.
 
@@ -17,6 +18,8 @@ Use the quick starts to run the service and install Codex on clients. The refere
 - [Validation and limitations](acceptance.md): the acceptance matrix, concurrency/failure tests, crash windows, and remaining platform/upstream verification gates.
 
 `REDAPP_PUBLIC_URL` is optional and defaults to empty. An explicit value must be an origin without a subpath, query, or credentials, and requests must use its exact Host. Otherwise the origin is derived per request; only configured trusted proxies can supply forwarded host/scheme. Host syntax validation does not establish domain trust. For production, use HTTPS at the reverse proxy; download endpoints do not require an admin session, so network access controls remain necessary. See the operations reference for configuration details rather than copying its configuration table here.
+
+Claude Code installation and update control: [unreleased v0.5.0 guide](claude-code-v0.5.0.md). Daily official-script checks and draft PRs: [installer maintenance](installers-maintenance.md#每日官方脚本检查与草稿-pr).
 
 ## Review before installing
 

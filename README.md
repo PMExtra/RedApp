@@ -2,7 +2,7 @@
 
 [Chinese](README.zh-CN.md)
 
-RedApp helps IT administrators distribute **Codex CLI** through an internal download endpoint. It caches downloads on demand and provides an admin page for managing cached versions, disk usage, and traffic.
+RedApp helps IT administrators distribute **Codex CLI** through an internal download endpoint. The unreleased v0.5.0 working tree also adds [Claude Code](docs/claude-code-v0.5.0.md); released v0.4.1 images support Codex only. It caches downloads on demand and provides an admin page for managing cached versions, disk usage, and traffic.
 
 ## Quick start
 

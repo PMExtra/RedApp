@@ -14,6 +14,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/store"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -81,7 +82,7 @@ type Manager struct {
 	mu         sync.Mutex
 	dir        string
 	db         *store.Store
-	upstream   *distributor.Client
+	upstreams  map[string]*distributor.Client
 	current    map[string]*Generation
 	all        map[string]*Generation
 	ctx        context.Context
@@ -97,8 +98,20 @@ type Manager struct {
 }
 
 func New(dir string, db *store.Store, c *distributor.Client) (*Manager, error) {
+	return NewApplications(dir, db, map[string]*distributor.Client{"": c, "codex": c})
+}
+
+// NewApplications owns one cache and one set of global limits across fixed upstreams.
+func NewApplications(dir string, db *store.Store, clients map[string]*distributor.Client) (*Manager, error) {
+	upstreams := make(map[string]*distributor.Client, len(clients))
+	for app, client := range clients {
+		if client == nil {
+			return nil, errors.New("Missing application upstream")
+		}
+		upstreams[app] = client
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m := &Manager{dir: dir, db: db, upstream: c, current: map[string]*Generation{}, all: map[string]*Generation{}, ctx: ctx, cancel: cancel, maxBytes: 4 << 30, maxReaders: 512, maxWriters: 16}
+	m := &Manager{dir: dir, db: db, upstreams: upstreams, current: map[string]*Generation{}, all: map[string]*Generation{}, ctx: ctx, cancel: cancel, maxBytes: 4 << 30, maxReaders: 512, maxWriters: 16}
 	if e := os.MkdirAll(filepath.Join(dir, "objects"), 0700); e != nil {
 		cancel()
 		return nil, e
@@ -304,6 +317,17 @@ type Reader struct {
 }
 
 func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error) {
+	if r.ID != Identity(r.Source, r.Hash) {
+		return nil, false, errors.New("Resource identity does not match source and digest")
+	}
+	client := m.upstreams[r.Labels["app"]]
+	if client == nil {
+		return nil, false, errors.New("Unknown resource application")
+	}
+	u, e := url.Parse(r.Source)
+	if e != nil || client.Validate(u) != nil {
+		return nil, false, errors.New("Resource does not belong to application upstream")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
@@ -317,6 +341,9 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 		return nil, false, errors.New("Client limit exceeded")
 	}
 	g := m.current[r.ID]
+	if g != nil && (g.Resource.Source != r.Source || g.Resource.Hash != r.Hash || g.Resource.Labels["app"] != r.Labels["app"]) {
+		return nil, false, errors.New("Cached resource application or identity does not match")
+	}
 	if g != nil && g.Retired {
 		if e := m.db.Delete("current", r.ID); e != nil {
 			return nil, false, e
@@ -505,7 +532,11 @@ func (m *Manager) attempt(g *Generation) error {
 			headers.Set("If-Range", etag)
 		}
 	}
-	resp, e := m.upstream.Get(m.ctx, g.Resource.Source, headers)
+	client := m.upstreams[g.Resource.Labels["app"]]
+	if client == nil {
+		return errors.New("Unknown persisted resource application")
+	}
+	resp, e := client.Get(m.ctx, g.Resource.Source, headers)
 	if e != nil {
 		return e
 	}

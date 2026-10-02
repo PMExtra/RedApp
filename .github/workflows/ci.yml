@@ -75,3 +75,26 @@ jobs:
         run: |
           test "$(docker run --rm --network none redapp:ci version)" = "RedApp $RELEASE_VERSION (commit $GITHUB_SHA)"
           sh scripts/test-docker-local.sh
+
+  windows-installers:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Parse both enterprise PowerShell installers
+        shell: pwsh
+        run: |
+          foreach ($file in @('installers/codex/generated/install.ps1', 'installers/claude-code/generated/install.ps1')) {
+            $errors = $null; $tokens = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $file), [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count) { $errors | Write-Error; exit 1 }
+          }
+      - name: Test Claude installation with harmless Windows executable
+        shell: pwsh
+        run: |
+          python scripts/test-claude-installers-windows.py --shell pwsh
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python scripts/test-claude-installers-windows.py --shell powershell.exe
+          exit $LASTEXITCODE

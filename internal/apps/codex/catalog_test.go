@@ -176,7 +176,7 @@ func TestVersionOrderingAndCleanupUnknown(t *testing.T) {
 			t.Fatal(v)
 		}
 	}
-	ids, unknown, e := cat.Candidates("0.150.0", []download.View{{Generation: download.Generation{Resource: download.Resource{ID: "old", Labels: map[string]string{"version": "0.149.9"}}}}, {Generation: download.Generation{Resource: download.Resource{ID: "unknown", Labels: map[string]string{"version": "nonsense"}}}}})
+	ids, unknown, e := cat.Candidates("0.150.0", []download.View{{Generation: download.Generation{Resource: download.Resource{ID: "old", Labels: map[string]string{"app": "codex", "version": "0.149.9"}}}}, {Generation: download.Generation{Resource: download.Resource{ID: "unknown", Labels: map[string]string{"app": "codex", "version": "nonsense"}}}}})
 	if e != nil || !ids["old"] || ids["unknown"] || len(unknown) != 1 {
 		t.Fatal(fmt.Sprint(ids, unknown, e))
 	}
