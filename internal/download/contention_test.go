@@ -18,7 +18,7 @@ func Test100SimultaneousFirstAcquisitionsCreateOneWriter(t *testing.T) {
 	var upstream atomic.Int32
 	c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { upstream.Add(1); <-release; w.Write(data) }))
 	m, _, _ := setup(t, c)
-	resource := resource(c, data)
+	resource := authorizedResource(t, m, c, data)
 	start := make(chan struct{})
 	ready := make(chan struct{}, 100)
 	failures := make(chan error, 100)

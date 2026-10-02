@@ -6,6 +6,7 @@ it("keeps secrets hidden and sends explicit preserve/replace/clear actions", asy
     ok: true,
     status: 200,
     json: async () => ({
+      revision: 0,
       server: "http://proxy.example:3128",
       has_credentials: true,
       has_password: true,

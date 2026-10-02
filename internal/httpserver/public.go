@@ -1,56 +1,83 @@
 package httpserver
 
 import (
-	"github.com/PMExtra/RedApp/internal/apps"
-	"github.com/PMExtra/RedApp/internal/apps/claude"
-	app "github.com/PMExtra/RedApp/internal/apps/codex"
-	"github.com/PMExtra/RedApp/internal/site"
-	"io"
-	"io/fs"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"runtime"
+	"strings"
+
+	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/internal/config"
+	"github.com/PMExtra/RedApp/internal/site"
 )
 
-func (s *Server) publicPage(w http.ResponseWriter, r *http.Request, origin string) {
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'")
-	if r.Method != http.MethodGet {
-		fail(w, http.StatusMethodNotAllowed, "Method not allowed")
+func (s *Server) publicApplications(origin string) []map[string]any {
+	out := make([]map[string]any, 0, len(s.Registry.Entries()))
+	for _, e := range s.Registry.Entries() {
+		d := e.Descriptor
+		root := origin + "/" + d.ID
+		icon := ""
+		if d.Icon != "" {
+			icon = "/" + d.ID + "/" + d.Icon
+		}
+		out = append(out, map[string]any{"id": d.ID, "name": d.Name, "publisher": d.Publisher, "summary": d.Summary, "origin": root, "detail_url": "/" + d.ID, "distribution_url": root, "icon": icon, "channels": d.Channels, "installers": publicInstallers(d.Installers), "update_policy": d.UpdatePolicy})
+	}
+	return out
+}
+func publicInstallers(items []application.Installer) []map[string]string {
+	out := make([]map[string]string, 0, len(items))
+	for _, item := range items {
+		label := "Shell"
+		if item.Shell == "powershell" {
+			label = "PowerShell"
+		}
+		out = append(out, map[string]string{"file": item.File, "shell": item.Shell, "runner": item.Shell, "label": label})
+	}
+	return out
+}
+func (s *Server) publicAPI(w http.ResponseWriter, r *http.Request, publicView config.PublicView) {
+	if r.Method != "GET" {
+		fail(w, 405, "Method not allowed")
 		return
 	}
-	if r.URL.Path == "/api/info" {
+	if !queryAllowed(r) {
+		fail(w, 400, "Invalid query")
+		return
+	}
+	public := publicView.EffectiveURL
+	apps := s.publicApplications(public)
+	switch r.URL.Path {
+	case "/api/bootstrap":
+		settings, err := site.LoadSnapshot(s.DB)
+		if err != nil {
+			fail(w, 503, "Site settings unavailable")
+			return
+		}
 		version := s.Version
 		if version == "" {
 			version = "dev"
 		}
-		settings, err := site.Load(s.DB)
-		if err != nil {
-			fail(w, 503, "Site settings are unavailable")
-			return
+		publicRevision := publicView.Revision
+		identity, _ := json.Marshal([]any{version, settings.Revision, publicRevision, public, apps})
+		digest := sha256.Sum256(identity)
+		reply(w, 200, map[string]any{"version": version, "os": runtime.GOOS, "arch": runtime.GOARCH, "site": settings.Settings, "apps": apps, "public_origin": public, "revision": hex.EncodeToString(digest[:])})
+		return
+	case "/api/apps":
+		reply(w, 200, apps)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/apps/") {
+		id := strings.TrimPrefix(r.URL.Path, "/api/apps/")
+		for _, entry := range apps {
+			if entry["id"] == id {
+				reply(w, 200, entry)
+				return
+			}
 		}
-		reply(w, http.StatusOK, map[string]any{"version": version, "os": runtime.GOOS, "arch": runtime.GOARCH, "site": settings})
+		problem(w, 404, "APPLICATION_NOT_FOUND", "Application not found")
 		return
 	}
-	if r.URL.Path == "/api/apps" {
-		reply(w, http.StatusOK, []apps.PublicInfo{app.PublicApplication(origin), claude.PublicApplication(origin)})
-		return
-	}
-	if r.URL.Path == "/apps/codex/icon.svg" {
-		w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
-		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
-		io.WriteString(w, app.OpenAISymbol())
-		return
-	}
-	if r.URL.Path != "/" && r.URL.Path != "/apps/codex" && r.URL.Path != "/apps/claude-code" {
-		fail(w, http.StatusNotFound, "Page not found")
-		return
-	}
-	assets, _ := fs.Sub(web, "web")
-	body, err := fs.ReadFile(assets, "index.html")
-	if err != nil {
-		fail(w, http.StatusServiceUnavailable, "Page is unavailable")
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(body)
+	fail(w, 404, "API endpoint not found")
 }

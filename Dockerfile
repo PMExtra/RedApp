@@ -30,5 +30,6 @@ COPY --from=build --chown=65532:65532 /var/lib/redapp /var/lib/redapp
 USER 65532:65532
 VOLUME ["/var/lib/redapp"]
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 CMD ["/redapp", "healthcheck"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 CMD ["/redapp", "healthcheck", "--config", "/etc/redapp/config.json"]
 ENTRYPOINT ["/redapp"]
+CMD ["serve", "--config", "/etc/redapp/config.json"]

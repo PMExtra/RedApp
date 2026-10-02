@@ -1,4 +1,5 @@
 import { language } from "./i18n";
+import { appAPI } from "./bootstrap";
 export interface Resource {
   ID: string;
   State: string;
@@ -12,7 +13,12 @@ export interface Resource {
   Started: string;
   Finished: string;
   Error: string;
-  Resource: { Labels: { app?: string; version: string; name: string } };
+  Resource: {
+    Application: string;
+    Version: string;
+    Key: string;
+    Labels: { name?: string };
+  };
 }
 export interface Status {
   metrics?: Metric[];
@@ -36,24 +42,38 @@ export interface Status {
     upstream_bytes_per_second: number;
     downstream_bytes_per_second: number;
   };
-  versions: Record<string, string>;
-  application_versions?: Record<string, Record<string, string>>;
   counters: Record<string, number>;
-  resources: Resource[];
-  events: Array<{
-    time: string;
-    resource: string;
-    category: string;
-    message: string;
-    status_code?: number;
-  }>;
 }
+export interface VersionSummary {
+  version: string;
+  first_seen: string;
+  requests: number;
+  bytes: number;
+}
+export interface DistributionEvent {
+  time: string;
+  resource: string;
+  app_id?: string;
+  version?: string;
+  resource_key?: string;
+  generation_id?: string;
+  code?: string;
+  category: string;
+  message: string;
+  status_code?: number;
+}
+export interface Page<T> {
+  items: T[];
+  next_cursor: string | null;
+}
+
 export interface CleanupPreview {
   job: {
     ID: string;
     Selected: Array<{ Resource: string; Generation: string }>;
   };
   logical_bytes: number;
+  reclaimable_blob_bytes: number;
   active: number;
   unknown_versions: string[];
 }
@@ -63,15 +83,42 @@ export interface ProxySettings {
   has_password: boolean;
   dns: string;
 }
+export interface APIProblem {
+  code?: string;
+  message?: string;
+  request_id?: string;
+  retryable?: boolean;
+}
 export class ApiError extends Error {
+  readonly code?: string;
+  readonly request_id?: string;
+  readonly retryable?: boolean;
   constructor(
-    message: string,
+    problem: string | APIProblem,
     public status: number,
   ) {
-    super(message);
+    super(
+      typeof problem === "string"
+        ? problem
+        : typeof problem.message === "string"
+          ? problem.message
+          : "Request failed",
+    );
+    this.name = "ApiError";
+    if (typeof problem === "object") {
+      this.code = typeof problem.code === "string" ? problem.code : undefined;
+      this.request_id =
+        typeof problem.request_id === "string" ? problem.request_id : undefined;
+      this.retryable =
+        typeof problem.retryable === "boolean" ? problem.retryable : undefined;
+    }
   }
 }
 let csrf = "";
+let unauthorized: (() => void) | undefined;
+export function setUnauthorizedHandler(handler: () => void) {
+  unauthorized = handler;
+}
 export function setCSRF(value: string) {
   csrf = value;
 }
@@ -80,9 +127,10 @@ export async function api<T>(
   body?: unknown,
   signal?: AbortSignal,
   extraHeaders: Record<string, string> = {},
+  method?: "GET" | "POST" | "PUT",
 ): Promise<T> {
   const response = await fetch("/admin/api/" + path, {
-    method: body === undefined ? "GET" : "POST",
+    method: method || (body === undefined ? "GET" : "POST"),
     credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
@@ -92,9 +140,17 @@ export async function api<T>(
     body: body === undefined ? undefined : JSON.stringify(body),
     signal,
   });
-  const data = await response.json();
-  if (!response.ok)
-    throw new ApiError(data.error || "Request failed", response.status);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (response.status === 401) unauthorized?.();
+    const problem = data?.error;
+    throw new ApiError(
+      typeof problem === "string" || (problem && typeof problem === "object")
+        ? problem
+        : "Request failed",
+      response.status,
+    );
+  }
   return data as T;
 }
 export function bytes(value: number | null | undefined): string {
@@ -139,15 +195,14 @@ export interface HistoryPoint {
   partial: boolean;
   incomplete: boolean;
 }
-export interface HistorySeries extends Omit<
-  Metric,
-  "value" | "observed_seconds"
-> {
+export interface HistorySeries
+  extends Omit<Metric, "value" | "observed_seconds"> {
   range: string;
   resolution_seconds: number;
   from: number;
   to: number;
   points: HistoryPoint[];
+  retired?: boolean;
 }
 export function formatMetric(
   value: number | null | undefined,
@@ -168,9 +223,25 @@ export function formatMetric(
     );
   return value.toLocaleString(language.value, { maximumFractionDigits: 2 });
 }
-export function getHistory(key: string, range: string, signal?: AbortSignal) {
-  return api<HistorySeries>("history", undefined, signal, {
-    "X-History-Metric": key,
-    "X-History-Range": range,
-  });
+export function getHistory(
+  key: string,
+  range: string,
+  signal?: AbortSignal,
+  application?: string,
+) {
+  const path = application ? `${appAPI(application)}/history` : "history";
+  return api<HistorySeries>(
+    `${path}?metric=${encodeURIComponent(key)}&range=${encodeURIComponent(range)}${application ? "" : "&scope=global"}`,
+    undefined,
+    signal,
+  );
+}
+
+export function putSetting<T>(
+  path: string,
+  body: unknown,
+  revision: number,
+  signal?: AbortSignal,
+) {
+  return api<T>(path, body, signal, { "If-Match": `"${revision}"` }, "PUT");
 }

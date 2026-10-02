@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -29,7 +28,7 @@ func setup(t *testing.T, c *distributor.Client) (*Manager, *store.Store, string)
 	if e != nil {
 		t.Fatal(e)
 	}
-	m, e := New(dir, db, c)
+	m, e := newTestManager(dir, db, c)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -39,7 +38,25 @@ func setup(t *testing.T, c *distributor.Client) (*Manager, *store.Store, string)
 func resource(c *distributor.Client, b []byte) Resource {
 	source := c.URL("asset")
 	hash := digest(b)
-	return Resource{ID: Identity(source, hash), Source: source, Hash: hash, Labels: map[string]string{"version": "0.1.0", "name": "asset"}}
+	return Resource{Application: testApp, Version: "0.1.0", Key: "asset", ID: LogicalIdentity(testApp, "0.1.0", "asset"), Source: source, Hash: hash, Labels: map[string]string{"version": "0.1.0", "name": "asset"}}
+}
+
+const testApp = "openai/codex"
+
+func newTestManager(dir string, db *store.Store, c *distributor.Client) (*Manager, error) {
+	return NewApplications(dir, db, map[string]*distributor.Client{testApp: c})
+}
+func authorize(t *testing.T, m *Manager, r Resource) {
+	t.Helper()
+	if e := m.db.PutRelease(store.ReleaseMetadata{AppID: r.Application, Version: r.Version, Raw: []byte("trusted fixture"), TrustRevision: 1, FetchedAt: time.Now()}, []store.Resource{{AppID: r.Application, Version: r.Version, Key: r.Key, SourceURL: r.Source, SHA256: r.Hash, ExpectedSize: r.Size}}); e != nil {
+		t.Fatal(e)
+	}
+}
+func authorizedResource(t *testing.T, m *Manager, c *distributor.Client, b []byte) Resource {
+	t.Helper()
+	r := resource(c, b)
+	authorize(t, m, r)
+	return r
 }
 func collect(t *testing.T, m *Manager, r Resource) []byte {
 	t.Helper()
@@ -78,7 +95,7 @@ func TestSharedStreaming100LateSlowAndCancelled(t *testing.T) {
 		w.Write(data[len(prefix):])
 	}))
 	m, db, _ := setup(t, c)
-	r := resource(c, data)
+	r := authorizedResource(t, m, c, data)
 	first, _, e := m.Acquire(context.Background(), r)
 	if e != nil {
 		t.Fatal(e)
@@ -166,7 +183,7 @@ func TestHashInvalidStartsNewGeneration(t *testing.T) {
 		}
 	}))
 	m, db, _ := setup(t, c)
-	r := resource(c, data)
+	r := authorizedResource(t, m, c, data)
 	rd, _, e := m.Acquire(context.Background(), r)
 	if e != nil {
 		t.Fatal(e)
@@ -243,7 +260,7 @@ func TestValidatedResumeAndRejectedBranches(t *testing.T) {
 				w.Write(data)
 			}))
 			m, db, _ := setup(t, c)
-			r := resource(c, data)
+			r := authorizedResource(t, m, c, data)
 			rd, _, e := m.Acquire(context.Background(), r)
 			if e != nil {
 				t.Fatal(e)
@@ -299,17 +316,17 @@ func TestCleanupOldWriterDrainsNewGenerationSurvives(t *testing.T) {
 		}
 	}))
 	m, _, _ := setup(t, c)
-	r := resource(c, data)
+	r := authorizedResource(t, m, c, data)
 	old, _, e := m.Acquire(context.Background(), r)
 	if e != nil {
 		t.Fatal(e)
 	}
 	await(t, firstStarted)
-	job, e := m.Preview(map[string]bool{r.ID: true})
+	job, e := m.Preview(testApp, map[string]bool{r.ID: true})
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = m.Cleanup(job.ID); e != nil {
+	if e = m.Cleanup(testApp, job.ID); e != nil {
 		t.Fatal(e)
 	}
 	if !bytes.Equal(collect(t, m, r), data) {
@@ -342,21 +359,21 @@ func TestCleanupPreviewCannotDeleteLaterGeneration(t *testing.T) {
 	data := []byte("x")
 	c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(data) }))
 	m, _, _ := setup(t, c)
-	r := resource(c, data)
+	r := authorizedResource(t, m, c, data)
 	collect(t, m, r)
-	preview, e := m.Preview(map[string]bool{r.ID: true})
+	preview, e := m.Preview(testApp, map[string]bool{r.ID: true})
 	if e != nil {
 		t.Fatal(e)
 	}
-	other, e := m.Preview(map[string]bool{r.ID: true})
+	other, e := m.Preview(testApp, map[string]bool{r.ID: true})
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = m.Cleanup(other.ID); e != nil {
+	if e = m.Cleanup(testApp, other.ID); e != nil {
 		t.Fatal(e)
 	}
 	collect(t, m, r)
-	if e = m.Cleanup(preview.ID); e != nil {
+	if e = m.Cleanup(testApp, preview.ID); e != nil {
 		t.Fatal(e)
 	}
 	if len(m.Snapshot()) != 1 {
@@ -384,11 +401,11 @@ func TestCrashRecoveryPartRenameAndTombstone(t *testing.T) {
 				t.Fatal(e)
 			}
 			defer db.DB.Close()
-			m, e := New(dir, db, c)
+			m, e := newTestManager(dir, db, c)
 			if e != nil {
 				t.Fatal(e)
 			}
-			r := resource(c, data)
+			r := authorizedResource(t, m, c, data)
 			m.mu.Lock()
 			g, e := m.createLocked(r, false)
 			if e != nil {
@@ -408,7 +425,8 @@ func TestCrashRecoveryPartRenameAndTombstone(t *testing.T) {
 				if mode == "retired" {
 					g.Retired = true
 				} else {
-					os.Rename(g.Path, strings.TrimSuffix(g.Path, ".part")+".blob")
+					ensureDirectory(filepath.Dir(m.blobPath(r)))
+					os.Rename(g.Path, m.blobPath(r))
 				}
 			}
 			if e = m.save(g); e != nil {
@@ -416,7 +434,7 @@ func TestCrashRecoveryPartRenameAndTombstone(t *testing.T) {
 			}
 			m.mu.Unlock()
 			m.Close()
-			restored, e := New(dir, db, c)
+			restored, e := newTestManager(dir, db, c)
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -431,7 +449,7 @@ func TestCrashRecoveryPartRenameAndTombstone(t *testing.T) {
 				t.Fatal("错误恢复范围")
 			}
 			if mode == "retired" {
-				if _, e = os.Stat(filepath.Join(dir, "objects", r.ID, g.ID+".part")); !os.IsNotExist(e) {
+				if _, e = os.Stat(m.partPath(g.ID)); !os.IsNotExist(e) {
 					t.Fatal("tombstone 未恢复删除")
 				}
 			}

@@ -10,7 +10,7 @@ it("loads bilingual settings, saves once, updates public chrome only after succe
   let resolve: ((value: unknown) => void) | undefined;
   let failed = false;
   const fetch = vi.fn(async (_url: string, init?: RequestInit) =>
-    init?.method === "POST"
+    init?.method === "PUT"
       ? failed
         ? {
             ok: false,
@@ -20,7 +20,10 @@ it("loads bilingual settings, saves once, updates public chrome only after succe
         : new Promise((r) => {
             resolve = r;
           })
-      : { ok: true, json: async () => structuredClone(defaultSite) },
+      : {
+          ok: true,
+          json: async () => ({ ...structuredClone(defaultSite), revision: 0 }),
+        },
   );
   vi.stubGlobal("fetch", fetch);
   const w = mount(SiteSettings);
@@ -30,13 +33,13 @@ it("loads bilingual settings, saves once, updates public chrome only after succe
   await w.find("input").setValue("Internal tools");
   await w.find("form").trigger("submit");
   await w.find("form").trigger("submit");
-  expect(fetch.mock.calls.filter((c) => c[1]?.method === "POST")).toHaveLength(
+  expect(fetch.mock.calls.filter((c) => c[1]?.method === "PUT")).toHaveLength(
     1,
   );
   expect(siteSettings.value.title.en).toBe("RedApp");
   const saved = structuredClone(defaultSite);
   saved.title.en = "Internal tools";
-  resolve?.({ ok: true, json: async () => saved });
+  resolve?.({ ok: true, json: async () => ({ ...saved, revision: 1 }) });
   await flushPromises();
   expect(siteSettings.value.title.en).toBe("Internal tools");
   expect(w.text()).toContain("Site settings saved.");
@@ -44,7 +47,9 @@ it("loads bilingual settings, saves once, updates public chrome only after succe
   await w.find("input").setValue("Unsaved");
   await w.find("form").trigger("submit");
   await flushPromises();
-  expect(w.emitted("error")).toHaveLength(1);
+  expect(w.find("[role=alert]").text()).toContain(
+    "Service temporarily unavailable",
+  );
   expect(siteSettings.value.title.en).toBe("Internal tools");
   w.unmount();
 });

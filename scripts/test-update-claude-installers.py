@@ -11,7 +11,9 @@ with tempfile.TemporaryDirectory(prefix='claude-updater-test-') as tmp:
     fixture=Path(tmp)
     shutil.copytree(root/'installers',fixture/'installers')
     shutil.copytree(root/'scripts',fixture/'scripts',ignore=shutil.ignore_patterns('__pycache__'))
-    target=fixture/'installers/claude-code'
+    manifest_dir=fixture/'internal/apps/builtin';manifest_dir.mkdir(parents=True)
+    shutil.copyfile(root/'internal/apps/builtin/manifest.json',manifest_dir/'manifest.json')
+    target=fixture/'installers/anthropic/claude-code'
     def state():return {str(p.relative_to(target)):hashlib.sha256(p.read_bytes()).hexdigest() for p in target.rglob('*') if p.is_file()}
     before=state()
     command=['python3',str(fixture/'scripts/update-claude-installers.py'),'--source',str(target/'upstream')]

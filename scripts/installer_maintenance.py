@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import ipaddress
+import http.client
 import socket
 import ssl
 import json
@@ -19,24 +20,13 @@ import urllib.request
 import urllib.parse
 import zipfile
 
-ROOT = Path(__file__).resolve().parents[1]
-APPS = ('codex', 'claude-code')
-NAMES = ('install.sh', 'install.ps1')
+from installer_manifest import ROOT, VALIDATORS, applications, inventory
 MAX_SCRIPT = 256 * 1024
 MAX_REDIRECTS = 5
 
 def digest(data): return hashlib.sha256(data).hexdigest()
 def run(args, **kwargs):
     return subprocess.run(args, check=True, capture_output=True, text=True, timeout=180, **kwargs).stdout
-
-def inventory(root=ROOT):
-    items=json.loads((root/'installers/upstream-scripts.json').read_text())['scripts']
-    expected={(app,name) for app in APPS for name in NAMES}
-    if len(items)!=4 or {(x['application'],x['name']) for x in items}!=expected: raise ValueError('Installer inventory is incomplete or duplicated')
-    for x in items:
-        expected_url=('https://releases.openai.com/codex/' if x['application']=='codex' else 'https://claude.ai/')+x['name']
-        if x['url']!=expected_url: raise ValueError('Unreviewed official installer URL')
-    return items
 
 def validate_https_url(url):
     target=urllib.parse.urlsplit(url)
@@ -48,9 +38,28 @@ def validate_https_url(url):
         raise ValueError('Cannot validate the installer destination address') from error
     if not addresses:raise ValueError('Installer destination has no addresses')
     for address in addresses:
-        ip=ipaddress.ip_address(address[4][0].split('%',1)[0])
-        if not ip.is_global or ip.is_multicast or ip.is_reserved:
-            raise ValueError('Installer destination resolves to a non-public address')
+        validate_address(address[4][0])
+
+def validate_address(address):
+    ip=ipaddress.ip_address(address.split('%',1)[0])
+    if not ip.is_global or ip.is_multicast or ip.is_reserved:
+        raise ValueError('Installer destination resolves to a non-public address')
+
+class PublicHTTPSConnection(http.client.HTTPSConnection):
+    def connect(self):
+        # Check the actual socket peer before TLS/request data, not just a prior
+        # DNS lookup. ProxyHandler({}) below prevents environment proxy routing.
+        http.client.HTTPConnection.connect(self)
+        try:
+            validate_address(self.sock.getpeername()[0])
+            self.sock=self._context.wrap_socket(self.sock,server_hostname=self.host)
+        except Exception:
+            self.close()
+            raise
+
+class PublicHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, request):
+        return self.do_open(PublicHTTPSConnection,request,context=self._context)
 
 class HTTPSRedirect(urllib.request.HTTPRedirectHandler):
     def __init__(self, original):
@@ -65,7 +74,7 @@ class HTTPSRedirect(urllib.request.HTTPRedirectHandler):
 
 def download(url):
     validate_https_url(url)
-    opener=urllib.request.build_opener(HTTPSRedirect(url),urllib.request.HTTPSHandler(context=ssl.create_default_context()))
+    opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),HTTPSRedirect(url),PublicHTTPSHandler(context=ssl.create_default_context()))
     request=urllib.request.Request(url,headers={'User-Agent':'RedApp-installer-maintenance','Accept-Encoding':'identity'})
     start=time.monotonic()
     with opener.open(request,timeout=25) as response:
@@ -156,31 +165,33 @@ def validate(prepared,output,root=ROOT):
     plan=json.loads((prepared/'plan.json').read_text());output.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='redapp-installer-validation-') as tmp:
         work=Path(tmp);shutil.copytree(root/'scripts',work/'scripts');shutil.copytree(root/'installers',work/'installers')
-        for app in APPS:
+        for descriptor in applications(root):
+            app=descriptor['id'];names=[x['file'] for x in descriptor['installers']]
             stage=work/'installers'/app
-            for name in NAMES:
+            for name in names:
                 raw=(prepared/'sources'/app/name).read_bytes()
                 row=next(r for r in plan['rows'] if r['application']==app and r['name']==name)
                 if digest(raw)!=row['current_sha256']:raise ValueError('Prepared source digest changed')
                 (stage/'upstream'/name).write_bytes(raw)
                 (stage/'generated'/name).write_bytes(strict_patch(raw,root/'installers'/app/'patches'/(name+'.patch')))
-            if app=='claude-code': audit_claude(stage/'generated')
-            script='test-installers.py' if app=='codex' else 'test-claude-installers.py'
+            if descriptor['installer_validator']=='claude-code': audit_claude(stage/'generated')
+            script=VALIDATORS[descriptor['installer_validator']]
             print(run(['python3',str(root/'scripts'/script),'--directory',str(stage/'generated')]),end='')
             # A changed PowerShell script must parse in the validation image; never skip this gate.
             if not shutil.which('pwsh'):raise ValueError('PowerShell parser required for automatic updates')
             env={**os.environ,'REDAPP_INSTALLER_SYNTAX_PATH':str(stage/'generated/install.ps1')}
             run(['pwsh','-NoProfile','-NonInteractive','-Command',"$e=$null;$t=$null;[System.Management.Automation.Language.Parser]::ParseFile($env:REDAPP_INSTALLER_SYNTAX_PATH,[ref]$t,[ref]$e)|Out-Null;if($e.Count){$e;exit 1}"],env=env)
             target=output/app;target.mkdir(parents=True,exist_ok=True)
-            for name in NAMES:shutil.copyfile(stage/'generated'/name,target/name)
+            for name in names:shutil.copyfile(stage/'generated'/name,target/name)
 
 def package(prepared,validated,bundle,root=ROOT):
     # Trusted host step after the isolated container exits. Rebuild expected outputs without executing scripts.
     plan=json.loads((prepared/'plan.json').read_text());files={}
     if plan['baseline']!=run(['git','rev-parse','HEAD'],cwd=root).strip():raise ValueError('Baseline changed during validation')
-    for app in APPS:
+    for descriptor in applications(root):
+        app=descriptor['id'];names=[x['file'] for x in descriptor['installers']]
         base=root/'installers'/app;manifest=json.loads((base/'provenance.json').read_text());changed=False
-        for name in NAMES:
+        for name in names:
             raw=(prepared/'sources'/app/name).read_bytes();row=next(r for r in plan['rows'] if r['application']==app and r['name']==name)
             if digest(raw)!=row['current_sha256']:raise ValueError('Downloaded source changed after preparation')
             generated=strict_patch(raw,base/'patches'/(name+'.patch'))
@@ -192,7 +203,7 @@ def package(prepared,validated,bundle,root=ROOT):
         if changed:
             manifest['script_baseline']={'kind':'official-live','checked_at':plan['checked_at'],'previous_main_commit':plan['baseline']}
             files[f'installers/{app}/provenance.json']=(json.dumps(manifest,indent=2,ensure_ascii=False)+'\n').encode()
-    payload={'baseline':plan['baseline'],'rows':plan['rows'],'files':{name:digest(body) for name,body in files.items()},'validation':'Strict zero-offset patches; isolated offline Codex/Claude Shell tests; PowerShell syntax parsing. Windows/macOS real-machine behavior and official binary runtime were not tested.'}
+    payload={'baseline':plan['baseline'],'rows':plan['rows'],'files':{name:digest(body) for name,body in files.items()},'validation':'Strict zero-offset patches; isolated offline descriptor-selected Shell tests; PowerShell syntax parsing. Windows/macOS real-machine behavior and official binary runtime were not tested.'}
     with zipfile.ZipFile(bundle,'w',compression=zipfile.ZIP_DEFLATED) as archive:
         for name,body in files.items():archive.writestr(name,body)
         archive.writestr('update.json',json.dumps(payload,indent=2))

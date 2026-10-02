@@ -2,9 +2,7 @@ package httpserver
 
 import (
 	"encoding/json"
-	"github.com/PMExtra/RedApp/internal/auth"
 	"github.com/PMExtra/RedApp/internal/site"
-	"github.com/PMExtra/RedApp/internal/store"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,24 +10,16 @@ import (
 )
 
 func TestSiteSettingsAuthenticationCSRFAndPublicText(t *testing.T) {
-	db, err := store.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.DB.Close()
-	var password string
-	a, err := auth.New(db, false, func(p string) { password = p })
-	if err != nil {
-		t.Fatal(err)
-	}
+	s, _, password := newTestServer(t, nil)
+	a := s.Auth
 	token, session, err := a.Login("127.0.0.1", password)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{DB: db, Auth: a}
 	request := func(method, path, body string, authenticated, csrf bool) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, "http://internal"+path, strings.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("If-Match", "0")
 		if authenticated {
 			r.AddCookie(&http.Cookie{Name: "redapp_session", Value: token})
 		}
@@ -48,18 +38,18 @@ func TestSiteSettingsAuthenticationCSRFAndPublicText(t *testing.T) {
 		method     string
 		auth, csrf bool
 		status     int
-	}{{"GET", false, false, 401}, {"POST", false, false, 401}, {"POST", true, false, 403}, {"POST", true, true, 200}, {"GET", true, false, 200}} {
-		w := request(tc.method, "/admin/api/site", string(body), tc.auth, tc.csrf)
+	}{{"GET", false, false, 401}, {"PUT", false, false, 401}, {"PUT", true, false, 403}, {"PUT", true, true, 200}, {"GET", true, false, 200}} {
+		w := request(tc.method, "/admin/api/settings/site", string(body), tc.auth, tc.csrf)
 		if w.Code != tc.status {
 			t.Fatalf("%+v: %d %s", tc, w.Code, w.Body)
 		}
 	}
 	for _, body := range []string{`{"title":{"en":""}}`, `{"unknown":true}`, `{"title":{"en":"x","zh-CN":"x"},"subtitle":{"en":false}}`} {
-		if w := request("POST", "/admin/api/site", body, true, true); w.Code != 400 {
+		if w := request("PUT", "/admin/api/settings/site", body, true, true); w.Code != 400 {
 			t.Fatal(w.Code)
 		}
 	}
-	w := request("GET", "/api/info", "", false, false)
+	w := request("GET", "/api/bootstrap", "", false, false)
 	var info struct {
 		Site site.Settings `json:"site"`
 	}

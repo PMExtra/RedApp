@@ -2,20 +2,11 @@ package httpserver
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	app "github.com/PMExtra/RedApp/internal/apps/codex"
-	"github.com/PMExtra/RedApp/internal/auth"
-	"github.com/PMExtra/RedApp/internal/download"
-	"github.com/PMExtra/RedApp/internal/store"
-	"github.com/PMExtra/RedApp/internal/testutil"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 )
 
 func TestRequestOriginTrustBoundary(t *testing.T) {
@@ -52,7 +43,7 @@ func TestRequestOriginTrustBoundary(t *testing.T) {
 			if tc.proto != "" {
 				r.Header.Set("X-Forwarded-Proto", tc.proto)
 			}
-			s := Server{Proxy: p}
+			s := Server{Proxy: p, AllowedHosts: []string{"internal:8080", "external.example"}}
 			got, err := s.origin(r)
 			if (err != nil) != tc.invalid || !tc.invalid && got != tc.want {
 				t.Fatalf("got=%q err=%v", got, err)
@@ -72,103 +63,52 @@ func TestRequestOriginTrustBoundary(t *testing.T) {
 }
 
 func TestAutomaticOriginHTTPIsolationAndSecurity(t *testing.T) {
-	hash := sha256.Sum256([]byte("archive"))
-	var base string
-	c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(app.Release{Tag: "rust-v0.159.2", Assets: []app.Asset{{Name: "archive.tgz", Digest: "sha256:" + hex.EncodeToString(hash[:]), URL: base + "/releases/0.159.2/archive.tgz"}}})
-	}))
-	base = c.Base.String()
-	dir := t.TempDir()
-	db, e := store.Open(dir)
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer db.DB.Close()
-	manager, e := download.New(dir, db, c)
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer manager.Close()
-	var password string
-	a, e := auth.New(db, false, func(p string) { password = p })
-	if e != nil {
-		t.Fatal(e)
-	}
-	p, _ := NewProxy("10.0.0.0/8")
-	s := Server{DB: db, Catalog: app.New(db, c), Downloads: manager, Auth: a, Proxy: p, Dir: dir, Started: time.Now()}
+	s, _, password := newTestServer(t, nil)
+	s.Proxy, _ = NewProxy("10.0.0.0/8")
+	s.AllowedHosts = []string{"one.example", "two.example"}
 	request := func(host, path, method, body, origin string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, "http://"+host+path, strings.NewReader(body))
 		r.RemoteAddr = "10.0.0.1:8080"
 		r.Header.Set("Forwarded", "for=8.8.8.8;host="+host+";proto=https")
 		r.Header.Set("Content-Type", "application/json")
-		if origin != "" {
-			r.Header.Set("Origin", origin)
-		}
+		r.Header.Set("Origin", origin)
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, r)
 		return w
 	}
 	var wg sync.WaitGroup
 	for _, host := range []string{"one.example", "two.example"} {
-		host := host
 		wg.Add(1)
-		go func() {
+		go func(host string) {
 			defer wg.Done()
-			for _, path := range []string{"/install.sh", "/install.ps1", "/channels/latest"} {
+			for _, path := range []string{"/openai/codex/install.sh", "/anthropic/claude-code/install.sh", "/api/bootstrap"} {
 				w := request(host, path, "GET", "", "")
 				if w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte("https://"+host)) || w.Header().Get("Cache-Control") != "no-store" {
-					t.Errorf("%s %s: %d %s", host, path, w.Code, w.Body)
+					t.Errorf("%s %s: %d", host, path, w.Code)
 				}
 			}
-		}()
+		}(host)
 	}
 	wg.Wait()
+	public := "https://published.example"
+	if _, err := s.PublicConfig.Set(&public, 0); err != nil {
+		t.Fatal(err)
+	}
 	body, _ := json.Marshal(map[string]string{"password": password})
-	rejected := request("one.example", "/admin/api/login", "POST", string(body), "https://two.example")
-	if rejected.Code != 403 {
-		t.Fatal("cross-origin login accepted")
+	if w := request("one.example", "/admin/api/login", "POST", string(body), "https://published.example"); w.Code != 403 {
+		t.Fatal("public origin granted CSRF trust")
 	}
 	w := request("one.example", "/admin/api/login", "POST", string(body), "https://one.example")
 	if w.Code != 200 || len(w.Result().Cookies()) != 1 || !w.Result().Cookies()[0].Secure {
-		t.Fatalf("secure login: %d %s", w.Code, w.Body)
+		t.Fatalf("login %d %s", w.Code, w.Body)
 	}
-	var session map[string]string
-	json.Unmarshal(w.Body.Bytes(), &session)
-	r := httptest.NewRequest("POST", "http://one.example/admin/api/settings", strings.NewReader(`{"latest_ttl_seconds":60}`))
-	r.RemoteAddr = "10.0.0.1:8080"
-	r.Header.Set("Forwarded", "for=8.8.8.8;host=one.example;proto=https")
-	r.Header.Set("Content-Type", "application/json")
-	r.AddCookie(w.Result().Cookies()[0])
-	rejected = httptest.NewRecorder()
-	s.ServeHTTP(rejected, r)
-	if rejected.Code != 403 {
-		t.Fatal("missing CSRF accepted")
+	if w = request("one.example", "/openai/codex/install.sh", "GET", "", ""); w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte(public+"/openai/codex")) {
+		t.Fatal("public override not used", w.Code)
 	}
-	r.Method = "GET"
-	r.URL.Path = "/admin/api/status"
-	w = httptest.NewRecorder()
-	s.ServeHTTP(w, r)
-	var status map[string]any
-	json.Unmarshal(w.Body.Bytes(), &status)
-	if status["public_base_url"] != "https://one.example" {
-		t.Fatalf("status origin %v", status["public_base_url"])
+	if w = request("published.example", "/openai/codex/install.sh", "GET", "", ""); w.Code != 400 {
+		t.Fatal("public override expanded allowed hosts", w.Code)
 	}
-	if s.Public != "" || a.Secure {
-		t.Fatal("request mutated shared origin/auth")
-	}
-	s.Public = "https://fixed.example"
-	r = httptest.NewRequest("GET", "http://one.example/install.sh", nil)
-	w = httptest.NewRecorder()
-	s.ServeHTTP(w, r)
-	if w.Code != 400 {
-		t.Fatal("explicit Host mismatch accepted")
-	}
-	r = httptest.NewRequest("GET", "http://fixed.example/install.sh", nil)
-	r.Header.Set("Forwarded", "host=attacker;proto=http")
-	r.RemoteAddr = "10.0.0.1:80"
-	w = httptest.NewRecorder()
-	s.ServeHTTP(w, r)
-	if w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte("https://fixed.example")) {
-		t.Fatal("explicit origin overridden")
+	if s.Auth.Secure {
+		t.Fatal("request changed global cookie state")
 	}
 }

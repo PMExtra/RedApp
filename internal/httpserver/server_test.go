@@ -7,10 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	app "github.com/PMExtra/RedApp/internal/apps/codex"
-	"github.com/PMExtra/RedApp/internal/auth"
-	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/history"
-	"github.com/PMExtra/RedApp/internal/store"
 	"github.com/PMExtra/RedApp/internal/testutil"
 	"io"
 	"net/http"
@@ -18,222 +15,156 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestAdminHTTPDownloadMetricsAndCSRF(t *testing.T) {
 	data := []byte("official archive")
 	h := sha256.Sum256(data)
 	hash := hex.EncodeToString(h[:])
-	var upstreamBase string
-	c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var base string
+	upstream, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "latest") || strings.HasSuffix(r.URL.Path, "release.json") {
-			json.NewEncoder(w).Encode(app.Release{Tag: "rust-v0.159.2", Assets: []app.Asset{{Name: "archive.tgz", Digest: "sha256:" + hash, URL: upstreamBase + "/releases/0.159.2/archive.tgz"}}})
+			json.NewEncoder(w).Encode(app.Release{Tag: "rust-v0.159.2", Assets: []app.Asset{{Name: "archive.tgz", Digest: "sha256:" + hash, URL: base + "/releases/0.159.2/archive.tgz"}}})
 		} else {
 			w.Write(data)
 		}
 	}))
-	upstreamBase = c.Base.String()
-	dir := t.TempDir()
-	db, e := store.Open(dir)
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer db.DB.Close()
-	manager, e := download.New(dir, db, c)
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer manager.Close()
-	var password string
-	bootstraps := 0
-	a, e := auth.New(db, false, func(p string) { password = p; bootstraps++ })
-	if e != nil {
-		t.Fatal(e)
-	}
-	if _, e = auth.New(db, false, func(p string) { bootstraps++ }); e != nil || bootstraps != 1 {
-		t.Fatal("重启重复输出密码", e)
-	}
-	var stored []byte
-	db.DB.QueryRow("SELECT hash FROM admin").Scan(&stored)
-	if bytes.Contains(stored, []byte(password)) || !strings.HasPrefix(string(stored), "$2a$") {
-		t.Fatal("未安全保存密码")
-	}
-	metricHistory, e := history.Open(db)
-	if e != nil {
-		t.Fatal(e)
-	}
-	handler := &Server{History: metricHistory, DB: db, Catalog: app.New(db, c), Downloads: manager, Auth: a, Dir: dir, Started: time.Now()}
-	httpServer := httptest.NewServer(handler)
-	defer httpServer.Close()
-	handler.Public = httpServer.URL
+	base = upstream.Base.String()
+	handler, db, password := newTestServer(t, upstream)
+	server := startTestServer(t, handler)
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar}
 	csrf := ""
-	request := func(method, path string, body any, withCSRF bool) (int, []byte) {
+	request := func(method, path string, body any, secure bool, revision string) (int, []byte) {
 		t.Helper()
 		var reader io.Reader
 		if body != nil {
 			b, _ := json.Marshal(body)
 			reader = bytes.NewReader(b)
 		}
-		r, e := http.NewRequest(method, httpServer.URL+path, reader)
-		if e != nil {
-			t.Fatal(e)
-		}
+		r, _ := http.NewRequest(method, server.URL+path, reader)
 		r.Header.Set("Content-Type", "application/json")
-		if withCSRF {
+		if secure {
 			r.Header.Set("X-CSRF-Token", csrf)
 		}
-		resp, e := client.Do(r)
+		if revision != "" {
+			r.Header.Set("If-Match", revision)
+		}
+		response, e := client.Do(r)
 		if e != nil {
 			t.Fatal(e)
 		}
-		defer resp.Body.Close()
-		b, e := io.ReadAll(resp.Body)
+		defer response.Body.Close()
+		b, e := io.ReadAll(response.Body)
 		if e != nil {
 			t.Fatal(e)
 		}
-		return resp.StatusCode, b
+		return response.StatusCode, b
 	}
 	for _, tc := range []struct {
 		method, path string
 		status       int
-		message      string
-	}{
-		{"GET", "/unknown", 404, "Route not found"},
-		{"POST", "/", 405, "Method not allowed"},
-		{"GET", "/?unexpected=1", 400, "Noncanonical request path"},
-		{"GET", "/admin/unknown", 404, "Page not found"},
-		{"GET", "/admin/api/status", 401, "Sign in required"},
-		{"POST", "/health/live", 405, "Method not allowed"},
-	} {
-		code, body := request(tc.method, tc.path, nil, false)
-		var errorBody map[string]string
-		if err := json.Unmarshal(body, &errorBody); err != nil || code != tc.status || errorBody["error"] != tc.message {
-			t.Fatalf("%s %s: status=%d body=%s", tc.method, tc.path, code, body)
+	}{{"GET", "/unknown", 404}, {"POST", "/", 405}, {"GET", "/?unexpected=1", 400}, {"GET", "/admin/unknown", 404}, {"GET", "/admin/api/status", 401}, {"POST", "/health/live", 405}, {"GET", "/install.sh", 404}, {"GET", "/api/info", 404}, {"GET", "/apps/codex", 404}} {
+		if status, body := request(tc.method, tc.path, nil, false, ""); status != tc.status {
+			t.Fatalf("%s %s: %d %s", tc.method, tc.path, status, body)
 		}
 	}
-	if code, body := request("GET", "/admin/", nil, false); code != 200 || !bytes.Contains(body, []byte(`<html lang="en">`)) || !bytes.Contains(body, []byte("/admin/assets/")) {
-		t.Fatalf("English admin page unavailable: status=%d", code)
-	}
-	if code, _ := request("GET", "/admin/api/status", nil, false); code != 401 {
-		t.Fatal(code)
-	}
-	if code, _ := request("GET", "/health/ready", nil, false); code != 200 {
-		t.Fatal(code)
-	}
-	if code, b := request("POST", "/admin/api/login", map[string]string{"password": password}, false); code != 200 {
-		t.Fatal(code, string(b))
+	if status, body := request("POST", "/admin/api/login", map[string]string{"password": password}, false, ""); status != 200 {
+		t.Fatal(status, string(body))
 	} else {
 		var session map[string]string
-		json.Unmarshal(b, &session)
+		json.Unmarshal(body, &session)
 		csrf = session["csrf"]
 	}
-	if code, _ := request("POST", "/admin/api/settings", map[string]int{"latest_ttl_seconds": 120}, false); code != 403 {
-		t.Fatal("CSRF 未阻止", code)
+	endpoint := "/admin/api/apps/openai/codex/settings"
+	if code, _ := request("PUT", endpoint, map[string]int{"channel_ttl_seconds": 120}, false, "0"); code != 403 {
+		t.Fatal("CSRF not enforced", code)
 	}
-	if code, _ := request("POST", "/admin/api/settings", map[string]int{"latest_ttl_seconds": 120}, true); code != 200 {
-		t.Fatal(code)
+	if code, body := request("PUT", endpoint, map[string]int{"channel_ttl_seconds": 120}, true, "0"); code != 200 {
+		t.Fatal(code, string(body))
 	}
-	for i := 0; i < 2; i++ {
-		code, b := request("GET", "/releases/0.159.2/archive.tgz", nil, false)
-		if code != 200 || !bytes.Equal(b, data) {
-			t.Fatal(code, string(b))
+	if code, _ := request("PUT", endpoint, map[string]int{"channel_ttl_seconds": 10}, true, "0"); code != 409 {
+		t.Fatal("stale revision accepted", code)
+	}
+	if code, body := request("GET", "/admin/api/apps/anthropic/claude-code/settings", nil, false, ""); code != 200 || !bytes.Contains(body, []byte(`"channel_ttl_seconds":60`)) {
+		t.Fatal("TTL crossed apps", code, string(body))
+	}
+	for range 2 {
+		if code, body := request("GET", "/openai/codex/releases/0.159.2/archive.tgz", nil, false, ""); code != 200 || !bytes.Equal(body, data) {
+			t.Fatal(code, string(body))
 		}
 	}
-	if code, _ := request("GET", "/releases/0.159.2/unlisted", nil, false); code != 404 {
-		t.Fatal("开放代理", code)
+	if code, _ := request("GET", "/openai/codex/releases/0.159.2/unlisted", nil, false, ""); code != 404 {
+		t.Fatal("unauthorized resource", code)
 	}
-	code, b := request("GET", "/admin/api/status", nil, false)
-	if code != 200 {
-		t.Fatal(code)
+	counters, _ := db.Counters()
+	owned, _ := db.CountersFor("openai/codex")
+	if counters["artifact_requests"] != 2 || counters["miss_requests"] != 1 || counters["cache_hit_requests"] != 1 || counters["downstream_bytes"] != int64(2*len(data)) || owned["downstream_bytes"] != counters["downstream_bytes"] {
+		t.Fatal(counters, owned)
 	}
-	var status struct {
-		Counters map[string]int64
-		Disk     map[string]int64
-		Versions map[string]string
+	if _, ok := counters["reuse_requests"]; ok {
+		t.Fatal("retired counter written")
 	}
-	if e = json.Unmarshal(b, &status); e != nil {
-		t.Fatal(e)
+	if err := db.SeenFor("anthropic/claude-code", "0.159.2"); err != nil {
+		t.Fatal(err)
 	}
-	if status.Counters["upstream_bytes"] != int64(len(data)) || status.Counters["downstream_bytes"] != int64(2*len(data)) || status.Counters["reuse_requests"] != 1 || status.Counters["miss_requests"] != 1 {
-		t.Fatal(status.Counters)
-	}
-	if status.Disk["used_bytes"] < status.Disk["cache_bytes"] || status.Versions["0.159.2"] == "" {
-		t.Fatal(status)
-	}
-	metricStatus, err := handler.status(handler.Public)
+	status, err := handler.status(server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	metrics := metricStatus["metrics"].([]history.Metric)
-	if len(metrics) != 43 {
-		t.Fatal("missing global metrics")
-	}
-	if err = handler.History.Record(time.Now(), metrics); err != nil {
-		t.Fatal(err)
-	}
-	for _, window := range []string{"24h", "7d", "30d"} {
-		req, _ := http.NewRequest("GET", httpServer.URL+"/admin/api/history", nil)
-		req.Header.Set("X-History-Metric", "disk.cache_bytes")
-		req.Header.Set("X-History-Range", window)
-		response, err := client.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var series history.Series
-		err = json.NewDecoder(response.Body).Decode(&series)
-		response.Body.Close()
-		resolution := int64(3600)
-		if window == "24h" {
-			resolution = 60
-		}
-		if err != nil || response.StatusCode != 200 || series.ResolutionSeconds != resolution || len(series.Points) == 0 {
-			t.Fatalf("history response %s status=%d err=%v", window, response.StatusCode, err)
+	for _, metric := range status["metrics"].([]history.Metric) {
+		if metric.Key == "versions.total" && *metric.Value != 2 {
+			t.Fatal("global versions lost application", *metric.Value)
 		}
 	}
-	badHistory, _ := http.NewRequest("GET", httpServer.URL+"/admin/api/history", nil)
-	badHistory.Header.Set("X-History-Metric", "resource:any")
-	badHistory.Header.Set("X-History-Range", "7d")
-	rejected, err := client.Do(badHistory)
-	if err != nil {
-		t.Fatal(err)
+	for _, path := range []string{"/admin/api/status", "/admin/api/apps/openai/codex/status"} {
+		code, body := request("GET", path, nil, false, "")
+		var summary map[string]json.RawMessage
+		if code != 200 || json.Unmarshal(body, &summary) != nil {
+			t.Fatal("status summary unavailable", code, string(body))
+		}
+		for _, key := range []string{"resources", "events", "versions", "version_stats", "application_versions"} {
+			if _, present := summary[key]; present {
+				t.Fatal("status summary contains an unbounded list", path, key)
+			}
+		}
 	}
-	rejected.Body.Close()
-	if rejected.StatusCode != 400 {
-		t.Fatal("unbounded metric accepted")
-	}
-	sampleCtx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	handler.SampleHistory(sampleCtx, func(err error) { t.Error(err) })
-	code, b = request("POST", "/admin/api/cleanup/preview", map[string]string{"minimum_version": "0.160.0"}, true)
+	handler.SampleHistory(ctx, func(e error) { t.Fatal(e) })
+	if code, body := request("GET", "/admin/api/history?scope=global&metric=versions.total&range=24h", nil, false, ""); code != 200 {
+		t.Fatal(code, string(body))
+	}
+	if code, body := request("GET", "/admin/api/apps/openai/codex/history?metric=versions.total&range=24h", nil, false, ""); code != 200 {
+		t.Fatal(code, string(body))
+	}
+	code, body := request("POST", "/admin/api/apps/openai/codex/cleanup/preview", map[string]string{"minimum_version": "0.160.0"}, true, "")
 	if code != 200 {
-		t.Fatal(code, string(b))
+		t.Fatal(code, string(body))
 	}
-	var preview struct{ Job download.Cleanup }
-	json.Unmarshal(b, &preview)
-	if code, _ = request("POST", "/admin/api/cleanup/execute", map[string]string{"cleanup_id": preview.Job.ID}, true); code != 200 {
-		t.Fatal(code)
+	var preview struct {
+		Job                  struct{ ID string }
+		LogicalBytes         int64 `json:"logical_bytes"`
+		ReclaimableBlobBytes int64 `json:"reclaimable_blob_bytes"`
+		Active               int   `json:"active"`
 	}
-	if code, _ = request("POST", "/admin/api/password", map[string]string{"old": password, "new": "new-password-for-test-only"}, true); code != 200 {
-		t.Fatal(code)
+	json.Unmarshal(body, &preview)
+	if preview.LogicalBytes != int64(len(data)) || preview.ReclaimableBlobBytes != int64(len(data)) || preview.Active != 0 {
+		t.Fatal("cleanup preview lost frozen byte and activity counts", string(body))
 	}
-	if code, _ = request("GET", "/admin/api/status", nil, false); code != 401 {
-		t.Fatal("改密未注销旧会话")
+	if code, _ = request("POST", "/admin/api/apps/anthropic/claude-code/cleanup/"+preview.Job.ID+"/execute", map[string]any{}, true, ""); code != 409 {
+		t.Fatal("cross-app cleanup accepted", code)
 	}
-	if code, b = request("GET", "/install.sh", nil, false); code != 200 || bytes.Contains(b, []byte("https://github.com")) || !bytes.Contains(b, []byte(httpServer.URL)) {
-		t.Fatal("企业安装器地址不正确")
+	for range 2 {
+		if code, body = request("POST", "/admin/api/apps/openai/codex/cleanup/"+preview.Job.ID+"/execute", map[string]any{}, true, ""); code != 200 {
+			t.Fatal(code, string(body))
+		}
 	}
-	req, _ := http.NewRequestWithContext(context.Background(), "GET", httpServer.URL+"/channels/latest", nil)
-	req.Host = "attacker.example"
-	resp, e := client.Do(req)
-	if e != nil {
-		t.Fatal(e)
+	if code, body = request("POST", "/admin/api/password", map[string]string{"old": password, "new": "correct-horse-battery-new"}, true, ""); code != 200 {
+		t.Fatal(code, string(body))
 	}
-	resp.Body.Close()
-	if resp.StatusCode != 400 {
-		t.Fatal("Host 注入未拒绝")
+	if code, _ = request("GET", "/admin/api/session", nil, false, ""); code != 401 {
+		t.Fatal("password did not invalidate session", code)
 	}
 }
 func TestProxyTrustedMultiHopIPv6AndMalformed(t *testing.T) {

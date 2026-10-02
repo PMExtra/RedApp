@@ -1,25 +1,21 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { t } from "../i18n";
+import { language, t } from "../i18n";
 import Icon from "./Icon.vue";
-const props = withDefaults(
-  defineProps<{ origin: string; application?: string }>(),
-  { application: "codex" },
+import type { Application } from "../bootstrap";
+const props = defineProps<{ origin: string; application: Application }>();
+const commands = computed(() =>
+  props.application.installers.map((item) => {
+    const url = `${props.origin}/${props.application.id}/${item.file}`;
+    return {
+      name: item.shell === "powershell" ? "PowerShell" : "Shell",
+      command:
+        item.shell === "powershell"
+          ? `irm '${url}' | iex`
+          : `curl -fsSL '${url}' | ${item.shell}`,
+    };
+  }),
 );
-const isClaude = computed(() => props.application === "claude-code");
-const installerBase = computed(
-  () => props.origin + (isClaude.value ? "/claude-code" : ""),
-);
-const commands = computed(() => [
-  {
-    name: "Shell",
-    command: `curl -fsSL '${installerBase.value}/install.sh' | ${isClaude.value ? "bash" : "sh"}`,
-  },
-  {
-    name: "PowerShell",
-    command: `irm '${installerBase.value}/install.ps1' | iex`,
-  },
-]);
 const canCopy =
   window.isSecureContext === true &&
   typeof navigator.clipboard?.writeText === "function";
@@ -46,19 +42,10 @@ async function copy(command: string) {
       <div>
         <span class="eyebrow">{{ t("Run in your terminal") }}</span>
         <h2 id="install-title">
-          {{ isClaude ? t("Install Claude Code") : t("Install Codex") }}
+          {{ t("Install {name}", { name: application.name[language] }) }}
         </h2>
       </div>
     </div>
-    <p class="muted">
-      {{
-        isClaude
-          ? t(
-              "Installs latest. Use stable or a version to pin your installation.",
-            )
-          : t("Uses CODEX_RELEASE if set, otherwise latest.")
-      }}
-    </p>
     <div class="command-stack">
       <article v-for="item in commands" :key="item.name" class="command">
         <div class="section-heading">
@@ -93,21 +80,11 @@ async function copy(command: string) {
     </p>
     <p class="muted small-text">
       {{
-        isClaude
-          ? t(
-              "The service verifies Anthropic’s signed manifest; the installer verifies the binary hash. The managed launcher disables official updates. Signing in and using Claude Code still requires its provider’s services.",
-            )
-          : t(
-              "This command downloads and runs an installer that verifies package hashes. Use a service you trust. Signing in and using Codex still requires its provider’s services.",
-            )
-      }}
-    </p>
-    <p v-if="isClaude" class="muted small-text">
-      {{
         t(
-          "Trust this HTTPS service. Run claude through its managed launcher; executing the version binary directly bypasses update control. Upgrade by rerunning this installer.",
+          "This command downloads and runs an installer. Use a service you trust.",
         )
       }}
     </p>
+    <p class="muted small-text">{{ application.update_policy[language] }}</p>
   </section>
 </template>

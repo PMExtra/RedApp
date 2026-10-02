@@ -10,7 +10,8 @@ on:
       - '.github/workflows/installer-updates.yml'
       - '.github/installer-check/Dockerfile'
       - 'scripts/installer_maintenance.py'
-      - 'installers/upstream-scripts.json'
+      - 'scripts/installer_manifest.py'
+      - 'internal/apps/builtin/manifest.json'
 
 permissions:
   contents: read

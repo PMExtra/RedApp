@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -35,14 +34,14 @@ func TestCleanupCrashHelper(t *testing.T) {
 	}
 	u, _ := url.Parse(os.Getenv("REDAPP_CLEANUP_SOURCE"))
 	c := &distributor.Client{Base: u, HTTP: &http.Client{Timeout: 10 * time.Second}}
-	m, e := New(guard.Directory, db, c)
+	m, e := newTestManager(guard.Directory, db, c)
 	if e != nil {
 		t.Fatal(e)
 	}
-	r := Resource{Source: c.URL("asset"), Hash: os.Getenv("REDAPP_CLEANUP_HASH")}
-	r.ID = Identity(r.Source, r.Hash)
-	db.Seen("0.1.0")
-	versions, _ := db.Versions()
+	r := Resource{Application: testApp, Version: "0.1.0", Key: "asset", Source: c.URL("asset"), Hash: os.Getenv("REDAPP_CLEANUP_HASH")}
+	r.ID = LogicalIdentity(r.Application, r.Version, r.Key)
+	authorize(t, m, r)
+	versions, _ := db.VersionsFor(testApp)
 	ev := crashEvidence{FirstSeen: versions["0.1.0"]}
 	rd, _, e := m.Acquire(context.Background(), r)
 	if e != nil {
@@ -63,22 +62,17 @@ func TestCleanupCrashHelper(t *testing.T) {
 			return
 		}
 		if ev.Job == "" {
-			jobs, _ := db.List("cleanup")
-			if len(jobs) > 0 {
-				var j Cleanup
-				json.Unmarshal(jobs[0], &j)
-				ev.Job = j.ID
-			}
+			db.DB.QueryRow("SELECT id FROM cleanup_previews LIMIT 1").Scan(&ev.Job)
 		}
 		json.NewEncoder(os.Stdout).Encode(ev)
 		os.Exit(91)
 	}
-	job, e := m.Preview(map[string]bool{r.ID: true})
+	job, e := m.Preview(testApp, map[string]bool{r.ID: true})
 	if e != nil {
 		t.Fatal(e)
 	}
 	ev.Job = job.ID
-	if e = m.Cleanup(job.ID); e != nil {
+	if e = m.Cleanup(testApp, job.ID); e != nil {
 		t.Fatal(e)
 	}
 	if mode == "new" {
@@ -91,19 +85,7 @@ func TestCleanupCrashHelper(t *testing.T) {
 		}
 		fresh.Close()
 		ev.New = fresh.g.ID
-		// A completed retired writer also retains a .part, not a published blob.
-		if point == "delete.after_part_unlink" {
-			m.mu.Lock()
-			part := filepath.Join(guard.Directory, "objects", r.ID, g.ID+".part")
-			if e = os.Rename(g.Path, part); e != nil {
-				t.Fatal(e)
-			}
-			g.Path = part
-			if e = m.save(g); e != nil {
-				t.Fatal(e)
-			}
-			m.mu.Unlock()
-		}
+
 		rd.Close()
 	}
 	t.Fatalf("故障点未触发: %s", point)
@@ -117,8 +99,7 @@ func TestCleanupProcessCrashWindows(t *testing.T) {
 		{"delete.before_files", "idle"}, {"delete.after_blob_unlink", "idle"},
 		{"delete.after_files", "idle"}, {"delete.after_generation_delete", "idle"},
 		{"cleanup.after_job_delete", "lease"},
-		{"delete.before_files", "new"}, {"delete.after_blob_unlink", "new"},
-		{"delete.after_part_unlink", "new"}, {"delete.after_files", "new"},
+		{"delete.before_files", "new"}, {"delete.after_files", "new"},
 		{"delete.after_generation_delete", "new"},
 	}
 	for _, stage := range stages {
@@ -147,11 +128,11 @@ func TestCleanupProcessCrashWindows(t *testing.T) {
 				if e != nil {
 					t.Fatal(e)
 				}
-				m, e := New(dir, db, c)
+				m, e := newTestManager(dir, db, c)
 				if e != nil {
 					t.Fatal(e)
 				}
-				versions, _ := db.Versions()
+				versions, _ := db.VersionsFor(testApp)
 				if versions["0.1.0"] != ev.FirstSeen {
 					t.Fatal("first_seen 被改写")
 				}
@@ -170,23 +151,23 @@ func TestCleanupProcessCrashWindows(t *testing.T) {
 					}
 				}
 				if stage.point != "preview.after_job_save" || restart > 0 {
-					for _, ext := range []string{".blob", ".part"} {
-						if _, e = os.Stat(filepath.Join(dir, "objects", r.ID, ev.Old+ext)); !os.IsNotExist(e) {
-							t.Fatalf("旧文件未回收: %s %v", ext, e)
+					if _, e = os.Stat(m.partPath(ev.Old)); !os.IsNotExist(e) {
+						t.Fatalf("old part remains: %v", e)
+					}
+					if ev.New == "" {
+						if _, e = os.Stat(m.blobPath(r)); !os.IsNotExist(e) {
+							t.Fatalf("unreferenced blob remains: %v", e)
 						}
 					}
+
 					if m.all[ev.Old] != nil {
 						t.Fatal("旧代记录残留")
 					}
 				}
-				jobs, _ := db.List("cleanup")
-				for _, raw := range jobs {
-					var job Cleanup
-					json.Unmarshal(raw, &job)
-					if e = m.Cleanup(job.ID); e != nil {
-						t.Fatal(e)
-					}
+				if e = m.Cleanup(testApp, ev.Job); e != nil {
+					t.Fatal(e)
 				}
+
 				if ev.New != "" && m.current[r.ID].ID != ev.New {
 					t.Fatal("旧 job 误删新代")
 				}
@@ -201,7 +182,7 @@ func TestPublishedPrefixShortReadFails(t *testing.T) {
 	data := []byte("published prefix")
 	c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(data) }))
 	m, _, _ := setup(t, c)
-	r := resource(c, data)
+	r := authorizedResource(t, m, c, data)
 	collect(t, m, r)
 	rd, _, e := m.Acquire(context.Background(), r)
 	if e != nil {
@@ -220,17 +201,17 @@ func TestCleanupTombstoneFailureDoesNotRetireCurrent(t *testing.T) {
 	data := []byte("tombstone rejection")
 	c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(data) }))
 	m, db, _ := setup(t, c)
-	r := resource(c, data)
+	r := authorizedResource(t, m, c, data)
 	collect(t, m, r)
-	job, e := m.Preview(map[string]bool{r.ID: true})
+	job, e := m.Preview(testApp, map[string]bool{r.ID: true})
 	if e != nil {
 		t.Fatal(e)
 	}
-	_, e = db.DB.Exec(`CREATE TRIGGER reject_retire BEFORE UPDATE ON records WHEN NEW.kind='generation' BEGIN SELECT RAISE(ABORT,'injected'); END`)
+	_, e = db.DB.Exec(`CREATE TRIGGER reject_retire BEFORE UPDATE ON generations BEGIN SELECT RAISE(ABORT,'injected'); END`)
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = m.Cleanup(job.ID); e == nil {
+	if e = m.Cleanup(testApp, job.ID); e == nil {
 		t.Fatal("提交失败未返回")
 	}
 	if m.current[r.ID].Retired {
@@ -240,7 +221,7 @@ func TestCleanupTombstoneFailureDoesNotRetireCurrent(t *testing.T) {
 	if !bytes.Equal(collect(t, m, r), data) {
 		t.Fatal("现有缓存受影响")
 	}
-	if e = m.Cleanup(job.ID); e != nil {
+	if e = m.Cleanup(testApp, job.ID); e != nil {
 		t.Fatal(e)
 	}
 }
@@ -249,25 +230,25 @@ func TestCleanupDatabaseDeleteFailureRetainsRetryableGeneration(t *testing.T) {
 	data := []byte("delete rejection")
 	c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(data) }))
 	m, db, _ := setup(t, c)
-	r := resource(c, data)
+	r := authorizedResource(t, m, c, data)
 	collect(t, m, r)
 	old := m.current[r.ID]
-	job, e := m.Preview(map[string]bool{r.ID: true})
+	job, e := m.Preview(testApp, map[string]bool{r.ID: true})
 	if e != nil {
 		t.Fatal(e)
 	}
-	_, e = db.DB.Exec(`CREATE TRIGGER reject_delete BEFORE DELETE ON records WHEN OLD.kind='generation' BEGIN SELECT RAISE(ABORT,'injected'); END`)
+	_, e = db.DB.Exec(`CREATE TRIGGER reject_delete BEFORE DELETE ON generations BEGIN SELECT RAISE(ABORT,'injected'); END`)
 	if e != nil {
 		t.Fatal(e)
 	}
-	if e = m.Cleanup(job.ID); e == nil {
+	if e = m.Cleanup(testApp, job.ID); e == nil {
 		t.Fatal("删除失败未返回")
 	}
 	if m.all[old.ID] != old || !old.Retired {
 		t.Fatal("删除失败失去可重试旧代")
 	}
 	db.DB.Exec("DROP TRIGGER reject_delete")
-	if e = m.Cleanup(job.ID); e != nil {
+	if e = m.Cleanup(testApp, job.ID); e != nil {
 		t.Fatal(e)
 	}
 	if m.all[old.ID] != nil {

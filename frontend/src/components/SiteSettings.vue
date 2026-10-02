@@ -1,45 +1,23 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
-import { api } from "../api";
-import { t } from "../i18n";
-import { applySite, defaultSite, type SiteSettings } from "../site";
-const emit = defineEmits<{ error: [unknown] }>();
-const draft = ref<SiteSettings>(structuredClone(defaultSite)),
-  busy = ref(false),
-  loaded = ref(false),
-  saved = ref(false);
-const languages = ["en", "zh-CN"] as const;
-let controller: AbortController | undefined,
-  disposed = false;
-async function request(save = false) {
-  if (busy.value) return;
-  busy.value = true;
-  saved.value = false;
-  controller = new AbortController();
-  try {
-    const value = await api<SiteSettings>(
-      "site",
-      save ? draft.value : undefined,
-      controller.signal,
-    );
-    if (!disposed) {
-      draft.value = value;
-      loaded.value = true;
+import { computed } from "vue";
+import { t, errorText } from "../i18n";
+import { applySite, type SiteSettings } from "../site";
+import { invalidateBootstrap } from "../bootstrap";
+import { useSetting } from "../composables/useSetting";
+const { draft, loading, saving, saved, error, load, save } =
+  useSetting<SiteSettings>(
+    computed(() => "settings/site"),
+    (value, saved) => {
+      if (saved) invalidateBootstrap();
       applySite(value);
-      saved.value = save;
-    }
-  } catch (error) {
-    if (!disposed) emit("error", error);
-  } finally {
-    busy.value = false;
-    controller = undefined;
-  }
+    },
+  );
+const busy = computed(() => loading.value || saving.value);
+const loaded = computed(() => !!draft.value);
+const languages = ["en", "zh-CN"] as const;
+function request(saving = false) {
+  return saving ? save() : load();
 }
-onMounted(() => request());
-onUnmounted(() => {
-  disposed = true;
-  controller?.abort();
-});
 </script>
 <template>
   <section class="panel site-settings">
@@ -54,8 +32,10 @@ onUnmounted(() => {
     <p v-if="saved" class="notice" role="status">
       {{ t("Site settings saved.") }}
     </p>
+    <p v-if="error" class="error" role="alert">{{ errorText(error) }}</p>
+    <p v-if="loading" role="status">{{ t("Loading…") }}</p>
     <form @submit.prevent="request(true)">
-      <fieldset :disabled="busy || !loaded">
+      <fieldset v-if="draft" :disabled="busy || !loaded">
         <div class="two-columns">
           <fieldset v-for="lang in languages" :key="lang" class="site-locale">
             <legend>{{ lang === "en" ? "English" : "简体中文" }}</legend>

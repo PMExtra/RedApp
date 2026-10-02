@@ -14,22 +14,25 @@ import threading
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--directory', type=Path, default=Path(__file__).resolve().parents[1] / 'installers/claude-code/generated')
+    parser.add_argument('--directory', type=Path, default=Path(__file__).resolve().parents[1] / 'installers/anthropic/claude-code/generated')
     args = parser.parse_args()
     seen, config = [], {}
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, *_): pass
         def do_GET(self):
-            seen.append(self.path)
+            if not self.path.startswith('/anthropic/claude-code/'):
+                seen.append(self.path);self.send_error(404);return
+            path=self.path[len('/anthropic/claude-code'):]
+            seen.append(path)
             if config.get('failure') == 'redirect':
                 self.send_response(302); self.send_header('Location', '/escaped'); self.end_headers(); return
             version = config['version']
-            if self.path in ['/latest', '/stable']:
+            if path in ['/latest', '/stable']:
                 body = version.encode() if config.get('failure') != 'channel' else b'2.1.285/../../escape'
-            elif self.path == f'/{version}/manifest.json':
+            elif path == f'/{version}/manifest.json':
                 body = json.dumps({'version': version, 'platforms': {config['platform']: {'binary': 'claude', 'checksum': hashlib.sha256(config['body']).hexdigest(), 'size': len(config['body'])}}}).encode()
                 if config.get('failure') == 'manifest': body = b'<html>Error</html>'
-            elif self.path == f'/{version}/{config["platform"]}/claude':
+            elif path == f'/{version}/{config["platform"]}/claude':
                 body = config['body'] + (b'tampered' if config.get('failure') == 'hash' else b'')
                 if config.get('failure') == 'download': self.send_error(503); return
             else:
@@ -37,7 +40,7 @@ def main():
             self.send_response(200); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
-    base = f'http://127.0.0.1:{server.server_port}'
+    base = f'http://127.0.0.1:{server.server_port}/anthropic/claude-code'
     script = (args.directory / 'install.sh').read_text().replace('@REDAPP_BASE_URL@', base)
     count = 0
     try:

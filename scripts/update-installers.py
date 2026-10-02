@@ -62,7 +62,7 @@ def main():
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9a-f]{40}", args.commit):
         parser.error("必须提供不可变 40 位 commit")
-    target = ROOT / "installers/codex"
+    target = ROOT / "installers/openai/codex"
     manifest = json.loads((target / "provenance.json").read_text())
     expected = {k: v["sha256"] for k, v in manifest["files"].items()}
     if args.commit != manifest["commit"] and not (args.shell_sha256 and args.powershell_sha256):

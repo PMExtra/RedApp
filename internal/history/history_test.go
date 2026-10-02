@@ -152,7 +152,7 @@ func TestRetentionAggregatesBeforeDeletionAndIsIdempotent(t *testing.T) {
 	now := time.Date(2026, 9, 30, 12, 35, 0, 0, time.UTC)
 	old := now.Add(-48 * time.Hour).Truncate(time.Hour)
 	// A stopped process may leave unaggregated raw observations beyond 24h.
-	if _, err := db.DB.Exec("INSERT INTO metric_samples VALUES(?,?,?,?,?,?,?)", "disk.cache_bytes", old.Unix(), old.Unix(), "old", 123, nil, 0); err != nil {
+	if _, err := db.DB.Exec("INSERT INTO metric_samples VALUES(?,?,?,?,?,?,?,?,?)", "global", "", "disk.cache_bytes", old.Unix(), old.Unix(), "old", 123, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.Maintain(now); err != nil {
@@ -183,7 +183,7 @@ func TestAtomicFailureCannotLoseUnaggregatedRaw(t *testing.T) {
 	h, db := setup(t)
 	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 	old := now.Add(-48 * time.Hour)
-	db.DB.Exec("INSERT INTO metric_samples VALUES(?,?,?,?,?,?,?)", "disk.cache_bytes", old.Unix(), old.Unix(), "old", 42, nil, 0)
+	db.DB.Exec("INSERT INTO metric_samples VALUES(?,?,?,?,?,?,?,?,?)", "global", "", "disk.cache_bytes", old.Unix(), old.Unix(), "old", 42, nil, 0)
 	db.DB.Exec(`CREATE TRIGGER fail_cleanup BEFORE DELETE ON metric_samples BEGIN SELECT RAISE(ABORT,'test failure'); END`)
 	if err := h.Maintain(now); err == nil {
 		t.Fatal("injected transaction failure ignored")
@@ -192,7 +192,7 @@ func TestAtomicFailureCannotLoseUnaggregatedRaw(t *testing.T) {
 	var watermark int64
 	db.DB.QueryRow("SELECT COUNT(*) FROM metric_samples").Scan(&raw)
 	db.DB.QueryRow("SELECT COUNT(*) FROM metric_hours").Scan(&hours)
-	db.DB.QueryRow("SELECT aggregated_before FROM metric_history_state").Scan(&watermark)
+	db.DB.QueryRow("SELECT aggregated_before_s FROM metric_history_state").Scan(&watermark)
 	if raw != 1 || hours != 0 || watermark != 0 {
 		t.Fatalf("failed transaction changed state raw=%d hours=%d watermark=%d", raw, hours, watermark)
 	}
@@ -214,7 +214,7 @@ func TestRatesAndCatalogValidation(t *testing.T) {
 	if p.Count != 2 || p.ObservedSeconds != 10 || !p.Incomplete {
 		t.Fatal("rate coverage lost")
 	}
-	if len(Definitions()) != 43 {
+	if len(Definitions()) != 41 {
 		t.Fatal("catalog changed unexpectedly")
 	}
 	seen := map[string]bool{}
@@ -313,4 +313,81 @@ func TestCounterDoesNotBridgeMissingUTCMinute(t *testing.T) {
 		t.Fatal("delta crossed a missing UTC minute")
 	}
 	value(t, point(t, h, key, "24h", now, base.Add(3*time.Minute)).Delta, 10)
+}
+
+func TestScopedHistoryAggregationAndUnknownRetention(t *testing.T) {
+	h, db := setup(t)
+	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	key := "counters.upstream_bytes"
+	for i := 0; i < 2; i++ {
+		err := h.RecordScoped(base.Add(time.Duration(i)*time.Minute), []Observation{
+			{Scope: "global", Metrics: []Metric{observation(key, float64(30+i*12))}},
+			{Scope: "app", AppID: "openai/codex", Metrics: []Metric{observation(key, float64(10+i*5))}},
+			{Scope: "app", AppID: "anthropic/claude-code", Metrics: []Metric{observation(key, float64(20+i*7))}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// History keys deliberately have no foreign key to the active definitions.
+	for _, metric := range []string{"retired.unknown", "counters.reuse_requests", "events.recent_total"} {
+		if _, err := db.DB.Exec("INSERT INTO metric_samples VALUES(?,?,?,?,?,?,?,?,?)", "global", "", metric, base.Unix(), base.Unix(), "old", 4, nil, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := base.Add(time.Hour)
+	if err := h.Maintain(now); err != nil {
+		t.Fatal(err)
+	}
+	for app, want := range map[string]float64{"openai/codex": 5, "anthropic/claude-code": 7} {
+		series, err := h.QueryFor(app, key, "7d", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, p := range series.Points {
+			if p.Time == base.Unix() {
+				value(t, p.Delta, want)
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("app point missing")
+		}
+	}
+	value(t, point(t, h, key, "7d", now, base).Delta, 12)
+	for _, key := range []string{"counters.reuse_requests", "events.recent_total"} {
+		retired, err := h.Query(key, "7d", now)
+		if err != nil || !retired.Retired {
+			t.Fatal("retired historical metadata unavailable", key, err)
+		}
+		value(t, point(t, h, key, "7d", now, base).Last, 4)
+		if err := h.Record(now, []Metric{observation(key, 5)}); err == nil {
+			t.Fatal("retired observation accepted", key)
+		}
+	}
+
+	var n int
+	if err := db.DB.QueryRow("SELECT COUNT(*) FROM metric_samples WHERE metric='retired.unknown'").Scan(&n); err != nil || n != 1 {
+		t.Fatal("unknown history eagerly removed", n, err)
+	}
+	if _, err := h.QueryFor("openai/codex", "runtime.memory_bytes", "24h", now); err == nil {
+		t.Fatal("process metric fabricated as app metric")
+	}
+	if err := h.Maintain(base.Add(25 * time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	db.DB.QueryRow("SELECT COUNT(*) FROM metric_samples WHERE metric='retired.unknown'").Scan(&n)
+	if n != 0 {
+		t.Fatal("unknown history did not naturally expire")
+	}
+	for _, key := range []string{"counters.reuse_requests", "events.recent_total"} {
+		value(t, point(t, h, key, "30d", base.Add(25*time.Hour), base).Last, 4)
+	}
+	if err := h.Maintain(base.Add(31 * 24 * time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DB.QueryRow("SELECT COUNT(*) FROM metric_hours WHERE metric IN ('counters.reuse_requests','events.recent_total')").Scan(&n); err != nil || n != 0 {
+		t.Fatal("retired hourly history did not naturally expire", n, err)
+	}
 }

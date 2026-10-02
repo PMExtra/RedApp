@@ -8,21 +8,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	installers "github.com/PMExtra/RedApp/installers/codex"
 	app "github.com/PMExtra/RedApp/internal/apps/codex"
-	"github.com/PMExtra/RedApp/internal/auth"
-	"github.com/PMExtra/RedApp/internal/download"
-	"github.com/PMExtra/RedApp/internal/store"
 	"github.com/PMExtra/RedApp/internal/testutil"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 )
 
 func testSHA(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
@@ -62,28 +57,16 @@ func TestEnterpriseInstallerThroughRedAppAndHashFailure(t *testing.T) {
 				}
 			}))
 			base = c.Base.String()
-			dir := t.TempDir()
-			db, e := store.Open(dir)
+			handler, _, _ := newTestServer(t, c)
+			enterprise := startTestServer(t, handler)
+			response, e := http.Get(enterprise.URL + "/openai/codex/install.sh")
 			if e != nil {
 				t.Fatal(e)
 			}
-			defer db.DB.Close()
-			manager, e := download.New(dir, db, c)
-			if e != nil {
-				t.Fatal(e)
-			}
-			defer manager.Close()
-			a, e := auth.New(db, false, func(string) {})
-			if e != nil {
-				t.Fatal(e)
-			}
-			handler := &Server{DB: db, Catalog: app.New(db, c), Downloads: manager, Auth: a, Dir: dir, Started: time.Now()}
-			enterprise := httptest.NewServer(handler)
-			defer enterprise.Close()
-			handler.Public = enterprise.URL
-			script, e := installers.Installer("install.sh", enterprise.URL)
-			if e != nil {
-				t.Fatal(e)
+			script, e := io.ReadAll(response.Body)
+			response.Body.Close()
+			if e != nil || response.StatusCode != http.StatusOK {
+				t.Fatalf("installer response: status=%d, error=%v, body=%s", response.StatusCode, e, script)
 			}
 			clientRoot := t.TempDir()
 			scriptPath := filepath.Join(clientRoot, "install.sh")

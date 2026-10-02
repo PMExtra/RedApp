@@ -1,5 +1,6 @@
 import { mount } from "@vue/test-utils";
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { applications } from "../testSupport";
 import InstallCommands from "./InstallCommands.vue";
 afterEach(() => vi.unstubAllGlobals());
 describe("Install commands", () => {
@@ -11,11 +12,14 @@ describe("Install commands", () => {
       configurable: true,
     });
     const wrapper = mount(InstallCommands, {
-      props: { origin: "https://redapp.example:8443" },
+      props: {
+        application: applications[0]!,
+        origin: "https://redapp.example:8443",
+      },
     });
     expect(wrapper.findAll("code").map((item) => item.text())).toEqual([
-      "curl -fsSL 'https://redapp.example:8443/install.sh' | sh",
-      "irm 'https://redapp.example:8443/install.ps1' | iex",
+      "curl -fsSL 'https://redapp.example:8443/openai/codex/install.sh' | sh",
+      "irm 'https://redapp.example:8443/openai/codex/install.ps1' | iex",
     ]);
     for (const button of wrapper.findAll("button"))
       await button.trigger("click");
@@ -35,7 +39,10 @@ describe("Install commands", () => {
       configurable: true,
     });
     const wrapper = mount(InstallCommands, {
-      props: { origin: "<img src=x onerror=alert(1)>" },
+      props: {
+        application: applications[0]!,
+        origin: "<img src=x onerror=alert(1)>",
+      },
     });
     await wrapper.find("button").trigger("click");
     await vi.waitFor(() =>
@@ -55,7 +62,7 @@ describe("Install commands", () => {
         configurable: true,
       });
       const w = mount(InstallCommands, {
-        props: { origin: "http://internal" },
+        props: { application: applications[0]!, origin: "http://internal" },
       });
       expect(w.find("button").exists()).toBe(false);
       expect(w.findAll('pre[tabindex="0"]')).toHaveLength(2);

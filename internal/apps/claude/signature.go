@@ -7,7 +7,7 @@ import (
 	_ "crypto/sha512"
 	"encoding/hex"
 	"errors"
-	assets "github.com/PMExtra/RedApp/installers/claude-code"
+	assets "github.com/PMExtra/RedApp/installers"
 	"golang.org/x/crypto/openpgp"
 	"golang.org/x/crypto/openpgp/armor"
 	"golang.org/x/crypto/openpgp/packet"
@@ -19,7 +19,13 @@ const SigningFingerprint = "31ddde24ddfab679f42d7bd2baa929ff1a7ecace"
 
 // Only the reviewed upstream RSA/SHA512 binary signature format is accepted.
 // The embedded key is never replaced by a key supplied alongside network metadata.
-func Verify(raw, signature []byte) error { return verifyWithKey(raw, signature, assets.PublicKey()) }
+func Verify(raw, signature []byte) error {
+	key, err := assets.PublicAsset("anthropic/claude-code", "claude-code.asc")
+	if err != nil {
+		return errors.New("Pinned release signing key is unavailable")
+	}
+	return verifyWithKey(raw, signature, key)
+}
 
 func verifyWithKey(raw, signature, key []byte) error {
 	if len(raw) == 0 || len(raw) > 1<<20 || len(signature) == 0 || len(signature) > 16<<10 {

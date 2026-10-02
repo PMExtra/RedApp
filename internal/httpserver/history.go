@@ -55,8 +55,9 @@ func globalMetrics(status map[string]any, started time.Time) []history.Metric {
 			values["resources."+view.State]++
 		}
 	}
-	values["versions.total"] = float64(len(status["versions"].(map[string]string)))
-	values["events.recent_total"] = float64(len(status["events"].([]map[string]any)))
+	for _, count := range status["application_version_counts"].(map[string]int64) {
+		values["versions.total"] += float64(count)
+	}
 	metrics := []history.Metric{}
 	validRate, _ := rates["valid"].(bool)
 	for _, definition := range history.Definitions() {
@@ -84,7 +85,18 @@ func (s *Server) SampleHistory(ctx context.Context, onError func(error)) {
 		status, err := s.status("")
 		if err == nil {
 			at = status["sampled_at"].(time.Time)
-			err = s.History.Record(at, status["metrics"].([]history.Metric))
+			observations := []history.Observation{{Scope: "global", Metrics: status["metrics"].([]history.Metric)}}
+			for _, entry := range s.Registry.Entries() {
+				appStatus, e := s.appStatus(entry.Descriptor.ID, "")
+				if e != nil {
+					err = e
+					break
+				}
+				observations = append(observations, history.Observation{Scope: "app", AppID: entry.Descriptor.ID, Metrics: appStatus["metrics"].([]history.Metric)})
+			}
+			if err == nil {
+				err = s.History.RecordScoped(at, observations)
+			}
 		} else if maintenanceErr := s.History.Maintain(at); maintenanceErr != nil {
 			onError(maintenanceErr)
 		}
@@ -101,4 +113,32 @@ func (s *Server) SampleHistory(ctx context.Context, onError func(error)) {
 			sample()
 		}
 	}
+}
+
+func applicationMetrics(status map[string]any) []history.Metric {
+	values := map[string]float64{}
+	for key, value := range status["counters"].(map[string]int64) {
+		values["counters."+key] = float64(value)
+	}
+	for _, v := range status["resources"].([]download.View) {
+		values["resources.total"]++
+		values["resources.readers"] += float64(v.Readers)
+		if v.Current {
+			values["resources.current"]++
+		}
+		if v.Retired {
+			values["resources.retired"]++
+		}
+		if v.ActiveWriter {
+			values["resources.active_writers"]++
+		}
+		values["resources."+v.State]++
+	}
+	values["versions.total"] = float64(status["version_count"].(int64))
+	out := []history.Metric{}
+	for _, d := range history.AppDefinitions() {
+		value := values[d.Key]
+		out = append(out, history.Metric{Definition: d, Value: &value})
+	}
+	return out
 }

@@ -13,4 +13,4 @@
 
 以上是来源页标签核验记录，不是独立法律结论；没有将用户 SVG 与远程原文件逐字节比对。本文件摘要仅标识当前收到的用户原文。用户已明确允许在本项目使用此素材。品牌标志不属于 RedApp 原创代码的 MIT 授权范围，不将 Codex 源码的 Apache 许可、RedApp MIT 许可或 Commons 网页正文的 CC BY-SA 当作图标许可。使用时仍须尊重商标限制，不暗示官方背书。
 
-SVG 仅含根元素和一个 path，无脚本、外链、事件属性或嵌入内容。由 Codex 模块 embed，经固定路由 `/apps/codex/icon.svg` 提供。前端通过 img 显示，适配仅发生在白色容器、尺寸和 object-fit，不修改图形。
+SVG 仅含根元素和一个 path，无脚本、外链、事件属性或嵌入内容。由 Codex 模块 embed，经固定路由 `/openai/codex/icon.svg` 提供。前端通过 img 显示，适配仅发生在白色容器、尺寸和 object-fit，不修改图形。

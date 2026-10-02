@@ -9,18 +9,18 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
-from installer_maintenance import ROOT,NAMES,audit_claude,digest,download,inventory,run,script_shape,strict_patch
+from installer_maintenance import ROOT,audit_claude,digest,download,inventory,run,script_shape,strict_patch
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source',type=Path)
     parser.add_argument('--shell-sha256');parser.add_argument('--powershell-sha256')
     parser.add_argument('--apply',action='store_true');args=parser.parse_args()
-    target=ROOT/'installers/claude-code';manifest=json.loads((target/'provenance.json').read_text())
-    items={x['name']:x for x in inventory() if x['application']=='claude-code'}
+    target=ROOT/'installers/anthropic/claude-code';manifest=json.loads((target/'provenance.json').read_text())
+    items={x['name']:x for x in inventory() if x['application']=='anthropic/claude-code'}
     with tempfile.TemporaryDirectory(prefix='.claude-stage-',dir=target.parent) as tmp:
         stage=Path(tmp)/'claude-code';shutil.copytree(target,stage)
-        for name,explicit in zip(NAMES,[args.shell_sha256,args.powershell_sha256]):
+        for name,explicit in [('install.sh',args.shell_sha256),('install.ps1',args.powershell_sha256)]:
             raw=(args.source/name).read_bytes() if args.source else download(items[name]['url'])
             script_shape(name,raw)
             expected=explicit or manifest['files'][name]['sha256']

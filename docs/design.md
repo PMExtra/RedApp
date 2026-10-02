@@ -1,5 +1,7 @@
 # RedApp 企业分发服务设计
 
+> 本文保留 v0.5.0 及更早的历史设计/验收记录。当前架构、CLI、路由与目录契约见 [多应用实施设计](multi-application-architecture-next.md) 和 [运维说明](operations.md)；历史测试结果不代表当前分支已验收。
+
 - 文档状态：设计基线，等待官方分发协议核验及实现验证
 - 编写日期：2026-09-30
 - 项目名：RedApp（Redistribution Application）

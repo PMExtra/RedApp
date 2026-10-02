@@ -33,13 +33,14 @@ func TestManagerProcessHelper(t *testing.T) {
 	defer db.DB.Close()
 	u, _ := url.Parse(os.Getenv("REDAPP_DOWNLOAD_SOURCE"))
 	c := &distributor.Client{Base: u, HTTP: &http.Client{}}
-	m, e := New(guard.Directory, db, c)
+	m, e := newTestManager(guard.Directory, db, c)
 	if e != nil {
 		os.Exit(4)
 	}
 	hash := os.Getenv("REDAPP_DOWNLOAD_HASH")
 	source := c.URL("asset")
-	r := Resource{ID: Identity(source, hash), Source: source, Hash: hash}
+	r := Resource{Application: testApp, Version: "0.1.0", Key: "asset", ID: LogicalIdentity(testApp, "0.1.0", "asset"), Source: source, Hash: hash}
+	authorize(t, m, r)
 	rd, _, e := m.Acquire(context.Background(), r)
 	if e != nil {
 		os.Exit(5)
@@ -101,7 +102,7 @@ func TestSIGKILLReleasesLockAndResumesDiskPrefix(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer db.DB.Close()
-	m, e := New(dir, db, c)
+	m, e := newTestManager(dir, db, c)
 	if e != nil {
 		t.Fatal(e)
 	}

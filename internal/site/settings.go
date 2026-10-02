@@ -53,22 +53,35 @@ func (s *Settings) Validate() error {
 	}
 	return nil
 }
-func Load(db *store.Store) (Settings, error) {
-	value := Defaults()
+
+type Snapshot struct {
+	Settings
+	Revision int64 `json:"revision"`
+}
+
+func LoadSnapshot(db *store.Store) (Snapshot, error) {
+	value := Snapshot{Settings: Defaults()}
 	if db == nil {
 		return value, nil
 	}
-	if err := db.Get("setting", "site", &value); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return Settings{}, err
+	revision, err := db.ReadSetting("global", "", "site", &value.Settings)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return Snapshot{}, err
 	}
+	value.Revision = revision
 	if err := value.Validate(); err != nil {
-		return Settings{}, err
+		return Snapshot{}, err
 	}
 	return value, nil
 }
-func Save(db *store.Store, value Settings) error {
+
+func SaveCAS(db *store.Store, value Settings, expected int64) (Snapshot, error) {
 	if err := value.Validate(); err != nil {
-		return err
+		return Snapshot{}, err
 	}
-	return db.Put("setting", "site", value)
+	revision, err := db.CompareAndSwapSetting("global", "", "site", expected, value)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return Snapshot{Settings: value, Revision: revision}, nil
 }

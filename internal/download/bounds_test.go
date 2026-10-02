@@ -15,7 +15,7 @@ func TestBoundsAndMissingCompleteFile(t *testing.T) {
 	data := []byte("bounded")
 	c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(data) }))
 	m, _, _ := setup(t, c)
-	r := resource(c, data)
+	r := authorizedResource(t, m, c, data)
 	collect(t, m, r)
 	m.mu.Lock()
 	g := m.current[r.ID]
@@ -42,7 +42,10 @@ func TestBoundsAndMissingCompleteFile(t *testing.T) {
 	m.mu.Lock()
 	m.maxWriters = 0
 	m.mu.Unlock()
-	r.ID = Identity(r.Source, "another-identity")
+	r.Version = "0.2.0"
+	r.Hash = digest([]byte("uncached"))
+	r.ID = LogicalIdentity(r.Application, r.Version, r.Key)
+	authorize(t, m, r)
 	if _, _, e = m.Acquire(context.Background(), r); e == nil {
 		t.Fatal("writer 上限未生效")
 	}
@@ -65,7 +68,7 @@ func TestSafe416AndWeakValidatorResume(t *testing.T) {
 				}
 			}))
 			m, _, _ := setup(t, c)
-			r := resource(c, data)
+			r := authorizedResource(t, m, c, data)
 			m.mu.Lock()
 			g, e := m.createLocked(r, false)
 			if e != nil {

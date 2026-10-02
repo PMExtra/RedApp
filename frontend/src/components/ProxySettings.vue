@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from "vue";
-import { api, type ProxySettings } from "../api";
-import { t } from "../i18n";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { api, putSetting, type ProxySettings } from "../api";
+import { errorText, t } from "../i18n";
 import SelectMenu from "./SelectMenu.vue";
+import { useDirtyDraft } from "../composables/useDirtyDraft";
 const emit = defineEmits<{ error: [unknown] }>();
+const error = ref<unknown>();
+const revision = ref<number>();
 const server = ref(""),
   username = ref(""),
   password = ref(""),
@@ -12,6 +15,12 @@ const server = ref(""),
   busy = ref(false),
   message = ref(false),
   loading = ref(false);
+const dirty = computed(
+  () =>
+    !!saved.value &&
+    (server.value !== saved.value.server || action.value !== "keep"),
+);
+const confirmDiscard = useDirtyDraft(dirty);
 let controller: AbortController | undefined,
   disposed = false;
 watch(action, (value) => {
@@ -21,26 +30,32 @@ watch(action, (value) => {
   }
 });
 async function load() {
-  if (busy.value) return;
+  if (busy.value || !confirmDiscard()) return;
   busy.value = true;
+  error.value = undefined;
   loading.value = true;
   message.value = false;
+  error.value = undefined;
   controller = new AbortController();
   try {
-    const data = await api<ProxySettings>(
-      "proxy",
+    const data = await api<ProxySettings & { revision: number }>(
+      "settings/proxy",
       undefined,
       controller.signal,
     );
     if (!disposed) {
+      revision.value = data.revision;
       saved.value = data;
       server.value = data.server;
       username.value = "";
       password.value = "";
       action.value = "keep";
     }
-  } catch (error) {
-    if (!disposed) emit("error", error);
+  } catch (reason) {
+    if (!disposed) {
+      error.value = reason;
+      emit("error", reason);
+    }
   } finally {
     busy.value = false;
     loading.value = false;
@@ -48,22 +63,25 @@ async function load() {
   }
 }
 async function save() {
-  if (busy.value || !saved.value) return;
+  if (busy.value || !saved.value || revision.value === undefined) return;
   busy.value = true;
   message.value = false;
+  error.value = undefined;
   controller = new AbortController();
   try {
-    const data = await api<ProxySettings>(
-      "proxy",
+    const data = await putSetting<ProxySettings & { revision: number }>(
+      "settings/proxy",
       {
         server: server.value,
         username: action.value === "replace" ? username.value : "",
         password: action.value === "replace" ? password.value : "",
         password_action: action.value,
       },
+      revision.value,
       controller.signal,
     );
     if (!disposed) {
+      revision.value = data.revision;
       saved.value = data;
       server.value = data.server;
       username.value = "";
@@ -71,8 +89,11 @@ async function save() {
       action.value = "keep";
       message.value = true;
     }
-  } catch (error) {
-    if (!disposed) emit("error", error);
+  } catch (reason) {
+    if (!disposed) {
+      error.value = reason;
+      emit("error", reason);
+    }
   } finally {
     busy.value = false;
     controller = undefined;
@@ -104,6 +125,7 @@ onUnmounted(() => {
       }}
     </p>
     <p v-if="loading" role="status">{{ t("Loading proxy settings…") }}</p>
+    <p v-if="error" class="error" role="alert">{{ errorText(error) }}</p>
     <form @submit.prevent="save">
       <fieldset :disabled="busy || !saved">
         <div class="two-columns">

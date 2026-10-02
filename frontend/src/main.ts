@@ -1,6 +1,6 @@
+import "./i18n";
 import { createApp } from "vue";
+import App from "./App.vue";
+import { makeRouter } from "./router";
 import "./style.css";
-const page = window.location.pathname.startsWith("/admin")
-  ? import("./App.vue")
-  : import("./PublicApp.vue");
-void page.then(({ default: App }) => createApp(App).mount("#app"));
+createApp(App).use(makeRouter()).mount("#app");

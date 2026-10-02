@@ -2,27 +2,23 @@ package store
 
 import "testing"
 
-func TestEventHTTPStatusPreservesEnglishAndLegacyHistory(t *testing.T) {
-	db, err := Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.DB.Close()
-	messages := map[string]int{"Upstream HTTP 502": 502, "\u4e0a\u6e38 HTTP 503": 503, "Disk write failed": 0}
-	for message := range messages {
-		if err := db.Event("test", "http", message); err != nil {
+func TestStructuredEventsKeepExplicitStatusAndApplicationScope(t *testing.T) {
+	s := openTest(t)
+	status := 502
+	for _, app := range []string{"openai/codex", "anthropic/claude-code"} {
+		if err := s.RecordEvent(Event{AppID: app, Version: "1.0.0", ResourceKey: "binary", Category: "http", Code: "upstream_http", Message: "The wording may change", UpstreamStatus: &status}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	events, err := db.Events()
-	if err != nil || len(events) != len(messages) {
-		t.Fatalf("events: %v count=%d", err, len(events))
+	events, err := s.EventsFor("openai/codex")
+	if err != nil || len(events) != 1 {
+		t.Fatal(events, err)
 	}
-	for _, event := range events {
-		message := event["message"].(string)
-		want, ok := messages[message]
-		if !ok || event["status_code"] != want {
-			t.Fatalf("event history or status changed: %v", event)
-		}
+	if events[0]["status_code"] != 502 || events[0]["app_id"] != "openai/codex" {
+		t.Fatal(events)
+	}
+	all, err := s.Events()
+	if err != nil || len(all) != 2 {
+		t.Fatal(all, err)
 	}
 }

@@ -1,14 +1,7 @@
 <script setup lang="ts">
-import {
-  computed,
-  nextTick,
-  onMounted,
-  onUnmounted,
-  ref,
-  useId,
-  watch,
-} from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import Icon from "./Icon.vue";
+import { usePopover } from "../composables/usePopover";
 const props = defineProps<{
   modelValue: string;
   options: { value: string; label: string }[];
@@ -17,11 +10,15 @@ const props = defineProps<{
   icon?: boolean;
 }>();
 const emit = defineEmits<{ "update:modelValue": [string] }>();
-const id = useId(),
-  open = ref(false),
-  active = ref(0),
-  root = ref<HTMLElement>(),
-  trigger = ref<HTMLButtonElement>();
+const {
+  id,
+  open,
+  root,
+  trigger,
+  close: dismiss,
+  show: showPopover,
+} = usePopover();
+const active = ref(0);
 const selected = computed(() =>
   props.options.findIndex((item) => item.value === props.modelValue),
 );
@@ -38,13 +35,13 @@ function scroll() {
 function show() {
   if (props.disabled || !props.options.length) return;
   active.value = Math.max(0, selected.value);
-  open.value = true;
+  showPopover();
   scroll();
 }
 function close(commit = false) {
   if (commit && open.value && props.options[active.value])
     emit("update:modelValue", props.options[active.value]!.value);
-  open.value = false;
+  dismiss();
   search = "";
 }
 function choose(index: number) {
@@ -123,9 +120,6 @@ function key(event: KeyboardEvent) {
     }
   }
 }
-function outside(event: PointerEvent) {
-  if (!root.value?.contains(event.target as Node)) close();
-}
 function blur(event: FocusEvent) {
   if (!root.value?.contains(event.relatedTarget as Node)) close(true);
 }
@@ -150,15 +144,13 @@ watch(
     }
   },
 );
-onMounted(() => document.addEventListener("pointerdown", outside));
-onUnmounted(() => document.removeEventListener("pointerdown", outside));
 </script>
 <template>
   <div ref="root" class="select-menu" @focusout="blur">
     <button
       ref="trigger"
       type="button"
-      class="select-trigger secondary"
+      class="select-trigger popover-trigger secondary"
       role="combobox"
       aria-haspopup="listbox"
       :aria-label="label"
@@ -175,7 +167,7 @@ onUnmounted(() => document.removeEventListener("pointerdown", outside));
     <ul
       v-if="open"
       :id="`${id}-list`"
-      class="select-options"
+      class="select-options popover-panel"
       role="listbox"
       :aria-label="label"
     >

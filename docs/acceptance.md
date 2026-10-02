@@ -1,5 +1,7 @@
 # RedApp 实现与验收记录
 
+> 本文保留 v0.5.0 及更早的历史设计/验收记录。当前架构、CLI、路由与目录契约见 [多应用实施设计](multi-application-architecture-next.md) 和 [运维说明](operations.md)；历史测试结果不代表当前分支已验收。
+
 日期：2026-09-30。验证平台：Linux/amd64、Go 1.25.1；使用 CLI、确定性本地 HTTP 上游和进程测试。
 
 ## 设计基线与实现决策

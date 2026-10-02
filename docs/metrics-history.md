@@ -1,8 +1,16 @@
-# 全局指标与历史
+# 指标作用域与历史
 
-管理页默认展示当前值，点击指标卡片打开历史，默认近 7 天，可切换 24 小时、7 天、30 天。容量和速率使用 IEC 的 1024 换算及两位小数；未知/负值显示“—”，已观测的零值正常显示。版本与单资源继续展示当前状态和速度，不创建历史维度。指标目录固定为下表 43 项，不将版本名、资源 ID 或失败事件字符串变成时序键。
+管理页默认展示当前值，点击指标打开历史，默认近 7 天，可切换 24 小时、7 天、30 天。全局概览分为 16 项常用指标和默认折叠的 25 项诊断指标；折叠只改变展示，刷新、后台采样和历史查询继续。应用页仅展示后端实际支持的应用指标，不复制进程或全局磁盘容量。容量和速率在概览及坐标轴使用 IEC 的 1024 换算及两位小数；未知/负值显示“—”，已观测的零值正常显示。版本与单资源继续展示当前状态和速度，不创建历史维度。活动指标目录为 41 项，下表同时列出两个已退役键供历史解释，不将版本名、资源 ID 或失败事件字符串变成时序键。
 
-## 完整指标目录
+图表悬停、触摸或键盘选择显示浏览器本地时间及 UTC 偏移，读取 API 返回的原始精度和基础单位（B、B/s、s、次数）。小时 gauge 展示 avg/min/max，分钟展示 value/min/max；rate 明确区分五秒观测和观测窗口加权平均。counter 只展示 last 或已知 delta，不平均累计数。缺失桶保留间隙，未知增量与已观测零值分开；同时显示样本数、覆盖时长、有效增量间隔和部分桶状态。聚合及表格时间仍使用 UTC。
+
+图表可聚焦，Left/Right、Home/End 遍历含缺失值的时间桶，Escape 清除选择；触摸选择固定读数，兼容鼠标事件不能覆盖它。切换范围、语言或应用会清除旧选点；更换应用取消旧请求并丢弃迟到结果。DOM 测试模拟这些事件，不等于真实设备或屏幕阅读器验证。
+
+新增应用历史使用固定 app scope，不以版本、资源、错误文本生成动态时序。全局 versions.total 统计所有应用的版本对，同名版本分别计数；应用页只计当前应用。新目录从第一条观测起就使用这些范围，不显示旧版 Codex 历史迁移提示。
+
+`counters.reuse_requests` 已停止独立写入、采样与展示；`events.recent_total` 已停止采样与展示，事件详情保留。其余 41 项继续采集。历史 Catalog 保留两个退役定义及聚合元信息，旧样本按原 24h/30d 周期自然过期，不能按 active 清单强制删除历史。新架构使用全新目录，不导入旧版历史，因此不增加版本口径迁移 marker 表。
+
+## 指标键与历史解释
 
 | 分类 / 类型 | 固定键 | 单位与范围 |
 | --- | --- | --- |
@@ -54,16 +62,16 @@ Go 的可选透明解压行为见官方 [Transport 源码](https://go.dev/src/ne
 管理会话和同源校验不变：
 
 ```sh
-curl -H 'X-History-Metric: disk.cache_bytes' \
-  -H 'X-History-Range: 7d' \
-  --cookie admin-session.cookies \
-  https://codex.example.internal/admin/api/history
+curl --cookie admin-session.cookies \
+  'https://downloads.example.internal/admin/api/history?scope=global&metric=disk.cache_bytes&range=7d'
 ```
 
-`X-History-Range` 仅允许 `24h`、`7d`、`30d`，metric 必须在固定目录中。24h 返回原始分钟点，7d/30d 返回小时聚合（含标记的当前部分桶）；响应明确 `resolution_seconds/from/to`、类型/单位和各点覆盖信息。未知指标/范围返回 400，未登录返回 401，存储失败返回 503。沿用管理响应 no-store；公共路径的查询参数限制不变。
+应用历史使用 `/admin/api/apps/<vendor>/<app>/history?metric=...&range=...`，不接受默认应用或 scope header。`range` 仅允许 `24h`、`7d`、`30d`，metric 必须在固定目录中。24h 返回原始分钟点，7d/30d 返回小时聚合（含标记的当前部分桶）；响应明确 `resolution_seconds/from/to`、类型/单位和各点覆盖信息。未知指标/范围返回 400，未登录返回 401，存储失败返回 503。沿用管理响应 no-store；公共路径的查询参数限制不变。
 
 ## 前端和验证
 
-图表使用 MIT 许可的 uPlot 1.6.32，固定在 lockfile，生产 JS 增加约 57 KB（压缩后总 JS 约 56 KB），CSS/JS 全部本地嵌入。选择它是因为它专注于时序、支持 null 缺失点且无需大型图表框架。来源：[官方项目](https://github.com/leeoniya/uPlot)、[npm 版本](https://www.npmjs.com/package/uplot/v/1.6.32)。CSP 未放宽；Canvas 图形同时提供键盘可达的数据/覆盖表，按钮、窗口选择、关闭和 Escape 均可键盘操作，关闭后焦点回到原指标。变更窗口或关闭时取消请求，错误可重试，空历史有明确提示。
+图表使用 MIT 许可的 uPlot 1.6.32，固定在 lockfile，CSS/JS 全部本地嵌入。选择它是因为它专注于时序、支持 null 缺失点且无需大型图表框架。来源：[官方项目](https://github.com/leeoniya/uPlot)、[npm 版本](https://www.npmjs.com/package/uplot/v/1.6.32)。CSP 未放宽；Canvas 图形同时提供键盘可达的数据/覆盖表，按钮、窗口选择、关闭和 Escape 均可键盘操作，关闭后焦点回到原指标。变更窗口或关闭时取消请求，错误可重试，空历史有明确提示。
 
-CLI 验证：`go test -race ./internal/history ./internal/store ./internal/httpserver`；`make frontend-test`；完整 `make check test build`；真实 CLI HTTP 与可选的 [无头浏览器脚本](../scripts/test-admin-headless.cjs)。聚合测试覆盖 UTC/小时边界、partial、counter 归零/重启/长间断、rate 覆盖、保留、幂等、重新打开数据库、删除故障回滚、刚关闭尚未提交的小时、未知维度拒绝和 API 分辨率。无头测试仅使用本地 fixture，不安装 Codex，不访问生产或公网下载。
+41 项指标的 16/25 展示分组与增强 tooltip 由另一任务交付。本分支已接通 global/app history scope 和后端退役语义，但因交付补丁未能下载为可校验字节，这两项前端改动尚未整合，不计入本轮已通过项。
+
+CLI 验证：`go test -race ./internal/history ./internal/store ./internal/httpserver`；`make frontend-test`；完整 `make check test build`；真实 CLI HTTP。旧无头浏览器脚本针对 v0.5 页面结构，本轮未运行且不作为新 SPA 的有效门禁。聚合测试覆盖 UTC/小时边界、partial、counter 归零/重启/长间断、rate 覆盖、保留、幂等、重新打开数据库、删除故障回滚、刚关闭尚未提交的小时、未知维度拒绝和 API 分辨率。本轮仅 CLI/DOM 验证，不声称完成真实浏览器、触摸或屏幕阅读器验收。

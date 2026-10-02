@@ -1,17 +1,15 @@
-# 公共安装页面
+# 公共目录与 SPA
 
-用户无需管理员账号即可打开 `/` 浏览应用，目前仅 Codex CLI。`/apps/codex` 显示面向终端用户的安装说明与 Shell/PowerShell 一行命令；页面右上角提供管理员入口。管理员认证、会话和管理 API 保持原有边界。
+公共目录为 `/`，详情为 `/<vendor>/<app>`，目前注册 `openai/codex` 与 `anthropic/claude-code`。详情与后台导航由编译注册表描述，不依赖前端应用名称判断。分发文件在同一应用根下；未知文件与 API 不返回成功 HTML。
 
-安装命令会立即下载并执行本服务的安装器，默认使用 `CODEX_RELEASE` 或 `latest`，不强制非交互，不修改安装器、patch 或 CLI 二进制。页面保留可信服务、包摘要校验与提供方登录服务提示；脚本审查、指定版本、无人值守和操作系统推广验证集中在[安装详解](README.md#review-before-installing)与[运维说明](operations.md#站点文案与客户端推广)。仅安全上下文且存在 Clipboard API 时显示复制按钮；真实复制失败给出行内状态反馈，命令始终可手动选择。
+Vue Router 支持内部导航、直达、刷新和前后退。公共与后台有独立布局；后台设置、应用版本与事件是明确子路由，未登录进入登录页。服务端对每次管理 API 请求验证 session、CSRF 与请求 origin，路由守卫只负责界面。
 
-`GET /api/info` 提供服务版本、OS、架构和公开双语 `site` 文案，不含提交信息或管理状态。公共页脚只显示版本，后台在版本后显示平台括号；两端 RedApp 均链接固定 GitHub 项目。站点标题、副标题和通用页脚声明由管理员编辑，按当前语言显示为纯文本；不再在每个应用内重复隶属声明。导航、正文及页脚宽度统一。设置契约及无障碍下拉组件见 [v0.4.1 说明](frontend-v0.4.1.md)。
+`GET /api/bootstrap` 返回版本、平台、双语站点文案、应用公共描述、有效公共 origin 与 revision；不含代理凭据或管理状态。公共 URL 优先级为后台覆盖、`REDAPP_PUBLIC_URL`、通过可信代理及 Host 白名单验证的请求 origin。清空后台值只撤销覆盖。旧 `/api/info`、`/apps/...` 和未指定应用的分发入口不再提供。
 
-`GET /api/apps` 返回固定 Codex 模块的公开 ID、名称、简介、本地图标路径和当前安全 origin，不读取管理员信息、缓存、版本、代理配置或凭据，也不触发 metadata 回源。公共页面不调用管理 API。origin 与安装器使用相同验证规则，支持显式固定地址或可信代理推导；页面与 JSON 均不缓存，避免不同 Host/代理请求互相污染。非法 origin、非规范路径及查询参数沿用拒绝规则。静态脚本、CSS 均由本进程提供，CSP 保持仅本站；无需外部运行服务。
+语言在 mount 前同步选择：手动保存值优先，其次浏览器 languages 中首个支持项；列表不可用/为空才检查 language；最终使用英语。站点自定义文案单独异步加载，局部骨架、失败回退与重试不阻止整个应用使用。首页已删除组织下载副句，保留可配置站点品牌。
 
-## 品牌标志与许可
+Overview 与应用摘要仅在当前页面可见时订阅状态；版本、资源和事件从有上限的独立分页接口读取。设置页不轮询 status。表单各自拥有加载状态、服务器 revision、草稿和错误，离页提示未保存修改，迟到响应不能串入另一应用。
 
-公共首页和详情页展示用户提供的 OpenAI 品牌标志，用于标识 Codex CLI 的提供方，不宣称其为 Codex 专属图标。SVG 原文保存在 Codex 模块内部，经 `/apps/codex/icon.svg` 从本服务提供，不依赖外部图片地址；视图仅调整容器与显示尺寸。
+Select 与账户菜单共享弹层基础设施和样式，但分别保留 combobox/listbox 与 menu 的键盘及 ARIA 语义。原 OpenAI SVG 仍以原始字节嵌入，通过 `/openai/codex/icon.svg` 提供；[素材来源说明](../internal/apps/codex/assets/README.md)不因 URL 改动而改变。
 
-准确来源、用户更正、原件 SHA256 和许可状态见[模块素材说明](../internal/apps/codex/assets/README.md)。Commons 来源页标记 PD-textlogo 并注明商标限制；这是来源标签核验，未将用户 SVG 与远程文件逐字节比对，不将素材纳入 RedApp MIT 许可。
-
-v0.4.0 的原始设计见[统一前端](frontend-v0.4.0.md)，当前修订见 [v0.4.1](frontend-v0.4.1.md)。各版本 CLI、浏览器交互和视觉审阅范围分别记录在[验收](acceptance.md)，不跨版本推断通过。
+本轮验证使用 CLI、类型检查和 DOM 测试，不声称完成截图、真实触摸设备或辅助技术验收。

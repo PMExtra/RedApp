@@ -1,141 +1,141 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import { api, bytes, type CleanupPreview } from "../api";
-import SelectMenu from "./SelectMenu.vue";
-import { t, type Message } from "../i18n";
+import { appAPI } from "../bootstrap";
+import { useSetting } from "../composables/useSetting";
+import { errorText, t, type Message } from "../i18n";
+const props = defineProps<{ application: string }>();
 const emit = defineEmits<{ error: [unknown]; changed: [] }>();
-const application = ref("codex");
-const headers = () => ({ "X-RedApp-Application": application.value });
-watch(application, () => {
+const path = computed(() => `${appAPI(props.application)}/settings`);
+const {
+  draft,
+  loading,
+  saving,
+  error,
+  load,
+  save: saveSetting,
+  saved,
+} = useSetting<{ channel_ttl_seconds: number }>(path);
+const ttl = computed({
+  get: () => draft.value?.channel_ttl_seconds,
+  set: (value) => {
+    if (draft.value && value !== undefined)
+      draft.value.channel_ttl_seconds = value;
+  },
+});
+const minimum = ref(""),
+  preview = ref<CleanupPreview>(),
+  cleanupBusy = ref(false),
+  cleanupError = ref<unknown>(),
+  message = ref<Message>();
+const busy = computed(() => saving.value || cleanupBusy.value);
+let ticket = 0,
+  controller: AbortController | undefined,
+  previewVersion = "";
+function reset() {
+  ticket++;
+  controller?.abort();
+  controller = undefined;
   preview.value = undefined;
   minimum.value = "";
+  cleanupError.value = undefined;
   message.value = undefined;
-  void load();
-});
-const ttl = ref<number>(),
-  minimum = ref(""),
-  preview = ref<CleanupPreview>(),
-  busy = ref(false),
-  message = ref<Message>(),
-  loading = ref(true);
-let controller: AbortController | undefined,
-  disposed = false,
-  previewVersion = "";
+  cleanupBusy.value = false;
+}
+watch(() => props.application, reset, { flush: "sync" });
 watch(minimum, () => {
   preview.value = undefined;
 });
-async function load() {
-  if (controller) return;
-  loading.value = true;
-  controller = new AbortController();
-  try {
-    const data = await api<{ latest_ttl_seconds: number }>(
-      "settings",
-      undefined,
-      controller.signal,
-      headers(),
-    );
-    if (!disposed) ttl.value = data.latest_ttl_seconds;
-  } catch (error) {
-    if (!disposed) emit("error", error);
-  } finally {
-    loading.value = false;
-    controller = undefined;
-  }
-}
-async function run(action: (signal: AbortSignal) => Promise<void>) {
-  if (busy.value || disposed || controller) return;
-  busy.value = true;
-  message.value = undefined;
-  controller = new AbortController();
-  try {
-    await action(controller.signal);
-  } catch (error) {
-    if (!disposed) emit("error", error);
-  } finally {
-    busy.value = false;
-    controller = undefined;
-  }
-}
 async function save() {
-  await run(async (signal) => {
-    await api("settings", { latest_ttl_seconds: ttl.value }, signal, headers());
-    if (!disposed) message.value = "latest TTL saved";
-  });
+  message.value = undefined;
+  await saveSetting();
 }
 async function plan() {
-  if (busy.value || loading.value) return;
+  if (cleanupBusy.value || !minimum.value) return;
+  const request = new AbortController(),
+    attempt = ++ticket,
+    app = props.application,
+    requested = minimum.value;
+  controller = request;
+  cleanupBusy.value = true;
+  cleanupError.value = undefined;
   preview.value = undefined;
-  const requested = minimum.value;
-  await run(async (signal) => {
+  try {
     const result = await api<CleanupPreview>(
-      "cleanup/preview",
+      `${appAPI(app)}/cleanup/preview`,
       { minimum_version: requested },
-      signal,
-      headers(),
+      request.signal,
     );
-    if (!disposed && requested === minimum.value) {
+    if (
+      attempt === ticket &&
+      app === props.application &&
+      requested === minimum.value
+    ) {
       preview.value = result;
       previewVersion = requested;
       message.value = "Review the selected generations before confirming";
     }
-  });
+  } catch (reason) {
+    if (attempt === ticket) cleanupError.value = reason;
+  } finally {
+    if (attempt === ticket) {
+      cleanupBusy.value = false;
+      controller = undefined;
+    }
+  }
 }
 async function clean() {
   const selected = preview.value;
-  if (!selected || minimum.value !== previewVersion) return;
-  await run(async (signal) => {
-    await api("cleanup/execute", { cleanup_id: selected.job.ID }, signal);
-    if (!disposed) {
+  if (!selected || cleanupBusy.value || minimum.value !== previewVersion)
+    return;
+  const request = new AbortController(),
+    attempt = ++ticket,
+    app = props.application;
+  controller = request;
+  cleanupBusy.value = true;
+  cleanupError.value = undefined;
+  try {
+    await api(
+      `${appAPI(app)}/cleanup/${encodeURIComponent(selected.job.ID)}/execute`,
+      {},
+      request.signal,
+    );
+    if (attempt === ticket) {
       preview.value = undefined;
       message.value =
         "Cleanup executed; space is reclaimed after existing readers and writers finish";
       emit("changed");
     }
-  });
+  } catch (reason) {
+    if (attempt === ticket) cleanupError.value = reason;
+  } finally {
+    if (attempt === ticket) {
+      cleanupBusy.value = false;
+      controller = undefined;
+    }
+  }
 }
-onMounted(load);
-onUnmounted(() => {
-  disposed = true;
-  controller?.abort();
-});
+onUnmounted(reset);
 </script>
 <template>
   <div class="maintenance-stack">
-    <SelectMenu
-      v-model="application"
-      :label="t('Application')"
-      :disabled="busy || loading"
-      :options="[
-        { value: 'codex', label: 'Codex CLI' },
-        { value: 'claude-code', label: 'Claude Code' },
-      ]"
-    />
-    <p v-if="message" class="notice" role="status">{{ t(message) }}</p>
+    <p v-if="message || saved" class="notice" role="status">
+      {{ message ? t(message) : t("Channel TTL saved") }}
+    </p>
     <section class="panel">
       <h2>{{ t("Metadata freshness") }}</h2>
-      <p class="muted">
-        {{
-          application === "claude-code"
-            ? t(
-                "latest and stable channels expire automatically. Signed version manifests remain cached.",
-              )
-            : t(
-                "Only latest metadata expires automatically. Other valid versions remain cached.",
-              )
-        }}
-      </p>
+      <p v-if="error" class="error" role="alert">{{ errorText(error) }}</p>
       <p v-if="loading" role="status">{{ t("Loading…") }}</p>
       <form class="ttl-form" @submit.prevent="save">
         <label
-          >{{ t("latest TTL (seconds)")
+          >{{ t("Channel TTL (seconds)")
           }}<input
             v-model.number="ttl"
             type="number"
             min="1"
             max="86400"
             required
-            :disabled="loading || busy"
+            :disabled="loading || busy || !draft"
         /></label>
         <div class="form-actions">
           <button :disabled="busy || loading || ttl === undefined">
@@ -144,7 +144,7 @@ onUnmounted(() => {
             class="secondary"
             type="button"
             :disabled="busy || loading"
-            @click="load"
+            @click="load()"
           >
             {{ t("Reload") }}
           </button>
@@ -160,12 +160,15 @@ onUnmounted(() => {
           )
         }}
       </p>
+      <p v-if="cleanupError" class="error" role="alert">
+        {{ errorText(cleanupError) }}
+      </p>
       <form class="cleanup" @submit.prevent="plan">
         <label
           >{{ t("Minimum version to keep")
           }}<input
             v-model="minimum"
-            :placeholder="application === 'codex' ? '0.150.0' : '2.1.285'"
+            placeholder="1.0.0"
             required
             :disabled="busy && !!preview"
             @input="preview = undefined" /></label
@@ -181,6 +184,13 @@ onUnmounted(() => {
               count: preview.job.Selected?.length || 0,
               size: bytes(preview.logical_bytes),
               active: preview.active,
+            })
+          }}
+        </p>
+        <p class="cleanup-reclaimable">
+          {{
+            t("Estimated reclaimable complete cache: {size}", {
+              size: bytes(preview.reclaimable_blob_bytes),
             })
           }}
         </p>

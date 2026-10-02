@@ -13,8 +13,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	app "github.com/PMExtra/RedApp/internal/apps/codex"
-	"github.com/PMExtra/RedApp/internal/download"
-	"github.com/PMExtra/RedApp/internal/store"
 	"github.com/PMExtra/RedApp/internal/testutil"
 )
 
@@ -41,18 +39,7 @@ func TestDownstreamCountersPrecedeExternalHTTPCompression(t *testing.T) {
 		w.Write(data)
 	}))
 	base = upstream.Base.String()
-	dir := t.TempDir()
-	db, err := store.Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.DB.Close()
-	manager, err := download.New(dir, db, upstream)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer manager.Close()
-	handler := &Server{DB: db, Catalog: app.New(db, upstream), Downloads: manager}
+	handler, db, _ := newTestServer(t, upstream)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Encoding", "gzip")
 		zip := gzip.NewWriter(w)
@@ -60,11 +47,12 @@ func TestDownstreamCountersPrecedeExternalHTTPCompression(t *testing.T) {
 		handler.ServeHTTP(compressedResponse{w, zip}, r)
 	}))
 	defer server.Close()
+	allowTestOrigin(handler, server.URL)
 	client := &http.Client{Transport: &http.Transport{DisableCompression: true}}
 	defer client.CloseIdleConnections()
 	var transferred int
 	for range 2 {
-		response, err := client.Get(server.URL + "/releases/0.159.2/asset.tgz")
+		response, err := client.Get(server.URL + "/openai/codex/releases/0.159.2/asset.tgz")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -89,8 +77,8 @@ func TestDownstreamCountersPrecedeExternalHTTPCompression(t *testing.T) {
 		t.Fatal(counters, transferred)
 	}
 	// A client-side write failure counts only bytes accepted by ResponseWriter.
-	handler.ServeHTTP(failedResponse{httptest.NewRecorder()}, httptest.NewRequest("GET", "http://internal/releases/0.159.2/asset.tgz", nil))
-	counters, err = db.Counters()
+	handler.ServeHTTP(failedResponse{httptest.NewRecorder()}, httptest.NewRequest("GET", "http://internal/openai/codex/releases/0.159.2/asset.tgz", nil))
+	counters, err := db.Counters()
 	if err != nil || counters["downstream_bytes"] != int64(2*len(data)+3) || counters["download_errors"] != 1 || counters["upstream_bytes"] != int64(len(data)) {
 		t.Fatal(counters, err)
 	}

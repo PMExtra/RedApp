@@ -2,8 +2,9 @@ package httpserver
 
 import (
 	"bytes"
+	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/apps/claude"
-	"github.com/PMExtra/RedApp/internal/store"
+	"github.com/PMExtra/RedApp/internal/catalog"
 	"github.com/PMExtra/RedApp/internal/testutil"
 	"net/http"
 	"net/http/httptest"
@@ -31,17 +32,24 @@ func TestClaudeHTTPPreservesSignedBytesAndRejectsOtherResources(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	}))
-	dir := t.TempDir()
-	db, e := store.Open(dir)
+	s, db, _ := newTestServer(t, nil)
+	entries := s.Registry.Entries()
+	for i := range entries {
+		if entries[i].Descriptor.ID == "anthropic/claude-code" {
+			entries[i].Upstream = c
+			entries[i].Protocol = claude.NewProtocol(c)
+		}
+	}
+	s.Registry, e = application.NewRegistry(entries)
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer db.DB.Close()
-	s := &Server{DB: db, Claude: claude.New(db, c), Dir: dir}
+	s.Catalog = catalog.New(db, s.Registry)
+	s.AllowedHosts = append(s.AllowedHosts, "internal.example")
 	for _, name := range []string{"install.sh", "install.ps1"} {
 		w := httptest.NewRecorder()
-		s.ServeHTTP(w, httptest.NewRequest("GET", "https://internal.example/claude-code/"+name, nil))
-		if w.Code != 200 || !strings.Contains(w.Body.String(), "https://internal.example/claude-code") || strings.Contains(w.Body.String(), "@REDAPP_BASE_URL@") || strings.Contains(w.Body.String(), "https://downloads.claude.ai") {
+		s.ServeHTTP(w, httptest.NewRequest("GET", "https://internal.example/anthropic/claude-code/"+name, nil))
+		if w.Code != 200 || !strings.Contains(w.Body.String(), "https://internal.example/anthropic/claude-code") || strings.Contains(w.Body.String(), "@REDAPP_BASE_URL@") || strings.Contains(w.Body.String(), "https://downloads.claude.ai") {
 			t.Fatalf("installer origin: %d", w.Code)
 		}
 	}
@@ -49,15 +57,15 @@ func TestClaudeHTTPPreservesSignedBytesAndRejectsOtherResources(t *testing.T) {
 		path   string
 		status int
 		body   []byte
-	}{{"latest", 200, []byte("2.1.285\n")}, {"stable", 200, []byte("2.1.285\n")}, {"2.1.285/manifest.json", 200, raw}, {"2.1.285/manifest.json.sig", 200, sig}, {"2.1.285/manifest.zst.json", 404, nil}, {"2.1.285/linux-x64/claude.zst", 404, nil}, {"2.1.285/other/claude", 404, nil}, {"2.1.285/linux-x64/claude.exe", 404, nil}, {"../manifest.json", 404, nil}, {"latest?url=https://evil.example", 400, nil}} {
+	}{{"latest", 200, []byte("2.1.285\n")}, {"stable", 200, []byte("2.1.285\n")}, {"2.1.285/manifest.json", 200, raw}, {"2.1.285/manifest.json.sig", 200, sig}, {"2.1.285/manifest.zst.json", 404, nil}, {"2.1.285/linux-x64/claude.zst", 404, nil}, {"2.1.285/other/claude", 404, nil}, {"2.1.285/linux-x64/claude.exe", 404, nil}, {"../manifest.json", 400, nil}, {"latest?url=https://evil.example", 400, nil}} {
 		w := httptest.NewRecorder()
-		s.ServeHTTP(w, httptest.NewRequest("GET", "https://internal.example/claude-code/"+tc.path, nil))
+		s.ServeHTTP(w, httptest.NewRequest("GET", "https://internal.example/anthropic/claude-code/"+tc.path, nil))
 		if w.Code != tc.status || tc.body != nil && !bytes.Equal(w.Body.Bytes(), tc.body) {
 			t.Fatalf("%s: %d %s", tc.path, w.Code, w.Body.String())
 		}
 	}
 	w := httptest.NewRecorder()
-	s.ServeHTTP(w, httptest.NewRequest("POST", "https://internal.example/claude-code/latest", nil))
+	s.ServeHTTP(w, httptest.NewRequest("POST", "https://internal.example/anthropic/claude-code/latest", nil))
 	if w.Code != 405 {
 		t.Fatal("unexpected write endpoint")
 	}

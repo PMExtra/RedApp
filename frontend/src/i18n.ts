@@ -1,31 +1,98 @@
 import { ref, watch } from "vue";
 export type Language = "en" | "zh-CN";
-function initialLanguage(): Language {
+export function resolveLanguage(value: unknown): Language | undefined {
+  if (typeof value !== "string" || !/^(en|zh)(?:-[a-z0-9]{1,8})*$/i.test(value))
+    return;
+  return value.toLowerCase().startsWith("zh") ? "zh-CN" : "en";
+}
+export function initialLanguage(): Language {
   try {
     const saved = localStorage.getItem("redapp-language");
     if (saved === "en" || saved === "zh-CN") return saved;
   } catch {
-    /* Storage can be disabled. */
+    /* Storage may be disabled. */
   }
-  return navigator.language.toLowerCase().startsWith("zh") ? "zh-CN" : "en";
+  try {
+    const preferred = navigator.languages;
+    if (preferred?.length) {
+      for (const item of preferred) {
+        const supported = resolveLanguage(item);
+        if (supported) return supported;
+      }
+      return "en";
+    }
+  } catch {
+    /* Fall back to the single browser language. */
+  }
+  try {
+    return resolveLanguage(navigator.language) || "en";
+  } catch {
+    return "en";
+  }
 }
 export const language = ref<Language>(initialLanguage());
 export function setLanguage(value: Language) {
   language.value = value;
+  try {
+    localStorage.setItem("redapp-language", value);
+  } catch {
+    /* Keep the explicit in-memory choice. */
+  }
 }
 watch(
   language,
   (value) => {
     document.documentElement.lang = value;
-    try {
-      localStorage.setItem("redapp-language", value);
-    } catch {
-      /* Keep the in-memory choice. */
-    }
   },
-  { immediate: true },
+  { immediate: true, flush: "sync" },
 );
 export const messages = {
+  Resources: "资源",
+  "Previous page": "上一页",
+  "Next page": "下一页",
+  "Page {page}": "第 {page} 页",
+  "Version pages": "版本分页",
+  "Resource pages": "资源分页",
+  "Event pages": "事件分页",
+  "A newer state conflicts with this request. Reload and try again.":
+    "当前状态与请求冲突，请重新加载后重试。",
+  "This cleanup preview is no longer valid. Create a new preview and confirm it again.":
+    "清理预览已失效，请重新生成预览并再次确认。",
+  "This request origin is not allowed.": "请求来源不被允许。",
+  "Download capacity is busy. Try again later.": "下载容量已满，请稍后重试。",
+  "Upstream metadata could not be verified.": "无法验证上游元数据。",
+  "The artifact exceeds the configured size limit.": "文件超过配置的大小限制。",
+  "The upstream service is unavailable. Try again later.":
+    "上游服务暂不可用，请稍后重试。",
+  "Local storage is unavailable. Try again later.":
+    "本地存储暂不可用，请稍后重试。",
+  "This operation is not supported.": "不支持此操作。",
+
+  "Channel TTL (seconds)": "渠道缓存有效期（秒）",
+  "Channel TTL saved": "渠道缓存有效期已保存",
+  "Page not found": "页面不存在",
+  "Discard unsaved changes?": "放弃尚未保存的更改？",
+  "Settings changed elsewhere. Your draft is preserved. Reload before saving again.":
+    "设置已在其他地方修改。草稿已保留，请重新加载后再保存。",
+  "Public URL": "公开地址",
+  "Public URL override": "公开地址覆盖值",
+  "Effective URL": "生效地址",
+  "Configuration source": "配置来源",
+  "Administrator override": "后台覆盖",
+  Environment: "环境变量",
+  "Request origin": "请求来源",
+  "Environment URL": "环境变量地址",
+  "No environment URL": "未设置环境变量地址",
+  "Clear override": "撤销覆盖",
+  "Leave empty to use the environment URL or the safe request origin.":
+    "留空以使用环境变量地址或安全请求来源。",
+  "Public URL saved.": "公开地址已保存。",
+  "Site information unavailable.": "站点信息暂不可用。",
+  "This command downloads and runs an installer. Use a service you trust.":
+    "此命令会下载并运行安装器，请使用可信的下载服务。",
+  "Start {command} and follow your provider’s sign-in instructions.":
+    "运行 {command}，并按照服务提供商的说明登录。",
+
   Application: "应用",
   "Install {name}": "安装 {name}",
   "Install Claude Code": "安装 Claude Code",
@@ -128,6 +195,15 @@ export const messages = {
   "View history": "查看历史",
   "View {name} history": "查看{name}历史",
   "All metrics": "全部指标",
+  "Common metrics": "常用指标",
+  "Diagnostic metrics": "诊断指标",
+  "Detailed troubleshooting metrics. Collection and history remain available.":
+    "用于深入排障；继续采集并保留历史。",
+  "Capacity, downloads and active transfers. Select a value to view history.":
+    "容量、下载与活动传输；点击数值查看历史。",
+  "Includes all applications; matching version names count separately.":
+    "包含所有应用；不同应用的相同版本名分别计数。",
+  "Includes only this application.": "仅包含当前应用。",
   "{count} metrics": "{count} 项指标",
   "Select a metric to explore its history.": "选择指标查看历史变化。",
   Disk: "磁盘",
@@ -190,8 +266,6 @@ export const messages = {
   "Run in your terminal": "在终端中运行",
   "Installers verify hashes and suppress the automatic-update marker. The CLI binary is unchanged; runtime/API traffic requires your enterprise egress policy.":
     "安装器会校验摘要并抑制自动更新标记。CLI 二进制保持原样；运行期及 API 流量仍需遵循企业出口策略。",
-  "Install tools from your organization’s download service.":
-    "从组织的下载服务安装工具。",
   "OpenAI’s coding agent for your terminal.":
     "在终端中使用 OpenAI 编程智能体。",
   "Installation instructions": "安装说明",
@@ -266,7 +340,8 @@ export const messages = {
   "Selected generations": "已选资源代次",
   "Unknown versions retained": "保留的未知版本",
   "{count} generations · {size} logical bytes · {active} active":
-    "{count} 个代次 · 逻辑大小 {size} · {active} 个活跃任务",
+    "{count} 个代次 · 逻辑大小 {size} · {active} 个活跃代次",
+  "Estimated reclaimable complete cache: {size}": "预计可回收完整缓存：{size}",
   "Only previewed generations are retired. Later generations remain available. Existing readers and writers drain before disk space is reclaimed.":
     "仅退役预览选中的代次，后续新代次不受影响。现有读取者和写入者结束后才回收磁盘空间。",
   "Cleanup executed; space is reclaimed after existing readers and writers finish":
@@ -303,6 +378,25 @@ export const messages = {
   "Observed average / value": "观测均值 / 值",
   "Observed minimum": "观测最小值",
   "Observed maximum": "观测最大值",
+  "Observed increment (delta)": "观测增量（delta）",
+  "Last cumulative value (last)": "最近累计值（last）",
+  "Five-second observation (value)": "五秒窗口观测值（value）",
+  "Observation (value)": "观测值（value）",
+  "Observed weighted average (avg)": "观测窗口加权均值（avg）",
+  "Observed average (avg)": "观测均值（avg）",
+  "Observed minimum (min)": "观测最小值（min）",
+  "Observed maximum (max)": "观测最大值（max）",
+  "Hover or tap to inspect a bucket. Focus the chart and use Left/Right, Home/End; Escape clears the selection.":
+    "悬停或轻触可查看时间桶。聚焦图表后可用左右方向键、Home/End 选点，Escape 清除选择。",
+  "Bucket start · browser local time": "时间桶起点 · 浏览器本地时间",
+  "Minute observation": "分钟观测",
+  "Hourly aggregate": "小时汇总",
+  "Valid intervals: {count}": "有效间隔：{count}",
+  "No observation in this bucket. Missing values are not zero.":
+    "此时间桶没有观测，缺失值不代表零。",
+  "Increment unknown: no valid adjacent observation interval.":
+    "增量未知：没有有效的相邻观测间隔。",
+  "Select a chart point to see exact values.": "选择图表数据点以查看精确数值。",
   "Loading history…": "正在加载历史…",
   "Retry history": "重试加载历史",
   "Minute observations · last 24 hours": "分钟观测 · 最近 24 小时",
@@ -346,7 +440,33 @@ export function t(
 export function label(value: string): string {
   return Object.hasOwn(messages, value) ? t(value as Message) : value;
 }
+const errorCodes: Record<string, Message> = {
+  AUTH_REQUIRED: "Your session expired. Sign in again.",
+  CSRF_REJECTED: "Permission check failed. Refresh the page and sign in again.",
+  ORIGIN_REJECTED: "This request origin is not allowed.",
+  SETTINGS_REVISION_CONFLICT:
+    "Settings changed elsewhere. Your draft is preserved. Reload before saving again.",
+  CLEANUP_INVALID:
+    "This cleanup preview is no longer valid. Create a new preview and confirm it again.",
+  INVALID_REQUEST: "Request rejected. Check your input and retry.",
+  INVALID_QUERY: "Request rejected. Check your input and retry.",
+  INVALID_PATH: "Request rejected. Check your input and retry.",
+  APPLICATION_NOT_FOUND: "Requested data is unavailable.",
+  RESOURCE_NOT_FOUND: "Requested data is unavailable.",
+  LOGIN_RATE_LIMITED: "Login failed or rate limit exceeded",
+  METHOD_NOT_ALLOWED: "This operation is not supported.",
+  DOWNLOAD_CAPACITY_EXCEEDED: "Download capacity is busy. Try again later.",
+  METADATA_UNTRUSTED: "Upstream metadata could not be verified.",
+  ARTIFACT_TOO_LARGE: "The artifact exceeds the configured size limit.",
+  UPSTREAM_UNAVAILABLE: "The upstream service is unavailable. Try again later.",
+  LOCAL_STORAGE_UNAVAILABLE: "Local storage is unavailable. Try again later.",
+};
 export function errorText(reason: unknown): string {
+  const code =
+    reason && typeof reason === "object" && "code" in reason
+      ? reason.code
+      : undefined;
+  if (typeof code === "string" && Object.hasOwn(errorCodes, code)) return t(errorCodes[code]!);
   const status =
     reason && typeof reason === "object" && "status" in reason
       ? Number(reason.status)
@@ -356,6 +476,10 @@ export function errorText(reason: unknown): string {
     return t("Permission check failed. Refresh the page and sign in again.");
   if (status === 429) return t("Login failed or rate limit exceeded");
   if (status === 400) return t("Request rejected. Check your input and retry.");
+  if (status === 409)
+    return t(
+      "A newer state conflicts with this request. Reload and try again.",
+    );
   if (status === 404) return t("Requested data is unavailable.");
   if (status >= 500) return t("Service temporarily unavailable. Try again.");
   return t("Connection failed. Check your connection and retry.");

@@ -83,13 +83,17 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Parse both enterprise PowerShell installers
+      - name: Parse every declared PowerShell installer
         shell: pwsh
         run: |
-          foreach ($file in @('installers/codex/generated/install.ps1', 'installers/claude-code/generated/install.ps1')) {
-            $errors = $null; $tokens = $null
-            [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $file), [ref]$tokens, [ref]$errors) | Out-Null
-            if ($errors.Count) { $errors | Write-Error; exit 1 }
+          $manifest = Get-Content internal/apps/builtin/manifest.json -Raw | ConvertFrom-Json
+          foreach ($app in $manifest.applications) {
+            foreach ($installer in $app.installers | Where-Object shell -eq 'powershell') {
+              $file = "installers/$($app.id)/generated/$($installer.file)"
+              $errors = $null; $tokens = $null
+              [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $file), [ref]$tokens, [ref]$errors) | Out-Null
+              if ($errors.Count) { $errors | Write-Error; exit 1 }
+            }
           }
       - name: Test Claude installation with harmless Windows executable
         shell: pwsh

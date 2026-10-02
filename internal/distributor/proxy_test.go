@@ -85,8 +85,12 @@ func TestHTTPProxyTLSResumeAndPrivateCredentials(t *testing.T) {
 	c, db, upstream := proxyFixture(t)
 	auth := make(chan string, 4)
 	proxy := connectProxy(t, upstream, auth, nil)
-	if err := c.SetProxy(ProxyUpdate{Server: proxy.URL, Username: "test-user", Password: "private-test-secret", PasswordAction: "replace"}); err != nil {
+	if err := c.SetProxy(ProxyUpdate{Server: proxy.URL, Username: "test-user", Password: "private-test-secret", PasswordAction: "replace"}, c.Proxy().Revision); err != nil {
 		t.Fatal(err)
+	}
+	transport := c.transports.current.Load()
+	if err := c.SetProxy(ProxyUpdate{Server: "", PasswordAction: "clear"}, 0); err == nil || c.transports.current.Load() != transport || c.Proxy().Revision != 1 {
+		t.Fatal("stale proxy update changed the active transport")
 	}
 	if _, err := c.Get(context.Background(), c.URL("channels/latest"), nil); err == nil {
 		t.Fatal("untrusted TLS certificate accepted")
@@ -121,20 +125,20 @@ func TestHTTPProxyTLSResumeAndPrivateCredentials(t *testing.T) {
 	if strings.Contains(string(b), "private-test-secret") || !c.Proxy().HasPassword {
 		t.Fatal("secret exposed or missing")
 	}
-	if err = c.SetProxy(ProxyUpdate{Server: proxy.URL, PasswordAction: "keep"}); err != nil {
+	if err = c.SetProxy(ProxyUpdate{Server: proxy.URL, PasswordAction: "keep"}, c.Proxy().Revision); err != nil {
 		t.Fatal(err)
 	}
 	reloaded, _ := New(c.Base.String())
 	if err = reloaded.LoadProxy(db); err != nil || !reloaded.Proxy().HasPassword {
 		t.Fatal("credentials not persisted")
 	}
-	if err = c.SetProxy(ProxyUpdate{Server: "http://other.example:3128", PasswordAction: "keep"}); err == nil {
+	if err = c.SetProxy(ProxyUpdate{Server: "http://other.example:3128", PasswordAction: "keep"}, c.Proxy().Revision); err == nil {
 		t.Fatal("saved credentials carried to a new server")
 	}
-	if err = c.SetProxy(ProxyUpdate{Server: proxy.URL, PasswordAction: "clear"}); err != nil || c.Proxy().HasPassword {
+	if err = c.SetProxy(ProxyUpdate{Server: proxy.URL, PasswordAction: "clear"}, c.Proxy().Revision); err != nil || c.Proxy().HasPassword {
 		t.Fatal("clear failed")
 	}
-	if err = c.SetProxy(ProxyUpdate{Server: "", PasswordAction: "clear"}); err != nil || c.transports.current.Load().Proxy != nil {
+	if err = c.SetProxy(ProxyUpdate{Server: "", PasswordAction: "clear"}, c.Proxy().Revision); err != nil || c.transports.current.Load().Proxy != nil {
 		t.Fatal("empty proxy must be direct")
 	}
 	t.Setenv("HTTPS_PROXY", proxy.URL)
@@ -194,7 +198,7 @@ func TestSOCKS5UsesProxyDNS(t *testing.T) {
 		go io.Copy(remote, conn)
 		io.Copy(conn, remote)
 	}()
-	if err = c.SetProxy(ProxyUpdate{Server: "socks5://" + listener.Addr().String(), PasswordAction: "clear"}); err != nil {
+	if err = c.SetProxy(ProxyUpdate{Server: "socks5://" + listener.Addr().String(), PasswordAction: "clear"}, c.Proxy().Revision); err != nil {
 		t.Fatal(err)
 	}
 	trustFixture(c, upstream)
@@ -225,14 +229,14 @@ func TestProxySwapDoesNotCancelActiveResponse(t *testing.T) {
 	c.LoadProxy(db)
 	first := connectProxy(t, upstream, nil, nil)
 	second := connectProxy(t, upstream, nil, nil)
-	c.SetProxy(ProxyUpdate{Server: first.URL, PasswordAction: "clear"})
+	c.SetProxy(ProxyUpdate{Server: first.URL, PasswordAction: "clear"}, c.Proxy().Revision)
 	trustFixture(c, upstream)
 	resp, err := c.Get(context.Background(), c.URL("channels/latest"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	<-started
-	if err = c.SetProxy(ProxyUpdate{Server: second.URL, PasswordAction: "clear"}); err != nil {
+	if err = c.SetProxy(ProxyUpdate{Server: second.URL, PasswordAction: "clear"}, c.Proxy().Revision); err != nil {
 		t.Fatal(err)
 	}
 	trustFixture(c, upstream)
@@ -259,7 +263,7 @@ func TestSiblingSharesProxyUpdatesButKeepsOriginBoundary(t *testing.T) {
 	}
 	for i := 0; i < 2; i++ {
 		proxy := connectProxy(t, upstream, nil, nil)
-		if err = c.SetProxy(ProxyUpdate{Server: proxy.URL, PasswordAction: "clear"}); err != nil {
+		if err = c.SetProxy(ProxyUpdate{Server: proxy.URL, PasswordAction: "clear"}, c.Proxy().Revision); err != nil {
 			t.Fatal(err)
 		}
 		trustFixture(c, upstream)

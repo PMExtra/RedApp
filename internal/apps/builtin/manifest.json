@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "applications": [
+    {
+      "id": "openai/codex",
+      "name": {
+        "en": "Codex CLI",
+        "zh-CN": "Codex CLI"
+      },
+      "publisher": "OpenAI",
+      "summary": {
+        "en": "OpenAI’s coding agent for your terminal.",
+        "zh-CN": "OpenAI 的终端编程助手。"
+      },
+      "protocol": "codex-releases-v1",
+      "trust_revision": 1,
+      "upstream": "https://releases.openai.com/codex",
+      "channels": [
+        "latest"
+      ],
+      "default_channel_ttl_seconds": 60,
+      "installer_validator": "codex",
+      "installers": [
+        {
+          "file": "install.sh",
+          "source": "https://releases.openai.com/codex/install.sh",
+          "shell": "sh"
+        },
+        {
+          "file": "install.ps1",
+          "source": "https://releases.openai.com/codex/install.ps1",
+          "shell": "powershell"
+        }
+      ],
+      "assets": [
+        {
+          "file": "licenses/LICENSE",
+          "kind": "license"
+        },
+        {
+          "file": "licenses/NOTICE",
+          "kind": "notice"
+        }
+      ],
+      "icon": "icon.svg",
+      "update_policy": {
+        "en": "Installer and self-update downloads use this distribution service.",
+        "zh-CN": "安装脚本与自动更新通过此分发服务下载。"
+      }
+    },
+    {
+      "id": "anthropic/claude-code",
+      "name": {
+        "en": "Claude Code",
+        "zh-CN": "Claude Code"
+      },
+      "publisher": "Anthropic",
+      "summary": {
+        "en": "Anthropic’s coding agent for your terminal.",
+        "zh-CN": "Anthropic 的终端编程助手。"
+      },
+      "protocol": "claude-manifest-v1",
+      "trust_revision": 1,
+      "upstream": "https://downloads.claude.ai/claude-code-releases",
+      "channels": [
+        "latest",
+        "stable"
+      ],
+      "default_channel_ttl_seconds": 60,
+      "installer_validator": "claude-code",
+      "installers": [
+        {
+          "file": "install.sh",
+          "source": "https://claude.ai/install.sh",
+          "shell": "bash"
+        },
+        {
+          "file": "install.ps1",
+          "source": "https://claude.ai/install.ps1",
+          "shell": "powershell"
+        }
+      ],
+      "assets": [
+        {
+          "file": "LICENSE.md",
+          "kind": "license"
+        },
+        {
+          "file": "claude-code.asc",
+          "kind": "public_key"
+        }
+      ],
+      "icon": "",
+      "update_policy": {
+        "en": "The installer verifies the signed manifest and artifact SHA256. The managed launcher disables official automatic updates; rerun this installer to update. Running the native binary directly bypasses the launcher’s update control.",
+        "zh-CN": "安装脚本验证签名清单与制品 SHA256。受管启动器禁用官方自动更新；请重新运行本安装脚本更新。直接运行原生程序会绕过启动器的更新控制。"
+      }
+    }
+  ]
+}

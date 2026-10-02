@@ -1,50 +1,71 @@
 #!/usr/bin/env python3
-"""验证真实 CLI 的数据目录默认值、覆盖优先级和权限失败；不输出初始化密码。"""
+"""Exercise strict deployment config and fresh-directory refusal using the real CLI."""
+import hashlib
+import json
 import os
 from pathlib import Path
-import re
+import sqlite3
 import subprocess
 import tempfile
 
 root = Path(__file__).resolve().parents[1]
 binary = str(root / "bin/redapp")
 env = os.environ.copy()
-env.pop("REDAPP_DATA", None)
+env.pop("REDAPP_PUBLIC_URL", None)
+
 
 def invoke(args, directory, overrides=None):
     return subprocess.run([binary, *args], cwd=directory,
                           env={**env, **(overrides or {})}, capture_output=True,
                           text=True, timeout=10)
 
+
+def fingerprint(directory):
+    return {str(path.relative_to(directory)): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in directory.rglob("*") if path.is_file()}
+
+
 with tempfile.TemporaryDirectory(prefix="redapp-data-cli-") as temp:
     directory = Path(temp)
-    for value in [None, ""]:
-        result = invoke(["--help"], directory, {} if value is None else {"REDAPP_DATA": value})
-        assert result.returncode == 0
-        assert re.search(r'-data string\s+.*\(default "/var/lib/redapp"\)', result.stderr)
-    selected = directory / "environment"
-    # An invalid listen address ends startup after database initialization, without binding a port.
-    result = invoke(["--listen", "invalid"], directory, {"REDAPP_DATA": str(selected)})
-    assert result.returncode == 1 and (selected / "state.sqlite").is_file()
-    selected = directory / "explicit"
-    ignored = directory / "ignored"
-    result = invoke(["--data", str(selected), "--listen", "invalid"], directory,
-                    {"REDAPP_DATA": str(ignored)})
-    assert result.returncode == 1 and (selected / "state.sqlite").is_file()
-    assert not ignored.exists()
-    result = invoke(["--data", "./data", "--listen", "invalid"], directory)
-    assert result.returncode == 1 and (directory / "data/state.sqlite").is_file()
-    # A read-only Linux filesystem denies writes even when the test is run as root.
-    blocked = "/sys/redapp-permission-test"
-    for args, overrides in [([], {"REDAPP_DATA": blocked}),
-                            (["--data", blocked], {"REDAPP_DATA": str(ignored)})]:
-        result = invoke(args, directory, overrides)
-        assert result.returncode == 1 and blocked in result.stderr
-        assert "read-only file system" in result.stderr.lower() or "permission denied" in result.stderr.lower()
-        assert not ignored.exists()
-    # Verify no new fallback directory is created after a failing start.
-    fallback = directory / "fallback"
-    fallback.mkdir()
-    result = invoke(["--data", blocked], fallback)
-    assert result.returncode == 1 and list(fallback.iterdir()) == []
-print("真实 CLI：默认目录、空环境默认值、环境/参数覆盖优先级、显式开发目录、权限失败不回退通过。")
+    config_path = directory / "config.json"
+    data = directory / "new-data"
+    config = {"schema_version": 1, "data_dir": str(data),
+              "allowed_hosts": ["localhost:8080"]}
+    config_path.write_text(json.dumps(config))
+    result = invoke(["config", "validate", "--config", str(config_path)], directory)
+    assert result.returncode == 0 and not data.exists(), result.stderr
+    result = invoke(["serve"], directory, {"REDAPP_DATA": str(data)})
+    assert result.returncode == 1 and "--config" in result.stderr and not data.exists()
+    result = invoke(["--data", str(data)], directory)
+    assert result.returncode == 1 and not data.exists()
+    result = invoke(["config", "validate", "--config", str(config_path)], directory,
+                    {"REDAPP_PUBLIC_URL": "https://example.test/invalid"})
+    assert result.returncode == 1 and not data.exists()
+    config_path.write_text(json.dumps(config)[:-1] + ',"schema_version":1}')
+    result = invoke(["config", "validate", "--config", str(config_path)], directory)
+    assert result.returncode == 1 and "Duplicate" in result.stderr and not data.exists()
+    # Old and unknown directories must be byte-identical after a refused startup,
+    # including absence of a new instance.lock or SQLite sidecar.
+    for kind in ["old-schema", "unknown"]:
+        data = directory / kind
+        data.mkdir()
+        if kind == "old-schema":
+            db = sqlite3.connect(data / "state.sqlite")
+            db.executescript("CREATE TABLE schema_version(version INTEGER NOT NULL);"
+                             "INSERT INTO schema_version VALUES(2);")
+            db.close()
+        else:
+            (data / "keep-me.txt").write_text("unrelated original data")
+        before = fingerprint(data)
+        config["data_dir"] = str(data)
+        config_path.write_text(json.dumps(config))
+        result = invoke(["serve", "--config", str(config_path)], directory)
+        assert result.returncode == 1 and "new empty data directory" in result.stderr, result.stderr
+        assert fingerprint(data) == before and not (data / "instance.lock").exists()
+    # Linux read-only filesystem: failed initialization must not fall back elsewhere.
+    config["data_dir"] = "/sys/redapp-permission-test"
+    config_path.write_text(json.dumps(config))
+    result = invoke(["serve", "--config", str(config_path)], directory)
+    assert result.returncode == 1 and ("read-only" in result.stderr.lower() or "permission denied" in result.stderr.lower())
+    assert not (directory / "new-data").exists()
+print("CLI config validation, required explicit config, invalid origin, duplicate keys, unchanged old/unknown directories and permission failure passed.")

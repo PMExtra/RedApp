@@ -31,16 +31,19 @@ def main():
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self,*_):pass
         def do_GET(self):
-            seen.append(self.path)
+            if not self.path.startswith('/anthropic/claude-code/'):
+                seen.append(self.path);self.send_error(404);return
+            path=self.path[len('/anthropic/claude-code'):]
+            seen.append(path)
             if config.get('failure')=='redirect':
                 self.send_response(302);self.send_header('Location','/escaped');self.end_headers();return
             version=config['version']
-            if self.path in ('/latest','/stable'):
+            if path in ('/latest','/stable'):
                 body=version.encode() if config.get('failure')!='channel' else b'2.1.285/../../escape'
-            elif self.path==f'/{version}/manifest.json':
+            elif path==f'/{version}/manifest.json':
                 body=json.dumps({'version':version,'platforms':{config['platform']:{'binary':'claude.exe','checksum':hashlib.sha256(config['body']).hexdigest(),'size':len(config['body'])}}}).encode()
                 if config.get('failure')=='manifest':body=b'<html>error</html>'
-            elif self.path==f'/{version}/{config["platform"]}/claude.exe':
+            elif path==f'/{version}/{config["platform"]}/claude.exe':
                 if config.get('failure')=='download':self.send_error(503);return
                 body=config['body']+(b'tampered' if config.get('failure')=='hash' else b'')
             else:self.send_error(404);return
@@ -62,8 +65,8 @@ def main():
             compile_command="Add-Type -Path $env:FIXTURE_SOURCE -OutputAssembly $env:FIXTURE_BINARY -OutputType ConsoleApplication"
             compile_result=run(['powershell.exe','-NoProfile','-NonInteractive','-Command',compile_command],env={**os.environ,'FIXTURE_SOURCE':str(source),'FIXTURE_BINARY':str(binary)})
             assert compile_result.returncode==0 and binary.is_file(),compile_result.stderr
-            original=(ROOT/'installers/claude-code/generated/install.ps1').read_text()
-            script=root/'install.ps1';script.write_text(original.replace('@REDAPP_BASE_URL@',f'http://127.0.0.1:{server.server_port}'),encoding='utf-8')
+            original=(ROOT/'installers/anthropic/claude-code/generated/install.ps1').read_text()
+            script=root/'install.ps1';script.write_text(original.replace('@REDAPP_BASE_URL@',f'http://127.0.0.1:{server.server_port}/anthropic/claude-code'),encoding='utf-8')
             parse=" $e=$null;$t=$null;[System.Management.Automation.Language.Parser]::ParseFile($env:FIXTURE_SCRIPT,[ref]$t,[ref]$e)|Out-Null;if($e.Count){$e;exit 1}"
             parsed=run([shell,'-NoProfile','-NonInteractive','-Command',parse],env={**os.environ,'FIXTURE_SCRIPT':str(script)})
             assert parsed.returncode==0,parsed.stdout+parsed.stderr

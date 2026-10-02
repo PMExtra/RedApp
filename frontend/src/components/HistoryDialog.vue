@@ -14,13 +14,19 @@ import SelectMenu from "./SelectMenu.vue";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import {
+  exactMetric,
+  historyData,
+  historyLines,
+  localBucketTime,
+} from "../historyChart";
+import {
   ApiError,
   formatMetric,
   getHistory,
   type HistorySeries,
   type Metric,
 } from "../api";
-const props = defineProps<{ metric: Metric }>();
+const props = defineProps<{ metric: Metric; application?: string }>();
 const emit = defineEmits<{ close: []; error: [unknown] }>();
 const dialog = ref<HTMLDialogElement>(),
   host = ref<HTMLElement>(),
@@ -29,6 +35,8 @@ const dialog = ref<HTMLDialogElement>(),
   loading = ref(false),
   error = ref<unknown>(),
   mode = ref("value");
+const selectedIndex = ref<number | null>(null);
+const inputMethod = ref<"pointer" | "keyboard" | "touch">("pointer");
 let controller: AbortController | undefined,
   plot: uPlot | undefined,
   observer: ResizeObserver | undefined,
@@ -42,7 +50,66 @@ const hasValues = computed(() =>
 );
 const filled = computed(() => points.value.filter((point) => point.count > 0));
 const current = computed(() => points.value.at(-1));
+const lines = computed(() =>
+  series.value ? historyLines(series.value, mode.value) : [],
+);
+const selectedPoint = computed(() =>
+  selectedIndex.value === null ? undefined : points.value[selectedIndex.value],
+);
+function clearPoint() {
+  selectedIndex.value = null;
+}
+function selectPoint(index: number, method: "keyboard" | "touch") {
+  if (!plot || !points.value.length) return;
+  inputMethod.value = method;
+  selectedIndex.value = Math.max(0, Math.min(points.value.length - 1, index));
+  plot.setCursor(
+    {
+      left: plot.valToPos(points.value[selectedIndex.value]!.time, "x"),
+      top: 0,
+    },
+    false,
+  );
+}
+function keyboardPoint(event: KeyboardEvent) {
+  if (event.key === "Escape" && selectedIndex.value !== null) {
+    event.preventDefault();
+    event.stopPropagation();
+    clearPoint();
+    plot?.setCursor({ left: -10, top: -10 }, false);
+    return;
+  }
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const last = points.value.length - 1;
+  const index =
+    event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? last
+        : (selectedIndex.value ?? last) + (event.key === "ArrowLeft" ? -1 : 1);
+  selectPoint(index, "keyboard");
+}
+function touchPoint(event: PointerEvent) {
+  if (!plot || (event.pointerType !== "touch" && event.pointerType !== "pen"))
+    return;
+  const rect = plot.over.getBoundingClientRect();
+  if (
+    event.clientX < rect.left ||
+    event.clientX > rect.right ||
+    event.clientY < rect.top ||
+    event.clientY > rect.bottom
+  )
+    return;
+  host.value?.focus({ preventScroll: true });
+  selectPoint(plot.posToIdx(event.clientX - rect.left), "touch");
+}
+function pointerInput(event: PointerEvent) {
+  if (event.pointerType === "mouse") inputMethod.value = "pointer";
+}
 function destroy() {
+  clearPoint();
   observer?.disconnect();
   observer = undefined;
   plot?.destroy();
@@ -51,31 +118,20 @@ function destroy() {
 function chart() {
   destroy();
   if (disposed || !host.value || !series.value || !hasValues.value) return;
-  const data: uPlot.AlignedData = [
-    points.value.map((point) => point.time),
-    points.value.map((point) =>
-      mode.value === "delta" ? point.delta : point.value,
-    ),
-  ];
+  const data = historyData(points.value, lines.value) as uPlot.AlignedData;
   const options: uPlot.Options = {
     width: Math.max(200, host.value.clientWidth),
     height: 280,
     tzDate: (timestamp) => uPlot.tzDate(new Date(timestamp * 1000), "UTC"),
     series: [
       {},
-      {
-        label:
-          mode.value === "delta"
-            ? t("Observed increment")
-            : props.metric.kind === "counter"
-              ? t("Last cumulative value")
-              : t("Observed average / value"),
-        stroke: "#146b56",
-        width: 2,
+      ...lines.value.map((line, index) => ({
+        label: t(line.label),
+        stroke: line.color,
+        width: index === 0 ? 2 : 1,
         spanGaps: false,
-        points: { show: true, size: 4 },
-        value: (_plot, value) => formatMetric(value, props.metric.unit),
-      },
+        ...(index === 0 ? { points: { show: true, size: 4 } } : {}),
+      })),
     ],
     axes: [
       {},
@@ -86,29 +142,33 @@ function chart() {
       },
     ],
     legend: { show: false },
-    cursor: { show: true },
+    cursor: {
+      show: true,
+      drag: { x: false, y: false },
+      // Do not snap null values to an adjacent observed bucket.
+      dataIdx: (_plot, _seriesIndex, index) => index,
+    },
+    hooks: {
+      setCursor: [
+        (chart) => {
+          // Touch taps are pinned until another input. Compatibility mouse
+          // events emitted after a tap must not replace or clear the readout.
+          if (inputMethod.value === "touch") return;
+          if (
+            chart.cursor.idx == null ||
+            (chart.cursor.left ?? -1) < 0 ||
+            (chart.cursor.top ?? -1) < 0
+          ) {
+            if (inputMethod.value === "pointer") clearPoint();
+            return;
+          }
+          inputMethod.value = "pointer";
+          selectedIndex.value = chart.cursor.idx;
+        },
+      ],
+    },
     select: { show: false, left: 0, top: 0, width: 0, height: 0 },
   };
-  if (props.metric.kind !== "counter") {
-    data.push(
-      points.value.map((point) => point.min),
-      points.value.map((point) => point.max),
-    );
-    options.series.push(
-      {
-        label: t("Observed minimum"),
-        stroke: "#7598b4",
-        width: 1,
-        spanGaps: false,
-      },
-      {
-        label: t("Observed maximum"),
-        stroke: "#a5773e",
-        width: 1,
-        spanGaps: false,
-      },
-    );
-  }
   plot = new uPlot(options, data, host.value);
   observer = new ResizeObserver(() => {
     if (host.value)
@@ -132,6 +192,7 @@ async function load() {
       props.metric.key,
       range.value,
       controller.signal,
+      props.application,
     );
     if (disposed || ticket !== sequence) return;
     series.value = data;
@@ -161,6 +222,13 @@ watch(language, async () => {
   await nextTick();
   chart();
 });
+watch(
+  () => [props.metric.key, props.application],
+  () => {
+    mode.value = "value";
+    void load();
+  },
+);
 function windowName(value: string) {
   return value === "24h"
     ? t("24 hours")
@@ -245,7 +313,19 @@ onUnmounted(() => {
       </button>
     </div>
     <template v-else-if="series"
-      ><p class="muted small-text">
+      ><p
+        v-if="metric.key === 'versions.total'"
+        class="notice small-text version-scope-note"
+      >
+        {{
+          application
+            ? t("Includes only this application.")
+            : t(
+                "Includes all applications; matching version names count separately.",
+              )
+        }}
+      </p>
+      <p class="muted small-text">
         {{
           series.resolution_seconds === 60
             ? t("Minute observations · last 24 hours")
@@ -256,18 +336,112 @@ onUnmounted(() => {
       <p v-if="!hasValues" class="empty" role="status">
         {{ t("No observations available for this window.") }}
       </p>
-      <div
-        v-else
-        ref="host"
-        class="history-chart"
-        role="img"
-        :aria-label="
-          t(
-            '{name} over {range}. Values and coverage are available in the table below.',
-            { name: label(metric.label), range: windowName(range) },
-          )
-        "
-      ></div>
+      <div v-else class="history-explorer">
+        <p id="history-point-help" class="muted small-text">
+          {{
+            t(
+              "Hover or tap to inspect a bucket. Focus the chart and use Left/Right, Home/End; Escape clears the selection.",
+            )
+          }}
+        </p>
+        <div
+          ref="host"
+          class="history-chart"
+          role="group"
+          tabindex="0"
+          aria-describedby="history-point-help history-point-values"
+          @keydown="keyboardPoint"
+          @focus="selectPoint(points.length - 1, 'keyboard')"
+          @blur="clearPoint"
+          @pointermove.capture="pointerInput"
+          @pointerdown.capture="pointerInput"
+          @pointerdown="touchPoint"
+          :aria-label="
+            t(
+              '{name} over {range}. Values and coverage are available in the table below.',
+              { name: label(metric.label), range: windowName(range) },
+            )
+          "
+        ></div>
+        <div
+          id="history-point-values"
+          class="history-readout"
+          role="status"
+          :aria-live="inputMethod === 'pointer' ? 'off' : 'polite'"
+          aria-atomic="true"
+        >
+          <template v-if="selectedPoint">
+            <p class="small-text">
+              <strong>{{ t("Bucket start · browser local time") }}</strong
+              ><br />
+              <time
+                :datetime="new Date(selectedPoint.time * 1000).toISOString()"
+                >{{ localBucketTime(selectedPoint.time) }}</time
+              >
+              ·
+              {{
+                series.resolution_seconds === 60
+                  ? t("Minute observation")
+                  : t("Hourly aggregate")
+              }}
+            </p>
+            <dl class="history-point-values">
+              <div
+                v-for="(line, index) in lines"
+                :key="line.field"
+                :class="'history-line-' + index"
+              >
+                <dt>{{ t(line.label) }}</dt>
+                <dd>
+                  {{ exactMetric(selectedPoint[line.field], metric.unit) }}
+                </dd>
+              </div>
+            </dl>
+            <p class="muted small-text">
+              {{ t("Samples") }}: {{ selectedPoint.count }} ·
+              {{
+                selectedPoint.partial
+                  ? t("Partial current bucket")
+                  : selectedPoint.incomplete
+                    ? t("Incomplete observations")
+                    : t("Complete observations")
+              }}
+              <template v-if="metric.kind !== 'gauge'">
+                ·
+                {{
+                  t("Observed duration: {seconds} seconds.", {
+                    seconds: selectedPoint.observed_seconds,
+                  })
+                }}</template
+              >
+              <template v-if="metric.kind === 'counter' && mode === 'delta'">
+                ·
+                {{
+                  t("Valid intervals: {count}", {
+                    count: selectedPoint.delta_count,
+                  })
+                }}</template
+              >
+            </p>
+            <p v-if="selectedPoint.count === 0" class="muted small-text">
+              {{
+                t("No observation in this bucket. Missing values are not zero.")
+              }}
+            </p>
+            <p
+              v-else-if="mode === 'delta' && selectedPoint.delta === null"
+              class="muted small-text"
+            >
+              {{
+                t("Increment unknown: no valid adjacent observation interval.")
+              }}
+            </p>
+          </template>
+          <p v-else class="muted small-text">
+            {{ t("Select a chart point to see exact values.") }}
+          </p>
+        </div>
+      </div>
       <p class="muted small-text">
         {{
           metric.kind === "counter"

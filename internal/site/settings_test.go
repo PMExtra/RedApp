@@ -14,20 +14,20 @@ func TestDefaultsPartialRecordsAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	initial, err := Load(db)
-	if err != nil || !reflect.DeepEqual(initial, Defaults()) {
+	initial, err := LoadSnapshot(db)
+	if err != nil || !reflect.DeepEqual(initial.Settings, Defaults()) {
 		t.Fatal(initial, err)
 	}
-	if err = db.Put("setting", "site", map[string]any{"title": map[string]string{"en": "Company tools"}}); err != nil {
+	if _, err = db.CompareAndSwapSetting("global", "", "site", 0, map[string]any{"title": map[string]string{"en": "Company tools"}}); err != nil {
 		t.Fatal(err)
 	}
-	partial, err := Load(db)
+	partial, err := LoadSnapshot(db)
 	if err != nil || partial.Title.EN != "Company tools" || partial.Title.ZHCN != initial.Title.ZHCN || partial.Subtitle != initial.Subtitle {
 		t.Fatal(partial, err)
 	}
 	partial.Disclaimer.EN = "<img src=x onerror=alert(1)>"
 	partial.Subtitle.EN = ""
-	if err = Save(db, partial); err != nil {
+	if partial, err = SaveCAS(db, partial.Settings, partial.Revision); err != nil {
 		t.Fatal(err)
 	}
 	db.DB.Close()
@@ -36,9 +36,12 @@ func TestDefaultsPartialRecordsAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.DB.Close()
-	got, err := Load(db)
+	got, err := LoadSnapshot(db)
 	if err != nil || !reflect.DeepEqual(got, partial) {
 		t.Fatal(got, err)
+	}
+	if _, err = SaveCAS(db, got.Settings, got.Revision-1); err == nil {
+		t.Fatal("stale revision overwrote site settings")
 	}
 	raw, _ := json.Marshal(got)
 	if strings.Contains(string(raw), "<img") {
@@ -47,18 +50,18 @@ func TestDefaultsPartialRecordsAndRestart(t *testing.T) {
 	for _, value := range []string{"", strings.Repeat("x", 81), "bad\x00text", string([]byte{0xff})} {
 		bad := got
 		bad.Title.EN = value
-		if Save(db, bad) == nil {
+		if _, err := SaveCAS(db, bad.Settings, bad.Revision); err == nil {
 			t.Fatal("invalid title accepted")
 		}
 	}
-	after, _ := Load(db)
+	after, _ := LoadSnapshot(db)
 	if !reflect.DeepEqual(after, got) {
 		t.Fatal("invalid update changed stored settings")
 	}
-	if err = db.Put("setting", "site", map[string]any{"title": false}); err != nil {
+	if _, err = db.CompareAndSwapSetting("global", "", "site", got.Revision, map[string]any{"title": false}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = Load(db); err == nil {
+	if _, err = LoadSnapshot(db); err == nil {
 		t.Fatal("corrupt settings silently accepted")
 	}
 }

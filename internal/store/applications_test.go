@@ -1,116 +1,307 @@
 package store
 
 import (
+	"bytes"
 	"database/sql"
+	"errors"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
-func TestVersionMigrationPreservesHistoryAndIsolation(t *testing.T) {
-	dir := t.TempDir()
-	db, e := sql.Open("sqlite3", filepath.Join(dir, "state.sqlite"))
+func openTest(t *testing.T) *Store {
+	t.Helper()
+	s, e := Open(t.TempDir())
 	if e != nil {
 		t.Fatal(e)
 	}
-	_, e = db.Exec(`CREATE TABLE schema_version(version INTEGER NOT NULL);INSERT INTO schema_version VALUES(1);CREATE TABLE versions(version TEXT PRIMARY KEY,first_seen TEXT NOT NULL);INSERT INTO versions VALUES('2.1.285','2026-09-01T12:00:00Z');CREATE TABLE records(kind TEXT,id TEXT,body BLOB,PRIMARY KEY(kind,id));INSERT INTO records VALUES('current','old-object','{"Generation":"unchanged"}');`)
-	if e != nil {
-		t.Fatal(e)
-	}
-	db.Close()
-	for i := 0; i < 2; i++ {
-		s, e := Open(dir)
-		if e != nil {
-			t.Fatal(e)
-		}
-		before, e := s.Versions()
-		if e != nil || before["2.1.285"] != "2026-09-01T12:00:00Z" {
-			t.Fatal(before, e)
-		}
-		if e = s.SeenFor("claude-code", "2.1.285"); e != nil {
-			t.Fatal(e)
-		}
-		other, _ := s.VersionsFor("claude-code")
-		if len(other) != 1 || other["2.1.285"] == before["2.1.285"] {
-			t.Fatal("history not isolated")
-		}
-		if e = s.Seen("2.1.285"); e != nil {
-			t.Fatal(e)
-		}
-		after, _ := s.Versions()
-		if after["2.1.285"] != before["2.1.285"] {
-			t.Fatal("first_seen rewritten")
-		}
-		var resource map[string]string
-		if e = s.Get("current", "old-object", &resource); e != nil || resource["Generation"] != "unchanged" {
-			t.Fatal("cache identity changed", e)
-		}
-		s.DB.Close()
-	}
+	t.Cleanup(func() { s.DB.Close() })
+	return s
 }
-func TestFailedVersionMigrationRollsBack(t *testing.T) {
-	dir := t.TempDir()
-	db, e := sql.Open("sqlite3", filepath.Join(dir, "state.sqlite"))
-	if e != nil {
-		t.Fatal(e)
-	}
-	_, e = db.Exec(`CREATE TABLE schema_version(version INTEGER NOT NULL);INSERT INTO schema_version VALUES(1);CREATE TABLE versions(version TEXT PRIMARY KEY,first_seen TEXT);INSERT INTO versions VALUES('2.1.285',NULL);`)
-	if e != nil {
-		t.Fatal(e)
-	}
-	db.Close()
-	if s, e := Open(dir); e == nil {
-		s.DB.Close()
-		t.Fatal("invalid legacy state silently migrated")
-	}
-	db, _ = sql.Open("sqlite3", filepath.Join(dir, "state.sqlite"))
-	defer db.Close()
-	var version, count int
-	if e = db.QueryRow("SELECT version FROM schema_version").Scan(&version); e != nil || version != 1 {
-		t.Fatal("migration version committed", e)
-	}
-	if e = db.QueryRow("SELECT count(*) FROM versions WHERE first_seen IS NULL").Scan(&count); e != nil || count != 1 {
-		t.Fatal("legacy data changed", e)
-	}
-}
-
-func TestMetadataHistoryCommitIsAtomicAcrossRestart(t *testing.T) {
-	dir := t.TempDir()
-	s, err := Open(dir)
+func snapshotFiles(t *testing.T, dir string) map[string][]byte {
+	t.Helper()
+	out := map[string][]byte{}
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Fail after the metadata write, at the history insertion boundary.
-	if _, err = s.DB.Exec(`CREATE TRIGGER reject_history BEFORE INSERT ON versions BEGIN SELECT RAISE(FAIL,'injected history failure'); END;`); err != nil {
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[e.Name()] = b
+	}
+	return out
+}
+func TestOldAndUnknownDirectoriesAreRejectedWithoutModification(t *testing.T) {
+	for _, ddl := range []string{
+		`CREATE TABLE schema_version(version INTEGER);INSERT INTO schema_version VALUES(1);CREATE TABLE versions(version TEXT);INSERT INTO versions VALUES('0.1.0')`,
+		`CREATE TABLE schema_version(version INTEGER);INSERT INTO schema_version VALUES(2);CREATE TABLE records(kind TEXT,id TEXT,body BLOB)`,
+		`CREATE TABLE unrelated(secret TEXT);INSERT INTO unrelated VALUES('preserve')`,
+		`CREATE TABLE schema_version(version INTEGER);INSERT INTO schema_version VALUES(3)`,
+	} {
+		t.Run(ddl[:30], func(t *testing.T) {
+			dir := t.TempDir()
+			db, err := sql.Open("sqlite3", filepath.Join(dir, "state.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = db.Exec(ddl); err != nil {
+				t.Fatal(err)
+			}
+			db.Close()
+			before := snapshotFiles(t, dir)
+			if !errors.Is(Preflight(dir), ErrFreshDirectory) {
+				t.Fatal("preflight accepted old data")
+			}
+			if s, err := Open(dir); !errors.Is(err, ErrFreshDirectory) {
+				if s != nil {
+					s.DB.Close()
+				}
+				t.Fatal("accepted old data", err)
+			}
+			after := snapshotFiles(t, dir)
+			if len(before) != len(after) {
+				t.Fatal("old directory modified")
+			}
+			for name, b := range before {
+				if !bytes.Equal(b, after[name]) {
+					t.Fatal("old file changed", name)
+				}
+			}
+		})
+	}
+	dir := t.TempDir()
+	os.Mkdir(filepath.Join(dir, "objects"), 0700)
+	if !errors.Is(Preflight(dir), ErrFreshDirectory) {
+		t.Fatal("nonempty legacy directory accepted")
+	}
+}
+func releaseFixture(t *testing.T, s *Store, app, version string) Resource {
+	t.Helper()
+	r := Resource{AppID: app, Version: version, Key: "linux/binary", SourceURL: "https://example.test/file", SHA256: strings.Repeat("a", 64)}
+	if err := s.PutRelease(ReleaseMetadata{AppID: app, Version: version, Raw: []byte(`{"release":1}`), TrustRevision: 1, FetchedAt: time.Now()}, []Resource{r}); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.PutVersion("trusted", "2.1.285", "new metadata", "claude-code", "2.1.285"); err == nil {
-		t.Fatal("history fault ignored")
+	return r
+}
+func TestMetadataAtomicityImmutabilityAndApplicationIsolation(t *testing.T) {
+	s := openTest(t)
+	if _, err := s.DB.Exec(`CREATE TRIGGER reject_resources BEFORE INSERT ON resources BEGIN SELECT RAISE(FAIL,'injected failure'); END`); err != nil {
+		t.Fatal(err)
 	}
-	s.DB.Close()
-	s, err = Open(dir)
+	m := ReleaseMetadata{AppID: "openai/codex", Version: "1.0.0", Raw: []byte(`{}`), TrustRevision: 1, FetchedAt: time.Now()}
+	r := Resource{AppID: m.AppID, Version: m.Version, Key: "file", SourceURL: "https://example.test/file", SHA256: strings.Repeat("a", 64)}
+	if err := s.PutRelease(m, []Resource{r}); err == nil {
+		t.Fatal("injected fault ignored")
+	}
+	if _, err := s.Release(m.AppID, m.Version); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal("partial metadata", err)
+	}
+	versions, _ := s.VersionsFor(m.AppID)
+	if len(versions) != 0 {
+		t.Fatal("partial version history")
+	}
+	s.DB.Exec("DROP TRIGGER reject_resources")
+	r = releaseFixture(t, s, m.AppID, m.Version)
+	releaseFixture(t, s, "anthropic/claude-code", m.Version)
+	r.SHA256 = strings.Repeat("b", 64)
+	if err := s.PutRelease(m, []Resource{r}); !errors.Is(err, ErrImmutableRelease) {
+		t.Fatal("mutable resource authorized", err)
+	}
+	before, _ := s.Release(m.AppID, m.Version)
+	if string(before.Raw) != `{"release":1}` {
+		t.Fatal("failed update changed envelope")
+	}
+	got, _ := s.VersionsFor("anthropic/claude-code")
+	if len(got) != 1 {
+		t.Fatal("application history not isolated")
+	}
+}
+func TestSettingsCASAndPairedCountersRollback(t *testing.T) {
+	s := openTest(t)
+	if _, rev, err := s.ChannelTTL("openai/codex"); !errors.Is(err, sql.ErrNoRows) || rev != 0 {
+		t.Fatal(rev, err)
+	}
+	rev, err := s.SetChannelTTL("openai/codex", 0, 30)
+	if err != nil || rev != 1 {
+		t.Fatal(rev, err)
+	}
+	if _, err = s.SetChannelTTL("openai/codex", 0, 60); !errors.Is(err, ErrConflict) {
+		t.Fatal("stale edit accepted", err)
+	}
+	if _, err = s.SetChannelTTL("anthropic/claude-code", 0, 0); err == nil {
+		t.Fatal("invalid ttl accepted")
+	}
+	if _, err = s.DB.Exec(`CREATE TRIGGER fail_app_counter BEFORE INSERT ON metric_counters WHEN NEW.scope='app' BEGIN SELECT RAISE(FAIL,'app fault'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.AddFor("openai/codex", "upstream_bytes", 7); err == nil {
+		t.Fatal("counter fault ignored")
+	}
+	counters, _ := s.Counters()
+	if counters["upstream_bytes"] != 0 {
+		t.Fatal("half counter committed")
+	}
+	s.DB.Exec("DROP TRIGGER fail_app_counter")
+	if err = s.AddFor("openai/codex", "upstream_bytes", 7); err != nil {
+		t.Fatal(err)
+	}
+	global, _ := s.Counters()
+	app, _ := s.CountersFor("openai/codex")
+	other, _ := s.CountersFor("anthropic/claude-code")
+	if global["upstream_bytes"] != 7 || app["upstream_bytes"] != 7 || len(other) != 0 {
+		t.Fatal(global, app, other)
+	}
+	if err = s.Add("reuse_requests", 1); err == nil {
+		t.Fatal("retired metric accepted")
+	}
+}
+func TestGenerationCleanupScopeAndCurrentCannotBeResurrected(t *testing.T) {
+	s := openTest(t)
+	r := releaseFixture(t, s, "openai/codex", "1.0.0")
+	releaseFixture(t, s, "anthropic/claude-code", "1.0.0")
+	now := time.Now().UTC().Truncate(time.Second)
+	g := Generation{ID: "first", AppID: r.AppID, Version: r.Version, ResourceKey: r.Key, ExpectedSHA256: r.SHA256, Phase: "incomplete", IsCurrent: true, StartedAt: now}
+	if err := s.CreateGeneration(g); err != nil {
+		t.Fatal(err)
+	}
+	p := CleanupPreview{ID: "preview", AppID: r.AppID, CreatedAt: now, ExpiresAt: now.Add(10 * time.Minute), Selection: []CleanupSelection{{GenerationID: g.ID, Version: r.Version, ResourceKey: r.Key}}}
+	if err := s.SaveCleanupPreview(p); err != nil {
+		t.Fatal(err)
+	}
+	g2 := g
+	g2.ID = "second"
+	if err := s.CreateGeneration(g2); err != nil {
+		t.Fatal(err)
+	}
+	g.Bytes = 10
+	if err := s.SaveGeneration(g); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RetireCleanupPreview("anthropic/claude-code", p.ID, now); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal("cross app cleanup accepted", err)
+	}
+	if _, err := s.RetireCleanupPreview(r.AppID, p.ID, now); err != nil {
+		t.Fatal(err)
+	}
+	all, _ := s.Generations()
+	for _, v := range all {
+		if v.ID == g.ID && v.IsCurrent || v.ID == g2.ID && !v.IsCurrent {
+			t.Fatal("cleanup/current generation leaked", all)
+		}
+	}
+	b := Blob{AppID: r.AppID, SHA256: r.SHA256, VerifiedAt: now}
+	if err := s.CompleteGeneration(r.AppID, g.ID, b, now, 0); err == nil {
+		t.Fatal("retired writer published")
+	}
+	if err := s.CompleteGeneration(r.AppID, g2.ID, b, now, 0); err != nil {
+		t.Fatal(err)
+	}
+	if deleted, err := s.DeleteUnreferencedBlob(r.AppID, r.SHA256); err != nil || deleted {
+		t.Fatal("referenced blob deleted", err)
+	}
+	if _, err := s.Blob("anthropic/claude-code", r.SHA256); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal("blob ownership shared", err)
+	}
+}
+
+func TestReadOnlyPreflightUnderstandsWALAndPreservesRejectedSource(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.sqlite")
+	db, err := sql.Open("sqlite3", sqliteURL(path, "_journal_mode=WAL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.Exec("CREATE TABLE schema_version(version INTEGER); INSERT INTO schema_version VALUES(2);"); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotFiles(t, dir)
+	if !errors.Is(Preflight(dir), ErrFreshDirectory) {
+		t.Fatal("legacy WAL accepted")
+	}
+	if s, err := Open(dir); !errors.Is(err, ErrFreshDirectory) {
+		if s != nil {
+			s.DB.Close()
+		}
+		t.Fatal("legacy WAL opened for writing", err)
+	}
+	after := snapshotFiles(t, dir)
+	if len(before) != len(after) {
+		t.Fatal("source sidecars changed")
+	}
+	for name, b := range before {
+		if !bytes.Equal(b, after[name]) {
+			t.Fatal("preflight changed source", name)
+		}
+	}
+	// A valid schema whose transactions remain in WAL can be inspected without a
+	// false fresh-directory rejection after an unclean process exit.
+	valid := t.TempDir()
+	s, err := Open(valid)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.DB.Close()
-	var value string
-	if err = s.Get("trusted", "2.1.285", &value); err != sql.ErrNoRows {
-		t.Fatal("partial metadata survived restart", value, err)
+	if err = Preflight(valid); err != nil {
+		t.Fatal("valid WAL database rejected", err)
 	}
-	if _, err = s.DB.Exec("DROP TRIGGER reject_history"); err != nil {
+}
+
+func TestWALDataSurvivesAbruptProcessExit(t *testing.T) {
+	const helper = "REDAPP_STORE_CRASH_DIR"
+	if dir := os.Getenv(helper); dir != "" {
+		s, err := Open(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = s.SetChannelTTL("openai/codex", 0, 37); err != nil {
+			t.Fatal(err)
+		}
+		if err = s.AddFor("openai/codex", "upstream_bytes", 13); err != nil {
+			t.Fatal(err)
+		}
+		os.Exit(0)
+	}
+	dir := t.TempDir()
+	command := exec.Command(os.Args[0], "-test.run=^TestWALDataSurvivesAbruptProcessExit$")
+	command.Env = append(os.Environ(), helper+"="+dir)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("crash fixture: %v %s", err, output)
+	}
+	info, err := os.Stat(filepath.Join(dir, "state.sqlite-wal"))
+	if err != nil || info.Size() == 0 {
+		t.Fatal("fixture did not leave committed data in WAL", err)
+	}
+	before := snapshotFiles(t, dir)
+	if err = Preflight(dir); err != nil {
+		t.Fatal("valid schema rejected after crash", err)
+	}
+	after := snapshotFiles(t, dir)
+	for name, b := range before {
+		if !bytes.Equal(b, after[name]) {
+			t.Fatal("immutable preflight touched source", name)
+		}
+	}
+	s, err := Open(dir)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.PutVersion("trusted", "2.1.285", "verified", "claude-code", "2.1.285"); err != nil {
-		t.Fatal(err)
+	defer s.DB.Close()
+	ttl, rev, err := s.ChannelTTL("openai/codex")
+	if err != nil || ttl != 37 || rev != 1 {
+		t.Fatal("committed WAL setting lost", ttl, rev, err)
 	}
-	before, _ := s.VersionsFor("claude-code")
-	if err = s.PutVersion("trusted", "2.1.285", "verified again", "claude-code", "2.1.285"); err != nil {
-		t.Fatal(err)
-	}
-	after, _ := s.VersionsFor("claude-code")
-	if before["2.1.285"] == "" || before["2.1.285"] != after["2.1.285"] {
-		t.Fatal("first_seen changed")
-	}
-	if got, _ := s.VersionsFor("codex"); len(got) != 0 {
-		t.Fatal("history leaked across apps")
+	counts, err := s.CountersFor("openai/codex")
+	if err != nil || counts["upstream_bytes"] != 13 {
+		t.Fatal("committed WAL counter lost", counts, err)
 	}
 }

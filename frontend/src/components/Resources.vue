@@ -1,81 +1,129 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
-import { bytes, type Status } from "../api";
-import { localDate, stateLabel, t } from "../i18n";
+import { computed, reactive, ref, watch } from "vue";
+import { bytes, type Resource, type VersionSummary } from "../api";
+import { appAPI } from "../bootstrap";
+import { usePagedCollection } from "../composables/usePagedCollection";
+import { errorText, localDate, stateLabel, t } from "../i18n";
 import SelectMenu from "./SelectMenu.vue";
-const props = defineProps<{ status: Status }>();
-const application = ref("codex");
+import PageNavigation from "./PageNavigation.vue";
+const props = withDefaults(
+  defineProps<{ application: string; automatic?: boolean }>(),
+  { automatic: true },
+);
 const version = ref("");
-const versions = computed(
-  () =>
-    props.status.application_versions?.[application.value] ||
-    (application.value === "codex" ? props.status.versions : {}),
+const automatic = computed(() => props.automatic);
+watch(
+  () => props.application,
+  () => {
+    version.value = "";
+  },
+  { flush: "sync" },
 );
-const counterPrefix = computed(() =>
-  application.value === "codex"
-    ? "version:"
-    : "app:" + application.value + ":version:",
-);
-watch(application, () => {
-  version.value = "";
-});
-const resources = computed(() =>
-  props.status.resources.filter(
-    (item) =>
-      (item.Resource.Labels.app || "codex") === application.value &&
-      (!version.value || item.Resource.Labels.version === version.value),
+const versions = reactive(
+  usePagedCollection<VersionSummary>(
+    computed(() => `${appAPI(props.application)}/versions`),
+    automatic,
   ),
 );
+const resources = reactive(
+  usePagedCollection<Resource>(
+    computed(
+      () =>
+        `${appAPI(props.application)}/resources${version.value ? `?version=${encodeURIComponent(version.value)}` : ""}`,
+    ),
+    automatic,
+  ),
+);
+const versionOptions = computed(() => [
+  { value: "", label: t("All versions") },
+  ...(version.value &&
+  !versions.items.some((item) => item.version === version.value)
+    ? [{ value: version.value, label: version.value }]
+    : []),
+  ...versions.items.map((item) => ({
+    value: item.version,
+    label: item.version,
+  })),
+]);
 </script>
 <template>
   <section class="panel">
     <div class="section-heading">
       <h2>{{ t("Versions and resources") }}</h2>
-      <SelectMenu
-        v-model="application"
-        :label="t('Application')"
-        :options="[
-          { value: 'codex', label: 'Codex CLI' },
-          { value: 'claude-code', label: 'Claude Code' },
-        ]"
-      />
       <div class="inline-label">
         <span>{{ t("Version") }}</span
         ><SelectMenu
           v-model="version"
           :label="t('Version')"
-          :options="[
-            { value: '', label: t('All versions') },
-            ...Object.keys(versions).map((name) => ({
-              value: name,
-              label: name,
-            })),
-          ]"
+          :options="versionOptions"
         />
       </div>
     </div>
+    <div v-if="versions.error" class="error" role="alert">
+      {{ errorText(versions.error)
+      }}<small v-if="versions.loaded">{{
+        t("Showing the last successful snapshot.")
+      }}</small
+      ><button
+        class="secondary"
+        :disabled="versions.loading"
+        @click="versions.refresh"
+      >
+        {{ t("Retry") }}
+      </button>
+    </div>
+    <p v-if="!versions.loaded && versions.loading" role="status">
+      {{ t("Loading…") }}
+    </p>
     <div class="version-list">
-      <article v-for="(firstSeen, name) in versions" :key="name">
+      <article v-for="item in versions.items" :key="item.version">
         <button
           class="version-button secondary"
-          :aria-pressed="version === name"
-          @click="version = version === name ? '' : name"
+          :aria-pressed="version === item.version"
+          @click="version = version === item.version ? '' : item.version"
         >
-          {{ name }}
+          {{ item.version }}
         </button>
         <div>
-          <span>{{ t("First seen") }} {{ localDate(firstSeen) }}</span
+          <span>{{ t("First seen") }} {{ localDate(item.first_seen) }}</span
           ><small class="muted">{{
             t("{count} artifact requests", {
-              count: status.counters[counterPrefix + name + ":requests"] || 0,
+              count: item.requests,
             })
           }}</small>
         </div>
       </article>
-      <p v-if="!Object.keys(versions).length" class="empty">
+      <p v-if="versions.loaded && !versions.items.length" class="empty">
         {{ t("No versions discovered yet. Downloads are fetched on demand.") }}
       </p>
     </div>
+    <PageNavigation
+      :label="t('Version pages')"
+      :page="versions.page"
+      :previous="versions.previousAvailable"
+      :next="versions.nextAvailable"
+      :loading="versions.loading"
+      @previous="versions.previous"
+      @next="versions.next"
+      @refresh="versions.refresh"
+    />
+    <h3>{{ t("Resources") }}</h3>
+    <div v-if="resources.error" class="error" role="alert">
+      {{ errorText(resources.error)
+      }}<small v-if="resources.loaded">{{
+        t("Showing the last successful snapshot.")
+      }}</small
+      ><button
+        class="secondary"
+        :disabled="resources.loading"
+        @click="resources.refresh"
+      >
+        {{ t("Retry") }}
+      </button>
+    </div>
+    <p v-if="!resources.loaded && resources.loading" role="status">
+      {{ t("Loading…") }}
+    </p>
     <p class="muted small-text">
       {{
         t(
@@ -85,7 +133,7 @@ const resources = computed(() =>
     </p>
     <div
       class="table-wrap"
-      v-if="resources.length"
+      v-if="resources.items.length"
       tabindex="0"
       :aria-label="t('Versions and resources')"
     >
@@ -101,10 +149,10 @@ const resources = computed(() =>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="item in resources" :key="item.ID">
+          <tr v-for="item in resources.items" :key="item.ID">
             <td>
-              <strong>{{ item.Resource.Labels.version }}</strong
-              ><code class="file-name">{{ item.Resource.Labels.name }}</code>
+              <strong>{{ item.Resource.Version }}</strong
+              ><code class="file-name">{{ item.Resource.Key }}</code>
             </td>
             <td>
               <code>{{ item.ID.slice(0, 8) }}</code
@@ -144,8 +192,18 @@ const resources = computed(() =>
         </tbody>
       </table>
     </div>
-    <p v-else class="empty">
+    <p v-else-if="resources.loaded" class="empty">
       {{ t("No cached resources for this selection.") }}
     </p>
+    <PageNavigation
+      :label="t('Resource pages')"
+      :page="resources.page"
+      :previous="resources.previousAvailable"
+      :next="resources.nextAvailable"
+      :loading="resources.loading"
+      @previous="resources.previous"
+      @next="resources.next"
+      @refresh="resources.refresh"
+    />
   </section>
 </template>

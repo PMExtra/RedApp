@@ -16,20 +16,21 @@ import zipfile
 
 BRANCH = 'automation/installer-updates'
 BOT = 'github-actions[bot]'
-ALLOWED = {f'installers/{app}/{kind}/{name}' for app in ('codex','claude-code') for kind in ('upstream','generated') for name in ('install.sh','install.ps1')} | {f'installers/{app}/provenance.json' for app in ('codex','claude-code')}
+from installer_manifest import ROOT, allowed_paths, inventory
 SHA = re.compile(r'[0-9a-f]{40}')
 MARKER = re.compile(r'<!-- redapp-installer-update-head: ([0-9a-f]{40}) -->')
 BASE_MARKER = re.compile(r'<!-- redapp-installer-update-base: ([0-9a-f]{40}) -->')
 
 
-def load_bundle(path, expected_sha, baseline):
+def load_bundle(path, expected_sha, baseline, root=ROOT):
+    allowed=allowed_paths(root)
     raw = path.read_bytes()
     if len(raw) > 8*1024*1024 or hashlib.sha256(raw).hexdigest() != expected_sha:
         raise ValueError('Bundle digest/size differs from the read-only validation job')
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
         entries = archive.infolist()
         names = [x.filename for x in entries]
-        if len(names) != len(set(names)) or set(names) - ALLOWED - {'update.json'} or 'update.json' not in names:
+        if len(names) != len(set(names)) or set(names) - allowed - {'update.json'} or 'update.json' not in names:
             raise ValueError('Bundle has duplicate or unapproved paths')
         if sum(x.file_size for x in entries) > 8*1024*1024 or any((x.external_attr >> 16) & 0o170000 == 0o120000 for x in entries):
             raise ValueError('Bundle has oversized files or symbolic links')
@@ -40,13 +41,13 @@ def load_bundle(path, expected_sha, baseline):
     if not files or payload.get('files') != {name:hashlib.sha256(body).hexdigest() for name,body in files.items()}:
         raise ValueError('Bundle file digests are incomplete or inconsistent')
     rows = payload.get('rows', [])
-    expected = {(app,name) for app in ('codex','claude-code') for name in ('install.sh','install.ps1')}
-    if len(rows) != 4 or {(r['application'],r['name']) for r in rows} != expected:
-        raise ValueError('Bundle does not report all four official scripts')
+    expected = {(x['application'],x['name']):x['url'] for x in inventory(root)}
+    if len(rows) != len(expected) or {(r['application'],r['name']) for r in rows} != set(expected):
+        raise ValueError('Bundle does not report every declared official installer exactly once')
     expected_files=set()
     for row in rows:
         app,name = row['application'],row['name']
-        source=('https://releases.openai.com/codex/' if app=='codex' else 'https://claude.ai/')+name
+        source=expected[(app,name)]
         if row['url']!=source or row['status'] not in ('changed','unchanged') or any(not re.fullmatch('[0-9a-f]{64}',row[key]) for key in ('baseline_sha256','current_sha256')):
             raise ValueError('Untrusted upstream result')
         if row['status']=='changed':
@@ -96,7 +97,7 @@ def body_for(payload,head,run_url):
     lines=['Updates official installer originals and generated files using the patches already reviewed on main.','',f"Baseline main: `{payload['baseline']}`",'', '| Script | Official source | Previous SHA256 | New SHA256 |','| --- | --- | --- | --- |']
     for row in payload['rows']:
         if row['status']=='changed':lines.append(f"| {row['application']}/{row['name']} | {row['url']} | `{row['baseline_sha256']}` | `{row['current_sha256']}` |")
-    lines+=['','Validation: strict zero-offset patch application, isolated offline Codex/Claude Shell tests, PowerShell parser, and a trusted file/digest recheck.',
+    lines+=['','Validation: strict zero-offset patch application, isolated offline descriptor-selected Shell tests, PowerShell parser, and a trusted file/digest recheck.',
         'Windows/macOS real-machine behavior and official binary runtime were not tested.',
         f'Updater run: {run_url}',
         'PRs created with GITHUB_TOKEN may not trigger ordinary PR CI. The validation above ran in the updater workflow; it does not claim a separate CI run.',
@@ -107,6 +108,8 @@ def body_for(payload,head,run_url):
 
 def publish(root,payload,files,api,token,run_url,remote='origin'):
     baseline=payload['baseline']
+    allowed=allowed_paths(root)
+    if set(files)-allowed:raise ValueError('Unapproved installer publication paths')
     auth=base64.b64encode(('x-access-token:'+token).encode()).decode()
     env={**os.environ,'GIT_CONFIG_COUNT':'1','GIT_CONFIG_KEY_0':'http.https://github.com/.extraheader','GIT_CONFIG_VALUE_0':'AUTHORIZATION: basic '+auth,
         'GIT_AUTHOR_NAME':BOT,'GIT_AUTHOR_EMAIL':'41898282+github-actions[bot]@users.noreply.github.com','GIT_COMMITTER_NAME':BOT,'GIT_COMMITTER_EMAIL':'41898282+github-actions[bot]@users.noreply.github.com'}
@@ -120,7 +123,7 @@ def publish(root,payload,files,api,token,run_url,remote='origin'):
         previous_base=check_pr(pr,remote_head)
         git(root,'fetch','--no-tags',remote,BRANCH,env=env)
         changed=set(git(root,'diff','--name-only',previous_base,remote_head).decode().splitlines())
-        if changed-ALLOWED:raise ValueError('Existing branch contains non-installer changes')
+        if changed-allowed:raise ValueError('Existing branch contains non-installer changes')
         if previous_base==baseline and changed==set(files):
             identical=True
             for name,data in files.items():

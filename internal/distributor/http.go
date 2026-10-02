@@ -15,12 +15,13 @@ import (
 )
 
 type Client struct {
-	Base        *url.URL
-	HTTP        *http.Client
-	proxyMu     sync.Mutex
-	proxyConfig proxyConfig
-	proxyStore  *store.Store
-	transports  *transportSwitch
+	Base          *url.URL
+	HTTP          *http.Client
+	proxyMu       sync.Mutex
+	proxyConfig   proxyConfig
+	proxyStore    *store.Store
+	proxyRevision int64
+	transports    *transportSwitch
 }
 
 func New(base string) (*Client, error) {

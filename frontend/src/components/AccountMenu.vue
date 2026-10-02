@@ -1,25 +1,18 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref } from "vue";
+import { nextTick } from "vue";
 import { t } from "../i18n";
 import Icon from "./Icon.vue";
+import { usePopover } from "../composables/usePopover";
 defineProps<{ busy?: boolean }>();
 const emit = defineEmits<{ password: []; logout: [] }>();
-const open = ref(false),
-  root = ref<HTMLElement>(),
-  trigger = ref<HTMLButtonElement>();
-function close(focus = false) {
-  open.value = false;
-  if (focus) trigger.value?.focus();
-}
+const { id, open, root, trigger, close, show } = usePopover();
 async function toggle() {
-  open.value = !open.value;
+  if (open.value) close();
+  else show();
   if (open.value) {
     await nextTick();
     root.value?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
   }
-}
-function outside(event: PointerEvent) {
-  if (!root.value?.contains(event.target as Node)) close();
 }
 function focusout(event: FocusEvent) {
   if (!root.value?.contains(event.relatedTarget as Node)) close();
@@ -56,19 +49,17 @@ function select(action: "password" | "logout") {
   if (action === "password") emit("password");
   else emit("logout");
 }
-onMounted(() => document.addEventListener("pointerdown", outside));
-onUnmounted(() => document.removeEventListener("pointerdown", outside));
 </script>
 <template>
   <div ref="root" class="account-control" @focusout="focusout" @keydown="key">
     <button
       ref="trigger"
-      class="account-trigger secondary"
+      class="account-trigger popover-trigger secondary"
       type="button"
       :aria-label="t('Account')"
       aria-haspopup="menu"
       :aria-expanded="open"
-      aria-controls="account-menu"
+      :aria-controls="open ? `${id}-menu` : undefined"
       :disabled="busy"
       @click="toggle"
       @keydown.down.prevent.stop="!open && toggle()"
@@ -78,10 +69,10 @@ onUnmounted(() => document.removeEventListener("pointerdown", outside));
     </button>
     <div
       v-if="open"
-      id="account-menu"
+      :id="`${id}-menu`"
       role="menu"
       :aria-label="t('Account actions')"
-      class="account-menu"
+      class="account-menu popover-panel"
     >
       <button role="menuitem" type="button" @click="select('password')">
         <Icon name="lock" />{{ t("Change password") }}</button

@@ -37,7 +37,7 @@ def archive(target, legacy):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--directory", type=Path, default=Path(__file__).resolve().parents[1] / "installers/codex/generated")
+    parser.add_argument("--directory", type=Path, default=Path(__file__).resolve().parents[1] / "installers/openai/codex/generated")
     args = parser.parse_args()
     config = {}
     seen = []
@@ -46,6 +46,9 @@ def main():
             pass
         def do_GET(self):
             seen.append(self.path)
+            if not self.path.startswith("/openai/codex/"):
+                self.send_error(404)
+                return
             if config["failure"] == "redirect":
                 self.send_response(302)
                 self.send_header("Location", "https://github.com/openai/codex")
@@ -68,7 +71,7 @@ def main():
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    base = f"http://127.0.0.1:{server.server_port}"
+    base = f"http://127.0.0.1:{server.server_port}/openai/codex"
     curl = shutil.which("curl")
     if not curl:
         raise SystemExit("需要 curl 运行离线安装器测试")

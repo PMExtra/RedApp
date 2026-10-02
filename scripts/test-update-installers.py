@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 
 root = Path(__file__).resolve().parents[1]
-target = root / "installers/codex"
+target = root / "installers/openai/codex"
 before = {p.relative_to(target): hashlib.sha256(p.read_bytes()).digest() for p in target.rglob("*") if p.is_file()}
 with tempfile.TemporaryDirectory(prefix="redapp-updater-test-") as temp:
     source = Path(temp)

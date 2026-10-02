@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/rsa"
-	assets "github.com/PMExtra/RedApp/installers/claude-code"
+	assets "github.com/PMExtra/RedApp/installers"
 	"golang.org/x/crypto/openpgp"
 	"golang.org/x/crypto/openpgp/armor"
 	"golang.org/x/crypto/openpgp/packet"
@@ -54,7 +54,11 @@ func TestRejectUnsupportedSignatureHashAndExtraPackets(t *testing.T) {
 
 func TestRejectDifferentValidPublicKey(t *testing.T) {
 	// Change the valid RSA key's creation timestamp, yielding a different fingerprint.
-	keys, err := openpgp.ReadArmoredKeyRing(bytes.NewReader(assets.PublicKey()))
+	keyBytes, err := assets.PublicAsset("anthropic/claude-code", "claude-code.asc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := openpgp.ReadArmoredKeyRing(bytes.NewReader(keyBytes))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,6 +3,8 @@ package download
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
+	"errors"
 	"github.com/PMExtra/RedApp/internal/testutil"
 	"net/http"
 	"os"
@@ -25,11 +27,44 @@ func TestUpstreamPayloadCountsCompressedArtifactOnce(t *testing.T) {
 		w.Write(data)
 	}))
 	m, db, _ := setup(t, c)
-	r := resource(c, data)
+	r := authorizedResource(t, m, c, data)
 	for range 2 {
 		if !bytes.Equal(collect(t, m, r), data) {
 			t.Fatal("artifact was decompressed or corrupted")
 		}
+	}
+	// Lowering deployment limits must also bound completed hits and same-app blob reuse.
+	path := m.current[r.ID].Path
+	if err := m.ConfigureLimits(16, 512, int64(len(data)-1)); err != nil {
+		t.Fatal(err)
+	}
+	if reader, _, err := m.Acquire(context.Background(), r); !errors.Is(err, ErrArtifactLimit) {
+		if reader != nil {
+			reader.Close()
+		}
+		t.Fatal("complete hit bypassed artifact limit", err)
+	}
+	second := r
+	second.Version = "0.2.0"
+	second.ID = LogicalIdentity(second.Application, second.Version, second.Key)
+	authorize(t, m, second)
+	if reader, _, err := m.Acquire(context.Background(), second); !errors.Is(err, ErrArtifactLimit) {
+		if reader != nil {
+			reader.Close()
+		}
+		t.Fatal("same-application blob reuse bypassed artifact limit", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal("limit reduction deleted a complete blob", err)
+	}
+	if len(m.Snapshot()) != 1 {
+		t.Fatal("rejected reuse created a generation")
+	}
+	if err := m.ConfigureLimits(16, 512, 4<<30); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(collect(t, m, r), data) {
+		t.Fatal("raising the limit did not restore cached serving")
 	}
 	counters, _ := db.Counters()
 	if counters["upstream_bytes"] != int64(len(data)) || int64(len(data)) >= int64(len(plain)) {
@@ -40,7 +75,7 @@ func TestUpstreamPayloadIncludesFailedWritesAndRetries(t *testing.T) {
 	data := []byte("payload read before disk rejection")
 	c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(data) }))
 	m, db, _ := setup(t, c)
-	g, err := m.createLocked(resource(c, data), false)
+	g, err := m.createLocked(authorizedResource(t, m, c, data), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +104,7 @@ func TestUpstreamPayloadCountsBodyRejectedByLengthLimit(t *testing.T) {
 	}))
 	m, db, _ := setup(t, c)
 	m.maxBytes = 1
-	g, err := m.createLocked(resource(c, data), false)
+	g, err := m.createLocked(authorizedResource(t, m, c, data), false)
 	if err != nil {
 		t.Fatal(err)
 	}

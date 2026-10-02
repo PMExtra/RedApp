@@ -1,91 +1,151 @@
 package httpserver
 
 import (
+	"crypto/rand"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/PMExtra/RedApp/installers/codex"
-	claude "github.com/PMExtra/RedApp/internal/apps/claude"
-	app "github.com/PMExtra/RedApp/internal/apps/codex"
-	"github.com/PMExtra/RedApp/internal/auth"
-	"github.com/PMExtra/RedApp/internal/distributor"
-	"github.com/PMExtra/RedApp/internal/download"
-	"github.com/PMExtra/RedApp/internal/history"
-	"github.com/PMExtra/RedApp/internal/site"
-	"github.com/PMExtra/RedApp/internal/store"
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
+	"strconv"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/PMExtra/RedApp/installers"
+	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/internal/auth"
+	"github.com/PMExtra/RedApp/internal/catalog"
+	"github.com/PMExtra/RedApp/internal/config"
+	"github.com/PMExtra/RedApp/internal/distributor"
+	"github.com/PMExtra/RedApp/internal/download"
+	"github.com/PMExtra/RedApp/internal/history"
+	"github.com/PMExtra/RedApp/internal/jsoncheck"
+	"github.com/PMExtra/RedApp/internal/site"
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
 //go:embed web/*
 var web embed.FS
 
 type Server struct {
-	Version   string
-	DB        *store.Store
-	Catalog   *app.Catalog
-	Claude    *claude.Catalog
-	Downloads *download.Manager
-	Auth      *auth.Auth
-	Proxy     Proxy
-	Upstream  *distributor.Client
-	History   *history.History
-	Public    string
-	Dir       string
-	Started   time.Time
+	Version      string
+	DB           *store.Store
+	Registry     *application.Registry
+	Catalog      *catalog.Service
+	Downloads    *download.Manager
+	Auth         *auth.Auth
+	Proxy        Proxy
+	Upstream     *distributor.Client
+	History      *history.History
+	PublicConfig *config.PublicSettings
+	AllowedHosts []string
+	Dir          string
+	Started      time.Time
 }
 
-func reply(w http.ResponseWriter, status int, v any) {
+func reply(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	json.NewEncoder(w).Encode(value)
 }
-func fail(w http.ResponseWriter, status int, msg string) {
-	reply(w, status, map[string]string{"error": msg})
+func problem(w http.ResponseWriter, status int, code, message string) {
+	var id [8]byte
+	_, _ = rand.Read(id[:])
+	reply(w, status, map[string]any{"error": map[string]any{"code": code, "message": message, "request_id": hex.EncodeToString(id[:]), "retryable": status >= 500}})
+}
+func fail(w http.ResponseWriter, status int, message string) {
+	code := map[int]string{400: "INVALID_REQUEST", 401: "AUTH_REQUIRED", 403: "CSRF_REJECTED", 404: "RESOURCE_NOT_FOUND", 405: "METHOD_NOT_ALLOWED", 409: "SETTINGS_REVISION_CONFLICT", 429: "LOGIN_RATE_LIMITED", 502: "UPSTREAM_UNAVAILABLE", 503: "LOCAL_STORAGE_UNAVAILABLE"}[status]
+	problem(w, status, code, message)
 }
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		return errors.New("JSON request required")
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 8192)
-	d := json.NewDecoder(r.Body)
+	b, err := io.ReadAll(r.Body)
+	if err != nil {
+		return err
+	}
+	if err = jsoncheck.Unique(b); err != nil {
+		return err
+	}
+	d := json.NewDecoder(strings.NewReader(string(b)))
 	d.DisallowUnknownFields()
-	if e := d.Decode(v); e != nil {
-		return e
+	if err = d.Decode(v); err != nil {
+		return err
 	}
 	var tail any
-	if e := d.Decode(&tail); e != io.EOF {
+	if err = d.Decode(&tail); err != io.EOF {
 		return errors.New("Unexpected trailing request data")
 	}
 	return nil
+}
+func canonicalPath(r *http.Request) bool {
+	if r.URL.RawPath != "" || strings.ContainsAny(r.URL.Path, "\\\x00") || strings.Contains(r.URL.Path, "//") {
+		return false
+	}
+	for _, segment := range strings.Split(r.URL.Path, "/") {
+		if segment == "." || segment == ".." {
+			return false
+		}
+	}
+	return true
+}
+func queryAllowed(r *http.Request, allowed ...string) bool {
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return false
+	}
+	for key, values := range q {
+		found := false
+		for _, k := range allowed {
+			if key == k {
+				found = true
+				break
+			}
+		}
+		if !found || len(values) != 1 {
+			return false
+		}
+	}
+	return true
 }
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "same-origin")
 	w.Header().Set("X-Frame-Options", "DENY")
-	public, err := s.origin(r)
+	w.Header().Set("Cache-Control", "no-store")
+	requestOrigin, err := s.origin(r)
 	if err != nil {
-		fail(w, 400, err.Error())
+		problem(w, 400, "ORIGIN_REJECTED", err.Error())
 		return
 	}
-	if r.URL.RawPath != "" || r.URL.RawQuery != "" || strings.Contains(r.URL.Path, "\\") || strings.Contains(r.URL.Path, "//") {
-		fail(w, 400, "Noncanonical request path")
+	if !canonicalPath(r) {
+		problem(w, 400, "INVALID_PATH", "Noncanonical request path")
 		return
 	}
-	if r.URL.Path == "/health/live" || r.URL.Path == "/health/ready" {
+	publicView := config.PublicView{EffectiveURL: requestOrigin, Source: "request"}
+	if s.PublicConfig != nil {
+		publicView = s.PublicConfig.View(requestOrigin)
+	}
+	public := publicView.EffectiveURL
+	path := r.URL.Path
+	if path == "/health/live" || path == "/health/ready" {
 		if r.Method != "GET" {
 			fail(w, 405, "Method not allowed")
 			return
 		}
-		if r.URL.Path == "/health/ready" {
-			if e := s.DB.DB.PingContext(r.Context()); e != nil {
+		if !queryAllowed(r) {
+			fail(w, 400, "Invalid query")
+			return
+		}
+		if path == "/health/ready" {
+			if s.DB == nil || s.DB.DB.PingContext(r.Context()) != nil {
 				fail(w, 503, "Local storage is not ready")
 				return
 			}
@@ -101,108 +161,229 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, map[string]bool{"ok": true})
 		return
 	}
-	if strings.HasPrefix(r.URL.Path, "/admin") {
-		s.admin(w, r, public)
+	if strings.HasPrefix(path, "/admin/api/") {
+		s.admin(w, r, requestOrigin, public)
 		return
 	}
-	if r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/apps/") || strings.HasPrefix(r.URL.Path, "/api/") {
-		s.publicPage(w, r, public)
+	if strings.HasPrefix(path, "/api/") {
+		s.publicAPI(w, r, publicView)
 		return
 	}
-	s.DB.Add("requests", 1)
+	if strings.HasPrefix(path, "/assets/") {
+		if r.Method != "GET" {
+			fail(w, 405, "Method not allowed")
+			return
+		}
+		if !queryAllowed(r) {
+			fail(w, 400, "Invalid query")
+			return
+		}
+		s.asset(w, r)
+		return
+	}
+	if path == "/admin" {
+		if r.Method != "GET" {
+			fail(w, 405, "Method not allowed")
+			return
+		}
+		if !queryAllowed(r) {
+			fail(w, 400, "Invalid query")
+			return
+		}
+		http.Redirect(w, r, "/admin/overview", http.StatusTemporaryRedirect)
+		return
+	}
+	if path == "/" || strings.HasPrefix(path, "/admin/") {
+		if r.Method != "GET" {
+			fail(w, 405, "Method not allowed")
+			return
+		}
+		if !s.validUI(path) {
+			s.page(w, 404)
+			return
+		}
+		if !queryAllowed(r, "return") {
+			fail(w, 400, "Invalid query")
+			return
+		}
+		s.page(w, 200)
+		return
+	}
+	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	if len(parts) < 2 {
+		fail(w, 404, "Route not found")
+		return
+	}
+	id := parts[0] + "/" + parts[1]
+	if _, err := application.ParseKey(id); err != nil {
+		problem(w, 400, "INVALID_PATH", "Invalid application identity")
+		return
+	}
+	entry, ok := s.Registry.Lookup(id)
+	if !ok {
+		problem(w, 404, "APPLICATION_NOT_FOUND", "Application not found")
+		return
+	}
+	if !queryAllowed(r) {
+		problem(w, 400, "INVALID_QUERY", "Unexpected query parameters")
+		return
+	}
 	if r.Method != "GET" {
 		fail(w, 405, "Method not allowed")
 		return
 	}
-	if strings.HasPrefix(r.URL.Path, "/claude-code/") {
-		s.claudeDownload(w, r, public)
+	if len(parts) == 2 {
+		s.page(w, 200)
 		return
 	}
-	if r.URL.Path == "/install.sh" || r.URL.Path == "/install.ps1" {
-		body, e := codex.Installer(strings.TrimPrefix(r.URL.Path, "/"), public)
+	if len(parts) == 3 && parts[2] == "" {
+		http.Redirect(w, r, "/"+id, http.StatusPermanentRedirect)
+		return
+	}
+	op, err := entry.ParsePath(strings.Join(parts[2:], "/"))
+	if err != nil {
+		fail(w, 404, "Resource not found")
+		return
+	}
+	if err = s.DB.Add("requests", 1); err != nil {
+		fail(w, 503, "Failed to record request")
+		return
+	}
+	appRoot := public + "/" + id
+	switch op.Kind {
+	case application.InstallerOperation:
+		body, e := installers.Installer(id, op.Name, appRoot)
 		if e != nil {
-			fail(w, 503, "Installer generation verification has not passed")
+			fail(w, 503, "Installer verification failed")
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
 		w.Write(body)
-		return
-	}
-	if r.URL.Path == "/licenses/LICENSE" || r.URL.Path == "/licenses/NOTICE" {
-		b, e := codex.License(strings.TrimPrefix(r.URL.Path, "/licenses/"))
+	case application.StaticOperation:
+		if asset, found := entry.PublicAsset(op.Name); found {
+			w.Header().Set("Content-Type", asset.ContentType)
+			w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
+			w.Write(asset.Body)
+			return
+		}
+		body, e := installers.PublicAsset(id, op.Name)
 		if e != nil {
-			fail(w, 404, "License file not found")
+			fail(w, 404, "Public asset not found")
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Write(b)
-		return
-	}
-	v := "latest"
-	isMetadata := r.URL.Path == "/channels/latest"
-	name := ""
-	if !isMetadata {
-		parts := strings.Split(r.URL.Path, "/")
-		if len(parts) != 4 || parts[1] != "releases" {
-			fail(w, 404, "Route not found")
-			return
-		}
-		var e error
-		v, e = app.Normalize(parts[2])
-		if e != nil || v != parts[2] {
-			fail(w, 400, "Version must use canonical form")
-			return
-		}
-		name = parts[3]
-		isMetadata = name == "release.json"
-	}
-	if isMetadata {
-		m, e := s.Catalog.Get(r.Context(), v)
+		w.Write(body)
+	case application.ChannelOperation, application.MetadataOperation:
+		rep, e := s.Catalog.Represent(r.Context(), id, op, appRoot)
 		if e != nil {
-			fail(w, 502, "Failed to fetch trusted metadata")
+			s.catalogError(w, e)
 			return
 		}
-		w.Header().Set("Cache-Control", "no-store")
-		reply(w, 200, m.Public(public))
+		w.Header().Set("Content-Type", rep.ContentType)
+		w.Write(rep.Body)
+	case application.ArtifactOperation:
+		resource, e := s.Catalog.Authorize(r.Context(), id, op.Target, op.Resource)
+		if e != nil {
+			s.catalogError(w, e)
+			return
+		}
+		s.serveResource(w, r, resource)
+	default:
+		fail(w, 404, "Resource not found")
+	}
+}
+func (s *Server) catalogError(w http.ResponseWriter, err error) {
+	if errors.Is(err, application.ErrNotFound) {
+		fail(w, 404, "Resource not found")
+	} else if errors.Is(err, application.ErrBusy) {
+		problem(w, 503, "DOWNLOAD_CAPACITY_EXCEEDED", "Metadata capacity exceeded")
+	} else {
+		problem(w, 502, "METADATA_UNTRUSTED", "Failed to fetch trusted metadata")
+	}
+}
+func (s *Server) validUI(path string) bool {
+	switch path {
+	case "/", "/admin/login", "/admin/overview", "/admin/events", "/admin/settings/site", "/admin/settings/proxy":
+		return true
+	}
+	p := strings.Split(strings.TrimPrefix(path, "/admin/apps/"), "/")
+	if !strings.HasPrefix(path, "/admin/apps/") || len(p) != 3 || (p[2] != "versions" && p[2] != "settings") {
+		return false
+	}
+	_, ok := s.Registry.Lookup(p[0] + "/" + p[1])
+	return ok
+}
+func (s *Server) page(w http.ResponseWriter, status int) {
+	body, err := web.ReadFile("web/index.html")
+	if err != nil {
+		fail(w, 503, "Page unavailable")
 		return
 	}
-	resource, e := s.Catalog.Authorize(r.Context(), v, name)
-	if e != nil {
-		fail(w, 404, "Resource is not authorized or metadata is unavailable")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'")
+	w.WriteHeader(status)
+	w.Write(body)
+}
+func (s *Server) asset(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/")
+	name := strings.TrimPrefix(path, "assets/")
+	if strings.Contains(name, "/") || (filepath.Ext(name) != ".js" && filepath.Ext(name) != ".css") {
+		fail(w, 404, "Asset not found")
 		return
 	}
-	s.serveResource(w, r, resource)
+	assets, _ := fs.Sub(web, "web")
+	b, err := fs.ReadFile(assets, path)
+	if err != nil {
+		fail(w, 404, "Asset not found")
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	if strings.HasSuffix(name, ".js") {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	} else {
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	}
+	w.Write(b)
 }
 func (s *Server) serveResource(w http.ResponseWriter, r *http.Request, resource download.Resource) {
-	counterPrefix := "version:" + resource.Labels["version"]
-	if resource.Labels["app"] != "codex" {
-		counterPrefix = "app:" + resource.Labels["app"] + ":" + counterPrefix
+	app := resource.Application
+	if err := s.DB.AddFor(app, "artifact_requests", 1); err != nil {
+		fail(w, 503, "Failed to record request")
+		return
 	}
-	s.DB.Add("artifact_requests", 1)
-	s.DB.Add(counterPrefix+":requests", 1)
-	rd, hit, e := s.Downloads.Acquire(r.Context(), resource)
-	if e != nil {
-		fail(w, 503, "Download capacity exceeded or local storage unavailable")
+	if err := s.DB.AddVersion(app, resource.Version, 1, 0); err != nil {
+		fail(w, 503, "Failed to record request")
+		return
+	}
+	rd, _, err := s.Downloads.Acquire(r.Context(), resource)
+	if err != nil {
+		if errors.Is(err, download.ErrArtifactLimit) {
+			problem(w, 413, "ARTIFACT_TOO_LARGE", "Artifact exceeds the configured size limit")
+			return
+		}
+		problem(w, 503, "DOWNLOAD_CAPACITY_EXCEEDED", "Download capacity exceeded or local storage unavailable")
 		return
 	}
 	defer rd.Close()
-	s.DB.Add(rd.Kind+"_requests", 1)
-	if hit {
-		s.DB.Add("reuse_requests", 1)
+	if err = s.DB.AddFor(app, rd.Kind+"_requests", 1); err != nil {
+		fail(w, 503, "Failed to record acquisition")
+		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Expected-SHA256", resource.Hash)
 	buf := make([]byte, 32<<10)
 	for {
 		n, re := rd.Read(buf)
 		if n > 0 {
 			written, we := w.Write(buf[:n])
-			s.DB.Add("downstream_bytes", int64(written))
-			s.DB.Add(counterPrefix+":downstream_bytes", int64(written))
+			if e := s.DB.AddFor(app, "downstream_bytes", int64(written)); e != nil {
+				panic(http.ErrAbortHandler)
+			}
+			if e := s.DB.AddVersion(app, resource.Version, 0, int64(written)); e != nil {
+				panic(http.ErrAbortHandler)
+			}
 			if we != nil {
-				s.DB.Add("download_errors", 1)
+				s.DB.AddFor(app, "download_errors", 1)
 				return
 			}
 			if f, ok := w.(http.Flusher); ok {
@@ -211,27 +392,49 @@ func (s *Server) serveResource(w http.ResponseWriter, r *http.Request, resource 
 		}
 		if re != nil {
 			if re == io.EOF {
-				s.DB.Add("download_success", 1)
+				s.DB.AddFor(app, "download_success", 1)
 				return
 			}
-			s.DB.Add("download_errors", 1)
+			s.DB.AddFor(app, "download_errors", 1)
 			panic(http.ErrAbortHandler)
 		}
 	}
 }
-func (s *Server) sameOrigin(r *http.Request, public string) bool {
-	return r.Header.Get("Origin") == "" || r.Header.Get("Origin") == public
+func expectedRevision(r *http.Request) (int64, error) {
+	s := r.Header.Get("If-Match")
+	if s == "" {
+		return 0, errors.New("If-Match revision is required")
+	}
+	v, err := strconv.ParseInt(strings.Trim(s, "\""), 10, 64)
+	if err != nil || v < 0 {
+		return 0, errors.New("Invalid If-Match revision")
+	}
+	return v, nil
 }
-func (s *Server) admin(w http.ResponseWriter, r *http.Request, public string) {
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'")
-	if !s.sameOrigin(r, public) {
-		fail(w, 403, "Origin not allowed")
+func revisionReply(w http.ResponseWriter, revision int64, value any) {
+	w.Header().Set("ETag", strconv.Quote(strconv.FormatInt(revision, 10)))
+	reply(w, 200, value)
+}
+func settingsError(w http.ResponseWriter, err error) {
+	if errors.Is(err, store.ErrRevisionConflict) {
+		problem(w, 409, "SETTINGS_REVISION_CONFLICT", "Settings changed; reload before saving")
+	} else {
+		fail(w, 503, "Unable to persist settings")
+	}
+}
+func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, public string) {
+	if r.Header.Get("Origin") != "" && r.Header.Get("Origin") != requestOrigin {
+		problem(w, 403, "ORIGIN_REJECTED", "Origin not allowed")
 		return
 	}
-	if r.URL.Path == "/admin/api/login" {
+	path := r.URL.Path
+	if path == "/admin/api/login" {
 		if r.Method != "POST" {
 			fail(w, 405, "Method not allowed")
+			return
+		}
+		if !queryAllowed(r) {
+			fail(w, 400, "Invalid query")
 			return
 		}
 		var input struct {
@@ -241,39 +444,13 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, public string) {
 			fail(w, 400, "Invalid request")
 			return
 		}
-		token, session, e := s.Auth.Login(s.Proxy.ClientIP(r), input.Password)
-		if e != nil {
+		token, session, err := s.Auth.Login(s.Proxy.ClientIP(r), input.Password)
+		if err != nil {
 			fail(w, 429, "Login failed or rate limit exceeded")
 			return
 		}
-		s.Auth.Cookie(w, token, strings.HasPrefix(public, "https://"))
+		s.Auth.Cookie(w, token, strings.HasPrefix(requestOrigin, "https://"))
 		reply(w, 200, map[string]string{"csrf": session.CSRF})
-		return
-	}
-	if !strings.HasPrefix(r.URL.Path, "/admin/api/") {
-		if r.Method != "GET" {
-			fail(w, 405, "Method not allowed")
-			return
-		}
-		path := strings.TrimPrefix(r.URL.Path, "/admin/")
-		if path == "/admin" || path == "" {
-			path = "index.html"
-		}
-		asset := strings.TrimPrefix(path, "assets/")
-		bundled := strings.HasPrefix(path, "assets/") && !strings.Contains(asset, "/") && (strings.HasSuffix(asset, ".js") || strings.HasSuffix(asset, ".css"))
-		if path != "index.html" && !bundled {
-			fail(w, 404, "Page not found")
-			return
-		}
-		assets, _ := fs.Sub(web, "web")
-		b, e := fs.ReadFile(assets, path)
-		if e != nil {
-			fail(w, 404, "Page not found")
-			return
-		}
-		contentType := map[string]string{".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}
-		w.Header().Set("Content-Type", contentType[filepath.Ext(path)])
-		w.Write(b)
 		return
 	}
 	session, ok := s.Auth.Session(r)
@@ -285,72 +462,275 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, public string) {
 		fail(w, 403, "CSRF validation failed")
 		return
 	}
+	app := ""
+	endpoint := strings.TrimPrefix(path, "/admin/api/")
+	if strings.HasPrefix(endpoint, "apps/") {
+		p := strings.SplitN(strings.TrimPrefix(endpoint, "apps/"), "/", 3)
+		if len(p) != 3 {
+			fail(w, 404, "API endpoint not found")
+			return
+		}
+		app = p[0] + "/" + p[1]
+		if _, exists := s.Registry.Lookup(app); !exists {
+			problem(w, 404, "APPLICATION_NOT_FOUND", "Application not found")
+			return
+		}
+		endpoint = p[2]
+	}
+	if endpoint == "history" {
+		if !queryAllowed(r, "scope", "metric", "range") {
+			fail(w, 400, "Invalid query")
+			return
+		}
+		if app != "" && r.URL.Query().Has("scope") {
+			fail(w, 400, "Application history does not accept scope")
+			return
+		}
+		if app == "" && r.URL.Query().Get("scope") != "global" {
+			fail(w, 400, "Global history requires scope=global")
+			return
+		}
+	} else if r.Method == "GET" && (endpoint == "versions" || endpoint == "resources" || endpoint == "events") {
+		allowed := []string{"limit", "cursor"}
+		if endpoint == "resources" {
+			allowed = append(allowed, "version")
+		}
+		if !queryAllowed(r, allowed...) {
+			fail(w, 400, "Invalid query")
+			return
+		}
+	} else if !queryAllowed(r) {
+		fail(w, 400, "Invalid query")
+		return
+	}
 	if r.Method == "GET" {
-		switch r.URL.Path {
-		case "/admin/api/site":
-			settings, e := site.Load(s.DB)
-			if e != nil {
-				fail(w, 503, "Site settings are unavailable")
-				return
+		switch endpoint {
+		case "session":
+			if app != "" {
+				break
 			}
-			reply(w, 200, settings)
-		case "/admin/api/settings":
-			application, ok := s.application(r.Header.Get("X-RedApp-Application"))
-			if !ok {
-				fail(w, 400, "Unknown application")
-				return
-			}
-			ttl := s.Catalog.LatestTTLSeconds()
-			if application == claude.ID {
-				ttl = s.Claude.LatestTTLSeconds()
-			}
-			reply(w, 200, map[string]int{"latest_ttl_seconds": ttl})
-		case "/admin/api/session":
 			reply(w, 200, map[string]string{"csrf": session.CSRF})
-		case "/admin/api/history":
-			if s.History == nil {
-				fail(w, 503, "Metric history is unavailable")
-				return
+			return
+		case "status":
+			var result map[string]any
+			var err error
+			if app == "" {
+				result, err = s.status(public)
+			} else {
+				result, err = s.appStatus(app, public)
 			}
-			metric, window := r.Header.Get("X-History-Metric"), r.Header.Get("X-History-Range")
-			series, err := s.History.Query(metric, window, time.Now().UTC())
 			if err != nil {
-				if _, ok := history.Find(metric); !ok || (window != "24h" && window != "7d" && window != "30d") {
-					fail(w, 400, "Invalid history metric or range")
-				} else {
-					fail(w, 503, "Failed to read metric history")
-				}
-				return
-			}
-			reply(w, 200, series)
-		case "/admin/api/proxy":
-			if s.Upstream == nil {
-				fail(w, 503, "Upstream proxy settings are unavailable")
-				return
-			}
-			reply(w, 200, s.Upstream.Proxy())
-		case "/admin/api/status":
-			status, e := s.status(public)
-			if e != nil {
 				fail(w, 503, "Failed to read status")
 				return
 			}
-			reply(w, 200, status)
-		default:
-			fail(w, 404, "API endpoint not found")
+			for _, key := range []string{"resources", "events", "versions", "version_stats", "application_versions"} {
+				delete(result, key)
+			}
+			reply(w, 200, result)
+			return
+		case "versions", "resources":
+			if app == "" {
+				break
+			}
+			s.applicationList(w, r, app, endpoint)
+			return
+		case "events":
+			s.eventList(w, r, app)
+			return
+		case "history":
+			if s.History == nil {
+				fail(w, 503, "History unavailable")
+				return
+			}
+			key, window := r.URL.Query().Get("metric"), r.URL.Query().Get("range")
+			validMetric := false
+			if app == "" {
+				_, validMetric = history.Find(key)
+			} else {
+				for _, definition := range history.AppDefinitions() {
+					if definition.Key == key {
+						validMetric = true
+						break
+					}
+				}
+			}
+			if !validMetric || (window != "24h" && window != "7d" && window != "30d") {
+				fail(w, 400, "Invalid history metric or range")
+				return
+			}
+
+			var series history.Series
+			var err error
+			if app == "" {
+				series, err = s.History.Query(key, window, time.Now().UTC())
+			} else {
+				series, err = s.History.QueryFor(app, key, window, time.Now().UTC())
+			}
+			if err != nil {
+				fail(w, 503, "Failed to read metric history")
+				return
+			}
+			reply(w, 200, series)
+			return
+		case "settings":
+			if app == "" {
+				break
+			}
+			ttl, rev, err := s.Catalog.TTL(app)
+			if err != nil {
+				fail(w, 503, "Application settings unavailable")
+				return
+			}
+			revisionReply(w, rev, map[string]any{"channel_ttl_seconds": ttl, "revision": rev})
+			return
+		case "settings/site":
+			if app != "" {
+				break
+			}
+			v, err := site.LoadSnapshot(s.DB)
+			if err != nil {
+				fail(w, 503, "Site settings unavailable")
+				return
+			}
+			revisionReply(w, v.Revision, v)
+			return
+		case "settings/proxy":
+			if app != "" || s.Upstream == nil {
+				break
+			}
+			v := s.Upstream.Proxy()
+			revisionReply(w, v.Revision, v)
+			return
+		case "settings/public-url":
+			if app != "" || s.PublicConfig == nil {
+				break
+			}
+			v := s.PublicConfig.View(requestOrigin)
+			revisionReply(w, v.Revision, v)
+			return
 		}
+		fail(w, 404, "API endpoint not found")
+		return
+	}
+	if r.Method == "PUT" {
+		rev, err := expectedRevision(r)
+		if err != nil {
+			problem(w, 400, "INVALID_REQUEST", err.Error())
+			return
+		}
+		switch endpoint {
+		case "settings":
+			if app == "" {
+				break
+			}
+			var input struct {
+				TTL int `json:"channel_ttl_seconds"`
+			}
+			if decode(w, r, &input) != nil {
+				fail(w, 400, "Invalid settings")
+				return
+			}
+			if input.TTL < 1 || input.TTL > 86400 {
+				fail(w, 400, "Channel TTL must be between 1 and 86400 seconds")
+				return
+			}
+			next, e := s.Catalog.SetTTL(app, rev, input.TTL)
+			if e != nil {
+				settingsError(w, e)
+				return
+			}
+			revisionReply(w, next, map[string]any{"channel_ttl_seconds": input.TTL, "revision": next})
+			return
+		case "settings/site":
+			if app != "" {
+				break
+			}
+			var input site.Settings
+			if decode(w, r, &input) != nil {
+				fail(w, 400, "Invalid site settings")
+				return
+			}
+			if input.Validate() != nil {
+				fail(w, 400, "Invalid site settings")
+				return
+			}
+			v, e := site.SaveCAS(s.DB, input, rev)
+			if e != nil {
+				settingsError(w, e)
+				return
+			}
+			revisionReply(w, v.Revision, v)
+			return
+		case "settings/proxy":
+			if app != "" || s.Upstream == nil {
+				break
+			}
+			var input distributor.ProxyUpdate
+			if decode(w, r, &input) != nil {
+				fail(w, 400, "Invalid proxy settings")
+				return
+			}
+			if e := s.Upstream.SetProxy(input, rev); e != nil {
+				if errors.Is(e, distributor.ErrInvalidProxySettings) {
+					fail(w, 400, "Invalid proxy settings")
+					return
+				}
+				settingsError(w, e)
+				return
+			}
+			v := s.Upstream.Proxy()
+			revisionReply(w, v.Revision, v)
+			return
+		case "settings/public-url":
+			if app != "" || s.PublicConfig == nil {
+				break
+			}
+			var input map[string]json.RawMessage
+			if decode(w, r, &input) != nil || len(input) != 1 || input["override_url"] == nil {
+				fail(w, 400, "Expected override_url")
+				return
+			}
+			var value *string
+			if json.Unmarshal(input["override_url"], &value) != nil {
+				fail(w, 400, "Invalid public URL")
+				return
+			}
+			if value != nil {
+				clean, e := config.PublicURL(*value)
+				if e != nil || clean == "" {
+					fail(w, 400, "Invalid public URL")
+					return
+				}
+			}
+			_, e := s.PublicConfig.Set(value, rev)
+			if e != nil {
+				settingsError(w, e)
+				return
+			}
+			v := s.PublicConfig.View(requestOrigin)
+			revisionReply(w, v.Revision, v)
+			return
+		}
+		fail(w, 404, "API endpoint not found")
 		return
 	}
 	if r.Method != "POST" {
 		fail(w, 405, "Method not allowed")
 		return
 	}
-	switch r.URL.Path {
-	case "/admin/api/logout":
+	switch endpoint {
+	case "logout":
+		if app != "" {
+			break
+		}
 		s.Auth.Logout(r)
-		s.Auth.Cookie(w, "", strings.HasPrefix(public, "https://"))
+		s.Auth.Cookie(w, "", strings.HasPrefix(requestOrigin, "https://"))
 		reply(w, 200, map[string]bool{"ok": true})
-	case "/admin/api/password":
+		return
+	case "password":
+		if app != "" {
+			break
+		}
 		var input struct {
 			Old string `json:"old"`
 			New string `json:"new"`
@@ -359,66 +739,16 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, public string) {
 			fail(w, 400, "Invalid request")
 			return
 		}
-		if e := s.Auth.Password(input.Old, input.New); e != nil {
+		if s.Auth.Password(input.Old, input.New) != nil {
 			fail(w, 400, "Password change failed; check the current password and new password length")
 			return
 		}
 		reply(w, 200, map[string]bool{"ok": true})
-	case "/admin/api/proxy":
-		if s.Upstream == nil {
-			fail(w, 503, "Upstream proxy settings are unavailable")
-			return
+		return
+	case "cleanup/preview":
+		if app == "" {
+			break
 		}
-		var input distributor.ProxyUpdate
-		if decode(w, r, &input) != nil {
-			fail(w, 400, "Invalid request")
-			return
-		}
-		if err := s.Upstream.SetProxy(input); err != nil {
-			fail(w, 400, err.Error())
-			return
-		}
-		reply(w, 200, s.Upstream.Proxy())
-	case "/admin/api/site":
-		var input site.Settings
-		if decode(w, r, &input) != nil {
-			fail(w, 400, "Invalid site settings")
-			return
-		}
-		if err := input.Validate(); err != nil {
-			fail(w, 400, "Invalid site settings")
-			return
-		}
-		if err := site.Save(s.DB, input); err != nil {
-			fail(w, 503, "Unable to save site settings")
-			return
-		}
-		reply(w, 200, input)
-	case "/admin/api/settings":
-		var input struct {
-			TTL int `json:"latest_ttl_seconds"`
-		}
-		if decode(w, r, &input) != nil {
-			fail(w, 400, "Invalid request")
-			return
-		}
-		application, ok := s.application(r.Header.Get("X-RedApp-Application"))
-		if !ok {
-			fail(w, 400, "Unknown application")
-			return
-		}
-		var e error
-		if application == claude.ID {
-			e = s.Claude.SetTTL(input.TTL)
-		} else {
-			e = s.Catalog.SetTTL(input.TTL)
-		}
-		if e != nil {
-			fail(w, 400, "TTL must be between 1 and 86400 seconds")
-			return
-		}
-		reply(w, 200, map[string]bool{"ok": true})
-	case "/admin/api/cleanup/preview":
 		var input struct {
 			Minimum string `json:"minimum_version"`
 		}
@@ -427,130 +757,29 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, public string) {
 			return
 		}
 		views := s.Downloads.Snapshot()
-		application, ok := s.application(r.Header.Get("X-RedApp-Application"))
-		if !ok {
-			fail(w, 400, "Unknown application")
-			return
-		}
-		var ids map[string]bool
-		var unknown []string
-		var e error
-		if application == claude.ID {
-			ids, unknown, e = s.Claude.Candidates(input.Minimum, views)
-		} else {
-			ids, unknown, e = s.Catalog.Candidates(input.Minimum, views)
-		}
+		ids, unknown, e := s.Catalog.Candidates(app, input.Minimum, views)
 		if e != nil {
 			fail(w, 400, "Invalid minimum version")
 			return
 		}
-		job, e := s.Downloads.Preview(ids)
+		job, e := s.Downloads.Preview(app, ids)
 		if e != nil {
 			fail(w, 503, "Failed to persist cleanup preview")
 			return
 		}
-		var size int64
-		active := 0
-		for _, v := range views {
-			for _, selected := range job.Selected {
-				if v.ID == selected.Generation {
-					size += v.Bytes
-					if v.State != "complete" {
-						active++
-					}
-				}
+		reply(w, 200, map[string]any{"job": job, "logical_bytes": job.LogicalBytes, "reclaimable_blob_bytes": job.ReclaimableBlobBytes, "active": job.ActiveGenerations, "unknown_versions": unknown})
+		return
+	}
+	if app != "" && strings.HasPrefix(endpoint, "cleanup/") && strings.HasSuffix(endpoint, "/execute") {
+		p := strings.Split(endpoint, "/")
+		if len(p) == 3 {
+			if e := s.Downloads.Cleanup(app, p[1]); e != nil {
+				problem(w, 409, "CLEANUP_INVALID", "Cleanup preview is expired, has a different application, or execution failed")
+				return
 			}
-		}
-		reply(w, 200, map[string]any{"job": job, "logical_bytes": size, "active": active, "unknown_versions": unknown})
-	case "/admin/api/cleanup/execute":
-		var input struct {
-			ID string `json:"cleanup_id"`
-		}
-		if decode(w, r, &input) != nil {
-			fail(w, 400, "Invalid request")
+			reply(w, 200, map[string]bool{"ok": true})
 			return
 		}
-		if e := s.Downloads.Cleanup(input.ID); e != nil {
-			fail(w, 409, "Cleanup task is invalid or execution failed")
-			return
-		}
-		reply(w, 200, map[string]bool{"ok": true})
-	default:
-		fail(w, 404, "API endpoint not found")
 	}
-}
-func (s *Server) status(public string) (map[string]any, error) {
-	views := s.Downloads.Snapshot()
-	var complete, temp, pending, total, logical, allocatedCache, allocatedTemp, allocatedPending int64
-	classes := map[string]string{}
-	for _, v := range views {
-		if v.Retired {
-			classes[v.Path] = "pending"
-			pending += v.Bytes
-		} else if v.State == "complete" {
-			classes[v.Path] = "cache"
-			complete += v.Bytes
-		} else {
-			classes[v.Path] = "temporary"
-			temp += v.Bytes
-		}
-	}
-	e := filepath.WalkDir(s.Dir, func(path string, d os.DirEntry, e error) error {
-		if e != nil {
-			return e
-		}
-		info, e := d.Info()
-		if os.IsNotExist(e) {
-			return nil
-		}
-		if e != nil {
-			return e
-		}
-		allocated := info.Size()
-		if st, ok := info.Sys().(*syscall.Stat_t); ok {
-			allocated = st.Blocks * 512
-		}
-		total += allocated
-		if !d.IsDir() {
-			logical += info.Size()
-		}
-		switch classes[path] {
-		case "cache":
-			allocatedCache += allocated
-		case "temporary":
-			allocatedTemp += allocated
-		case "pending":
-			allocatedPending += allocated
-		}
-		return nil
-	})
-	if e != nil {
-		return nil, e
-	}
-	var disk syscall.Statfs_t
-	if e = syscall.Statfs(s.Dir, &disk); e != nil {
-		return nil, e
-	}
-	versions, e := s.DB.Versions()
-	if e != nil {
-		return nil, e
-	}
-	events, e := s.DB.Events()
-	if e != nil {
-		return nil, e
-	}
-	counters, e := s.DB.Counters()
-	if e != nil {
-		return nil, e
-	}
-	var mem runtime.MemStats
-	runtime.ReadMemStats(&mem)
-	status := map[string]any{"name": "RedApp", "started": s.Started, "os": runtime.GOOS, "arch": runtime.GOARCH, "go": runtime.Version(), "goroutines": runtime.NumGoroutine(), "memory_bytes": mem.Alloc, "sampled_at": time.Now().UTC(), "resources": views, "versions": versions, "events": events, "counters": counters, "disk": map[string]any{"used_bytes": total, "logical_bytes": logical, "allocated_cache_bytes": allocatedCache, "allocated_temporary_bytes": allocatedTemp, "allocated_pending_bytes": allocatedPending, "cache_bytes": complete, "temporary_bytes": temp, "pending_bytes": pending, "other_bytes": total - allocatedCache - allocatedTemp - allocatedPending, "free_bytes": disk.Bavail * uint64(disk.Bsize)}, "public_base_url": public, "rates": s.DB.Rates(), "client_runtime_update_policy": "The enterprise installer suppresses the automatic-update marker; the CLI binary is unchanged. Control runtime public update checks through enterprise egress policy."}
-	claudeVersions, e := s.DB.VersionsFor(claude.ID)
-	if e != nil {
-		return nil, e
-	}
-	status["application_versions"] = map[string]map[string]string{"codex": versions, claude.ID: claudeVersions}
-	status["metrics"] = globalMetrics(status, s.Started)
-	return status, nil
+	fail(w, 404, "API endpoint not found")
 }

@@ -1,179 +1,124 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watchEffect } from "vue";
-import { t } from "./i18n";
-import AppShell from "./components/AppShell.vue";
+import { computed, watchEffect } from "vue";
+import { useRoute } from "vue-router";
+import {
+  bootstrap,
+  bootstrapError,
+  bootstrapLoading,
+  loadBootstrap,
+} from "./bootstrap";
+import { language, t } from "./i18n";
+import { siteTitle } from "./site";
 import InstallCommands from "./components/InstallCommands.vue";
 import Icon from "./components/Icon.vue";
-import { siteTitle } from "./site";
-type Application = {
-  id: string;
-  name: string;
-  summary: string;
-  origin: string;
-  icon: string;
-};
-const applications = ref<Application[]>([]),
-  loading = ref(true),
-  error = ref(false);
-const detail = window.location.pathname.startsWith("/apps/");
-const selectedID = window.location.pathname.split("/")[2];
-const description = (id: string) =>
-  id === "claude-code"
-    ? t("Anthropic’s coding agent for your terminal.")
-    : t("OpenAI’s coding agent for your terminal.");
-const publisher = (id: string) =>
-  id === "claude-code" ? "Anthropic" : "OpenAI";
+const route = useRoute();
+const selectedID = computed(() => `${route.params.vendor}/${route.params.app}`);
+const detail = computed(() => !!route.params.vendor);
 const selected = computed(() =>
-  applications.value.find((app) => app.id === selectedID),
+  bootstrap.value?.apps.find((app) => app.id === selectedID.value),
 );
-let controller: AbortController | undefined,
-  disposed = false;
-async function load() {
-  if (controller) return;
-  controller = new AbortController();
-  loading.value = true;
-  error.value = false;
-  try {
-    const response = await fetch("/api/apps", {
-      credentials: "omit",
-      cache: "no-store",
-      signal: controller.signal,
-    });
-    if (!response.ok) throw Error();
-    const data = await response.json();
-    if (!disposed) applications.value = data;
-  } catch (reason) {
-    if (!disposed && !(reason instanceof Error && reason.name === "AbortError"))
-      error.value = true;
-  } finally {
-    controller = undefined;
-    loading.value = false;
-  }
-}
 watchEffect(() => {
-  document.title = `${detail ? t("Install {name}", { name: selected.value?.name || "" }) : t("Applications")} · ${siteTitle.value}`;
-});
-onMounted(load);
-onUnmounted(() => {
-  disposed = true;
-  controller?.abort();
+  document.title = `${detail.value ? t("Install {name}", { name: selected.value?.name[language.value] || "" }) : t("Applications")} · ${siteTitle.value}`;
 });
 </script>
 <template>
-  <AppShell
-    ><template #actions
-      ><a href="/admin/" class="header-link admin-link"
-        ><Icon name="user" /><span>{{ t("Administrator") }}</span></a
-      ></template
+  <div v-if="!bootstrap && bootstrapLoading" class="empty panel" role="status">
+    {{ t("Loading applications…") }}
+  </div>
+  <section
+    v-else-if="!bootstrap && bootstrapError"
+    class="panel empty-state"
+    role="alert"
+  >
+    <Icon name="alert" :size="28" />
+    <h1>{{ t("Unable to load applications") }}</h1>
+    <p class="muted">
+      {{ t("Connection failed. Check your connection and retry.") }}
+    </p>
+    <button @click="loadBootstrap">{{ t("Retry") }}</button>
+  </section>
+  <template v-else-if="detail && selected && bootstrap"
+    ><RouterLink to="/" class="back-link"
+      ><Icon name="back" :size="16" />{{ t("All applications") }}</RouterLink
     >
-    <main id="main-content" class="public-main" tabindex="-1">
-      <div v-if="loading" class="empty panel" role="status">
-        {{ t("Loading applications…") }}
+    <div class="application-identity">
+      <div class="application-logo">
+        <img
+          v-if="selected.icon"
+          :src="selected.icon"
+          :alt="selected.publisher"
+          width="48"
+          height="48"
+        /><Icon v-else name="box" :size="48" />
       </div>
-      <section v-else-if="error" class="panel empty-state" role="alert">
-        <Icon name="alert" :size="28" />
-        <h1>{{ t("Unable to load applications") }}</h1>
-        <p class="muted">
-          {{ t("Connection failed. Check your connection and retry.") }}
-        </p>
-        <button @click="load">{{ t("Retry") }}</button>
-      </section>
-      <template v-else-if="detail && selected">
-        <a href="/" class="back-link"
-          ><Icon name="back" :size="16" />{{ t("All applications") }}</a
-        >
-        <div class="application-identity">
+      <div class="public-heading">
+        <span class="eyebrow">{{ t("Installation instructions") }}</span>
+        <h1>{{ selected.name[language] }}</h1>
+        <p class="public-lead">{{ selected.summary[language] }}</p>
+      </div>
+    </div>
+    <div class="installation-layout">
+      <InstallCommands
+        :origin="bootstrap.public_origin"
+        :application="selected"
+      />
+      <aside class="install-guide">
+        <section class="panel">
+          <h2>{{ t("Getting started") }}</h2>
+          <ol class="steps">
+            <li>
+              {{
+                t(
+                  "Open a terminal on Linux or macOS, or PowerShell on Windows.",
+                )
+              }}
+            </li>
+            <li>
+              {{
+                t(
+                  "Copy and run the matching command. Review the prompts before confirming installation.",
+                )
+              }}
+            </li>
+          </ol>
+        </section>
+      </aside>
+    </div></template
+  >
+  <section v-else-if="detail" class="panel empty-state">
+    <h1>{{ t("Page not found") }}</h1>
+    <RouterLink to="/">{{ t("All applications") }}</RouterLink>
+  </section>
+  <template v-else
+    ><div class="public-heading">
+      <h1>{{ t("Applications") }}</h1>
+    </div>
+    <div class="application-list">
+      <RouterLink
+        v-for="app in bootstrap?.apps || []"
+        :key="app.id"
+        :to="`/${app.id}`"
+        class="application-card"
+        ><div class="application-card-brand">
           <div class="application-logo">
             <img
-              v-if="selected.icon"
-              :src="selected.icon"
-              :alt="t('OpenAI brand mark')"
-              width="48"
-              height="48"
-            /><Icon v-else name="box" :size="48" />
+              v-if="app.icon"
+              :src="app.icon"
+              :alt="app.publisher"
+              width="40"
+              height="40"
+            /><Icon v-else name="box" :size="40" />
           </div>
-          <div class="public-heading">
-            <span class="eyebrow">{{ t("Installation instructions") }}</span>
-            <h1>{{ selected.name }}</h1>
-            <p class="public-lead">
-              {{ description(selected.id) }}
-            </p>
-          </div>
+          <span class="app-publisher">{{ app.publisher }}</span>
         </div>
-        <div class="installation-layout">
-          <InstallCommands
-            :origin="selected.origin"
-            :application="selected.id"
-          />
-          <aside class="install-guide">
-            <section class="panel">
-              <h2>{{ t("Getting started") }}</h2>
-              <ol class="steps">
-                <li>
-                  {{
-                    t(
-                      "Open a terminal on Linux or macOS, or PowerShell on Windows.",
-                    )
-                  }}
-                </li>
-                <li>
-                  {{
-                    t(
-                      "Copy and run the matching command. Review the prompts before confirming installation.",
-                    )
-                  }}
-                </li>
-                <li>
-                  {{
-                    selected.id === "claude-code"
-                      ? t(
-                          "Start claude through its managed launcher and follow your organization’s sign-in instructions.",
-                        )
-                      : t(
-                          "Start codex and follow your organization’s sign-in instructions.",
-                        )
-                  }}
-                </li>
-              </ol>
-            </section>
-          </aside>
-        </div>
-      </template>
-      <template v-else
-        ><div class="public-heading">
-          <h1>{{ t("Applications") }}</h1>
-          <p class="public-lead">
-            {{ t("Install tools from your organization’s download service.") }}
-          </p>
-        </div>
-        <div class="application-list">
-          <a
-            v-for="app in applications"
-            :key="app.id"
-            :href="`/apps/${app.id}`"
-            class="application-card"
-            ><div class="application-card-brand">
-              <div class="application-logo">
-                <img
-                  v-if="app.icon"
-                  :src="app.icon"
-                  :alt="t('OpenAI brand mark')"
-                  width="40"
-                  height="40"
-                /><Icon v-else name="box" :size="40" />
-              </div>
-              <span class="app-publisher">{{ publisher(app.id) }}</span>
-            </div>
-            <h2>{{ app.name }}</h2>
-            <p>{{ description(app.id) }}</p>
-            <span class="card-action"
-              >{{ t("Installation instructions") }}<Icon name="arrow" /></span
-          ></a>
-        </div>
-        <p v-if="!applications.length" class="empty">
-          {{ t("No applications are available.") }}
-        </p></template
-      >
-    </main></AppShell
+        <h2>{{ app.name[language] }}</h2>
+        <p>{{ app.summary[language] }}</p>
+        <span class="card-action"
+          >{{ t("Installation instructions") }}<Icon name="arrow" /></span
+      ></RouterLink>
+    </div>
+    <p v-if="bootstrap && !bootstrap.apps.length" class="empty">
+      {{ t("No applications are available.") }}
+    </p></template
   >
 </template>

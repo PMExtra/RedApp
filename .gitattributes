@@ -1,6 +1,6 @@
 # Audited bytes and strict patch context must survive Windows checkouts unchanged.
-installers/*/upstream/* -text -whitespace
-installers/*/generated/* -text -whitespace
-installers/*/patches/* -text -whitespace
+installers/*/*/upstream/* -text -whitespace
+installers/*/*/generated/* -text -whitespace
+installers/*/*/patches/* -text -whitespace
 internal/apps/claude/testdata/manifest.json -text
 internal/apps/claude/testdata/manifest.json.sig -text

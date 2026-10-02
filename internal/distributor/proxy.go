@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"github.com/PMExtra/RedApp/internal/store"
 	"net"
 	"net/http"
@@ -19,11 +20,19 @@ type proxyConfig struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
+
+var ErrInvalidProxySettings = errors.New("invalid upstream proxy settings")
+
+func invalidProxy(message string) error {
+	return fmt.Errorf("%w: %s", ErrInvalidProxySettings, message)
+}
+
 type ProxyView struct {
 	Server         string `json:"server"`
 	HasCredentials bool   `json:"has_credentials"`
 	HasPassword    bool   `json:"has_password"`
 	DNS            string `json:"dns"`
+	Revision       int64  `json:"revision"`
 }
 type ProxyUpdate struct {
 	Server         string `json:"server"`
@@ -44,7 +53,8 @@ func (c *Client) LoadProxy(db *store.Store) error {
 	c.proxyMu.Lock()
 	defer c.proxyMu.Unlock()
 	var conf proxyConfig
-	if err := db.Get("settings", "upstream_proxy", &conf); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	revision, err := db.ReadSetting("global", "", "upstream_proxy", &conf)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return errors.New("Failed to read upstream proxy settings")
 	}
 	tr, err := transportFor(conf)
@@ -58,6 +68,7 @@ func (c *Client) LoadProxy(db *store.Store) error {
 	old.CloseIdleConnections()
 	c.proxyStore = db
 	c.proxyConfig = conf
+	c.proxyRevision = revision
 	return nil
 }
 func (c *Client) Proxy() ProxyView {
@@ -68,9 +79,9 @@ func (c *Client) Proxy() ProxyView {
 	if conf.Server != "" {
 		dns = "proxy"
 	}
-	return ProxyView{Server: conf.Server, HasCredentials: conf.Username != "" || conf.Password != "", HasPassword: conf.Password != "", DNS: dns}
+	return ProxyView{Server: conf.Server, HasCredentials: conf.Username != "" || conf.Password != "", HasPassword: conf.Password != "", DNS: dns, Revision: c.proxyRevision}
 }
-func (c *Client) SetProxy(update ProxyUpdate) error {
+func (c *Client) SetProxy(update ProxyUpdate, expected int64) error {
 	c.proxyMu.Lock()
 	defer c.proxyMu.Unlock()
 	if c.proxyStore == nil || c.transports == nil {
@@ -80,10 +91,10 @@ func (c *Client) SetProxy(update ProxyUpdate) error {
 	switch update.PasswordAction {
 	case "keep":
 		if update.Password != "" || update.Username != "" {
-			return errors.New("Credentials must be empty when keeping saved credentials")
+			return invalidProxy("Credentials must be empty when keeping saved credentials")
 		}
 		if conf.Server != c.proxyConfig.Server && (c.proxyConfig.Username != "" || c.proxyConfig.Password != "") {
-			return errors.New("Clear or replace credentials when changing the proxy server")
+			return invalidProxy("Clear or replace credentials when changing the proxy server")
 		}
 		conf.Username = c.proxyConfig.Username
 		conf.Password = c.proxyConfig.Password
@@ -92,10 +103,10 @@ func (c *Client) SetProxy(update ProxyUpdate) error {
 	case "clear":
 		conf.Username = ""
 		if update.Password != "" {
-			return errors.New("Password must be empty when clearing saved credentials")
+			return invalidProxy("Password must be empty when clearing saved credentials")
 		}
 	default:
-		return errors.New("Choose keep, replace, or clear for the proxy password")
+		return invalidProxy("Choose keep, replace, or clear for the proxy password")
 	}
 	if conf.Server == "" {
 		conf.Username = ""
@@ -103,12 +114,15 @@ func (c *Client) SetProxy(update ProxyUpdate) error {
 	}
 	tr, err := transportFor(conf)
 	if err != nil {
+		return invalidProxy(err.Error())
+	}
+	revision, err := c.proxyStore.CompareAndSwapSetting("global", "", "upstream_proxy", expected, conf)
+	if err != nil {
+		tr.CloseIdleConnections()
 		return err
 	}
-	if err = c.proxyStore.Put("settings", "upstream_proxy", conf); err != nil {
-		return errors.New("Failed to persist upstream proxy settings")
-	}
 	c.proxyConfig = conf
+	c.proxyRevision = revision
 	old := c.transports.current.Swap(tr)
 	old.CloseIdleConnections()
 	return nil

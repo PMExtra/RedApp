@@ -1,6 +1,8 @@
 import { mount, flushPromises } from "@vue/test-utils";
 import { it, expect } from "vitest";
 import AccountMenu from "./AccountMenu.vue";
+import SelectMenu from "./SelectMenu.vue";
+import { defineComponent } from "vue";
 it("supports keyboard navigation, Escape focus return and outside dismissal", async () => {
   const wrapper = mount(AccountMenu, { attachTo: document.body });
   const trigger = wrapper.find(".account-trigger");
@@ -26,5 +28,25 @@ it("supports keyboard navigation, Escape focus return and outside dismissal", as
   await trigger.trigger("click");
   await wrapper.find("[role=menuitem]").trigger("click");
   expect(wrapper.emitted("password")).toHaveLength(1);
+  wrapper.unmount();
+});
+
+it("shares dismissal without merging account and selection semantics", async () => {
+  const page = defineComponent({
+    components: { AccountMenu, SelectMenu },
+    template: `<AccountMenu/><SelectMenu model-value="en" :options="[{value:'en',label:'English'}]" label="Language"/>`,
+  });
+  const wrapper = mount(page, { attachTo: document.body });
+  await wrapper.find("[role=combobox]").trigger("click");
+  expect(wrapper.find("[role=listbox]").exists()).toBe(true);
+  await wrapper.find(".account-trigger").trigger("click");
+  await flushPromises();
+  expect(wrapper.find("[role=listbox]").exists()).toBe(false);
+  expect(wrapper.find("[role=menu]").exists()).toBe(true);
+  expect(document.activeElement?.getAttribute("role")).toBe("menuitem");
+  await wrapper.find("[role=combobox]").trigger("click");
+  await flushPromises();
+  expect(wrapper.find("[role=menu]").exists()).toBe(false);
+  expect(wrapper.find("[role=listbox]").exists()).toBe(true);
   wrapper.unmount();
 });

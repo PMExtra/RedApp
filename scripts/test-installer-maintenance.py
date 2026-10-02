@@ -29,10 +29,23 @@ class CheckTests(unittest.TestCase):
         return (m.ROOT/'installers'/item['application']/'upstream'/item['name']).read_bytes()
     def test_unchanged_and_one_changed(self):
         rows=m.inspect(fetch=self.original)
-        self.assertEqual([r['status'] for r in rows],['unchanged']*4)
+        self.assertEqual([r['status'] for r in rows],['unchanged']*len(m.inventory()))
         def changed(url):return self.original(url)+(b'\n# new official comment\n' if url.endswith('/install.sh') and 'claude.ai' in url else b'')
         rows=m.inspect(fetch=changed)
         self.assertEqual(sum(r['status']=='changed' for r in rows),1)
+    def test_manifest_extends_inventory_and_allowlist_without_protocol_code(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);target=root/'internal/apps/builtin/manifest.json';target.parent.mkdir(parents=True)
+            manifest=json.loads((m.ROOT/'internal/apps/builtin/manifest.json').read_text())
+            extra=copy.deepcopy(manifest['applications'][0]);extra['id']='example/third-app'
+            manifest['applications'].append(extra);target.write_text(json.dumps(manifest))
+            self.assertEqual(len(m.inventory(root)),len(m.inventory())+len(extra['installers']))
+            allowed=p.allowed_paths(root)
+            self.assertIn('installers/example/third-app/generated/install.sh',allowed)
+            for protected in ('patches/install.sh.patch','upstream/LICENSE','upstream/claude-code.asc'):
+                self.assertNotIn('installers/example/third-app/'+protected,allowed)
+            extra['installer_validator']='arbitrary-shell-command';target.write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError,'reviewed implementation'):m.inventory(root)
     def test_all_errors_are_aggregated(self):
         calls=[]
         def fail(url):
@@ -42,7 +55,7 @@ class CheckTests(unittest.TestCase):
             if len(calls)==3:raise ValueError('Unreviewed upstream redirect')
             return b''
         rows=m.inspect(fetch=fail)
-        self.assertEqual(len(calls),4)
+        self.assertEqual(len(calls),len(m.inventory()))
         self.assertTrue(all(r['status']=='error' for r in rows))
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(ValueError):m.prepare(Path(tmp),fetch=fail)
@@ -51,11 +64,13 @@ class CheckTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
             shutil.copytree(m.ROOT/'installers',root/'installers')
-            (root/'installers/codex/upstream/install.sh').write_bytes(b'#!/bin/sh\nmodified locally\n')
+            target=root/'internal/apps/builtin';target.mkdir(parents=True)
+            shutil.copyfile(m.ROOT/'internal/apps/builtin/manifest.json',target/'manifest.json')
+            (root/'installers/openai/codex/upstream/install.sh').write_bytes(b'#!/bin/sh\nmodified locally\n')
             rows=m.inspect(root=root,fetch=self.original)
             self.assertEqual(rows[0]['status'],'error')
             self.assertIn('audited digest',rows[0]['error'])
-            self.assertEqual(len(rows),4)
+            self.assertEqual(len(rows),len(m.inventory()))
 
     def test_redirects_and_shape_fail_closed(self):
         with self.assertRaises(ValueError):m.HTTPSRedirect('https://official.example/install.sh').redirect_request(m.urllib.request.Request('https://official.example/install.sh'),None,302,'Found',{},'http://example.org/install.sh')
@@ -100,6 +115,9 @@ class CheckTests(unittest.TestCase):
                 if not url.startswith(base+'/'):raise ValueError('Fixture rejected non-HTTPS/non-loopback destination')
             try:
                 with patch.object(m,'validate_https_url',side_effect=allow_fixture):
+                    # A DNS allow decision cannot authorize the actual private peer.
+                    with self.assertRaisesRegex(ValueError,'non-public'):m.download(base+'/start')
+                with patch.object(m,'validate_https_url',side_effect=allow_fixture),patch.object(m,'validate_address'):
                     with self.assertRaises(m.urllib.error.URLError) as caught:m.download(base+'/start')
                     self.assertIsInstance(caught.exception.reason,ssl.SSLCertVerificationError)
                     with patch.object(m.ssl,'create_default_context',return_value=trusted):
@@ -109,14 +127,14 @@ class CheckTests(unittest.TestCase):
             finally:server.shutdown();server.server_close();thread.join()
 
     def test_strict_patch_generation_and_conflict(self):
-        for app in m.APPS:
-            for name in m.NAMES:
-                root=m.ROOT/'installers'/app
-                raw=(root/'upstream'/name).read_bytes()
-                result=m.strict_patch(raw,root/'patches'/(name+'.patch'))
-                self.assertEqual(result,(root/'generated'/name).read_bytes())
-                with self.assertRaises((ValueError,subprocess.SubprocessError)):
-                    m.strict_patch(b'\n'+raw,root/'patches'/(name+'.patch'))
+        for item in m.inventory():
+            app,name=item['application'],item['name']
+            root=m.ROOT/'installers'/app
+            raw=(root/'upstream'/name).read_bytes()
+            result=m.strict_patch(raw,root/'patches'/(name+'.patch'))
+            self.assertEqual(result,(root/'generated'/name).read_bytes())
+            with self.assertRaises((ValueError,subprocess.SubprocessError)):
+                m.strict_patch(b'\n'+raw,root/'patches'/(name+'.patch'))
     def test_isolated_test_failure_does_not_output(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp=Path(tmp);prepared=tmp/'prepared';m.prepare(prepared,fetch=self.original)
@@ -139,8 +157,9 @@ class CheckTests(unittest.TestCase):
     def test_readonly_package_rejects_changed_validation_output(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp=Path(tmp);prepared=tmp/'prepared';m.prepare(prepared,fetch=self.original)
-            for app in m.APPS:shutil.copytree(m.ROOT/'installers'/app/'generated',tmp/'validated'/app)
-            (tmp/'validated/codex/install.sh').write_text('tampered output')
+            for descriptor in m.applications():
+                app=descriptor['id'];shutil.copytree(m.ROOT/'installers'/app/'generated',tmp/'validated'/app)
+            (tmp/'validated/openai/codex/install.sh').write_text('tampered output')
             with self.assertRaises(ValueError):m.package(prepared,tmp/'validated',tmp/'bundle.zip')
             self.assertFalse((tmp/'bundle.zip').exists())
 
@@ -159,17 +178,18 @@ class PublishTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name)/'repo';self.root.mkdir();self.remote=Path(self.temp.name)/'remote.git'
         p.git(self.root,'init','-b','main');p.git(self.root,'config','user.name','Fixture');p.git(self.root,'config','user.email','fixture@example.invalid')
-        for name in sorted(p.ALLOWED):
+        target=self.root/'internal/apps/builtin';target.mkdir(parents=True)
+        shutil.copyfile(m.ROOT/'internal/apps/builtin/manifest.json',target/'manifest.json')
+        for name in sorted(p.allowed_paths(self.root)):
             file=self.root/name;file.parent.mkdir(parents=True,exist_ok=True);file.write_text('{}\n' if name.endswith('.json') else 'old\n')
         p.git(self.root,'add','.');p.git(self.root,'commit','-m','baseline')
         p.git(self.root,'init','--bare',str(self.remote));p.git(self.root,'remote','add','origin',str(self.remote));p.git(self.root,'push','origin','main')
         self.baseline=p.git(self.root,'rev-parse','HEAD').decode().strip();self.api=FakeAPI()
         self.payload={'baseline':self.baseline,'rows':[]}
-        for app in m.APPS:
-            for name in m.NAMES:
-                changed=app=='claude-code' and name=='install.sh'
-                self.payload['rows'].append({'application':app,'name':name,'url':('https://claude.ai/' if app=='claude-code' else 'https://releases.openai.com/codex/')+name,'status':'changed' if changed else 'unchanged','baseline_sha256':m.digest(b'old\n'),'current_sha256':m.digest(b'new\n' if changed else b'old\n')})
-        self.files={'installers/claude-code/upstream/install.sh':b'new\n','installers/claude-code/generated/install.sh':b'patched\n','installers/claude-code/provenance.json':b'{"script_baseline":{"checked_at":"first"}}\n'}
+        for item in m.inventory():
+            changed=item['application']=='anthropic/claude-code' and item['name']=='install.sh'
+            self.payload['rows'].append({**item,'status':'changed' if changed else 'unchanged','baseline_sha256':m.digest(b'old\n'),'current_sha256':m.digest(b'new\n' if changed else b'old\n')})
+        self.files={'installers/anthropic/claude-code/upstream/install.sh':b'new\n','installers/anthropic/claude-code/generated/install.sh':b'patched\n','installers/anthropic/claude-code/provenance.json':b'{"script_baseline":{"checked_at":"first"}}\n'}
     def publish(self):return p.publish(self.root,self.payload,self.files,self.api,'fixture-token','https://example.invalid/run')
     def bundle(self,extras=None):
         path=Path(self.temp.name)/'bundle.zip'
@@ -184,14 +204,14 @@ class PublishTests(unittest.TestCase):
         with self.assertRaises(ValueError):p.load_bundle(path,'0'*64,self.baseline)
         path,sha=self.bundle({'../../script.py':b'no execution'})
         with self.assertRaises(ValueError):p.load_bundle(path,sha,self.baseline)
-        self.files['installers/claude-code/patches/install.sh.patch']=b'unapproved'
+        self.files['installers/anthropic/claude-code/patches/install.sh.patch']=b'unapproved'
         path,sha=self.bundle()
         with self.assertRaises(ValueError):p.load_bundle(path,sha,self.baseline)
     def test_create_idempotent_update_and_fast_forward(self):
         result=self.publish();first=result['head']['sha'];self.assertTrue(result['draft'])
-        self.files['installers/claude-code/provenance.json']=b'{"script_baseline":{"checked_at":"tomorrow"}}\n'
+        self.files['installers/anthropic/claude-code/provenance.json']=b'{"script_baseline":{"checked_at":"tomorrow"}}\n'
         self.publish();self.assertEqual(self.api.created,1);self.assertEqual(self.api.updated,0)
-        self.files['installers/claude-code/upstream/install.sh']=b'newer\n'
+        self.files['installers/anthropic/claude-code/upstream/install.sh']=b'newer\n'
         self.publish();second=self.api.pr['head']['sha'];self.assertNotEqual(first,second)
         p.git(self.root,'merge-base','--is-ancestor',first,second)
         self.assertEqual(p.git(self.root,'ls-remote','origin','refs/heads/main').decode().split()[0],self.baseline)

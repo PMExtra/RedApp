@@ -14,10 +14,10 @@ import (
 func TestEffectiveAverageExcludesVerificationAndRecentSnapshot(t *testing.T) {
 	data := bytes.Repeat([]byte("speed"), 10000)
 	c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(data) }))
-	m, _, _ := setup(t, c)
-	collect(t, m, resource(c, data))
+	m, db, dir := setup(t, c)
+	collect(t, m, authorizedResource(t, m, c, data))
 	m.mu.Lock()
-	g := m.current[resource(c, data).ID]
+	g := m.current[authorizedResource(t, m, c, data).ID]
 	now := time.Now()
 	g.Started = now.Add(-10 * time.Second)
 	g.Received = now.Add(-8 * time.Second)
@@ -25,6 +25,10 @@ func TestEffectiveAverageExcludesVerificationAndRecentSnapshot(t *testing.T) {
 	g.VerificationNS = 8 * time.Second.Nanoseconds()
 	g.samples = []sample{{now.Add(-2 * time.Second), 0}, {now, 50000}}
 	g.SourceBytes = 50000
+	if e := m.save(g); e != nil {
+		m.mu.Unlock()
+		t.Fatal(e)
+	}
 	m.mu.Unlock()
 	v := m.Snapshot()[0]
 	if v.AverageBPS != 25000 || v.DownloadNS != 2*time.Second.Nanoseconds() {
@@ -36,6 +40,18 @@ func TestEffectiveAverageExcludesVerificationAndRecentSnapshot(t *testing.T) {
 	if v.SampledAt.IsZero() {
 		t.Fatal("缺采样时间")
 	}
+	if e := m.Close(); e != nil {
+		t.Fatal(e)
+	}
+	restored, e := newTestManager(dir, db, c)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer restored.Close()
+	after := restored.Snapshot()[0]
+	if after.DownloadNS != v.DownloadNS || after.AverageBPS != v.AverageBPS {
+		t.Fatal("restart changed precise verified download duration", after)
+	}
 }
 func TestHangingUpstreamHasBoundedFailure(t *testing.T) {
 	c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
@@ -44,7 +60,7 @@ func TestHangingUpstreamHasBoundedFailure(t *testing.T) {
 	data := []byte("not received")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	rd, _, e := m.Acquire(ctx, resource(c, data))
+	rd, _, e := m.Acquire(ctx, authorizedResource(t, m, c, data))
 	if e != nil {
 		t.Fatal(e)
 	}

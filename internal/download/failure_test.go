@@ -17,11 +17,14 @@ func TestDiskFailureDoesNotPoisonVerifiedCache(t *testing.T) {
 	data := []byte("verified-cache")
 	c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(data) }))
 	m, _, _ := setup(t, c)
-	good := resource(c, data)
+	good := authorizedResource(t, m, c, data)
 	collect(t, m, good)
 	bad := good
 	bad.Source = c.URL("second")
-	bad.ID = Identity(bad.Source, bad.Hash)
+	bad.Version = "0.2.0"
+	bad.Hash = digest([]byte("different approved content"))
+	bad.ID = LogicalIdentity(bad.Application, bad.Version, bad.Key)
+	authorize(t, m, bad)
 	m.mu.Lock()
 	g, e := m.createLocked(bad, false)
 	if e != nil {
@@ -51,7 +54,7 @@ func TestDatabaseBusyIsBoundedAndVerifiedCacheSurvives(t *testing.T) {
 	data := []byte("database-busy")
 	c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(data) }))
 	m, db, dir := setup(t, c)
-	good := resource(c, data)
+	good := authorizedResource(t, m, c, data)
 	collect(t, m, good)
 	if _, e := db.DB.Exec("PRAGMA busy_timeout=30"); e != nil {
 		t.Fatal(e)
@@ -61,13 +64,16 @@ func TestDatabaseBusyIsBoundedAndVerifiedCacheSurvives(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer blocker.Close()
+	bad := good
+	bad.Source = c.URL("second")
+	bad.Version = "0.2.0"
+	bad.Hash = digest([]byte("different approved content"))
+	bad.ID = LogicalIdentity(bad.Application, bad.Version, bad.Key)
+	authorize(t, m, bad)
 	if _, e = blocker.Exec("BEGIN IMMEDIATE"); e != nil {
 		t.Fatal(e)
 	}
 	defer blocker.Exec("ROLLBACK")
-	bad := good
-	bad.Source = c.URL("second")
-	bad.ID = Identity(bad.Source, bad.Hash)
 	start := time.Now()
 	if _, _, e = m.Acquire(context.Background(), bad); e == nil {
 		t.Fatal("数据库 busy 未拒绝新缓存写入")

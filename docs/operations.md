@@ -1,92 +1,107 @@
 # RedApp 运维说明
 
-## 配置
+本文适用于采用规范 `vendor/app` 身份的新架构。旧版配置、缓存、历史全部不导入；必须选择全新空目录，旧目录保留归档，不自动升级或删除。新格式目录仍可正常重启。带版本号的历史文档不替代本说明。
 
-命令行参数优先于对应环境变量。数据目录优先级固定为 `--data` > 非空 `REDAPP_DATA` > `/var/lib/redapp`，程序、Docker 和宿主系统服务统一使用该默认目录。不会探测运行环境、在权限失败后回退或自动迁移旧 `/data`；目录不可写时启动失败。宿主部署应由管理员提前创建目录并赋予服务用户所有权，本地开发显式使用 `--data ./data`。
+## 启动配置
 
-| 参数 | 环境变量 | 默认值 | 含义 |
-| --- | --- | --- | --- |
-| `--data` | `REDAPP_DATA` | `/var/lib/redapp` | SQLite 与缓存所在本地目录 |
-| `--listen` | `REDAPP_LISTEN` | `:8080` | HTTP 监听地址 |
-| `--public-url` | `REDAPP_PUBLIC_URL` | 空 | 可选企业对外 HTTP(S) origin；空时逐请求推导 |
-| `--base-url` | `REDAPP_BASE_URL` | `https://releases.openai.com/codex` | 服务端固定上游 HTTPS 根，客户端不能覆盖 |
-| `--claude-base-url` | `REDAPP_CLAUDE_BASE_URL` | `https://downloads.claude.ai/claude-code-releases` | Claude 服务端固定 HTTPS 上游，不能由客户端覆盖 |
-| `--trusted-proxies` | `REDAPP_TRUSTED_PROXIES` | 空 | 可信代理 CIDR，逗号分隔 |
+```sh
+redapp config validate --config /etc/redapp/config.json
+redapp serve --config /etc/redapp/config.json
+redapp healthcheck --config /etc/redapp/config.json
+```
 
-Codex latest 与 Claude latest/stable 各自维护渠道缓存。各应用 TTL 默认值为 60 秒，管理员通过设置 API 可调整为 1–86400 秒；配置保存至 SQLite，按原成功 fetched 时间重新计算有效期。release 和完成制品不自动过期。过期 latest 刷新失败返回 502，不把旧值伪装为新值。
+三个命令都要求显式配置文件；validate 只验证配置，不打开或初始化部署数据库。配置示例为 [config/example.json](../config/example.json)。拒绝未知字段、重复 JSON key、null、错误类型和越界值，不猜测旧配置版本。
 
-当前保守边界：最多 16 个活动写入、512 个制品读者、32 个 metadata flight、每资源最大 4 GiB、清单最大 4 MiB/1024 资产、JSON 深度 32。上游总请求超时 5 分钟，响应头 30 秒、连接/TLS 10 秒；每代最多 3 次顺序尝试。不安全续传至多自动创建一个完整重试的新代；原响应失败，不能把新文件拼接到旧前缀。服务器请求头 10 秒、请求读取 30 秒、写响应 10 分钟，正常停止最多等待 15 秒。SQLite busy timeout 为 5 秒。失败事件最多 1000 条/30 天，管理接口展示最近 100 条。
+| JSON 字段 | 必填/默认 | 含义 |
+| --- | --- | --- |
+| `schema_version` | 必填，1 | 部署文件格式版本，与 SQLite schema 分开 |
+| `data_dir` | 必填，绝对路径 | 新架构 SQLite 和制品目录 |
+| `allowed_hosts` | 必填，1–128 项 | 认可的有效入站 authority 精确集合，含非默认端口，不允许 wildcard |
+| `listen` | `:8080` | IP 或 localhost 加 1–65535 端口 |
+| `trusted_proxies` | 空列表，最多 128 项 | 可提供转发信息的直接/链式代理 CIDR |
+| `download_limits.max_active_writers` | 16，范围 1–1024 | 所有应用共享的活动写入上限 |
+| `download_limits.max_readers` | 512，范围 1–65536 | 所有应用共享的制品读者上限 |
+| `download_limits.max_artifact_bytes` | 4294967296，范围 1–1099511627776 | 单个制品的最大字节数 |
 
-首次随机密码仅输出一次，bcrypt cost=12；会话有效期 8 小时，最多 128 个，修改密码注销全部会话。每来源 IP 每 5 分钟最多 10 次登录尝试，限流表最多 4096 个来源。会话 Cookie 使用 HttpOnly/SameSite=Strict，本次请求的对外 origin 为 HTTPS 时 Secure。变更 API 要求会话和 `X-CSRF-Token`，所有管理请求拒绝跨 origin 来源。
+不再读取旧的逐字段启动参数、数据目录/监听/上游覆盖环境变量。上游地址、应用协议和信任根来自经过审查的编译期定义，不能在后台改成任意 URL。唯一保留的应用部署环境变量是新需求明确提供的 `REDAPP_PUBLIC_URL`。目录权限失败直接退出，不寻找备用目录。
 
-## 反向代理
+站点文案、回源代理和公共地址覆盖保存在全局 settings；渠道 TTL 以规范 app_id 独立保存。TTL 默认 60 秒，范围 1–86400。GET 返回默认设置时 revision=0，不自动创建记录；PUT 要求 `If-Match: "<revision>"`，冲突返回 409，成功保存递增 revision。
+
+## 公共地址与入站信任
+
+生成安装命令和分发链接的公共地址优先级固定为：**后台覆盖 > `REDAPP_PUBLIC_URL` > 安全请求 origin**。环境空值表示未配置，非法非空值阻止启动。后台提交 `{"override_url":null}` 撤销覆盖，重新使用环境值或请求 origin；不是绕过环境值的“强制自动”模式。设置响应包含编辑值、环境值、有效值、来源和 revision。
+
+公共地址仅接受 HTTP(S) origin，允许规范化一个尾 `/`，拒绝凭据、子路径、query、fragment 和注入字符。保存时不探测网络；持久化成功后新请求立即采用该地址，失败不改变运行状态。公共 bootstrap 和动态 installer 使用 no-store；已经复制出去的旧命令不会自动改写。
+
+**请求 origin、公共地址、上游 origin 独立。** 请求 origin 按入站 Host、可信代理和 `allowed_hosts` 校验，决定同源校验与 Cookie Secure。改变公共地址不扩大 Host allowlist、不改变上游授权，也不跳转当前后台。
 
 ```nginx
 location / {
     proxy_pass http://127.0.0.1:8080;
-    proxy_set_header Host codex.example.internal;
-    proxy_set_header Forwarded "for=$remote_addr;proto=https;host=codex.example.internal";
+    proxy_set_header Host downloads.example.internal;
+    proxy_set_header Forwarded "for=$remote_addr;proto=https;host=downloads.example.internal";
     proxy_buffering off;
     proxy_read_timeout 600s;
 }
 ```
 
-只在直连 peer 命中可信 CIDR 时解析转发头。合法 Forwarded 优先于 X-Forwarded-For；从右往左剥离可信节点，停在首个不可信 IP。畸形 Forwarded 不转而拼接 XFF 链，回退至 peer。支持引号、IPv6 和多跳。显式 public URL 优先，且请求 Host 必须与配置的 origin host 完全一致。未配置时，使用合法请求 Host 与 TLS/HTTP scheme；仅可信直连 peer 可以通过 Forwarded 或 X-Forwarded-Host/Proto 提供对外 origin。Forwarded 从右向左选择信任边界对应节点；多值 X-Forwarded-Host/Proto 必须与 XFF 长度一致，单值要求直连可信代理覆盖设置。畸形的可信 origin 头返回 400，不混用两套头。反代必须删除/覆盖客户端传入的转发头，不要信任覆盖公网客户端的 CIDR。
+将实际代理网段写入 `trusted_proxies`，并把 `downloads.example.internal` 写入 `allowed_hosts`。仅可信 peer 的转发头生效；合法 Forwarded 优先于 X-Forwarded-*，沿链从右向左选择信任边界。多值 Host/Proto 必须与 XFF 长度一致，单值须由直连可信代理覆盖。畸形可信 origin 返回 400，不混用两套头。代理必须删除或覆盖客户端转发头，不应信任覆盖公网客户端的 CIDR。
 
-安装器、metadata、管理状态和 Cookie 按本次请求使用同一 origin，不修改全局配置或上游 metadata 缓存；安装器与 metadata 响应禁用缓存。合法 Host 仅说明格式可安全使用，并不证明域名可信；自动模式允许不同合法 Host，严格域名边界请显式设置 public URL 并在反代限制 Host。管理请求仍进行同源和 CSRF 检查。安装页默认提供 `curl ... | sh` 与 `irm ... | iex` 命令；仅安全上下文（通常为 HTTPS 或 localhost）且存在 Clipboard API 时显示复制按钮，实际权限失败提供行内提示，也可直接选择命令手动复制。
+首次随机管理员密码只输出一次；登录后修改并保护日志。会话 Cookie 为 HttpOnly、SameSite=Strict、Path=/admin，按请求安全 origin 决定 Secure；管理写入要求会话、同源校验和 `X-CSRF-Token`。修改密码使现有会话失效。
 
-## 站点文案与客户端推广
+## 站点文案与回源代理
 
-管理员在设置页的“站点外观”同时编辑 English / 简体中文标题、副标题和通用页脚声明，保存到本地 SQLite，重启后保留。默认标题为 RedApp，副标题分别为 `Application Redistribution Platform` / `应用再分发平台`。标题必填（每语言最多 80 字符），副标题 160、声明 500，可留空；仅接受纯文本，不解析 HTML/Markdown。公开页面和后台共用文案，页脚的 RedApp 源码链接始终固定。详细 API、兼容与并发编辑语义见[站点设置契约](frontend-v0.4.1.md#设置契约与兼容)。
+`/admin/settings/site` 同时编辑英文、简体中文标题、副标题和声明，并提供独立公共地址表单。默认品牌保留 RedApp；副标题为 Application Redistribution Platform / 应用再分发平台。标题每语言必填、最多 80 字符，副标题最多 160、声明最多 500；文本不执行 HTML/Markdown。
 
-公共安装页面聚焦终端用户，管理员应在推广前从本服务下载并审查脚本，按[安装详解](README.md#review-before-installing)选择版本与无人值守参数；Windows/macOS 实机安装、权限/失败路径和生产上游链路仍需独立验证。安装器会校验包摘要，仍保留正常确认交互；抑制自动更新标记不等于禁用或改写 CLI 的全部运行期更新/联网行为。请结合企业出口策略完成验证，不从页面提供命令推断所有平台已经验收。
+`GET/PUT /admin/api/settings/proxy` 管理共享出口代理，PUT 要求 revision 和会话/CSRF。server 为带端口的 `http://host:port`、`https://host:port` 或 `socks5://host:port`；URL 内禁止凭据、路径、查询、fragment，空 server 表示直连。不继承 HTTP_PROXY/HTTPS_PROXY。HTTP 代理以 CONNECT 访问 HTTPS 上游，SOCKS5 由代理端解析 DNS；固定上游路径、重定向和端到端 TLS 校验仍生效。
 
-## 回源代理
+`password_action` 为 keep、replace 或 clear。keep 不接受 username/password，且不能将已有凭据静默带到新地址；replace 使用本次凭据，clear 清空凭据。GET 只返回 server、has_credentials、has_password、dns、revision。凭据存放在受目录权限保护的 SQLite，备份须按敏感材料保管。
 
-管理员可通过 `GET /admin/api/proxy` 和带会话/CSRF 的 `POST /admin/api/proxy` 配置统一回源代理。`server` 使用带明确端口的 `http://host:port`、`https://host:port` 或 `socks5://host:port`，禁止在 URL 中包含用户名、密码、路径或查询；空值直连，不继承 HTTP_PROXY/HTTPS_PROXY 等环境变量。HTTP 代理通过 CONNECT 访问 HTTPS 上游。SOCKS5 由代理端解析目标域名；本服务无法校验代理最终解析出的 IP，代理本身须可信。仍保留固定上游 URL/路径、逐跳重定向限制和端到端 TLS 证书校验，不提供任意 URL 代理。
+代理先 CAS 持久化，再切换所有应用共享的 transport；失败不生效。新请求使用新配置，已开始传输的响应自然结束。此操作不强制失效 metadata、缓存制品或正在进行的摘要校验。
 
-请求包含 `password_action`：`keep` 保留已存用户名和密码（不得提交 username/password）；`replace` 使用此次 username/password；`clear` 清除全部凭据。更换代理地址时不能将已有凭据静默保留，须显式替换/清除；空 server 清除凭据。查询只返回 server、has_credentials、has_password、dns，不回显用户名/密码。凭据保存在本地 SQLite，并由数据目录权限保护，未做额外存储加密；数据库备份应作为敏感材料保护。
+## 数据目录、清理与恢复
 
-配置先成功持久化，再原子切换 transport。新 HTTP 请求（含 metadata、制品、重试/续传和重定向下一跳）采用新配置；已在传输的响应不被取消，旧空闲连接关闭。此设置不强制刷新已缓存 metadata/制品，也不会改写既有代际完整性校验。上游连接错误对客户端和事件使用通用消息，不输出代理 URL 凭据。
+- `instance.lock` 是保留的内核锁文件；进程退出或崩溃后内核释放锁，禁止人为删除锁 inode。获取写锁前先以只读方式检查已有目录，拒绝旧 schema 或未知内容，不创建锁来污染被拒绝的旧目录。
+- SQLite schema=3，包含类型化全局/应用设置、授权 metadata、渠道、资源、generation、应用内 blob、累计值、指标样本/聚合、事件、清理快照和管理员记录。没有旧版迁移命令。
+- 逻辑资源身份为 `(app_id,version,resource_key)`。每次下载拥有独立随机 generation；完整 blob 按 `(app_id,sha256)` 复用，首版不跨应用物理去重。未完成文件位于 `objects/parts/<generation>.part`，完整文件位于 `objects/blobs/<app摘要>/<内容摘要>.blob`，URL 不直接映射磁盘路径。
+- 活动下载仅按精确逻辑资源合流。完整校验、fsync 和文件发布后才能标记 complete；重启核对磁盘和数据库，损坏/缺失文件不能作为已验证缓存返回。续传使用强 ETag/If-Range 并验证范围、编码、长度和最终摘要。
+- 清理预览冻结本应用的精确 generation 集合，有效 10 分钟；执行不能跨应用，成功回执支持重试。旧代退出当前状态后等待已有读写租约排空；应用内共享 blob 只在最后引用结束后回收。版本发现、可信 metadata 和累计指标不随缓存清理删除。
+- 一个本地目录只由一个实例使用，不支持 NFS/SMB。Docker 可采用只读根文件系统加可写持久卷；镜像内 `/var/lib/redapp` 为 UID/GID 65532、模式 0700。已有宿主 bind mount 的权限需管理员预先设置，不递归自动 chown。
 
-## 数据与恢复
+备份先正常停止服务，再复制整个新格式数据目录，包括可能存在的 WAL/SHM。恢复到同格式目录前确认没有服务持锁，不在线单独复制 state.sqlite。启动不会把旧格式目录转为新格式，也不会将旧历史导入。
 
-- `instance.lock` 是永久保留的内核锁文件。进程始终持有 fd，退出或崩溃由内核释放；**禁止删除锁文件**。目录先解析符号链接，第二实例非阻塞失败。
-- `state.sqlite` / WAL / SHM 存放 schema=2（旧 schema=1 自动事务迁移）、授权清单原文与解析索引、首次发现历史、代际状态、当前指针、管理员 hash、设置、统计、事件和清理快照。
-- `objects/<SHA256 身份>/<随机代际>.part|.blob` 由程序产生；URL 不直接映射本地路径。
-- 每代共享一个顺序写入和增长文件。读者从零维护独立 offset；慢读者/客户端退出不会取消任务。无读者的完成缓存不长期占用文件描述符。
-- 完成后计算完整 SHA-256，再 fsync、rename、目录 fsync 和提交 SQLite。启动重新核对文件与 hash，处理 rename 尚未提交、缺文件、坏 blob、遗留 part 和 tombstone/orphan；缺失或未验证文件不能作为 complete 返回。
-- 续传采用落盘实际大小，强 ETag 使用 If-Range，严格验证 206 起点/终点/总量/validator/编码。416 仅在文件完整且 hash 已通过时接受；弱 ETag 不用于 If-Range，最终 hash 仍必需。
-- 清理预览保存精确资源/代际集合，有效 10 分钟。执行先持久化 retiring，再摘除当前指针；新请求用新代，旧读者/写入者排空后删除。旧写入者不能发布成当前缓存。first_seen、清单和历史保留。
-- 数据盘不支持 NFS/SMB 共享挂载。只读根文件系统配合可写本地持久卷运行。
-- Docker 构建阶段预建 `/var/lib/redapp`，以 UID/GID `65532:65532`、模式 `0700` 复制到运行镜像；新建空命名卷由 Docker 初始化并继承目录权限，无需首次启动手工授权。任意已有宿主 bind mount 会覆盖镜像目录，其权限必须由管理员预先设置，非 root 镜像不会自动修正或递归 chown。v0.2.0 镜像使用新路径；旧 v0.1.0 镜像仍预建 `/data`，不能搭配新的卷路径。
+## 路由、管理 API 与指标
 
-备份时先正常停止服务，再复制整个数据目录（包括可能存在的 WAL/SHM）；恢复时确认无服务持锁，完整恢复后启动。不要在线只复制 `state.sqlite`。本版本不提供在线备份端点。跨 schema 降级启动会拒绝未知版本。
+公开目录为 `/`；应用详情为 `/<vendor>/<app>`，制品及 installer 位于 `/<vendor>/<app>/<file_path>`，当前是 `/openai/codex` 和 `/anthropic/claude-code`。`admin`、`api`、`assets`、`health` 为保留命名空间。旧 `/apps/codex`、根 `/install.sh` 和 `/api/info` 不提供兼容别名。`GET /api/bootstrap` 返回公开站点、应用定义和公共地址，不依赖管理 status。
 
-## 管理 API 与指标
+后台页面有真实路径：`/admin/overview`、`/admin/events`、`/admin/settings/site`、`/admin/settings/proxy`、`/admin/apps/<vendor>/<app>/versions`、`.../settings`，可以刷新和直接打开。设置页不订阅全局 status 轮询。
 
-公共入口：`GET /channels/latest`、`GET /releases/{version}/release.json`、精确清单授权的 `/releases/{version}/{asset}`、`/install.sh`、`/install.ps1`、`/licenses/{LICENSE|NOTICE}`。任意 URL、编码别名、查询参数、遍历与未授权资产拒绝。浏览器应用目录为 `/`，安装详情为 `/apps/codex` / `/apps/claude-code`，后台为 `/admin/`。公开的 `/api/info` 提供版本、平台与公开站点文案，`/api/apps` 仅提供固定应用信息。
+| API | 用途 |
+| --- | --- |
+| `POST /admin/api/login`、`/logout`、`/password` | 登录、退出、改密码 |
+| `GET /admin/api/session`、`/status`、`/events` | 会话、全局状态、事件 |
+| `GET/PUT /admin/api/settings/site`、`.../proxy`、`.../public-url` | 带 revision 的全局设置 |
+| `GET/PUT /admin/api/apps/<vendor>/<app>/settings` | channel_ttl_seconds 与 revision |
+| `GET /admin/api/apps/<vendor>/<app>/status`、`.../versions`、`.../resources` | 明确应用状态 |
+| `POST /admin/api/apps/<vendor>/<app>/cleanup/preview` | minimum_version 清理预览 |
+| `POST /admin/api/apps/<vendor>/<app>/cleanup/<id>/execute` | 执行冻结预览 |
+| `GET /admin/api/history?scope=global&metric=...&range=24h` | 全局指标历史 |
+| `GET /admin/api/apps/<vendor>/<app>/history?metric=...&range=24h` | 有限应用维度历史 |
 
-Claude 公共协议位于 `/claude-code/`：安装器、公钥、许可、latest/stable、版本 manifest 及其分离签名、白名单原始二进制；详细信任和客户端升级边界见 [Claude 说明](claude-code-v0.5.0.md)。管理 settings / cleanup preview 可用 `X-RedApp-Application` 选择应用，缺省 Codex，未知应用拒绝。共享磁盘、并发额度与代理保持全局口径。schema 2 不能由旧版本程序读取，回退须恢复升级前的完整备份。
+不存在默认 Codex 应用，也不接受应用选择 header 作为身份替代。资源 path、query、应用和授权均须通过服务端校验，未知 API 不回退成成功 HTML。
 
-管理 API：`POST /admin/api/login` → Cookie 和 csrf；`GET /admin/api/session`、`GET /admin/api/status`、`GET /admin/api/site`；带 csrf 的 `POST /admin/api/site`（双语站点文案）、`settings`（latest_ttl_seconds）、`password`（old/new）、`logout`、`cleanup/preview`（minimum_version）、`cleanup/execute`（cleanup_id）。请求体为 JSON，最大 8 KiB。下载无需管理员登录；企业网络访问控制在反代/网络层实施。
+status 仅返回摘要和指标，列表从 versions、resources、events 单独读取。列表响应为 `{"items":[],"next_cursor":null}`；`limit` 默认 50、最大 100，下一页提交返回的非空 `cursor`。resources 可用 `version` 精确筛选。游标绑定应用、端点和筛选条件，不能在切换应用或版本后复用；版本按文本升序、资源按 generation ID 升序、事件按 ID 降序。分页是实时视图，不承诺跨请求冻结快照。
 
-`/health/live` 不依赖上游，`/health/ready` 检查 SQLite 和目录可写，不要求外网在线；健康请求不计入业务访问。`redapp healthcheck` 使用环境配置的监听端口和 public Host。
+`/health/live` 不依赖上游；`/health/ready` 检查 SQLite 和目录可写，不要求外网在线。CLI healthcheck 读取部署文件，连接实际监听地址并使用允许的 Host，不受公共发布地址改变影响。健康请求不计入业务访问。
 
-持久统计包括制品回源 HTTP 载荷字节、外部压缩前分发字节、访问次数、命中/共享跟随/未命中、成功/失败、版本访问和清理释放字节，不代表 TLS/线路实际流量。进程最近五秒速率另附采样时间。成功资源平均有效速度为最终大小/回源开始至收齐字节耗时，包含重试/退避，排除完整文件验证耗时。数据库计数与文件系统并非每字节原子事务，崩溃边界可能有统计偏差；完整性与发布不依赖统计。完整压缩、错误、重试及旧历史数据边界见[流量口径](metrics-history.md#制品流量与压缩口径)。
+当前 active 采集目录为 41 项。已确认的 16 个常用/25 个诊断前端分组及图表 tooltip 由独立补丁交付，本分支尚待取得可校验补丁后整合。`reuse_requests` 不再独立写入/采样/展示；`events.recent_total` 不再采样/展示，事件详情保留。全局 versions.total 计算全部规范应用的版本记录。旧样本（若新格式库已有）自然过期，不通过未知 ID 删除历史；本次架构切换本身不导入旧库历史。
 
-磁盘 used 按数据树文件与目录的已分配块计算，包含 SQLite/WAL/SHM；另提供 logical 总字节和缓存/临时/待释放的逻辑量与已分配块分类，free 是文件系统 `bavail`。释放累计统计为逻辑字节，不能当作包含块舍入、稀疏文件和文件系统保留块的物理释放量。并发快照可能有短暂差异，待旧租约结束后归零。
+默认每分钟采样，每小时聚合；24h 使用分钟点，7d/30d 使用小时汇总，保留期分别 24h/30d。缺失点留空、当前未完整小时标记 partial；计数器不平均累计量，也不把重启或断档视为零增量。磁盘 used 为已分配块，free 为文件系统可用空间，清理释放累计为逻辑字节。计数和磁盘状态不是每字节原子事务，完整性校验与发布不依赖统计。单个版本/资源不扩展成无限历史标签。
 
-## 指标历史
+## 上游与安装器边界
 
-管理页点击任意全局指标打开近 7 天历史，可切换 24 小时和 30 天。默认每分钟采样、每小时聚合；24h 返回分钟原始点，7d/30d 返回小时汇总，分别保留 24h/30d。缺失点留空，当前未完小时标记 partial，计数器不平均累计量、不把重启/归零/断档当作零增量。完整目录、覆盖语义与 API 见[指标历史](metrics-history.md)。版本与单资源不保存历史维度。
+协议适配器校验版本、渠道、metadata、签名和授权制品；共享分发层仅允许对应编译期上游 origin 和路径，限制重定向并禁止直接连接私有/loopback/link-local DNS 地址。新增 CDN 或信任根须审查代码，失败时不自动猜测来源。
 
-## 上游和发布门禁
+安装器原文、patch、generated、provenance 和许可分离保存；统一 descriptor 驱动产物清单和固定验证器。更新须通过严格 patch、隔离离线检查及宿主重验，daily PR 不可顺带改 descriptor、信任根或验证代码。详见[安装器维护](installers-maintenance.md)。
 
-生产客户端仅允许固定上游 origin，禁止私有/loopback/link-local/multicast DNS 地址，逐跳验证重定向、路径、协议、无查询凭据；不猜测额外 CDN 域名，也不启用服务器 GitHub 回退。真实 CDN allowlist、原始清单/manifest fixture、历史 legacy/预发行真实样本仍待核验。如果官方资产跳出固定 origin，本服务失败关闭，维护者核验实际链后再扩充严格允许范围。
-
-安装器原文、固定 commit、摘要、patch、generated、LICENSE/NOTICE 分离保存。CLI updater 在同文件系统临时树获取、校验、严格 patch、离线测试，再通过 Linux renameat2 交换整个目录；没有通过检查就不会改动目标。离线流程已测试；新版联网获取流程仍待验证。新版本仍需人工审阅 diff。
-
-企业安装器抑制自动更新标记，保留官方正常交互语义。推荐无人值守环境显式 `CODEX_NON_INTERACTIVE=1`；交互选择启动 CLI 或包管理器子进程仍受企业出口策略控制。固定源码的 TUI 更新检查访问 GitHub，standalone 更新动作和 daemon 更新器获取公共安装器；删除 marker 不等于改写这些二进制路径。来源：[updates.rs](https://github.com/openai/codex/blob/ff6aec96948b70d94983af2641a6b67c94faeff5/codex-rs/tui/src/updates.rs)、[update_action.rs](https://github.com/openai/codex/blob/ff6aec96948b70d94983af2641a6b67c94faeff5/codex-rs/tui/src/update_action.rs)、[update_loop.rs](https://github.com/openai/codex/blob/ff6aec96948b70d94983af2641a6b67c94faeff5/codex-rs/app-server-daemon/src/update_loop.rs)。
-
-正式外部分发之前，仍需核查六平台真实 package 的 LICENSE/NOTICE 和捆绑第三方材料，不改写官方 archive 字节或摘要。Windows/PowerShell 以及真实 macOS 的运行验证未完成。
+安装器下载经本服务，不改写应用运行期/API 流量。抑制安装器更新标记不等于禁用全部 CLI 更新检查；Windows/PowerShell、macOS、官方真实制品和生产下载链仍需独立上线验证。

@@ -16,8 +16,8 @@ check:
 	test -z "$$(gofmt -l cmd internal installers)"
 	go vet ./...
 installers:
-	python3 scripts/update-installers.py --source installers/codex/upstream
-	python3 scripts/update-claude-installers.py --source installers/claude-code/upstream
+	python3 scripts/update-installers.py --source installers/openai/codex/upstream
+	python3 scripts/update-claude-installers.py --source installers/anthropic/claude-code/upstream
 docker:
 	docker build -t redapp:local .
 

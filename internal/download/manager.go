@@ -6,17 +6,15 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/store"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,12 +22,32 @@ import (
 )
 
 type Resource struct {
-	ID     string
-	Source string
-	Hash   string
-	Size   *int64
-	Labels map[string]string
+	// Application, Version and Key are the authorized logical identity. Labels are display only.
+	Application string
+	Version     string
+	Key         string
+	ID          string
+	Source      string
+	Hash        string
+	Size        *int64
+	Labels      map[string]string
 }
+
+func cloneResource(r Resource) Resource {
+	if r.Size != nil {
+		n := *r.Size
+		r.Size = &n
+	}
+	if r.Labels != nil {
+		labels := make(map[string]string, len(r.Labels))
+		for k, v := range r.Labels {
+			labels[k] = v
+		}
+		r.Labels = labels
+	}
+	return r
+}
+
 type Generation struct {
 	ID             string
 	Resource       Resource
@@ -53,20 +71,30 @@ type Generation struct {
 	done           bool
 	readers        int
 	samples        []sample
+	upstreamStatus int
+	downloadNS     int64
 }
 type sample struct {
 	time  time.Time
 	bytes int64
 }
-type Current struct{ Generation string }
 type Selection struct {
 	Resource   string
 	Generation string
+	Version    string
+	Key        string
+	Bytes      int64
 }
 type Cleanup struct {
-	ID       string
-	Selected []Selection
-	Created  time.Time
+	ID                   string
+	Application          string
+	Selected             []Selection
+	Created              time.Time
+	Expires              time.Time
+	Executed             *time.Time
+	LogicalBytes         int64
+	ReclaimableBlobBytes int64
+	ActiveGenerations    int
 }
 type View struct {
 	Generation
@@ -97,136 +125,24 @@ type Manager struct {
 	testFault func(string, *Generation)
 }
 
-func New(dir string, db *store.Store, c *distributor.Client) (*Manager, error) {
-	return NewApplications(dir, db, map[string]*distributor.Client{"": c, "codex": c})
-}
-
-// NewApplications owns one cache and one set of global limits across fixed upstreams.
+// NewApplications owns one cache and one set of global limits across registered upstreams.
+// There is deliberately no implicit application or default upstream.
 func NewApplications(dir string, db *store.Store, clients map[string]*distributor.Client) (*Manager, error) {
 	upstreams := make(map[string]*distributor.Client, len(clients))
 	for app, client := range clients {
-		if client == nil {
-			return nil, errors.New("Missing application upstream")
+		if client == nil || !validApplication(app) {
+			return nil, errors.New("Invalid application upstream registration")
 		}
 		upstreams[app] = client
 	}
+	if len(upstreams) == 0 {
+		return nil, errors.New("No application upstreams registered")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{dir: dir, db: db, upstreams: upstreams, current: map[string]*Generation{}, all: map[string]*Generation{}, ctx: ctx, cancel: cancel, maxBytes: 4 << 30, maxReaders: 512, maxWriters: 16}
-	if e := os.MkdirAll(filepath.Join(dir, "objects"), 0700); e != nil {
+	if e := m.recover(); e != nil {
 		cancel()
-		return nil, e
-	}
-	raw, e := db.List("generation")
-	if e != nil {
-		cancel()
-		return nil, e
-	}
-	for _, b := range raw {
-		g := new(Generation)
-		if e = json.Unmarshal(b, g); e != nil {
-			cancel()
-			return nil, e
-		}
-		if !validID(g.ID) || !validID(g.Resource.ID) {
-			cancel()
-			return nil, errors.New("Invalid persisted cache identity")
-		}
-		expected := filepath.Join(dir, "objects", g.Resource.ID, g.ID)
-		if g.Path != expected+".part" && g.Path != expected+".blob" {
-			cancel()
-			return nil, errors.New("Invalid persisted cache path")
-		}
-		g.changed = make(chan struct{})
-		m.all[g.ID] = g
-		if g.Retired || g.State == "failed" || g.State == "invalid" || g.State == "deleted" {
-			if e = m.removeLocked(g); e != nil {
-				cancel()
-				return nil, e
-			}
-			continue
-		}
-		// Rename may have succeeded before the SQLite commit. Revalidate every recovered blob.
-		blob := expected + ".blob"
-		if _, e = os.Stat(blob); e == nil {
-			g.Path = blob
-			f, e := os.OpenFile(blob, os.O_RDWR, 0600)
-			if e != nil {
-				cancel()
-				return nil, e
-			}
-			g.file = f
-			st, e := f.Stat()
-			if e == nil {
-				g.Bytes = st.Size()
-			}
-			if e != nil || !verified(f, g.Bytes, g.Resource.Hash) {
-				g.State = "invalid"
-				g.done = true
-				m.removeLocked(g)
-				continue
-			}
-			g.State = "complete"
-			g.done = true
-			g.file.Close()
-			g.file = nil
-		} else {
-			f, e := os.OpenFile(g.Path, os.O_RDWR, 0600)
-			if e != nil {
-				g.State = "failed"
-				g.done = true
-				m.removeLocked(g)
-				continue
-			}
-			g.file = f
-			st, e := f.Stat()
-			if e != nil {
-				cancel()
-				return nil, e
-			}
-			g.Bytes = st.Size()
-			g.State = "interrupted"
-		}
-		if e = m.save(g); e != nil {
-			cancel()
-			return nil, e
-		}
-	}
-	ptrs, e := db.List("current")
-	if e != nil {
-		cancel()
-		return nil, e
-	}
-	for _, b := range ptrs {
-		var p struct {
-			Resource   string
-			Generation string
-		}
-		if e = json.Unmarshal(b, &p); e != nil {
-			cancel()
-			return nil, e
-		}
-		g := m.all[p.Generation]
-		if g != nil && g.Resource.ID == p.Resource && !g.Retired && g.State != "deleted" {
-			m.current[p.Resource] = g
-		} else {
-			if e = db.Delete("current", p.Resource); e != nil {
-				cancel()
-				return nil, e
-			}
-		}
-	}
-	// Any generation without a durable current pointer is an orphan of a crash window.
-	for _, g := range m.all {
-		if m.current[g.Resource.ID] != g {
-			g.Retired = true
-			if e = m.removeLocked(g); e != nil {
-				cancel()
-				return nil, e
-			}
-		}
-	}
-	if e = m.removeOrphans(); e != nil {
-		cancel()
+		m.closeFiles()
 		return nil, e
 	}
 	return m, nil
@@ -238,24 +154,7 @@ func validID(s string) bool {
 	_, e := hex.DecodeString(s)
 	return e == nil
 }
-func (m *Manager) removeOrphans() error {
-	return filepath.WalkDir(filepath.Join(m.dir, "objects"), func(path string, d os.DirEntry, e error) error {
-		if e != nil {
-			return e
-		}
-		if d.IsDir() {
-			return nil
-		}
-		for _, g := range m.all {
-			if g.State != "deleted" && path == g.Path {
-				return nil
-			}
-		}
-		return os.Remove(path)
-	})
-}
-func (m *Manager) save(g *Generation) error { return m.db.Put("generation", g.ID, g) }
-func signal(g *Generation)                  { close(g.changed); g.changed = make(chan struct{}) }
+func signal(g *Generation) { close(g.changed); g.changed = make(chan struct{}) }
 func id() string {
 	b := make([]byte, 16)
 	if _, e := rand.Read(b); e != nil {
@@ -263,8 +162,8 @@ func id() string {
 	}
 	return hex.EncodeToString(b)
 }
-func Identity(source, hash string) string {
-	sum := sha256.Sum256([]byte(source + "\x00" + hash))
+func LogicalIdentity(application, version, key string) string {
+	sum := sha256.Sum256([]byte(application + "\x00" + version + "\x00" + key))
 	return hex.EncodeToString(sum[:])
 }
 func verified(f *os.File, n int64, expected string) bool {
@@ -273,37 +172,50 @@ func verified(f *os.File, n int64, expected string) bool {
 	return e == nil && copied == n && hex.EncodeToString(h.Sum(nil)) == expected
 }
 func (m *Manager) createLocked(r Resource, fullRetry bool) (*Generation, error) {
-	if !validID(r.ID) || len(r.Hash) != 64 {
-		return nil, errors.New("Invalid resource identity")
-	}
-	if m.jobs >= m.maxWriters {
-		return nil, errors.New("Active download limit exceeded")
-	}
-	if e := os.MkdirAll(filepath.Join(m.dir, "objects", r.ID), 0700); e != nil {
+	if e := m.validateResource(r); e != nil {
 		return nil, e
 	}
 	g := &Generation{ID: id(), Resource: r, State: "queued", Total: -1, Started: time.Now(), changed: make(chan struct{}), FullRetry: fullRetry}
-	g.Path = filepath.Join(m.dir, "objects", r.ID, g.ID+".part")
+	// Only complete, revalidated content may be reused across logical resources.
+	// In-flight writers are never coalesced by content digest.
+	if blob, e := m.db.Blob(r.Application, r.Hash); e == nil {
+		if blob.SizeBytes > m.maxBytes {
+			return nil, ErrArtifactLimit
+		}
+		path := m.blobPath(r)
+		f, err := openRegular(path)
+		if err == nil {
+			st, statErr := f.Stat()
+			valid := statErr == nil && st.Size() == blob.SizeBytes && (r.Size == nil || *r.Size == st.Size()) && verified(f, st.Size(), r.Hash)
+			f.Close()
+			if valid {
+				g.Path, g.Bytes, g.Total, g.State, g.done = path, blob.SizeBytes, blob.SizeBytes, "complete", true
+				g.Finished = time.Now()
+				if e = m.db.CreateGeneration(m.record(g)); e != nil {
+					return nil, e
+				}
+				m.current[r.ID], m.all[g.ID] = g, g
+				return g, nil
+			}
+		}
+	} else if !errors.Is(e, sql.ErrNoRows) {
+		return nil, e
+	}
+	if m.jobs >= m.maxWriters {
+		return nil, ErrWriterLimit
+	}
+	g.Path = m.partPath(g.ID)
 	f, e := os.OpenFile(g.Path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
 	if e != nil {
 		return nil, e
 	}
 	g.file = f
-	if e = m.save(g); e != nil {
+	if e = m.db.CreateGeneration(m.record(g)); e != nil {
 		f.Close()
 		os.Remove(g.Path)
 		return nil, e
 	}
-	if e = m.db.Put("current", r.ID, struct {
-		Resource   string
-		Generation string
-	}{r.ID, g.ID}); e != nil {
-		f.Close()
-		os.Remove(g.Path)
-		return nil, e
-	}
-	m.current[r.ID] = g
-	m.all[g.ID] = g
+	m.current[r.ID], m.all[g.ID] = g, g
 	return g, nil
 }
 
@@ -317,35 +229,34 @@ type Reader struct {
 }
 
 func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error) {
-	if r.ID != Identity(r.Source, r.Hash) {
-		return nil, false, errors.New("Resource identity does not match source and digest")
-	}
-	client := m.upstreams[r.Labels["app"]]
-	if client == nil {
-		return nil, false, errors.New("Unknown resource application")
-	}
-	u, e := url.Parse(r.Source)
-	if e != nil || client.Validate(u) != nil {
-		return nil, false, errors.New("Resource does not belong to application upstream")
+	r = cloneResource(r)
+	if e := m.validateResource(r); e != nil {
+		return nil, false, e
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
 		return nil, false, errors.New("Server is shutting down")
 	}
+	if r.Size != nil && *r.Size > m.maxBytes {
+		return nil, false, ErrArtifactLimit
+	}
 	readers := 0
 	for _, g := range m.all {
 		readers += g.readers
 	}
 	if readers >= m.maxReaders {
-		return nil, false, errors.New("Client limit exceeded")
+		return nil, false, ErrReaderLimit
 	}
 	g := m.current[r.ID]
-	if g != nil && (g.Resource.Source != r.Source || g.Resource.Hash != r.Hash || g.Resource.Labels["app"] != r.Labels["app"]) {
+	if g != nil && g.Bytes > m.maxBytes {
+		return nil, false, ErrArtifactLimit
+	}
+	if g != nil && (g.Resource.Source != r.Source || g.Resource.Hash != r.Hash || g.Resource.Application != r.Application) {
 		return nil, false, errors.New("Cached resource application or identity does not match")
 	}
 	if g != nil && g.Retired {
-		if e := m.db.Delete("current", r.ID); e != nil {
+		if e := m.db.RetireGeneration(r.Application, g.ID, time.Now()); e != nil {
 			return nil, false, e
 		}
 		delete(m.current, r.ID)
@@ -358,7 +269,7 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 			g.Retired = true
 			g.Error = "Completed cache file is missing or its length changed"
 			m.save(g)
-			if err := m.db.Delete("current", r.ID); err != nil {
+			if err := m.db.RetireGeneration(r.Application, g.ID, time.Now()); err != nil {
 				return nil, false, err
 			}
 			delete(m.current, r.ID)
@@ -374,6 +285,7 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 			return nil, false, e
 		}
 	}
+	hit = hit || g.State == "complete"
 	kind := "miss"
 	if hit {
 		kind = "shared_follower"
@@ -382,7 +294,7 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 		}
 	}
 	if g.file == nil {
-		f, err := os.OpenFile(g.Path, os.O_RDWR, 0600)
+		f, err := openRegular(g.Path)
 		if err != nil {
 			return nil, false, err
 		}
@@ -390,7 +302,7 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 	}
 	if !g.done && !g.running {
 		if m.jobs >= m.maxWriters {
-			return nil, false, errors.New("Active download limit exceeded")
+			return nil, false, ErrWriterLimit
 		}
 		g.running = true
 		m.jobs++
@@ -467,45 +379,44 @@ func (m *Manager) removeLocked(g *Generation) error {
 		g.file.Close()
 		g.file = nil
 	}
+	m.checkpoint("delete.before_files", g)
+	part := m.partPath(g.ID)
 	var released int64
-	if st, e := os.Stat(g.Path); e == nil {
+	if st, e := os.Lstat(part); e == nil {
 		released = st.Size()
 	}
-	m.checkpoint("delete.before_files", g)
-	paths := []string{g.Path, filepath.Join(m.dir, "objects", g.Resource.ID, g.ID+".blob"), filepath.Join(m.dir, "objects", g.Resource.ID, g.ID+".part")}
-	seen := map[string]bool{}
-	for _, path := range paths {
-		if seen[path] {
-			continue
-		}
-		seen[path] = true
-		e := os.Remove(path)
-		if e != nil && !os.IsNotExist(e) {
-			return e
-		}
-		if e == nil {
-			if strings.HasSuffix(path, ".part") {
-				m.checkpoint("delete.after_part_unlink", g)
-			} else {
-				m.checkpoint("delete.after_blob_unlink", g)
-			}
-		}
+	if e := os.Remove(part); e != nil && !os.IsNotExist(e) {
+		return e
+	} else if e == nil {
+		m.checkpoint("delete.after_part_unlink", g)
 	}
-	m.checkpoint("delete.after_files", g)
-	if g.Retired && released > 0 {
-		m.db.Add("cleanup_freed_bytes", released)
-	}
-	if e := m.db.Delete("generation", g.ID); e != nil {
+	if e := m.db.DeleteGeneration(g.Resource.Application, g.ID); e != nil {
 		return e
 	}
 	m.checkpoint("delete.after_generation_delete", g)
-	g.State = "deleted"
-	g.done = true
+	// The generation reference disappears before shared content can be unlinked.
+	// A crash between these steps leaves an unreferenced blob for startup GC.
+	freed, e := m.collectBlob(g.Resource)
+	if e != nil {
+		return e
+	}
+	released += freed
+	m.checkpoint("delete.after_files", g)
+	if g.Retired && released > 0 {
+		if e := m.db.AddFor(g.Resource.Application, "cleanup_freed_bytes", released); e != nil {
+			return e
+		}
+	}
+	g.State, g.done = "deleted", true
 	delete(m.all, g.ID)
 	return nil
 }
 
 var unsafeResume = errors.New("Unsafe upstream resume; a new generation is required")
+
+type upstreamHTTPError int
+
+func (e upstreamHTTPError) Error() string { return fmt.Sprintf("Upstream HTTP %d", int(e)) }
 
 func (m *Manager) attempt(g *Generation) error {
 	m.mu.Lock()
@@ -532,7 +443,7 @@ func (m *Manager) attempt(g *Generation) error {
 			headers.Set("If-Range", etag)
 		}
 	}
-	client := m.upstreams[g.Resource.Labels["app"]]
+	client := m.upstreams[g.Resource.Application]
 	if client == nil {
 		return errors.New("Unknown persisted resource application")
 	}
@@ -559,7 +470,7 @@ func (m *Manager) attempt(g *Generation) error {
 		total = n
 	} else {
 		if resp.StatusCode != 200 {
-			return fmt.Errorf("Upstream HTTP %d", resp.StatusCode)
+			return upstreamHTTPError(resp.StatusCode)
 		}
 		total = resp.ContentLength
 	}
@@ -598,7 +509,7 @@ func (m *Manager) attempt(g *Generation) error {
 				g.samples = g.samples[1:]
 			}
 			m.mu.Unlock()
-			if e = m.db.Add("upstream_bytes", int64(n)); e != nil {
+			if e = m.db.AddFor(g.Resource.Application, "upstream_bytes", int64(n)); e != nil {
 				return e
 			}
 			if offset+int64(n) > m.maxBytes || (total >= 0 && offset+int64(n) > total) {
@@ -702,32 +613,41 @@ func (m *Manager) run(g *Generation) {
 	g.done = true
 	g.Error = ""
 	if err == nil {
+		if e := m.save(g); e != nil {
+			err = errors.New("Cache state checkpoint failed")
+		}
+	}
+	if err == nil {
 		if e := g.file.Sync(); e != nil {
 			err = errors.New("File fsync failed")
 		}
 		if err == nil && !g.Retired && m.current[g.Resource.ID] == g {
-			newPath := strings.TrimSuffix(g.Path, ".part") + ".blob"
-			if e := os.Rename(g.Path, newPath); e != nil {
-				err = errors.New("Cache publication failed")
-			} else {
-				g.Path = newPath
-				if dir, e := os.Open(filepath.Dir(newPath)); e == nil {
-					e = dir.Sync()
-					dir.Close()
-					if e != nil {
-						err = e
-					}
-				}
-			}
+			err = m.publishLocked(g)
 		}
 	}
 	if err == nil {
 		g.State = "complete"
-		if e := m.save(g); e != nil {
-			err = errors.New("Cache state commit failed")
+		// A retired writer only finishes its existing readers; it never publishes a head.
+		if !g.Retired {
+			if e := m.db.CompleteGeneration(g.Resource.Application, g.ID, store.Blob{AppID: g.Resource.Application, SHA256: g.Resource.Hash, SizeBytes: g.Bytes, VerifiedAt: time.Now()}, g.Finished, g.VerificationNS); e != nil {
+				err = errors.New("Cache state commit failed")
+			}
+		}
+		if err == nil && !g.Retired {
+			for _, old := range m.all {
+				if old != g && old.Retired && old.State == "invalid" && old.Resource.Application == g.Resource.Application && old.Resource.Hash == g.Resource.Hash {
+					// New content already has a durable reference. Removing an
+					// old lease must not collect the newly published blob.
+					_ = m.removeLocked(old)
+				}
+			}
 		}
 	}
 	if err != nil {
+		var status upstreamHTTPError
+		if errors.As(err, &status) {
+			g.upstreamStatus = int(status)
+		}
 		g.Error = err.Error()
 		g.State = "failed"
 		if strings.Contains(g.Error, "SHA256") {
@@ -737,11 +657,11 @@ func (m *Manager) run(g *Generation) {
 			g.State = "interrupted"
 		}
 		m.save(g)
-		m.db.Event(g.Resource.ID, failureCategory(g.Error), g.Error)
-		m.db.Add("upstream_errors", 1)
+		m.recordFailure(g)
+		m.db.AddFor(g.Resource.Application, "upstream_errors", 1)
 		if m.current[g.Resource.ID] == g && g.State != "interrupted" {
 			delete(m.current, g.Resource.ID)
-			m.db.Delete("current", g.Resource.ID)
+			m.db.RetireGeneration(g.Resource.Application, g.ID, time.Now())
 		}
 	}
 	signal(g)
@@ -753,7 +673,7 @@ func (m *Manager) run(g *Generation) {
 		m.removeLocked(g)
 	}
 	if errors.Is(err, unsafeResume) && !g.Retired && !g.FullRetry && !m.closed {
-		if next, e := m.createLocked(g.Resource, true); e == nil {
+		if next, e := m.createLocked(g.Resource, true); e == nil && !next.done {
 			next.running = true
 			m.jobs++
 			m.wg.Add(1)
@@ -771,12 +691,15 @@ func (m *Manager) Snapshot() []View {
 			continue
 		}
 		v := View{Generation: *g, ActiveWriter: g.running, Readers: g.readers, Current: m.current[g.Resource.ID] == g, SampledAt: now}
+		v.Resource = cloneResource(g.Resource)
+		v.DownloadNS = g.downloadNS
 		if !g.Received.IsZero() {
 			v.DownloadNS = g.Received.Sub(g.Started).Nanoseconds()
-			if v.DownloadNS > 0 && g.State == "complete" {
-				v.AverageBPS = float64(g.Bytes) / (float64(v.DownloadNS) / 1e9)
-			}
 		}
+		if v.DownloadNS > 0 && g.State == "complete" {
+			v.AverageBPS = float64(g.Bytes) / (float64(v.DownloadNS) / 1e9)
+		}
+
 		if len(g.samples) > 1 {
 			first := g.samples[0]
 			if now.Sub(first.time).Seconds() > 0 && now.Sub(g.samples[len(g.samples)-1].time) < 5*time.Second {
@@ -786,65 +709,6 @@ func (m *Manager) Snapshot() []View {
 		out = append(out, v)
 	}
 	return out
-}
-func (m *Manager) Preview(ids map[string]bool) (Cleanup, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	job := Cleanup{ID: id(), Created: time.Now(), Selected: []Selection{}}
-	for rid, g := range m.current {
-		if ids[rid] {
-			job.Selected = append(job.Selected, Selection{rid, g.ID})
-		}
-	}
-	if e := m.db.Put("cleanup", job.ID, job); e != nil {
-		return job, e
-	}
-	m.checkpoint("preview.after_job_save", nil)
-	return job, nil
-}
-func (m *Manager) Cleanup(jobID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	var job Cleanup
-	if !validID(jobID) {
-		return errors.New("Invalid cleanup ID")
-	}
-	if e := m.db.Get("cleanup", jobID, &job); e != nil {
-		return e
-	}
-	if time.Since(job.Created) > 10*time.Minute {
-		return errors.New("Cleanup preview expired")
-	}
-	for _, s := range job.Selected {
-		g := m.all[s.Generation]
-		if g == nil || g.Resource.ID != s.Resource {
-			continue
-		}
-		wasRetired := g.Retired
-		g.Retired = true
-		if e := m.save(g); e != nil {
-			g.Retired = wasRetired
-			return e
-		}
-		m.checkpoint("cleanup.after_tombstone", g)
-		if m.current[s.Resource] == g {
-			if e := m.db.Delete("current", s.Resource); e != nil {
-				return e
-			}
-			m.checkpoint("cleanup.after_pointer_delete", g)
-			delete(m.current, s.Resource)
-			m.checkpoint("cleanup.after_detach", g)
-		}
-		signal(g)
-		if e := m.removeLocked(g); e != nil {
-			return e
-		}
-	}
-	if e := m.db.Delete("cleanup", jobID); e != nil {
-		return e
-	}
-	m.checkpoint("cleanup.after_job_delete", nil)
-	return nil
 }
 func (m *Manager) Close() error {
 	m.mu.Lock()
