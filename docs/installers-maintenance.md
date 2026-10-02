@@ -29,7 +29,7 @@ python3 scripts/test-installers.py
 
 ## Claude Code 基线与最小 patch
 
-Claude 原文、来源、长度与 SHA256 独立记录于 `installers/claude-code/`，不改写 Codex 基线。完整信任链和安装语义见 [Claude 说明](claude-code-v0.5.0.md)。官方原文保持逐字节不变；生成结果由严格补丁得到。
+Claude 原文、来源、长度与 SHA256 独立记录于 `installers/claude-code/`，不改写 Codex 基线。完整信任链和安装语义见 [Claude 说明](claude-code-v0.5.0.md)。官方原文保持逐字节不变；生成结果由严格补丁得到。`.gitattributes` 禁止原文、生成文件、patch 和签名 fixture 的换行转换；原文既有空白及 unified diff 的空白上下文不作格式化，以保持身份与最小差异。
 
 | 脚本 | 新增行 | 删除行 | 必要变更 |
 | --- | ---: | ---: | --- |
