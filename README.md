@@ -4,7 +4,7 @@
 
 RedApp distributes **Codex CLI and Claude Code** through an internal download service. It verifies application metadata, caches downloads on demand, and provides an administrator interface for cache, traffic, and service settings.
 
-This development architecture uses canonical application identities: `openai/codex` and `anthropic/claude-code`. It requires a **new, empty data directory**. Configuration, cache, and history from older releases are not imported; keep the old directory as an archive. Startup rejects an old or unrecognized directory without upgrading or deleting it. Existing new-format directories can be reopened normally.
+Version 0.6.0 uses canonical application identities: `openai/codex` and `anthropic/claude-code`. This is a **breaking upgrade requiring a new, empty data directory**. Configuration, cache, and history from older releases are not imported; keep the old directory as an archive. Startup rejects an old or unrecognized directory without upgrading or deleting it. Existing new-format directories can be reopened normally. See the [v0.6.0 release notes](docs/multi-application-v0.6.0.md) before upgrading.
 
 ## Start the service
 
@@ -18,14 +18,14 @@ redapp healthcheck --config /etc/redapp/config.json
 
 Configuration validation does not open or create the data directory. `schema_version`, `data_dir`, and a nonempty `allowed_hosts` are required. Omitted listen and download limits use the documented example defaults. Unknown fields, duplicate JSON keys, null values, invalid CIDRs, and out-of-range values are rejected. Writers support 1–1024, readers 1–65536, and maximum artifact size 1 byte–1 TiB. These limits are shared across all applications.
 
-For an image built from this revision, mount the configuration read-only and use a new named volume:
+Mount the configuration read-only and use a new named volume:
 
 ```sh
 docker run -d --name redapp --read-only \
   -p 127.0.0.1:8080:8080 \
-  -v redapp-next-data:/var/lib/redapp \
+  -v redapp-v060-data:/var/lib/redapp \
   -v /etc/redapp/config.json:/etc/redapp/config.json:ro \
-  redapp:local
+  ghcr.io/pmextra/redapp:0.6.0
 ```
 
 The image starts `serve --config /etc/redapp/config.json`; its health check reads the same file. One process owns each local data directory. Shared network filesystems and URL subpath deployment are unsupported. Docker and native processes no longer accept the old per-field CLI flags or `REDAPP_DATA`, `REDAPP_LISTEN`, and upstream override variables. Upstream origins and trust roots are reviewed, compiled application definitions.

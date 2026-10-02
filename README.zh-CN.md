@@ -4,7 +4,7 @@
 
 RedApp 帮助 IT 管理员通过内网服务分发 **Codex CLI 和 Claude Code**，验证应用元数据、按需缓存制品，并管理缓存、流量与站点设置。
 
-当前开发架构统一使用 `openai/codex`、`anthropic/claude-code` 应用身份，**必须使用全新空数据目录**。旧版配置、缓存和历史全部不导入；旧目录保留归档，不自动升级或删除。启动检测到旧版或未知目录会拒绝继续。新架构已创建的目录可以正常重启使用。
+v0.6.0 统一使用 `openai/codex`、`anthropic/claude-code` 应用身份，是**必须使用全新空数据目录的破坏性升级**。旧版配置、缓存和历史全部不导入；旧目录保留归档，不自动升级或删除。启动检测到旧版或未知目录会拒绝继续。新架构已创建的目录可以正常重启使用。升级前请阅读 [v0.6.0 发布说明](docs/multi-application-v0.6.0.md)。
 
 ## 快速上手
 
@@ -18,14 +18,14 @@ redapp healthcheck --config /etc/redapp/config.json
 
 验证命令不打开或创建数据目录。必须提供配置文件及 `schema_version`、`data_dir`、非空 `allowed_hosts`；其余字段默认值和合法范围见[运维说明](docs/operations.md)。未知字段、重复 JSON key、null、错误类型及越界值均拒绝。
 
-使用从当前代码构建的镜像时，挂载配置文件并创建新的命名卷：
+挂载配置文件并创建新的命名卷：
 
 ```sh
 docker run -d --name redapp --read-only \
   -p 127.0.0.1:8080:8080 \
-  -v redapp-next-data:/var/lib/redapp \
+  -v redapp-v060-data:/var/lib/redapp \
   -v /etc/redapp/config.json:/etc/redapp/config.json:ro \
-  redapp:local
+  ghcr.io/pmextra/redapp:0.6.0
 ```
 
 镜像默认执行 `serve --config /etc/redapp/config.json`，健康检查读取同一配置。每个本地数据目录只运行一个实例，不支持网络共享文件系统或 URL 子路径。旧逐字段 CLI 和 `REDAPP_DATA`、`REDAPP_LISTEN`、上游覆盖环境变量不再使用；上游地址和信任根来自编译期应用定义。
