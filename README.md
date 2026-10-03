@@ -14,10 +14,10 @@ No configuration file is required. The native executable accepts `redapp` or `re
 docker run -d --name redapp --read-only \
   -p 127.0.0.1:8080:8080 \
   -v redapp-v06-data:/var/lib/redapp \
-  ghcr.io/pmextra/redapp:0.6.2
+  ghcr.io/pmextra/redapp:0.6.3
 ```
 
-Defaults are `:8080`, `/var/lib/redapp`, and no trusted proxies. The unreleased source accepts any syntactically valid request Host; configure domain and network access policy at the reverse proxy. New deployments need a new empty data directory/volume; existing v0.6 data can be reused. Directory permission failures never fall back elsewhere.
+Defaults are `:8080`, `/var/lib/redapp`, and no trusted proxies. RedApp accepts any syntactically valid request Host; configure domain and network access policy at the reverse proxy. New deployments need a new empty data directory/volume; existing v0.6 data can be reused. Directory permission failures never fall back elsewhere.
 
 Deployment environment variables work without a file, for example:
 
@@ -42,9 +42,9 @@ For an optional container YAML file, add `--mount type=bind,src=/absolute/config
 
 Open **http://localhost:8080/** for the catalog or **http://localhost:8080/admin/overview** for administration. The first-start logs contain the initial admin password; protect those logs and change the password after signing in. Containers run as UID/GID 65532; ensure bind-mounted data directories are writable by that identity.
 
-Unreleased source builds accept capacity strings such as `REDAPP_MAX_ARTIFACT_BYTES=4GiB` through environment, CLI and YAML/JSON configuration, alongside integer byte counts. This is a **per-file** limit, not total cache capacity: `4GB`/`4gb` means 4,000,000,000 bytes, while `4GiB` means 4,294,967,296 bytes. The default remains 4 GiB; the accepted range is 1 byte to 1 TiB. Published v0.6.2 requires integer bytes; see [release notes](docs/releases.md).
+Starting with v0.6.3, RedApp accepts capacity strings such as `REDAPP_MAX_ARTIFACT_BYTES=4GiB` through environment, CLI and YAML/JSON configuration, alongside integer byte counts. This is a **per-file** limit, not total cache capacity: `4GB`/`4gb` means 4,000,000,000 bytes, while `4GiB` means 4,294,967,296 bytes. The default remains 4 GiB; the accepted range is 1 byte to 1 TiB. v0.6.2 requires integer bytes; see [release notes](docs/releases.md).
 
-The source examples and deployment table describe the unreleased configuration: writer limits use `REDAPP_MAX_WRITERS`, `download_limits.max_writers`, or `--max-writers`; reader names remain unchanged. Removed Host and writer options have no aliases. For published v0.6.2, use its [tagged examples](https://github.com/PMExtra/RedApp/tree/v0.6.2/config).
+The source examples and deployment table describe v0.6.3: writer limits use `REDAPP_MAX_WRITERS`, `download_limits.max_writers`, or `--max-writers`; reader names remain unchanged. Removed Host and writer options have no aliases. For published v0.6.2, use its [tagged examples](https://github.com/PMExtra/RedApp/tree/v0.6.2/config).
 
 ## Public address and proxy trust
 

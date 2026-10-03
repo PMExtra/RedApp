@@ -1,6 +1,6 @@
 # RedApp 运维说明
 
-本文对应待发布源码的配置规范；已发布 v0.6.2 请使用[其版本文档及样例](https://github.com/PMExtra/RedApp/tree/v0.6.2/config)。本文适用于采用规范 `vendor/app` 身份的新架构。旧版配置、缓存、历史全部不导入；必须选择全新空目录，旧目录保留归档，不自动升级或删除。新格式目录仍可正常重启。带版本号的历史文档不替代本说明。
+本文对应 v0.6.3 的配置规范；旧版本请使用[相应标签下的文档](https://github.com/PMExtra/RedApp/blob/v0.6.2/docs/operations.md)及样例。本文适用于采用规范 `vendor/app` 身份的新架构。旧版配置、缓存、历史全部不导入；必须选择全新空目录，旧目录保留归档，不自动升级或删除。新格式目录仍可正常重启。带版本号的历史文档不替代本说明。
 
 ## 启动配置
 
@@ -20,7 +20,7 @@
 | `download_limits.max_readers` | `REDAPP_MAX_READERS` | `--max-readers` | 512，范围 1–65536 |
 | `download_limits.max_artifact_bytes` | `REDAPP_MAX_ARTIFACT_BYTES` | `--max-artifact-bytes` | 4 GiB（4294967296 字节），范围 1 字节–1 TiB |
 
-`max_artifact_bytes` 限制每个下载制品文件的大小，不是应用总体积或缓存总配额；压缩包按下载文件大小计算。默认保持 4 GiB。待发布源码支持环境变量、CLI、YAML 和显式 JSON 使用相同容量字符串，例如 `REDAPP_MAX_ARTIFACT_BYTES=4GiB`、`--max-artifact-bytes 1.5GiB`、YAML `max_artifact_bytes: '4GiB'` 或 JSON `"max_artifact_bytes": "4GiB"`。现有整数字节值仍有效，已发布 v0.6.2 应继续使用整数。
+`max_artifact_bytes` 限制每个下载制品文件的大小，不是应用总体积或缓存总配额；压缩包按下载文件大小计算。默认保持 4 GiB。自 v0.6.3 起支持环境变量、CLI、YAML 和显式 JSON 使用相同容量字符串，例如 `REDAPP_MAX_ARTIFACT_BYTES=4GiB`、`--max-artifact-bytes 1.5GiB`、YAML `max_artifact_bytes: '4GiB'` 或 JSON `"max_artifact_bytes": "4GiB"`。现有整数字节值仍有效，已发布 v0.6.2 应继续使用整数。
 
 容量字符串去除首尾空白后，按 [go-humanize ParseBytes](https://pkg.go.dev/github.com/dustin/go-humanize@v1.1.0#ParseBytes) 解析，支持小数及大小写不敏感的单位。**GB = 10^9 字节，GiB = 2^30 字节**，所以 `4gb` 是 4000000000 字节，`4GiB` 是 4294967296 字节。推荐使用 `4GiB` 等明确单位，不使用逗号；纯数字表示字节。转换结果必须在 1–1099511627776 字节之间，非法或超范围值阻止启动。reader/writer 数量仍使用整数，不接受容量单位。
 

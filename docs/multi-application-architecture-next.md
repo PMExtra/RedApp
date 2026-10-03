@@ -236,7 +236,7 @@ UI fallback 只覆盖表内 UI 路由。未知 app、未知 file、API、签名/
 | 应用设置 | channel TTL | SQLite，以规范 app_id 为键 | descriptor 默认值 → 已持久化设置 |
 | 浏览器偏好 | locale、非敏感界面偏好 | 浏览器 localStorage/内存 | 合法保存值 → `navigator.languages` 首个支持项 → 列表不可用时 `navigator.language` → en |
 
-v0.6.2 恢复无文件的 `redapp` / `redapp serve` 默认启动。路径只选一个：`--config` > `REDAPP_CONFIG` > `/etc/redapp/config.yaml`；仅默认文件缺失可继续，选中文件存在但非法/不可读或手动指定缺失均报错，不自动探测 JSON。字段支持部署 env/CLI，详见[运维说明](operations.md#启动配置)。待发布源码接受语法合法的 Host，无默认可信代理；域名和网络访问限制交由反向代理。JSON/YAML 不包含 public_origin，PUBLIC_URL 的已约定来源保持独立。旧数据目录保护由写入前的 Preflight 检查负责，不再依赖强制配置文件。
+v0.6.2 恢复无文件的 `redapp` / `redapp serve` 默认启动。路径只选一个：`--config` > `REDAPP_CONFIG` > `/etc/redapp/config.yaml`；仅默认文件缺失可继续，选中文件存在但非法/不可读或手动指定缺失均报错，不自动探测 JSON。字段支持部署 env/CLI，详见[运维说明](operations.md#启动配置)。v0.6.3 接受语法合法的 Host，无默认可信代理；域名和网络访问限制交由反向代理。JSON/YAML 不包含 public_origin，PUBLIC_URL 的已约定来源保持独立。旧数据目录保护由写入前的 Preflight 检查负责，不再依赖强制配置文件。
 
 ```json
 {
@@ -252,7 +252,7 @@ v0.6.2 恢复无文件的 `redapp` / `redapp serve` 默认启动。路径只选�
 }
 ```
 
-示例只含虚构部署参数，无真实凭据。RedApp 校验入站与有效转发 Host 的语法，域名访问策略由外层代理负责；代理应覆盖转发头，来自非可信直连 peer 的转发头被忽略。修改公共 URL 只影响生成链接。健康检查直接使用配置监听地址，对通配地址选择本地回环，不依赖 PUBLIC_URL。配置与 writer 命名以待发布[运维规范](operations.md#启动配置)为准，不保留旧别名。
+示例只含虚构部署参数，无真实凭据。RedApp 校验入站与有效转发 Host 的语法，域名访问策略由外层代理负责；代理应覆盖转发头，来自非可信直连 peer 的转发头被忽略。修改公共 URL 只影响生成链接。健康检查直接使用配置监听地址，对通配地址选择本地回环，不依赖 PUBLIC_URL。配置与 writer 命名以 v0.6.3 [运维规范](operations.md#启动配置)为准，不保留旧别名。
 
 拒绝未知字段、重复 JSON key、非法范围和错误类型；新配置版本不可降格解释。`redapp config validate --config ...` 只验证并输出去敏结果，不打开/初始化部署数据库。`REDAPP_PUBLIC_URL` 为空视为未提供；非空但非法时启动失败，不能静默降级到请求 Host，即使后台当前有覆盖也须报告部署配置错误。
 

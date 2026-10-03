@@ -14,10 +14,10 @@ v0.6.0 统一使用 `openai/codex`、`anthropic/claude-code` 应用身份，是*
 docker run -d --name redapp --read-only \
   -p 127.0.0.1:8080:8080 \
   -v redapp-v06-data:/var/lib/redapp \
-  ghcr.io/pmextra/redapp:0.6.2
+  ghcr.io/pmextra/redapp:0.6.3
 ```
 
-默认监听 `:8080`、数据目录 `/var/lib/redapp`、不信任任何反向代理。待发布源码接受语法合法的请求 Host，域名和网络访问策略由反向代理控制。首次部署使用新的空目录/卷，已有 v0.6 数据可继续使用；权限失败不会寻找备用目录。
+默认监听 `:8080`、数据目录 `/var/lib/redapp`、不信任任何反向代理。RedApp 接受语法合法的请求 Host，域名和网络访问策略由反向代理控制。首次部署使用新的空目录/卷，已有 v0.6 数据可继续使用；权限失败不会寻找备用目录。
 
 可以只用环境变量启动：
 
@@ -42,9 +42,9 @@ redapp serve --config ./custom.yaml --listen 127.0.0.1:8081
 
 打开 **http://localhost:8080/** 浏览应用；管理员入口为 **http://localhost:8080/admin/overview**。初始管理员密码只写入首次启动日志，登录后请修改密码并保护日志。容器以 UID/GID 65532 运行，宿主 bind mount 的权限须提前设置。
 
-待发布源码支持在环境变量、CLI 和 YAML/JSON 中使用 `REDAPP_MAX_ARTIFACT_BYTES=4GiB` 等容量简写，兼容原有整数字节值。这是**单个制品文件**的上限，不是缓存总体积：`4GB`/`4gb` 表示 4000000000 字节，`4GiB` 表示 4294967296 字节。默认保持 4 GiB，允许范围为 1 字节至 1 TiB。已发布 v0.6.2 仍需使用整数字节值，见[版本说明](docs/releases.md)。
+自 v0.6.3 起支持在环境变量、CLI 和 YAML/JSON 中使用 `REDAPP_MAX_ARTIFACT_BYTES=4GiB` 等容量简写，兼容原有整数字节值。这是**单个制品文件**的上限，不是缓存总体积：`4GB`/`4gb` 表示 4000000000 字节，`4GiB` 表示 4294967296 字节。默认保持 4 GiB，允许范围为 1 字节至 1 TiB。已发布 v0.6.2 仍需使用整数字节值，见[版本说明](docs/releases.md)。
 
-当前源码样例和配置表描述待发布规范：writer 使用 `REDAPP_MAX_WRITERS`、`download_limits.max_writers`、`--max-writers`，reader 名称不变；删除的 Host 与 writer 选项没有兼容别名。已发布 v0.6.2 请使用其[对应版本样例](https://github.com/PMExtra/RedApp/tree/v0.6.2/config)。
+当前源码样例和配置表描述 v0.6.3 规范：writer 使用 `REDAPP_MAX_WRITERS`、`download_limits.max_writers`、`--max-writers`，reader 名称不变；删除的 Host 与 writer 选项没有兼容别名。已发布 v0.6.2 请使用其[对应版本样例](https://github.com/PMExtra/RedApp/tree/v0.6.2/config)。
 
 ## 公共地址与代理
 

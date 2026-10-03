@@ -1,6 +1,6 @@
 # Optional /etc/redapp/config.yaml. Every field below has a built-in default.
 # CLI > environment > this selected file > defaults. Lists replace, not merge.
-# Matches the unreleased source; published v0.6.2 uses its tagged example.
+# Matches v0.6.3; older versions use their tagged examples.
 schema_version: 1
 listen: ':8080'
 data_dir: /var/lib/redapp
