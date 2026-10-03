@@ -43,6 +43,8 @@ For an optional container YAML file, add `--mount type=bind,src=/absolute/config
 
 Open **http://localhost:8080/** for the catalog or **http://localhost:8080/admin/overview** for administration. The first-start logs contain the initial admin password; protect those logs and change the password after signing in. Containers run as UID/GID 65532; ensure bind-mounted data directories are writable by that identity.
 
+Unreleased source builds accept capacity strings such as `REDAPP_MAX_ARTIFACT_BYTES=4GiB` through environment, CLI and YAML/JSON configuration, alongside integer byte counts. This is a **per-file** limit, not total cache capacity: `4GB`/`4gb` means 4,000,000,000 bytes, while `4GiB` means 4,294,967,296 bytes. The default remains 4 GiB; the accepted range is 1 byte to 1 TiB. Published v0.6.2 requires integer bytes; see [release notes](docs/releases.md).
+
 ## Public address and proxy trust
 
 The global public address determines generated download links and installers. Its priority is:

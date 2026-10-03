@@ -10,4 +10,6 @@ trusted_proxies: []
 download_limits:
   max_active_writers: 16
   max_readers: 512
-  max_artifact_bytes: 4294967296
+  # Per artifact, not total cache usage. GB = 10^9 bytes; GiB = 2^30 bytes.
+  # Size strings require the unreleased source; use 4294967296 with v0.6.2.
+  max_artifact_bytes: '4GiB'

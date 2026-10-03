@@ -43,6 +43,8 @@ redapp serve --config ./custom.yaml --listen 127.0.0.1:8081
 
 打开 **http://localhost:8080/** 浏览应用；管理员入口为 **http://localhost:8080/admin/overview**。初始管理员密码只写入首次启动日志，登录后请修改密码并保护日志。容器以 UID/GID 65532 运行，宿主 bind mount 的权限须提前设置。
 
+待发布源码支持在环境变量、CLI 和 YAML/JSON 中使用 `REDAPP_MAX_ARTIFACT_BYTES=4GiB` 等容量简写，兼容原有整数字节值。这是**单个制品文件**的上限，不是缓存总体积：`4GB`/`4gb` 表示 4000000000 字节，`4GiB` 表示 4294967296 字节。默认保持 4 GiB，允许范围为 1 字节至 1 TiB。已发布 v0.6.2 仍需使用整数字节值，见[版本说明](docs/releases.md)。
+
 ## 公共地址与代理
 
 安装链接使用全局公共地址，优先级为：**后台持久化覆盖 > `REDAPP_PUBLIC_URL` 环境默认 > 经验证的请求 origin**。后台清空覆盖会恢复环境默认（若有）；界面显示有效值和来源。只接受无凭据、子路径、查询或 fragment 的 HTTP(S) origin。非空但非法的环境值会阻止启动。

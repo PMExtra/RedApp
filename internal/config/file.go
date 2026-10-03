@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/PMExtra/RedApp/internal/jsoncheck"
@@ -57,6 +58,27 @@ func readDeployment(path string, optional bool, c *Deployment) error {
 		for key, value := range limits {
 			if key != "max_active_writers" && key != "max_readers" && key != "max_artifact_bytes" || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 				return fmt.Errorf("unknown or null download limit %q", key)
+			}
+		}
+		// Only the artifact limit accepts a size string. Keep numeric values and
+		// every other field under the existing strict JSON type validation.
+		if value := bytes.TrimSpace(limits["max_artifact_bytes"]); len(value) > 0 && value[0] == '"' {
+			var size string
+			if err := json.Unmarshal(value, &size); err != nil {
+				return err
+			}
+			n, err := artifactBytes(size)
+			if err != nil {
+				return err
+			}
+			limits["max_artifact_bytes"] = json.RawMessage(strconv.FormatInt(n, 10))
+			fields["download_limits"], err = json.Marshal(limits)
+			if err != nil {
+				return err
+			}
+			raw, err = json.Marshal(fields)
+			if err != nil {
+				return err
 			}
 		}
 	}

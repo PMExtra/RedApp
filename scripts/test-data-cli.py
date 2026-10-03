@@ -35,6 +35,17 @@ with tempfile.TemporaryDirectory(prefix="redapp-data-cli-") as temp:
     assert result.returncode == 0 and not data.exists(), result.stderr
     result = invoke(["config", "validate"], directory, {"REDAPP_DATA": str(data)})
     assert result.returncode == 0 and not data.exists(), result.stderr
+    # Exercise actual CLI/env size parsing before any data initialization.
+    for args, overrides, expected in [
+        (["--max-artifact-bytes", "4GiB"], {}, 0),
+        ([], {"REDAPP_MAX_ARTIFACT_BYTES": "4gb"}, 0),
+        (["--max-artifact-bytes", "2TiB"], {}, 1),
+        (["--max-artifact-bytes", "4GiB"], {"REDAPP_MAX_ARTIFACT_BYTES": "2TiB"}, 1),
+    ]:
+        result = invoke(["config", "validate", "--config", str(config_path), *args], directory, overrides)
+        assert result.returncode == expected and not data.exists(), result.stderr
+        if expected:
+            assert "max_artifact_bytes" in result.stderr
     # Explicit CLI path wins over a missing environment-selected path.
     result = invoke(["config", "validate", "--config", str(config_path)], directory,
                     {"REDAPP_CONFIG": str(directory / "missing.yaml")})

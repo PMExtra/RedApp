@@ -71,10 +71,10 @@ func TestOneSelectedFileAndFieldPrecedence(t *testing.T) {
 	}
 	// Neither an invalid default file nor an invalid env path is read when CLI selects a file.
 	writeConfig(t, defaultPath, "invalid: [")
-	writeConfig(t, cliPath, "data_dir: /cli-file-data\nallowed_hosts: [cli-file.example]\ndownload_limits: {max_readers: 800}\n")
+	writeConfig(t, cliPath, "data_dir: /cli-file-data\nallowed_hosts: [cli-file.example]\ndownload_limits: {max_readers: 800, max_artifact_bytes: '4GiB'}\n")
 	t.Setenv("REDAPP_CONFIG", filepath.Join(dir, "missing.json"))
 	c, err = load(cliPath, defaultPath, nil)
-	if err != nil || c.DataDir != "/cli-file-data" || c.DownloadLimits.MaxReaders != 800 {
+	if err != nil || c.DataDir != "/cli-file-data" || c.DownloadLimits.MaxReaders != 800 || c.DownloadLimits.MaxArtifactBytes != 4<<30 {
 		t.Fatal(c, err)
 	}
 	t.Setenv("REDAPP_DATA", "/environment-data")
@@ -83,13 +83,13 @@ func TestOneSelectedFileAndFieldPrecedence(t *testing.T) {
 	t.Setenv("REDAPP_TRUSTED_PROXIES", "192.0.2.0/24")
 	t.Setenv("REDAPP_MAX_ACTIVE_WRITERS", "20")
 	t.Setenv("REDAPP_MAX_READERS", "900")
-	t.Setenv("REDAPP_MAX_ARTIFACT_BYTES", "1073741824")
+	t.Setenv("REDAPP_MAX_ARTIFACT_BYTES", "1GiB")
 	c, err = load(cliPath, defaultPath, nil)
 	if err != nil || c.DataDir != "/environment-data" || c.Listen != "127.0.0.1:9191" || c.DownloadLimits != (DownloadLimits{20, 900, 1073741824}) || !reflect.DeepEqual(c.AllowedHosts, []string{"env.example", "second.example"}) || !reflect.DeepEqual(c.TrustedProxies, []string{"192.0.2.0/24"}) {
 		t.Fatal(c, err)
 	}
-	c, err = load(cliPath, defaultPath, map[string]string{"data": "/flag-data", "listen": ":9292", "allowed-hosts": "flag.example", "trusted-proxies": "", "max-active-writers": "21", "max-readers": "901", "max-artifact-bytes": "1073741825"})
-	if err != nil || c.DataDir != "/flag-data" || c.Listen != ":9292" || c.DownloadLimits != (DownloadLimits{21, 901, 1073741825}) || !reflect.DeepEqual(c.AllowedHosts, []string{"flag.example"}) || len(c.TrustedProxies) != 0 {
+	c, err = load(cliPath, defaultPath, map[string]string{"data": "/flag-data", "listen": ":9292", "allowed-hosts": "flag.example", "trusted-proxies": "", "max-active-writers": "21", "max-readers": "901", "max-artifact-bytes": "1.5GiB"})
+	if err != nil || c.DataDir != "/flag-data" || c.Listen != ":9292" || c.DownloadLimits != (DownloadLimits{21, 901, 3 << 29}) || !reflect.DeepEqual(c.AllowedHosts, []string{"flag.example"}) || len(c.TrustedProxies) != 0 {
 		t.Fatal(c, err)
 	}
 }

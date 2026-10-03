@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/dustin/go-humanize"
 )
 
 type DownloadLimits struct {
@@ -106,7 +108,13 @@ func apply(c *Deployment, name, value string) error {
 		} else {
 			c.TrustedProxies = list
 		}
-	case "max-active-writers", "max-readers", "max-artifact-bytes":
+	case "max-artifact-bytes":
+		n, err := artifactBytes(value)
+		if err != nil {
+			return err
+		}
+		c.DownloadLimits.MaxArtifactBytes = n
+	case "max-active-writers", "max-readers":
 		n, err := strconv.ParseInt(value, 10, 64)
 		if err != nil || n < 1 || n > 1<<40 {
 			return errors.New("expected a positive decimal integer within the documented limit")
@@ -122,13 +130,24 @@ func apply(c *Deployment, name, value string) error {
 				return errors.New("max_readers must be at most 65536")
 			}
 			c.DownloadLimits.MaxReaders = int(n)
-		default:
-			c.DownloadLimits.MaxArtifactBytes = n
 		}
 	default:
 		return errors.New("unknown deployment option")
 	}
 	return validate(c)
+}
+
+// Delegate unit syntax to go-humanize; check the deployment bound before the
+// uint64 result is converted to the download manager's int64 byte count.
+func artifactBytes(value string) (int64, error) {
+	n, err := humanize.ParseBytes(strings.TrimSpace(value))
+	if err != nil {
+		return 0, fmt.Errorf("invalid max_artifact_bytes: %w", err)
+	}
+	if n < 1 || n > 1<<40 {
+		return 0, errors.New("max_artifact_bytes must be between 1 byte and 1 TiB")
+	}
+	return int64(n), nil
 }
 
 func validate(c *Deployment) error {

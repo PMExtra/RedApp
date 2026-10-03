@@ -28,6 +28,7 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
     env["REDAPP_PUBLIC_URL"] = "https://environment.example.test"
     env["REDAPP_DATA"] = str(directory / "data")
     env["REDAPP_LISTEN"] = f"127.0.0.1:{port}"
+    env["REDAPP_MAX_ARTIFACT_BYTES"] = "4gb"
     args = [binary]  # No arguments and no configuration file.
     log = (directory / "server.log").open("w+")
     process = subprocess.Popen(args, env=env, stdout=log, stderr=log)
@@ -168,9 +169,9 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         log = (directory / "restart.log").open("w+")
         env["REDAPP_PUBLIC_URL"] = ""
         config_path = directory / "restart.yaml"
-        config_path.write_text(f"# YAML-selected restart of the same data\nlisten: '127.0.0.1:{port}'\ndata_dir: {json.dumps(str(directory / 'data'))}\nallowed_hosts: ['127.0.0.1:{port}']\n")
+        config_path.write_text(f"# YAML-selected restart of the same data\nlisten: '127.0.0.1:{port}'\ndata_dir: {json.dumps(str(directory / 'data'))}\nallowed_hosts: ['127.0.0.1:{port}']\ndownload_limits: {{max_artifact_bytes: '4GiB'}}\n")
         env["REDAPP_CONFIG"] = str(config_path)
-        del env["REDAPP_DATA"], env["REDAPP_LISTEN"]
+        del env["REDAPP_DATA"], env["REDAPP_LISTEN"], env["REDAPP_MAX_ARTIFACT_BYTES"]
         process = subprocess.Popen(args, env=env, stdout=log, stderr=log)
         ready()
         bootstrap = read("/api/bootstrap")

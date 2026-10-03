@@ -8,7 +8,7 @@
 
 文件路径按 **`--config FILE` > `REDAPP_CONFIG` > `/etc/redapp/config.yaml`** 选择，只读取一个文件。空配置路径环境变量视为未指定。默认文件不存在允许继续；默认文件存在但非法/不可读，或手动指定文件缺失/非法，都失败退出。不读取默认 `config.json`，不搜索工作目录，不叠加默认文件。`.json` 按 JSON 解析，其他路径按 YAML 解析（也可承载 JSON 子集）。推荐 [config/example.yaml](../config/example.yaml)，旧 [JSON 示例](../config/example.json) 仍可显式选择。
 
-部署字段逐层覆盖：**CLI > env > 所选文件 > 默认值**。未提供字段保留低层值；列表整体替换。每个来源都必须合法，低层错误不能由高层值掩盖。`schema_version` 可省略，提供时只能为 1。配置最大 64 KiB，必须是一个对象/映射；拒绝未知字段、重复键、null、类型/范围错误、多 YAML 文档、锚点/别名/合并键及自定义标签。整数不接受字符串或浮点形式。
+部署字段逐层覆盖：**CLI > env > 所选文件 > 默认值**。未提供字段保留低层值；列表整体替换。每个来源都必须合法，低层错误不能由高层值掩盖。`schema_version` 可省略，提供时只能为 1。配置最大 64 KiB，必须是一个对象/映射；拒绝未知字段、重复键、null、类型/范围错误、多 YAML 文档、锚点/别名/合并键及自定义标签。除下述制品容量字符串外，文件中的整数不接受字符串或浮点形式。
 
 | 字段 | 环境变量 | CLI | 默认 |
 | --- | --- | --- | --- |
@@ -19,9 +19,13 @@
 | `trusted_proxies` | `REDAPP_TRUSTED_PROXIES` | `--trusted-proxies` | 空列表 |
 | `download_limits.max_active_writers` | `REDAPP_MAX_ACTIVE_WRITERS` | `--max-active-writers` | 16，范围 1–1024 |
 | `download_limits.max_readers` | `REDAPP_MAX_READERS` | `--max-readers` | 512，范围 1–65536 |
-| `download_limits.max_artifact_bytes` | `REDAPP_MAX_ARTIFACT_BYTES` | `--max-artifact-bytes` | 4294967296，范围 1–1099511627776 |
+| `download_limits.max_artifact_bytes` | `REDAPP_MAX_ARTIFACT_BYTES` | `--max-artifact-bytes` | 4 GiB（4294967296 字节），范围 1 字节–1 TiB |
 
-Host/代理的环境变量与 CLI 使用逗号分隔列表，去除项两侧空白。显式 Host 列表需要 1–128 个精确 authority，不含 wildcard；不会再加入默认 localhost。监听 80 端口时默认 Host 同时接受带 `:80` 和省略端口的本地 authority。默认信任不来自任意请求 Host、绑定的网卡地址或 PUBLIC_URL。若镜像映射到不同宿主端口，应把实际访问 authority 写入 `REDAPP_ALLOWED_HOSTS`。`trusted_proxies` 最多 128 个有效 CIDR；空环境值/CLI 可清空列表。数值使用十进制整数。
+`max_artifact_bytes` 限制每个下载制品文件的大小，不是应用总体积或缓存总配额；压缩包按下载文件大小计算。默认保持 4 GiB。待发布源码支持环境变量、CLI、YAML 和显式 JSON 使用相同容量字符串，例如 `REDAPP_MAX_ARTIFACT_BYTES=4GiB`、`--max-artifact-bytes 1.5GiB`、YAML `max_artifact_bytes: '4GiB'` 或 JSON `"max_artifact_bytes": "4GiB"`。现有整数字节值仍有效，已发布 v0.6.2 应继续使用整数。
+
+容量字符串去除首尾空白后，按 [go-humanize ParseBytes](https://pkg.go.dev/github.com/dustin/go-humanize@v1.1.0#ParseBytes) 解析，支持小数及大小写不敏感的单位。**GB = 10^9 字节，GiB = 2^30 字节**，所以 `4gb` 是 4000000000 字节，`4GiB` 是 4294967296 字节。推荐使用 `4GiB` 等明确单位，不使用逗号；纯数字表示字节。转换结果必须在 1–1099511627776 字节之间，非法或超范围值阻止启动。reader/writer 数量仍使用整数，不接受容量单位。
+
+Host/代理的环境变量与 CLI 使用逗号分隔列表，去除项两侧空白。显式 Host 列表需要 1–128 个精确 authority，不含 wildcard；不会再加入默认 localhost。监听 80 端口时默认 Host 同时接受带 `:80` 和省略端口的本地 authority。默认信任不来自任意请求 Host、绑定的网卡地址或 PUBLIC_URL。若镜像映射到不同宿主端口，应把实际访问 authority 写入 `REDAPP_ALLOWED_HOSTS`。`trusted_proxies` 最多 128 个有效 CIDR；空环境值/CLI 可清空列表。
 
 ```sh
 # 无文件验证和启动；数据目录须可写
