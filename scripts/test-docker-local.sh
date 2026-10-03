@@ -17,7 +17,8 @@ docker_run() {
   fi
 }
 cleanup() {
-  docker rm -f "$task_name" "$task_name-second" >/dev/null 2>&1 || true
+  # Also remove image-declared anonymous volumes when REDAPP_DATA changes mounts.
+  docker rm -fv "$task_name" "$task_name-second" >/dev/null 2>&1 || true
   docker volume rm "$task_volume" >/dev/null 2>&1 || true
   if [ -z "${REDAPP_TEST_IMAGE:-}" ]; then docker image rm "$task_image" >/dev/null 2>&1 || true; fi
   rm -rf "$task_temp"
