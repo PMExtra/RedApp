@@ -4,26 +4,37 @@
 
 ## 启动配置
 
+自 v0.6.2 起默认无需文件：`redapp` 和 `redapp serve` 等价；`redapp healthcheck` 使用相同解析规则。镜像 CMD 为 `serve`，HEALTHCHECK 为 `healthcheck`，都不硬编码 `--config`。
+
+文件路径按 **`--config FILE` > `REDAPP_CONFIG` > `/etc/redapp/config.yaml`** 选择，只读取一个文件。空配置路径环境变量视为未指定。默认文件不存在允许继续；默认文件存在但非法/不可读，或手动指定文件缺失/非法，都失败退出。不读取默认 `config.json`，不搜索工作目录，不叠加默认文件。`.json` 按 JSON 解析，其他路径按 YAML 解析（也可承载 JSON 子集）。推荐 [config/example.yaml](../config/example.yaml)，旧 [JSON 示例](../config/example.json) 仍可显式选择。
+
+部署字段逐层覆盖：**CLI > env > 所选文件 > 默认值**。未提供字段保留低层值；列表整体替换。每个来源都必须合法，低层错误不能由高层值掩盖。`schema_version` 可省略，提供时只能为 1。配置最大 64 KiB，必须是一个对象/映射；拒绝未知字段、重复键、null、类型/范围错误、多 YAML 文档、锚点/别名/合并键及自定义标签。整数不接受字符串或浮点形式。
+
+| 字段 | 环境变量 | CLI | 默认 |
+| --- | --- | --- | --- |
+| `schema_version` | — | — | 1（部署格式，与 SQLite schema 分开） |
+| `data_dir` | `REDAPP_DATA` | `--data` | `/var/lib/redapp`，必须为绝对路径 |
+| `listen` | `REDAPP_LISTEN` | `--listen` | `:8080` |
+| `allowed_hosts` | `REDAPP_ALLOWED_HOSTS` | `--allowed-hosts` | 监听端口上的 localhost、127.0.0.1、[::1] |
+| `trusted_proxies` | `REDAPP_TRUSTED_PROXIES` | `--trusted-proxies` | 空列表 |
+| `download_limits.max_active_writers` | `REDAPP_MAX_ACTIVE_WRITERS` | `--max-active-writers` | 16，范围 1–1024 |
+| `download_limits.max_readers` | `REDAPP_MAX_READERS` | `--max-readers` | 512，范围 1–65536 |
+| `download_limits.max_artifact_bytes` | `REDAPP_MAX_ARTIFACT_BYTES` | `--max-artifact-bytes` | 4294967296，范围 1–1099511627776 |
+
+Host/代理的环境变量与 CLI 使用逗号分隔列表，去除项两侧空白。显式 Host 列表需要 1–128 个精确 authority，不含 wildcard；不会再加入默认 localhost。监听 80 端口时默认 Host 同时接受带 `:80` 和省略端口的本地 authority。默认信任不来自任意请求 Host、绑定的网卡地址或 PUBLIC_URL。若镜像映射到不同宿主端口，应把实际访问 authority 写入 `REDAPP_ALLOWED_HOSTS`。`trusted_proxies` 最多 128 个有效 CIDR；空环境值/CLI 可清空列表。数值使用十进制整数。
+
 ```sh
-redapp config validate --config /etc/redapp/config.json
-redapp serve --config /etc/redapp/config.json
-redapp healthcheck --config /etc/redapp/config.json
+# 无文件验证和启动；数据目录须可写
+REDAPP_DATA=/absolute/writable/redapp-data redapp config validate
+REDAPP_DATA=/absolute/writable/redapp-data redapp
+# 可选文件，以及命令行覆盖环境变量路径
+REDAPP_CONFIG=/etc/redapp/custom.yaml redapp serve
+REDAPP_CONFIG=/ignored.yaml redapp config validate --config ./config.json
 ```
 
-三个命令都要求显式配置文件；validate 只验证配置，不打开或初始化部署数据库。配置示例为 [config/example.json](../config/example.json)。拒绝未知字段、重复 JSON key、null、错误类型和越界值，不猜测旧配置版本。
+`validate` 不打开或初始化数据目录。容器默认无需挂配置；可选挂载 `/etc/redapp/config.yaml`，或挂载自定义文件后设置 `REDAPP_CONFIG`，使服务及健康检查使用一致来源。单独修改容器 CMD 的 CLI 参数时也须调整 HEALTHCHECK；推荐环境变量方式。v0.6.0/0.6.1 自定义 JSON 部署升级后应继续显式选择其 JSON，不能依赖自动发现。旧数据目录仍在初始化写入之前被拒绝，权限失败直接退出，不寻找备用目录。
 
-| JSON 字段 | 必填/默认 | 含义 |
-| --- | --- | --- |
-| `schema_version` | 必填，1 | 部署文件格式版本，与 SQLite schema 分开 |
-| `data_dir` | 必填，绝对路径 | 新架构 SQLite 和制品目录 |
-| `allowed_hosts` | 必填，1–128 项 | 认可的有效入站 authority 精确集合，含非默认端口，不允许 wildcard |
-| `listen` | `:8080` | IP 或 localhost 加 1–65535 端口 |
-| `trusted_proxies` | 空列表，最多 128 项 | 可提供转发信息的直接/链式代理 CIDR |
-| `download_limits.max_active_writers` | 16，范围 1–1024 | 所有应用共享的活动写入上限 |
-| `download_limits.max_readers` | 512，范围 1–65536 | 所有应用共享的制品读者上限 |
-| `download_limits.max_artifact_bytes` | 4294967296，范围 1–1099511627776 | 单个制品的最大字节数 |
-
-不再读取旧的逐字段启动参数、数据目录/监听/上游覆盖环境变量。上游地址、应用协议和信任根来自经过审查的编译期定义，不能在后台改成任意 URL。唯一保留的应用部署环境变量是新需求明确提供的 `REDAPP_PUBLIC_URL`。目录权限失败直接退出，不寻找备用目录。
+上游地址、应用协议和信任根仍来自受审查的编译期定义，不恢复任意上游 URL 覆盖。`REDAPP_PUBLIC_URL` 不属于上述字段覆盖链，只给后台公共 URL 设置提供环境默认值；文件/CLI 不增加新的 public_origin 来源。
 
 站点文案、回源代理和公共地址覆盖保存在全局 settings；渠道 TTL 以规范 app_id 独立保存。TTL 默认 60 秒，范围 1–86400。GET 返回默认设置时 revision=0，不自动创建记录；PUT 要求 `If-Match: "<revision>"`，冲突返回 409，成功保存递增 revision。
 
@@ -92,9 +103,9 @@ location / {
 
 status 仅返回摘要和指标，列表从 versions、resources、events 单独读取。列表响应为 `{"items":[],"next_cursor":null}`；`limit` 默认 50、最大 100，下一页提交返回的非空 `cursor`。resources 可用 `version` 精确筛选。游标绑定应用、端点和筛选条件，不能在切换应用或版本后复用；版本按文本升序、资源按 generation ID 升序、事件按 ID 降序。分页是实时视图，不承诺跨请求冻结快照。
 
-`/health/live` 不依赖上游；`/health/ready` 检查 SQLite 和目录可写，不要求外网在线。CLI healthcheck 读取部署文件，连接实际监听地址并使用允许的 Host，不受公共发布地址改变影响。健康请求不计入业务访问。
+`/health/live` 不依赖上游；`/health/ready` 检查 SQLite 和目录可写，不要求外网在线。CLI healthcheck 按相同的路径/字段优先级解析配置，连接实际监听地址并使用允许的 Host，不受公共发布地址改变影响。健康请求不计入业务访问。
 
-当前 active 采集目录为 41 项。已确认的 16 个常用/25 个诊断前端分组及图表 tooltip 由独立补丁交付，本分支尚待取得可校验补丁后整合。`reuse_requests` 不再独立写入/采样/展示；`events.recent_total` 不再采样/展示，事件详情保留。全局 versions.total 计算全部规范应用的版本记录。旧样本（若新格式库已有）自然过期，不通过未知 ID 删除历史；本次架构切换本身不导入旧库历史。
+当前 active 采集目录为 41 项。16 个常用/25 个诊断前端分组及图表 tooltip 已整合。`reuse_requests` 不再独立写入/采样/展示；`events.recent_total` 不再采样/展示，事件详情保留。全局 versions.total 计算全部规范应用的版本记录。旧样本（若新格式库已有）自然过期，不通过未知 ID 删除历史；本次架构切换本身不导入旧库历史。
 
 默认每分钟采样，每小时聚合；24h 使用分钟点，7d/30d 使用小时汇总，保留期分别 24h/30d。缺失点留空、当前未完整小时标记 partial；计数器不平均累计量，也不把重启或断档视为零增量。磁盘 used 为已分配块，free 为文件系统可用空间，清理释放累计为逻辑字节。计数和磁盘状态不是每字节原子事务，完整性校验与发布不依赖统计。单个版本/资源不扩展成无限历史标签。
 

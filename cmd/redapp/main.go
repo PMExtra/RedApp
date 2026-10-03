@@ -42,16 +42,19 @@ func command(args []string) error {
 		return nil
 	}
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "help") {
-		fmt.Println("Usage: redapp serve --config FILE | config validate --config FILE | healthcheck --config FILE | version")
+		fmt.Println("Usage: redapp [serve] [options] | config validate [options] | healthcheck [options] | version")
+		fmt.Println("Config path: --config FILE > REDAPP_CONFIG > optional /etc/redapp/config.yaml (YAML; explicit JSON supported)")
+		fmt.Println("Deployment fields: CLI > environment > selected file > defaults")
+		fmt.Println("Options: --data, --listen, --allowed-hosts, --trusted-proxies, --max-active-writers, --max-readers, --max-artifact-bytes")
 		return nil
 	}
-	if len(args) == 0 {
-		return errors.New("command required: redapp serve --config FILE; use a fresh data directory for this architecture")
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		args = append([]string{"serve"}, args...)
 	}
 	mode, rest := args[0], args[1:]
 	if mode == "config" {
 		if len(rest) == 0 || rest[0] != "validate" {
-			return errors.New("usage: redapp config validate --config FILE")
+			return errors.New("usage: redapp config validate [--config FILE] [options]")
 		}
 		mode, rest = "validate", rest[1:]
 	}
@@ -60,14 +63,29 @@ func command(args []string) error {
 	}
 	flags := flag.NewFlagSet(mode, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	path := flags.String("config", "", "deployment JSON configuration file")
+	path := flags.String("config", "", "deployment YAML or JSON configuration file")
+	for _, name := range []string{"data", "listen", "allowed-hosts", "trusted-proxies", "max-active-writers", "max-readers", "max-artifact-bytes"} {
+		flags.String(name, "", "override deployment setting")
+	}
 	if err := flags.Parse(rest); err != nil {
 		return fmt.Errorf("invalid arguments for %s: %w", mode, err)
 	}
 	if flags.NArg() != 0 {
 		return errors.New("unexpected positional arguments")
 	}
-	c, err := config.Load(*path)
+	overrides := map[string]string{}
+	configSet := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "config" {
+			configSet = true
+		} else {
+			overrides[f.Name] = f.Value.String()
+		}
+	})
+	if configSet && *path == "" {
+		return errors.New("--config requires a nonempty file path")
+	}
+	c, err := config.Load(*path, overrides)
 	if err != nil {
 		return err
 	}

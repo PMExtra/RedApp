@@ -1,0 +1,13 @@
+# Optional /etc/redapp/config.yaml. Every field below has a built-in default.
+# CLI > environment > this selected file > defaults. Lists replace, not merge.
+schema_version: 1
+listen: ':8080'
+data_dir: /var/lib/redapp
+# Omit allowed_hosts to use localhost/loopback at the final listening port.
+# Set the exact public authorities for remote domains/IPs or mapped ports.
+# allowed_hosts: [downloads.example.internal]
+trusted_proxies: []
+download_limits:
+  max_active_writers: 16
+  max_readers: 512
+  max_artifact_bytes: 4294967296

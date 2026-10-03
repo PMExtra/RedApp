@@ -24,12 +24,11 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     base = f"http://127.0.0.1:{port}"
-    env = os.environ.copy()
+    env = {key: value for key, value in os.environ.items() if not key.startswith("REDAPP_")}
     env["REDAPP_PUBLIC_URL"] = "https://environment.example.test"
-    config_path = directory / "config.json"
-    config_path.write_text(json.dumps({"schema_version": 1, "listen": f"127.0.0.1:{port}",
-                                      "data_dir": str(directory / "data"), "allowed_hosts": [f"127.0.0.1:{port}"]}))
-    args = [binary, "serve", "--config", str(config_path)]
+    env["REDAPP_DATA"] = str(directory / "data")
+    env["REDAPP_LISTEN"] = f"127.0.0.1:{port}"
+    args = [binary]  # No arguments and no configuration file.
     log = (directory / "server.log").open("w+")
     process = subprocess.Popen(args, env=env, stdout=log, stderr=log)
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
@@ -77,7 +76,14 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
     try:
         ready()
         # Healthcheck must work even though publication origin differs from listener.
-        subprocess.run([binary, "healthcheck", "--config", str(config_path)], env=env, check=True)
+        subprocess.run([binary, "healthcheck"], env=env, check=True)
+        # Public URL is a link setting, not permission to accept that incoming Host.
+        for host in ["untrusted.example", "environment.example.test"]:
+            try:
+                opener.open(urllib.request.Request(base + "/api/bootstrap", headers={"Host": host}), timeout=5)
+                raise AssertionError("default Host trust expanded")
+            except urllib.error.HTTPError as error:
+                assert error.code == 400, error.code
         log.flush()
         log.seek(0)
         match = re.search(r"Initial admin password: ([0-9a-f]+)", log.read())
@@ -161,11 +167,17 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         log.close()
         log = (directory / "restart.log").open("w+")
         env["REDAPP_PUBLIC_URL"] = ""
+        config_path = directory / "restart.yaml"
+        config_path.write_text(f"# YAML-selected restart of the same data\nlisten: '127.0.0.1:{port}'\ndata_dir: {json.dumps(str(directory / 'data'))}\nallowed_hosts: ['127.0.0.1:{port}']\n")
+        env["REDAPP_CONFIG"] = str(config_path)
+        del env["REDAPP_DATA"], env["REDAPP_LISTEN"]
         process = subprocess.Popen(args, env=env, stdout=log, stderr=log)
         ready()
         bootstrap = read("/api/bootstrap")
         assert bootstrap["site"] == site and bootstrap["public_origin"] == base
-        subprocess.run([binary, "healthcheck", "--config", str(config_path)], env=env, check=True)
+        subprocess.run([binary, "healthcheck"], env=env, check=True)
+        with opener.open(urllib.request.Request(base + "/api/bootstrap", headers={"Forwarded": "proto=https;host=untrusted.example"}), timeout=5) as response:
+            assert json.load(response)["public_origin"] == base, "untrusted proxy header affected origin"
         process.terminate()
         assert process.wait(timeout=20) == 0
         log.flush()
@@ -176,4 +188,4 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
             process.kill()
             process.wait()
         log.close()
-print("CLI HTTP startup, canonical/deep routes, healthcheck, session, scoped settings/CAS, PUBLIC_URL/installer updates, SIGTERM and persistent restart passed.")
+print("CLI file-free environment startup, Host/proxy boundaries, routes/session/CAS, PUBLIC_URL/installer updates, YAML-selected persistent restart and shared healthcheck configuration passed.")

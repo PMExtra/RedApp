@@ -1,6 +1,6 @@
 # RedApp 文档
 
-当前运行与配置说明见 [English quick start](../README.md)、[中文快速开始](../README.zh-CN.md) 与 [运维说明](operations.md)。新架构要求显式 JSON 配置和全新数据目录；配置、缓存、历史均不从旧版导入，旧目录保留，不自动改删。
+当前运行与配置说明见 [English quick start](../README.md)、[中文快速开始](../README.zh-CN.md) 与 [运维说明](operations.md)。v0.6.2 默认无需配置文件，可选 YAML 或显式 JSON；从旧架构首次升级仍要求全新数据目录；配置、缓存、历史均不从旧版导入，旧目录保留，不自动改删。
 
 - [多应用实施设计](multi-application-architecture-next.md)：规范身份、注册、协议、存储、配置、路由和实施边界。
 - [v0.6.0 发布说明](multi-application-v0.6.0.md)：破坏性升级、部署配置和发布验证边界。

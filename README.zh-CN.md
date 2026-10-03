@@ -8,27 +8,38 @@ v0.6.0 统一使用 `openai/codex`、`anthropic/claude-code` 应用身份，是*
 
 ## 快速上手
 
-复制 [config/example.json](config/example.json) 为部署文件，按实际域名和端口修改 `allowed_hosts`。示例只允许 `localhost:8080`，不支持通配 Host；`data_dir` 必须为绝对路径。
-
-```sh
-redapp config validate --config /etc/redapp/config.json
-redapp serve --config /etc/redapp/config.json
-redapp healthcheck --config /etc/redapp/config.json
-```
-
-验证命令不打开或创建数据目录。必须提供配置文件及 `schema_version`、`data_dir`、非空 `allowed_hosts`；其余字段默认值和合法范围见[运维说明](docs/operations.md)。未知字段、重复 JSON key、null、错误类型及越界值均拒绝。
-
-挂载配置文件并创建新的命名卷：
+默认无需配置文件。原生程序执行 `redapp` 或 `redapp serve` 即可；镜像默认执行 `serve`，健康检查使用相同的配置解析规则。
 
 ```sh
 docker run -d --name redapp --read-only \
   -p 127.0.0.1:8080:8080 \
-  -v redapp-v060-data:/var/lib/redapp \
-  -v /etc/redapp/config.json:/etc/redapp/config.json:ro \
-  ghcr.io/pmextra/redapp:0.6.0
+  -v redapp-v06-data:/var/lib/redapp \
+  ghcr.io/pmextra/redapp:0.6.2
 ```
 
-镜像默认执行 `serve --config /etc/redapp/config.json`，健康检查读取同一配置。每个本地数据目录只运行一个实例，不支持网络共享文件系统或 URL 子路径。旧逐字段 CLI 和 `REDAPP_DATA`、`REDAPP_LISTEN`、上游覆盖环境变量不再使用；上游地址和信任根来自编译期应用定义。
+默认监听 `:8080`、数据目录 `/var/lib/redapp`、不信任任何反向代理，Host 仅允许监听端口上的 `localhost`、`127.0.0.1`、`[::1]`。使用远程域名/IP 或不同映射端口时，明确设置 `REDAPP_ALLOWED_HOSTS`；PUBLIC_URL 不自动扩大 Host 列表。首次部署使用新的空目录/卷，已有 v0.6 数据可继续使用；权限失败不会寻找备用目录。
+
+可以只用环境变量启动：
+
+```sh
+REDAPP_DATA=/absolute/writable/redapp-data \
+REDAPP_LISTEN=127.0.0.1:8080 \
+REDAPP_ALLOWED_HOSTS=localhost:8080,127.0.0.1:8080 \
+  redapp
+```
+
+配置路径选择为 **`--config FILE` > `REDAPP_CONFIG` > `/etc/redapp/config.yaml`**，只读取选中的一个文件。默认 YAML 存在则读取，不存在也可启动；手动指定的文件缺失、选中文件非法/不可读都会报错。空 `REDAPP_CONFIG` 视为未指定。不自动探测 `config.json` 或工作目录文件。已有 JSON 部署可以设置 `REDAPP_CONFIG=/etc/redapp/config.json`，让服务和健康检查继续读取同一文件。
+
+可选的 [YAML 示例](config/example.yaml) 展示默认值；不需要的字段可以省略。手动选择 `.json` 文件仍兼容 [JSON 示例](config/example.json)。部署字段优先级是 **命令行参数 > 环境变量 > 所选文件 > 内建默认值**；列表整体替换，不合并。各来源单独校验，覆盖值不会掩盖已选文件的错误。配置必须是单个映射，拒绝未知字段、重复键、null、类型/范围错误及 YAML 锚点、别名、合并键。验证命令不打开或创建数据目录。
+
+```sh
+redapp config validate
+redapp config validate --config ./config.yaml
+REDAPP_CONFIG=/etc/redapp/config.json redapp serve
+redapp serve --config ./custom.yaml --listen 127.0.0.1:8081
+```
+
+容器可选挂载 YAML：在上述命令中增加 `--mount type=bind,src=/absolute/config.yaml,dst=/etc/redapp/config.yaml,readonly`。自定义 YAML/JSON 路径使用挂载加 `REDAPP_CONFIG`。若通过覆盖容器命令传入 `--config` 或其他部署参数，应在 `--health-cmd` 中传入等价参数；Docker 不会将 CMD 参数传给 HEALTHCHECK。全部字段、环境变量、CLI 和限额见[运维说明](docs/operations.md#启动配置)。上游地址和信任根继续来自编译期定义。
 
 打开 **http://localhost:8080/** 浏览应用；管理员入口为 **http://localhost:8080/admin/overview**。初始管理员密码只写入首次启动日志，登录后请修改密码并保护日志。容器以 UID/GID 65532 运行，宿主 bind mount 的权限须提前设置。
 

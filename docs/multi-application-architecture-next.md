@@ -229,14 +229,14 @@ UI fallback 只覆盖表内 UI 路由。未知 app、未知 file、API、签名/
 
 | 类别 | 内容 | 唯一可编辑来源 | 解析顺序 |
 | --- | --- | --- | --- |
-| 部署配置 | listen、data_dir、allowed_hosts、trusted_proxies、下载全局限额 | 必须显式提供的 JSON 启动文件；修改后重启 | 有文档的编译默认值 → 文件显式字段 |
+| 部署配置 | listen、data_dir、allowed_hosts、trusted_proxies、下载全局限额 | 可选 YAML/JSON、部署环境变量或 CLI；修改后重启 | 编译默认值 → 所选文件 → env → CLI（v0.6.2 修订） |
 | 受信应用定义 | identity、upstream、protocol、trust revision、channels、installer | 编译嵌入 descriptor/adapter | 无运行时覆盖 |
 | 全局业务设置 | 站点双语文案、共享出口 proxy | SQLite，经全局管理 API 修改 | 内建默认值 → 已持久化设置 |
 | 公共 URL | 服务全局的对外链接 origin | 后台覆盖值；部署环境提供下一级默认值 | 后台持久化覆盖 > `REDAPP_PUBLIC_URL` > 每请求安全 RequestOrigin |
 | 应用设置 | channel TTL | SQLite，以规范 app_id 为键 | descriptor 默认值 → 已持久化设置 |
 | 浏览器偏好 | locale、非敏感界面偏好 | 浏览器 localStorage/内存 | 合法保存值 → `navigator.languages` 首个支持项 → 列表不可用时 `navigator.language` → en |
 
-运行命令为 `redapp serve --config /etc/redapp/config.json`。只保留新需求明确要求的 `REDAPP_PUBLIC_URL`；不读取其他旧 `REDAPP_*` 或 `--base-url` 等兼容入口，不增设与 JSON 重复的逐字段 env/CLI 覆盖。启动 JSON 不再包含 public_origin，防止出现第四层来源。缺少必需启动文件时失败退出，避免旧部署误用默认数据目录初始化新实例。
+v0.6.2 恢复无文件的 `redapp` / `redapp serve` 默认启动。路径只选一个：`--config` > `REDAPP_CONFIG` > `/etc/redapp/config.yaml`；仅默认文件缺失可继续，选中文件存在但非法/不可读或手动指定缺失均报错，不自动探测 JSON。字段支持部署 env/CLI，详见[运维说明](operations.md#启动配置)。默认 Host 只允许监听端口上的 localhost/回环 authority，无默认可信代理。JSON/YAML 不包含 public_origin，PUBLIC_URL 的已约定来源保持独立。旧数据目录保护由写入前的 Preflight 检查负责，不再依赖强制配置文件。
 
 ```json
 {

@@ -36,25 +36,45 @@ COPY --chown=65532:65532 data /var/lib/redapp
 USER 65532:65532
 VOLUME ["/var/lib/redapp"]
 EXPOSE 8080
-HEALTHCHECK --interval=2s --timeout=5s --start-period=1s --retries=5 CMD ["/redapp", "healthcheck", "--config", "/etc/redapp/config.json"]
+HEALTHCHECK --interval=2s --timeout=5s --start-period=1s --retries=5 CMD ["/redapp", "healthcheck"]
 ENTRYPOINT ["/redapp"]
-CMD ["serve", "--config", "/etc/redapp/config.json"]
+CMD ["serve"]
 DOCKER
 docker build -t "$task_image" "$task_temp" >/dev/null
 fi
-cat > "$task_temp/config.json" <<'CONFIG'
-{"schema_version":1,"data_dir":"/var/lib/redapp","allowed_hosts":["localhost:8080"]}
+# Verify actual /etc discovery and one-file selection without starting a service.
+cat > "$task_temp/config.yaml" <<'CONFIG'
+# A partial YAML file can override defaults.
+listen: ':8181'
+allowed_hosts: [yaml.example:8181]
 CONFIG
-chmod 0644 "$task_temp/config.json"
+cat > "$task_temp/selected.json" <<'CONFIG'
+{"listen":":8282","allowed_hosts":["json.example:8282"]}
+CONFIG
+printf '%s\n' 'listen: [' > "$task_temp/invalid.yaml"
+chmod 0644 "$task_temp/config.yaml" "$task_temp/selected.json" "$task_temp/invalid.yaml"
+docker_run --rm --network none --read-only -v "$task_temp/config.yaml:/etc/redapp/config.yaml:ro" "$task_image" config validate
+# Invalid default YAML must not be read when an env path selects JSON.
+docker_run --rm --network none --read-only -v "$task_temp/invalid.yaml:/etc/redapp/config.yaml:ro" -v "$task_temp/selected.json:/selected.json:ro" -e REDAPP_CONFIG=/selected.json "$task_image" config validate
+# CLI selection overrides a missing env path as well as the invalid default.
+docker_run --rm --network none --read-only -v "$task_temp/invalid.yaml:/etc/redapp/config.yaml:ro" -v "$task_temp/config.yaml:/selected.yaml:ro" -e REDAPP_CONFIG=/missing.json "$task_image" config validate --config /selected.yaml
+if docker_run --rm --network none --read-only -v "$task_temp/invalid.yaml:/etc/redapp/config.yaml:ro" "$task_image" config validate >"$task_temp/invalid.log" 2>&1; then
+  echo 'Invalid automatic YAML was ignored' >&2; exit 1
+fi
+grep -q 'invalid YAML' "$task_temp/invalid.log"
+if docker_run --rm --network none --read-only -e REDAPP_CONFIG=/missing.yaml "$task_image" config validate >"$task_temp/missing.log" 2>&1; then
+  echo 'Missing explicit configuration was ignored' >&2; exit 1
+fi
+grep -q '/missing.yaml' "$task_temp/missing.log"
 docker volume create "$task_volume" >/dev/null
-docker_run -d --network none --read-only --name "$task_name" -v "$task_volume:/var/lib/redapp" -v "$task_temp/config.json:/etc/redapp/config.json:ro" "$task_image" >/dev/null
+docker_run -d --network none --read-only --name "$task_name" -v "$task_volume:/var/lib/redapp" "$task_image" >/dev/null
 task_try=0
 while [ "$task_try" -lt 20 ]; do
-  if docker exec "$task_name" /redapp healthcheck --config /etc/redapp/config.json; then break; fi
+  if docker exec "$task_name" /redapp healthcheck; then break; fi
   task_try=$((task_try+1))
   sleep 1
 done
-docker exec "$task_name" /redapp healthcheck --config /etc/redapp/config.json
+docker exec "$task_name" /redapp healthcheck
 if [ -n "${REDAPP_TEST_PLATFORM:-}" ]; then
   test "$(docker inspect --format '{{.Os}}/{{.Architecture}}' "$(docker inspect --format '{{.Image}}' "$task_name")")" = "$REDAPP_TEST_PLATFORM"
 fi
@@ -62,12 +82,13 @@ docker_run --rm --network none "$task_image" version
 test "$(docker inspect --format '{{.Config.User}}' "$task_name")" = '65532:65532'
 test "$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$task_name")" = 'none'
 test "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$task_name")" = 'true'
+test "$(docker inspect --format '{{len .Mounts}}' "$task_name")" = 1
 test "$(docker inspect --format '{{range .Mounts}}{{if eq .Type "volume"}}{{.Destination}}{{end}}{{end}}' "$task_name")" = '/var/lib/redapp'
 # Capture bootstrap logs privately; never print credentials to a report.
 docker logs "$task_name" >"$task_temp/first.log" 2>&1
 grep -q 'data directory /var/lib/redapp' "$task_temp/first.log"
 test "$(grep -c 'Initial admin password' "$task_temp/first.log")" = 1
-if docker_run --name "$task_name-second" --network none --read-only -v "$task_volume:/var/lib/redapp" -v "$task_temp/config.json:/etc/redapp/config.json:ro" "$task_image" >"$task_temp/second.log" 2>&1; then
+if docker_run --name "$task_name-second" --network none --read-only -v "$task_volume:/var/lib/redapp" "$task_image" >"$task_temp/second.log" 2>&1; then
   echo '第二实例错误地取得独占目录' >&2
   exit 1
 fi
@@ -76,28 +97,30 @@ docker kill "$task_name" >/dev/null
 docker start "$task_name" >/dev/null
 task_try=0
 while [ "$task_try" -lt 20 ]; do
-  if docker exec "$task_name" /redapp healthcheck --config /etc/redapp/config.json; then break; fi
+  if docker exec "$task_name" /redapp healthcheck; then break; fi
   task_try=$((task_try+1))
   sleep 1
 done
-docker exec "$task_name" /redapp healthcheck --config /etc/redapp/config.json
+docker exec "$task_name" /redapp healthcheck
 docker logs "$task_name" >"$task_temp/after.log" 2>&1
 test "$(grep -c 'Initial admin password' "$task_temp/after.log")" = 1
 docker stop --time 20 "$task_name" >/dev/null
 docker rm "$task_name" >/dev/null
-# Recreate using the same explicit configuration and persistent new-format data.
-docker_run -d --network none --read-only --name "$task_name" -v "$task_volume:/var/lib/redapp" -v "$task_temp/config.json:/etc/redapp/config.json:ro" "$task_image" >/dev/null
+# Recreate the same volume at a different path using environment only. Healthcheck
+# must follow the changed port and exact Host, independently of PUBLIC_URL.
+docker_run -d --network none --read-only --name "$task_name" -v "$task_volume:/state" -e REDAPP_DATA=/state -e REDAPP_LISTEN=:18081 -e REDAPP_ALLOWED_HOSTS=container.example:18081 -e REDAPP_PUBLIC_URL=https://links.example "$task_image" >/dev/null
 task_try=0
 while [ "$task_try" -lt 20 ]; do
-  if docker exec "$task_name" /redapp healthcheck --config /etc/redapp/config.json; then break; fi
+  if docker exec "$task_name" /redapp healthcheck; then break; fi
   task_try=$((task_try+1))
   sleep 1
 done
-docker exec "$task_name" /redapp healthcheck --config /etc/redapp/config.json
+docker exec "$task_name" /redapp healthcheck
 docker logs "$task_name" >"$task_temp/recreated.log" 2>&1
+grep -q 'listener :18081, data directory /state' "$task_temp/recreated.log"
 if grep -q 'Initial admin password' "$task_temp/recreated.log"; then
   echo '重建容器后数据库未保持' >&2
   exit 1
 fi
 docker stop --time 20 "$task_name" >/dev/null
-echo "Docker runtime (${REDAPP_TEST_PLATFORM:-host})：禁用网络、非 root、只读根、新空命名卷/重建持久性、健康检查、双实例拒绝、SIGKILL/正常停止通过。"
+echo "Docker runtime (${REDAPP_TEST_PLATFORM:-host})：无配置默认启动、YAML/JSON单文件选择/失败保护、环境变量改路径/端口/Host、禁用网络、非 root、只读根、持久性/健康/实例锁/崩溃恢复通过。"

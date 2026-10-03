@@ -19,7 +19,7 @@ func TestDeploymentIsStrictAndValidationDoesNotTouchData(t *testing.T) {
 	if err := os.WriteFile(path, []byte(base), 0600); err != nil {
 		t.Fatal(err)
 	}
-	c, err := Load(path)
+	c, err := Load(path, nil)
 	if err != nil || c.Listen != ":8080" || c.DownloadLimits.MaxActiveWriters != 16 || c.EnvironmentPublicURL != "https://downloads.example.com" {
 		t.Fatal(c, err)
 	}
@@ -41,13 +41,13 @@ func TestDeploymentIsStrictAndValidationDoesNotTouchData(t *testing.T) {
 		rawBase, _ := json.Marshal(fields)
 		raw := strings.TrimSuffix(string(rawBase), "}") + "," + change + "}"
 		os.WriteFile(path, []byte(raw), 0600)
-		if _, err := Load(path); err == nil {
+		if _, err := Load(path, nil); err == nil {
 			t.Errorf("invalid configuration accepted: %s", change)
 		}
 	}
 	os.WriteFile(path, []byte(base), 0600)
 	t.Setenv("REDAPP_PUBLIC_URL", "https://example.com/subpath")
-	if _, err := Load(path); err == nil {
+	if _, err := Load(path, nil); err == nil {
 		t.Fatal("invalid environment origin accepted")
 	}
 }
