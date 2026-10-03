@@ -20,11 +20,25 @@ func TestMalformedMetadataRejected(t *testing.T) {
 	c, _ := testutil.Upstream(t, http.NotFoundHandler())
 	cat := NewProtocol(c)
 	good := string(fixture(c.Base.String(), "0.159.2"))
-	cases := []string{`{"tag_name":"rust-v0.159.2","tag_name":"rust-v0.159.2","assets":[]}`, strings.Replace(good, "sha256:", "sha512:", 1), strings.Replace(good, "asset.tar.gz", "../asset.tar.gz", 1), strings.Replace(good, c.Base.String(), "https://evil.example", 1), strings.Replace(good, "rust-v0.159.2", "rust-v0.159.3", 1), strings.Replace(good, "other.tgz", "asset.tar.gz", -1), good + " trailing"}
-	for i, b := range cases {
-		if _, e := cat.parse([]byte(b), "0.159.2"); e == nil {
-			t.Errorf("bad case %d accepted", i)
-		}
+	cases := map[string]string{
+		"top level duplicate":    strings.Replace(good, `"tag_name":"rust-v0.159.2"`, `"tag_name":"rust-v0.159.2","tag_name":"rust-v0.159.2"`, 1),
+		"nested asset duplicate": strings.Replace(good, `"name":"asset.tar.gz"`, `"name":"asset.tar.gz","name":"asset.tar.gz"`, 1),
+		"digest algorithm":       strings.Replace(good, "sha256:", "sha512:", 1),
+		"unsafe asset name":      strings.Replace(good, "asset.tar.gz", "../asset.tar.gz", 1),
+		"foreign origin":         strings.Replace(good, c.Base.String(), "https://evil.example", 1),
+		"version mismatch":       strings.Replace(good, "rust-v0.159.2", "rust-v0.159.3", 1),
+		"duplicate asset":        strings.ReplaceAll(good, "other.tgz", "asset.tar.gz"),
+		"trailing data":          good + " trailing",
+	}
+	for name, b := range cases {
+		t.Run(name, func(t *testing.T) {
+			if b == good {
+				t.Fatal("fixture mutation had no effect")
+			}
+			if _, e := cat.parse([]byte(b), "0.159.2"); e == nil {
+				t.Fatal("invalid metadata accepted")
+			}
+		})
 	}
 	m, e := cat.parse([]byte(good), "0.159.2")
 	if e != nil {

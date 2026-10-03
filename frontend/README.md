@@ -17,7 +17,7 @@ Vite uses `/` as its asset base and writes `internal/httpserver/web`. Rebuild an
 
 The DOM suite uses Vitest and happy-dom. It exercises canonical navigation, translated rendering and commands, session/CSRF behavior, visibility-aware polling, dirty drafts, conflict responses, failed application switches, late requests, cleanup previews, proxy credential actions, public URL precedence, and the distinct dropdown keyboard models. These checks do not claim browser layout, screen-reader, touch-device or native installer verification.
 
-`scripts/test-admin-headless.cjs` is a v0.5-era browser fixture using superseded routes and startup options. It is not part of this refactor's acceptance and must be revised separately before use. Prior screenshots or browser results do not validate the new SPA.
+The obsolete v0.5 browser fixture was removed in v0.6.1: its database tables, routes and metric expectations no longer match this SPA. Current acceptance uses the DOM suite and real CLI HTTP tests. Historical screenshots do not validate the current SPA.
 
 Vue Router is pinned to 4.6.4, compatible with Vue 3.5.43. Its history/router API is sufficient for the explicit route table; file-based routing, plugin loaders and generated route schemas are not used. Other library versions remain pinned in the lockfile.
 
@@ -55,7 +55,7 @@ Only visible overview, events and versions pages poll, with a five-second delay 
 
 The typed API client retains structured error `code`, `message`, `request_id` and `retryable` fields. Display messages use stable codes before HTTP status: settings revision conflicts preserve drafts, while invalid cleanup previews request a new preview. Unknown codes and older string errors have a generic status fallback; an arbitrary 409 is never labeled a settings conflict.
 
-The auth module owns session/CSRF state. Mutations use session cookies and CSRF headers; the server remains authoritative for authentication and origin checks. Password and proxy credential inputs remain in component memory and clear on completion or unmount. Stored credentials are never displayed. A transient session-check failure is shown without discarding an already authenticated form; a 401 expires it.
+The auth module owns session/CSRF state. Each API request captures the current session generation and checks it, along with cancellation, after JSON parsing. A late 401 from an earlier session cannot expire a newer login or clear its CSRF token, even if token text is reused. Mutations use session cookies and CSRF headers; the server remains authoritative for authentication and origin checks. Password and proxy credential inputs remain in component memory and clear on completion or unmount. Stored credentials are never displayed. A transient session-check failure is shown without discarding an already authenticated form; a current-session 401 expires it.
 
 ## Localization and controls
 

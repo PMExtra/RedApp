@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setLanguage } from "./i18n";
 import { boot, mountPage, resetStores, response, status } from "./testSupport";
 import { defaultSite } from "./site";
+import { api } from "./api";
 beforeEach(resetStores);
 afterEach(() => {
   vi.useRealTimers();
@@ -15,7 +16,7 @@ describe("SPA page ownership", () => {
   it("retains snapshots on error, polls only visible active pages, and expires sessions", async () => {
     vi.useFakeTimers();
     let phase = "ready";
-    const fetch = vi.fn(async (url: string) =>
+    const fetch = vi.fn(async (url: string, _init?: RequestInit) =>
       url === "/api/bootstrap"
         ? response(boot)
         : url.endsWith("/session")
@@ -51,6 +52,12 @@ describe("SPA page ownership", () => {
     await flushPromises();
     expect(wrapper.text()).toContain("Your session expired");
     await vi.waitFor(() => expect(wrapper.find(".login").exists()).toBe(true));
+    expect(wrapper.text()).not.toContain("Distribution overview");
+    expect(wrapper.find(".account-trigger").exists()).toBe(false);
+    await expect(api("after-expiry")).rejects.toMatchObject({ status: 401 });
+    expect(
+      (fetch.mock.calls.at(-1)![1]!.headers as Record<string, string>)["X-CSRF-Token"],
+    ).toBe("");
     const ended = fetch.mock.calls.length;
     await vi.advanceTimersByTimeAsync(10000);
     expect(fetch.mock.calls.length).toBe(ended);

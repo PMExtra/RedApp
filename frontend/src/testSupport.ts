@@ -11,12 +11,14 @@ import {
   type Application,
 } from "./bootstrap";
 import {
+  cancelSessionCheck,
   sessionBusy,
   sessionChecked,
   sessionError,
   sessionNotice,
   signedIn,
 } from "./session";
+import { setCSRF } from "./api";
 export const applications: Application[] = [
   {
     id: "openai/codex",
@@ -87,6 +89,8 @@ export const response = (data: unknown, status = 200) => ({
   json: async () => data,
 });
 export function resetStores() {
+  cancelSessionCheck();
+  setCSRF("");
   invalidateBootstrap();
   bootstrap.value = undefined;
   bootstrapError.value = undefined;

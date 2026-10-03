@@ -190,7 +190,7 @@ ARM64 完整 Dockerfile 构建已尝试：官方 Go 基础镜像可拉取，但 
 | OpenAI 品牌标志 | PASS（接入）；来源标签已核验 | 用户提供 SVG 原文，内置 Codex 模块；保留 path/viewBox 及指定更正，不宣称 Codex 专属图标；出处与 SHA256 已记录；Commons 标记 PD-textlogo 并注明商标限制，未比对远程原件字节 |
 | 新镜像、ARM64 及远端 CI | 发布门禁 | 标签只能指向已通过 main 双架构原生 CI 的精确提交；发布工作流检查 manifest 并按子 digest 拉取运行两种架构。发布结果以该提交及 v0.4.0 的 Actions 记录为准，不能沿用 v0.3.0 结果 |
 
-既有仅英文测试已限定后端应用消息，前端双语由单独测试覆盖。`scripts/test-admin-headless.cjs` 已适配本轮结构，使用临时 loopback 服务与假缓存/历史数据，拒绝外部页面请求，退出删除运行数据库。截图前强制检查所有密码输入为空；测试凭据不写入报告。浏览器检查发现账号按钮 ArrowDown 冒泡后重复移动焦点，已通过阻止该事件冒泡修复，重新构建、前端 21 项测试及完整无头流程通过。
+既有仅英文测试已限定后端应用消息，前端双语由单独测试覆盖。当时的浏览器测试脚本已适配 v0.4.0 结构（该旧脚本在 v0.6.1 删除，以下为历史记录），使用临时 loopback 服务与假缓存/历史数据，拒绝外部页面请求，退出删除运行数据库。截图前强制检查所有密码输入为空；测试凭据不写入报告。浏览器检查发现账号按钮 ArrowDown 冒泡后重复移动焦点，已通过阻止该事件冒泡修复，重新构建、前端 21 项测试及完整无头流程通过。
 
 四种组合均验证本地 SVG、语言持久化、真实剪贴板命令、浏览器本地时区、43 项指标、自动刷新、账号菜单、密码失败/重复提交/成功后注销、历史与维护导航、TTL、代理凭据动作及会话失效；另验证历史错误重试/空态和最终清理执行。24 张截图仅含测试数据；模型审阅是视觉检查，不能替代其它浏览器、真实移动设备或 Windows/macOS Codex 安装验证。
 
@@ -223,7 +223,6 @@ make check test frontend-test build
 make frontend-test build
 python3 scripts/test-http-cli.py
 python3 scripts/test-data-cli.py
-node --check scripts/test-admin-headless.cjs
 git diff --check
 ```
 
@@ -235,10 +234,7 @@ HTTP CLI 验证新生成的全部静态资源、匿名/管理 API 隔离、双�
 
 ### v0.4.1 浏览器验收
 
-```sh
-REDAPP_TEST_ARTIFACT_DIR=/tmp/redapp-v041-screenshots \
-  node scripts/test-admin-headless.cjs
-```
+以下为 v0.4.1 的历史浏览器记录。对应旧脚本已在 v0.6.1 删除，不能作为当前版本的可运行验收入口；当前入口见 [frontend/README.md](../frontend/README.md)。
 
 Chromium 151.0.7922.173 / Playwright 1.62.1，English / 简体中文 × 1366×900 / 390×844，28 组交互检查通过，52 张截图，预期外控制台/网络错误为 0。浏览器访问仅限本地 fixture，不安装 Codex，不接触生产部署；非安全 `http://redapp.test` origin 的请求通过测试路由送往同一 loopback 服务，未使用公网域名或降低浏览器安全设置。
 

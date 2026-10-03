@@ -4,7 +4,7 @@
 
 RedApp distributes **Codex CLI and Claude Code** through an internal download service. It verifies application metadata, caches downloads on demand, and provides an administrator interface for cache, traffic, and service settings.
 
-Version 0.6.0 uses canonical application identities: `openai/codex` and `anthropic/claude-code`. This is a **breaking upgrade requiring a new, empty data directory**. Configuration, cache, and history from older releases are not imported; keep the old directory as an archive. Startup rejects an old or unrecognized directory without upgrading or deleting it. Existing new-format directories can be reopened normally. See the [v0.6.0 release notes](docs/multi-application-v0.6.0.md) before upgrading.
+Version 0.6 uses canonical application identities: `openai/codex` and `anthropic/claude-code`. Upgrading from versions before 0.6 is a **breaking upgrade requiring a new, empty data directory**. Configuration, cache, and history from older releases are not imported; keep the old directory as an archive. Startup rejects an old or unrecognized directory without upgrading or deleting it. Existing 0.6 data directories can be reopened normally. See the [v0.6.0 upgrade notes](docs/multi-application-v0.6.0.md) and [current release notes](docs/releases.md) before upgrading.
 
 ## Start the service
 
@@ -25,7 +25,7 @@ docker run -d --name redapp --read-only \
   -p 127.0.0.1:8080:8080 \
   -v redapp-v060-data:/var/lib/redapp \
   -v /etc/redapp/config.json:/etc/redapp/config.json:ro \
-  ghcr.io/pmextra/redapp:0.6.0
+  ghcr.io/pmextra/redapp:0.6.1
 ```
 
 The image starts `serve --config /etc/redapp/config.json`; its health check reads the same file. One process owns each local data directory. Shared network filesystems and URL subpath deployment are unsupported. Docker and native processes no longer accept the old per-field CLI flags or `REDAPP_DATA`, `REDAPP_LISTEN`, and upstream override variables. Upstream origins and trust roots are reviewed, compiled application definitions.

@@ -41,24 +41,64 @@ func TestPinnedOfficialSignature(t *testing.T) {
 }
 func TestManifestVersionAndBounds(t *testing.T) {
 	raw, _ := fixture(t)
-	var m map[string]any
-	json.Unmarshal(raw, &m)
+	if _, err := parse(raw, "2.1.285"); err != nil {
+		t.Fatalf("valid fixture: %v", err)
+	}
 	for _, v := range []string{"../2.1.285", "2.1.285/../../", "02.1.285", "2.1.285\n", "2.1.285?x", "999999999999999999999.1.2"} {
 		if ValidVersion(v) {
 			t.Fatal(v)
 		}
 	}
-	for _, change := range []func(){func() { m["version"] = "2.1.286" }, func() {
-		m["platforms"] = map[string]any{"linux-x64": map[string]any{"binary": "../../secret", "checksum": "00", "size": 1}}
-	}} {
-		change()
-		b, _ := json.Marshal(m)
-		if _, e := parse(b, "2.1.285"); e == nil {
-			t.Fatal("invalid metadata")
-		}
+	for name, change := range map[string]func(*Manifest){
+		"version mismatch": func(m *Manifest) { m.Version = "2.1.286" },
+		"unsafe binary": func(m *Manifest) {
+			p := m.Platforms["linux-x64"]
+			p.Binary = "../../secret"
+			m.Platforms["linux-x64"] = p
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var m Manifest
+			if err := json.Unmarshal(raw, &m); err != nil {
+				t.Fatal(err)
+			}
+			change(&m)
+			b, err := json.Marshal(m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := parse(b, "2.1.285"); err == nil {
+				t.Fatal("invalid metadata accepted")
+			}
+		})
 	}
-	if _, e := parse([]byte(`{"version":"2.1.285","version":"2.1.285"}`), "2.1.285"); e == nil {
-		t.Fatal("duplicate keys")
+}
+func TestManifestDuplicateKeys(t *testing.T) {
+	raw, _ := fixture(t)
+	var m Manifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	good, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parse(good, m.Version); err != nil {
+		t.Fatalf("valid fixture: %v", err)
+	}
+	for name, field := range map[string]string{
+		"top level":       `"version":"2.1.285"`,
+		"nested platform": `"binary":"claude"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := bytes.Replace(good, []byte(field), []byte(field+","+field), 1)
+			if bytes.Equal(good, bad) {
+				t.Fatal("fixture did not contain target field")
+			}
+			if _, err := parse(bad, m.Version); err == nil {
+				t.Fatal("duplicate field accepted in otherwise valid manifest")
+			}
+		})
 	}
 }
 func TestManifestRejectsInvalidPlatformFields(t *testing.T) {

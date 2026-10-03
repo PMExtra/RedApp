@@ -115,11 +115,14 @@ export class ApiError extends Error {
   }
 }
 let csrf = "";
+let sessionGeneration = 0;
 let unauthorized: (() => void) | undefined;
 export function setUnauthorizedHandler(handler: () => void) {
   unauthorized = handler;
 }
 export function setCSRF(value: string) {
+  // Every session transition revokes old requests, even if a token is reused.
+  sessionGeneration++;
   csrf = value;
 }
 export async function api<T>(
@@ -129,6 +132,7 @@ export async function api<T>(
   extraHeaders: Record<string, string> = {},
   method?: "GET" | "POST" | "PUT",
 ): Promise<T> {
+  const generation = sessionGeneration;
   const response = await fetch("/admin/api/" + path, {
     method: method || (body === undefined ? "GET" : "POST"),
     credentials: "same-origin",
@@ -141,6 +145,13 @@ export async function api<T>(
     signal,
   });
   const data = await response.json().catch(() => ({}));
+  // Fetch may have resolved before cancellation, while its JSON body was pending.
+  // Check ownership before returning sensitive data or invoking the global 401 handler.
+  if (signal?.aborted || generation !== sessionGeneration)
+    throw new DOMException(
+      "Request no longer belongs to the active session",
+      "AbortError",
+    );
   if (!response.ok) {
     if (response.status === 401) unauthorized?.();
     const problem = data?.error;
