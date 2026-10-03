@@ -194,7 +194,7 @@ descriptor 首版只描述两应用当前已有的事实：身份、名称/图�
 
 UI fallback 只覆盖表内 UI 路由。未知 app、未知 file、API、签名/二进制请求不能 fallback 成 200 HTML。未知 UI 返回带 404 状态的入口/错误页；未知 API 返回 JSON 404。Vite 的资源基址改为 `/`、输出路径 `/assets/`，不能把现有 `/admin/` asset base 当作 Router base。
 
-服务 origin 仍只支持 scheme+authority，不支持部署子路径。区分安全上下文的 RequestOrigin 与生成链接的 PublicOrigin：前者按请求、受信代理链和部署 allowed_hosts 验证，后者按后台覆盖 > 环境 > RequestOrigin 选择。规范分发根是 `PublicOrigin + "/" + appKey`。PublicOrigin 不能授予新的入站 Host 信任，不能进入上游 URL 授权；Origin/CSRF 和 cookie Secure 依据已验证 RequestOrigin，避免改变发布地址破坏当前管理员的安全上下文。
+服务 origin 仍只支持 scheme+authority，不支持部署子路径。区分安全上下文的 RequestOrigin 与生成链接的 PublicOrigin：前者按合法请求 Host、协议和受信代理链验证，后者按后台覆盖 > 环境 > RequestOrigin 选择。规范分发根是 `PublicOrigin + "/" + appKey`。PublicOrigin 不限制入站 Host，不能进入上游 URL 授权；Origin/CSRF 和 cookie Secure 依据已验证 RequestOrigin，避免改变发布地址破坏当前管理员的安全上下文。
 
 ### 4.3 错误契约
 
@@ -229,31 +229,30 @@ UI fallback 只覆盖表内 UI 路由。未知 app、未知 file、API、签名/
 
 | 类别 | 内容 | 唯一可编辑来源 | 解析顺序 |
 | --- | --- | --- | --- |
-| 部署配置 | listen、data_dir、allowed_hosts、trusted_proxies、下载全局限额 | 可选 YAML/JSON、部署环境变量或 CLI；修改后重启 | 编译默认值 → 所选文件 → env → CLI（v0.6.2 修订） |
+| 部署配置 | listen、data_dir、trusted_proxies、下载全局限额 | 可选 YAML/JSON、部署环境变量或 CLI；修改后重启 | 编译默认值 → 所选文件 → env → CLI（v0.6.2 修订） |
 | 受信应用定义 | identity、upstream、protocol、trust revision、channels、installer | 编译嵌入 descriptor/adapter | 无运行时覆盖 |
 | 全局业务设置 | 站点双语文案、共享出口 proxy | SQLite，经全局管理 API 修改 | 内建默认值 → 已持久化设置 |
 | 公共 URL | 服务全局的对外链接 origin | 后台覆盖值；部署环境提供下一级默认值 | 后台持久化覆盖 > `REDAPP_PUBLIC_URL` > 每请求安全 RequestOrigin |
 | 应用设置 | channel TTL | SQLite，以规范 app_id 为键 | descriptor 默认值 → 已持久化设置 |
 | 浏览器偏好 | locale、非敏感界面偏好 | 浏览器 localStorage/内存 | 合法保存值 → `navigator.languages` 首个支持项 → 列表不可用时 `navigator.language` → en |
 
-v0.6.2 恢复无文件的 `redapp` / `redapp serve` 默认启动。路径只选一个：`--config` > `REDAPP_CONFIG` > `/etc/redapp/config.yaml`；仅默认文件缺失可继续，选中文件存在但非法/不可读或手动指定缺失均报错，不自动探测 JSON。字段支持部署 env/CLI，详见[运维说明](operations.md#启动配置)。默认 Host 只允许监听端口上的 localhost/回环 authority，无默认可信代理。JSON/YAML 不包含 public_origin，PUBLIC_URL 的已约定来源保持独立。旧数据目录保护由写入前的 Preflight 检查负责，不再依赖强制配置文件。
+v0.6.2 恢复无文件的 `redapp` / `redapp serve` 默认启动。路径只选一个：`--config` > `REDAPP_CONFIG` > `/etc/redapp/config.yaml`；仅默认文件缺失可继续，选中文件存在但非法/不可读或手动指定缺失均报错，不自动探测 JSON。字段支持部署 env/CLI，详见[运维说明](operations.md#启动配置)。待发布源码接受语法合法的 Host，无默认可信代理；域名和网络访问限制交由反向代理。JSON/YAML 不包含 public_origin，PUBLIC_URL 的已约定来源保持独立。旧数据目录保护由写入前的 Preflight 检查负责，不再依赖强制配置文件。
 
 ```json
 {
   "schema_version": 1,
   "listen": ":8080",
   "data_dir": "/var/lib/redapp",
-  "allowed_hosts": ["downloads.example.com"],
   "trusted_proxies": ["10.20.0.0/16"],
   "download_limits": {
-    "max_active_writers": 16,
+    "max_writers": 16,
     "max_readers": 512,
     "max_artifact_bytes": 4294967296
   }
 }
 ```
 
-示例只含虚构部署参数，无真实凭据。allowed_hosts 是部署认可的有效入站 authority 精确集合（含非默认端口），不是任意 wildcard；由可信代理提供的有效 host 也必须属于该集合。外层代理应覆盖转发头，来自非可信直连 peer 的转发头被忽略。修改公共 URL 不修改 allowed_hosts。健康检查使用配置内已允许的 authority；不为探活放开整个后台 Host 检查。
+示例只含虚构部署参数，无真实凭据。RedApp 校验入站与有效转发 Host 的语法，域名访问策略由外层代理负责；代理应覆盖转发头，来自非可信直连 peer 的转发头被忽略。修改公共 URL 只影响生成链接。健康检查直接使用配置监听地址，对通配地址选择本地回环，不依赖 PUBLIC_URL。配置与 writer 命名以待发布[运维规范](operations.md#启动配置)为准，不保留旧别名。
 
 拒绝未知字段、重复 JSON key、非法范围和错误类型；新配置版本不可降格解释。`redapp config validate --config ...` 只验证并输出去敏结果，不打开/初始化部署数据库。`REDAPP_PUBLIC_URL` 为空视为未提供；非空但非法时启动失败，不能静默降级到请求 Host，即使后台当前有覆盖也须报告部署配置错误。
 

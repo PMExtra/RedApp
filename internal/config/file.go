@@ -44,7 +44,7 @@ func readDeployment(path string, optional bool, c *Deployment) error {
 	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
 		return errors.New("deployment configuration must be an object")
 	}
-	allowed := map[string]bool{"schema_version": true, "listen": true, "data_dir": true, "allowed_hosts": true, "trusted_proxies": true, "download_limits": true}
+	allowed := map[string]bool{"schema_version": true, "listen": true, "data_dir": true, "trusted_proxies": true, "download_limits": true}
 	for key, value := range fields {
 		if !allowed[key] || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 			return fmt.Errorf("unknown or null deployment field %q", key)
@@ -56,7 +56,7 @@ func readDeployment(path string, optional bool, c *Deployment) error {
 			return errors.New("download_limits must be an object")
 		}
 		for key, value := range limits {
-			if key != "max_active_writers" && key != "max_readers" && key != "max_artifact_bytes" || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			if key != "max_writers" && key != "max_readers" && key != "max_artifact_bytes" || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 				return fmt.Errorf("unknown or null download limit %q", key)
 			}
 		}

@@ -45,7 +45,6 @@ func TestClaudeHTTPPreservesSignedBytesAndRejectsOtherResources(t *testing.T) {
 		t.Fatal(e)
 	}
 	s.Catalog = catalog.New(db, s.Registry)
-	s.AllowedHosts = append(s.AllowedHosts, "internal.example")
 	for _, name := range []string{"install.sh", "install.ps1"} {
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, httptest.NewRequest("GET", "https://internal.example/anthropic/claude-code/"+name, nil))

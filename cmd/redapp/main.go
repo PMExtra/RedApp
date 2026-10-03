@@ -45,7 +45,7 @@ func command(args []string) error {
 		fmt.Println("Usage: redapp [serve] [options] | config validate [options] | healthcheck [options] | version")
 		fmt.Println("Config path: --config FILE > REDAPP_CONFIG > optional /etc/redapp/config.yaml (YAML; explicit JSON supported)")
 		fmt.Println("Deployment fields: CLI > environment > selected file > defaults")
-		fmt.Println("Options: --data, --listen, --allowed-hosts, --trusted-proxies, --max-active-writers, --max-readers, --max-artifact-bytes")
+		fmt.Println("Options: --data, --listen, --trusted-proxies, --max-writers, --max-readers, --max-artifact-bytes")
 		return nil
 	}
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
@@ -64,7 +64,7 @@ func command(args []string) error {
 	flags := flag.NewFlagSet(mode, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	path := flags.String("config", "", "deployment YAML or JSON configuration file")
-	for _, name := range []string{"data", "listen", "allowed-hosts", "trusted-proxies", "max-active-writers", "max-readers", "max-artifact-bytes"} {
+	for _, name := range []string{"data", "listen", "trusted-proxies", "max-writers", "max-readers", "max-artifact-bytes"} {
 		flags.String(name, "", "override deployment setting")
 	}
 	if err := flags.Parse(rest); err != nil {
@@ -107,12 +107,11 @@ func healthcheck(c config.Deployment) error {
 	} else if host == "::" {
 		host = "::1"
 	}
+	// Use the listener's local authority, independently of the published URL.
 	r, err := http.NewRequest("GET", "http://"+net.JoinHostPort(host, port)+"/health/ready", nil)
 	if err != nil {
 		return err
 	}
-	// PUBLIC_URL affects published links, never the authority used for health checks.
-	r.Host = c.AllowedHosts[0]
 	client := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{Proxy: nil}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	defer client.CloseIdleConnections()
 	resp, err := client.Do(r)
@@ -163,7 +162,7 @@ func serve(c config.Deployment) error {
 		return err
 	}
 	defer manager.Close()
-	if err := manager.ConfigureLimits(c.DownloadLimits.MaxActiveWriters, c.DownloadLimits.MaxReaders, c.DownloadLimits.MaxArtifactBytes); err != nil {
+	if err := manager.ConfigureLimits(c.DownloadLimits.MaxWriters, c.DownloadLimits.MaxReaders, c.DownloadLimits.MaxArtifactBytes); err != nil {
 		return err
 	}
 	a, err := auth.New(db, false, func(password string) {
@@ -176,7 +175,7 @@ func serve(c config.Deployment) error {
 	if err != nil {
 		return err
 	}
-	handler := &httpserver.Server{Version: version, DB: db, Registry: registry, Catalog: catalog.New(db, registry), Downloads: manager, Auth: a, Proxy: proxy, Upstream: upstream, History: metricHistory, PublicConfig: public, AllowedHosts: c.AllowedHosts, Dir: guard.Directory, Started: time.Now().UTC()}
+	handler := &httpserver.Server{Version: version, DB: db, Registry: registry, Catalog: catalog.New(db, registry), Downloads: manager, Auth: a, Proxy: proxy, Upstream: upstream, History: metricHistory, PublicConfig: public, Dir: guard.Directory, Started: time.Now().UTC()}
 	server := &http.Server{Addr: c.Listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 10 * time.Minute, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

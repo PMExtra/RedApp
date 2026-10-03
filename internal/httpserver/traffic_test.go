@@ -47,7 +47,6 @@ func TestDownstreamCountersPrecedeExternalHTTPCompression(t *testing.T) {
 		handler.ServeHTTP(compressedResponse{w, zip}, r)
 	}))
 	defer server.Close()
-	allowTestOrigin(handler, server.URL)
 	client := &http.Client{Transport: &http.Transport{DisableCompression: true}}
 	defer client.CloseIdleConnections()
 	var transferred int

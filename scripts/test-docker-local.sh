@@ -47,10 +47,10 @@ fi
 cat > "$task_temp/config.yaml" <<'CONFIG'
 # A partial YAML file can override defaults.
 listen: ':8181'
-allowed_hosts: [yaml.example:8181]
+download_limits: {max_writers: 20, max_readers: 600, max_artifact_bytes: '4GiB'}
 CONFIG
 cat > "$task_temp/selected.json" <<'CONFIG'
-{"listen":":8282","allowed_hosts":["json.example:8282"]}
+{"listen":":8282","download_limits":{"max_writers":20,"max_readers":600,"max_artifact_bytes":"4gb"}}
 CONFIG
 printf '%s\n' 'listen: [' > "$task_temp/invalid.yaml"
 chmod 0644 "$task_temp/config.yaml" "$task_temp/selected.json" "$task_temp/invalid.yaml"
@@ -108,8 +108,8 @@ test "$(grep -c 'Initial admin password' "$task_temp/after.log")" = 1
 docker stop --time 20 "$task_name" >/dev/null
 docker rm "$task_name" >/dev/null
 # Recreate the same volume at a different path using environment only. Healthcheck
-# must follow the changed port and exact Host, independently of PUBLIC_URL.
-docker_run -d --network none --read-only --name "$task_name" -v "$task_volume:/state" -e REDAPP_DATA=/state -e REDAPP_LISTEN=:18081 -e REDAPP_ALLOWED_HOSTS=container.example:18081 -e REDAPP_PUBLIC_URL=https://links.example "$task_image" >/dev/null
+# must follow the changed listener, independently of PUBLIC_URL.
+docker_run -d --network none --read-only --name "$task_name" -v "$task_volume:/state" -e REDAPP_DATA=/state -e REDAPP_LISTEN=:18081 -e REDAPP_MAX_WRITERS=20 -e REDAPP_MAX_READERS=600 -e REDAPP_MAX_ARTIFACT_BYTES=4GiB -e REDAPP_PUBLIC_URL=https://links.example "$task_image" >/dev/null
 task_try=0
 while [ "$task_try" -lt 20 ]; do
   if docker exec "$task_name" /redapp healthcheck; then break; fi
@@ -124,4 +124,4 @@ if grep -q 'Initial admin password' "$task_temp/recreated.log"; then
   exit 1
 fi
 docker stop --time 20 "$task_name" >/dev/null
-echo "Docker runtime (${REDAPP_TEST_PLATFORM:-host})：无配置默认启动、YAML/JSON单文件选择/失败保护、环境变量改路径/端口/Host、禁用网络、非 root、只读根、持久性/健康/实例锁/崩溃恢复通过。"
+echo "Docker runtime (${REDAPP_TEST_PLATFORM:-host})：无配置默认启动、YAML/JSON单文件选择/失败保护、新writer/reader字段和容量简写、环境变量改路径/端口、禁用网络、非 root、只读根、持久性/健康/实例锁/崩溃恢复通过。"

@@ -17,14 +17,13 @@ docker run -d --name redapp --read-only \
   ghcr.io/pmextra/redapp:0.6.2
 ```
 
-Defaults are `:8080`, `/var/lib/redapp`, no trusted proxies, and only `localhost`, `127.0.0.1`, and `[::1]` Host authorities at the listening port. A custom domain, remote IP, or different published port requires an explicit `REDAPP_ALLOWED_HOSTS` list. Public URL settings do not expand this list. New deployments need a new empty data directory/volume; existing v0.6 data can be reused. Directory permission failures never fall back elsewhere.
+Defaults are `:8080`, `/var/lib/redapp`, and no trusted proxies. The unreleased source accepts any syntactically valid request Host; configure domain and network access policy at the reverse proxy. New deployments need a new empty data directory/volume; existing v0.6 data can be reused. Directory permission failures never fall back elsewhere.
 
 Deployment environment variables work without a file, for example:
 
 ```sh
 REDAPP_DATA=/absolute/writable/redapp-data \
 REDAPP_LISTEN=127.0.0.1:8080 \
-REDAPP_ALLOWED_HOSTS=localhost:8080,127.0.0.1:8080 \
   redapp
 ```
 
@@ -45,17 +44,19 @@ Open **http://localhost:8080/** for the catalog or **http://localhost:8080/admin
 
 Unreleased source builds accept capacity strings such as `REDAPP_MAX_ARTIFACT_BYTES=4GiB` through environment, CLI and YAML/JSON configuration, alongside integer byte counts. This is a **per-file** limit, not total cache capacity: `4GB`/`4gb` means 4,000,000,000 bytes, while `4GiB` means 4,294,967,296 bytes. The default remains 4 GiB; the accepted range is 1 byte to 1 TiB. Published v0.6.2 requires integer bytes; see [release notes](docs/releases.md).
 
+The source examples and deployment table describe the unreleased configuration: writer limits use `REDAPP_MAX_WRITERS`, `download_limits.max_writers`, or `--max-writers`; reader names remain unchanged. Removed Host and writer options have no aliases. For published v0.6.2, use its [tagged examples](https://github.com/PMExtra/RedApp/tree/v0.6.2/config).
+
 ## Public address and proxy trust
 
 The global public address determines generated download links and installers. Its priority is:
 
 1. The saved administrator override in site settings.
 2. The deployment environment variable `REDAPP_PUBLIC_URL`.
-3. The current request origin, verified against `allowed_hosts` and `trusted_proxies`.
+3. The current request origin, derived from a valid Host and trusted proxy headers.
 
-Clearing the administrator override restores the environment default, if present. The interface shows the effective address and its source. Only HTTP(S) origins are accepted, with no credentials, subpath, query, or fragment. An invalid nonempty environment value prevents startup. Changing the public address does not authorize another incoming Host, change cookie security, or alter upstream download origins.
+Clearing the administrator override restores the environment default, if present. The interface shows the effective address and its source. Only HTTP(S) origins are accepted, with no credentials, subpath, query, or fragment. An invalid nonempty environment value prevents startup. Changing the public address only affects generated links; it preserves request-origin checks, cookie security, and upstream download authorization.
 
-For enterprise access, use an HTTPS reverse proxy. Configure the proxy's CIDRs in `trusted_proxies` and make the proxy overwrite forwarded headers. Headers from untrusted peers are ignored. The effective forwarded authority must still be listed in `allowed_hosts`. Health checks connect to the configured listener with an allowed Host, independently of the public address.
+For enterprise access, use an HTTPS reverse proxy. Configure the proxy's CIDRs in `trusted_proxies` and make the proxy overwrite forwarded headers. Headers from untrusted peers are ignored. RedApp validates Host syntax and derives the request origin from the trusted proxy chain; the proxy controls accepted domains. Health checks connect to the configured local listener, independently of the public address.
 
 Site branding, outbound proxy, and public address are global settings. Channel cache TTL is per application. Every administrator update uses a revision check so stale browser forms cannot silently overwrite another update. Proxy credentials are never returned by read APIs.
 

@@ -17,14 +17,13 @@ docker run -d --name redapp --read-only \
   ghcr.io/pmextra/redapp:0.6.2
 ```
 
-默认监听 `:8080`、数据目录 `/var/lib/redapp`、不信任任何反向代理，Host 仅允许监听端口上的 `localhost`、`127.0.0.1`、`[::1]`。使用远程域名/IP 或不同映射端口时，明确设置 `REDAPP_ALLOWED_HOSTS`；PUBLIC_URL 不自动扩大 Host 列表。首次部署使用新的空目录/卷，已有 v0.6 数据可继续使用；权限失败不会寻找备用目录。
+默认监听 `:8080`、数据目录 `/var/lib/redapp`、不信任任何反向代理。待发布源码接受语法合法的请求 Host，域名和网络访问策略由反向代理控制。首次部署使用新的空目录/卷，已有 v0.6 数据可继续使用；权限失败不会寻找备用目录。
 
 可以只用环境变量启动：
 
 ```sh
 REDAPP_DATA=/absolute/writable/redapp-data \
 REDAPP_LISTEN=127.0.0.1:8080 \
-REDAPP_ALLOWED_HOSTS=localhost:8080,127.0.0.1:8080 \
   redapp
 ```
 
@@ -45,11 +44,13 @@ redapp serve --config ./custom.yaml --listen 127.0.0.1:8081
 
 待发布源码支持在环境变量、CLI 和 YAML/JSON 中使用 `REDAPP_MAX_ARTIFACT_BYTES=4GiB` 等容量简写，兼容原有整数字节值。这是**单个制品文件**的上限，不是缓存总体积：`4GB`/`4gb` 表示 4000000000 字节，`4GiB` 表示 4294967296 字节。默认保持 4 GiB，允许范围为 1 字节至 1 TiB。已发布 v0.6.2 仍需使用整数字节值，见[版本说明](docs/releases.md)。
 
+当前源码样例和配置表描述待发布规范：writer 使用 `REDAPP_MAX_WRITERS`、`download_limits.max_writers`、`--max-writers`，reader 名称不变；删除的 Host 与 writer 选项没有兼容别名。已发布 v0.6.2 请使用其[对应版本样例](https://github.com/PMExtra/RedApp/tree/v0.6.2/config)。
+
 ## 公共地址与代理
 
 安装链接使用全局公共地址，优先级为：**后台持久化覆盖 > `REDAPP_PUBLIC_URL` 环境默认 > 经验证的请求 origin**。后台清空覆盖会恢复环境默认（若有）；界面显示有效值和来源。只接受无凭据、子路径、查询或 fragment 的 HTTP(S) origin。非空但非法的环境值会阻止启动。
 
-公共地址不改变入站 Host 信任、Cookie 安全属性或上游下载地址。企业访问使用 HTTPS 反向代理，将可信代理 CIDR 写入 `trusted_proxies`，并让代理覆盖转发头；有效 Host 仍须在 `allowed_hosts` 中。来自不可信 peer 的转发头会被忽略。
+公共地址只影响生成链接；请求同源校验、Cookie 安全属性和上游授权保持独立。企业访问使用 HTTPS 反向代理，将可信代理 CIDR 写入 `trusted_proxies`，并让代理覆盖转发头、控制允许的域名。RedApp 校验 Host 语法并按可信代理链推导请求 origin；来自不可信 peer 的转发头会被忽略。健康检查使用本地监听地址，不依赖公共地址。
 
 站点文案、回源代理和公共地址属于全局设置；渠道 TTL 按应用独立保存。每次保存校验 revision，过期表单不会静默覆盖更新。回源代理凭据不通过读 API 返回。
 

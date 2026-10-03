@@ -1,12 +1,12 @@
 # RedApp 运维说明
 
-本文适用于采用规范 `vendor/app` 身份的新架构。旧版配置、缓存、历史全部不导入；必须选择全新空目录，旧目录保留归档，不自动升级或删除。新格式目录仍可正常重启。带版本号的历史文档不替代本说明。
+本文对应待发布源码的配置规范；已发布 v0.6.2 请使用[其版本文档及样例](https://github.com/PMExtra/RedApp/tree/v0.6.2/config)。本文适用于采用规范 `vendor/app` 身份的新架构。旧版配置、缓存、历史全部不导入；必须选择全新空目录，旧目录保留归档，不自动升级或删除。新格式目录仍可正常重启。带版本号的历史文档不替代本说明。
 
 ## 启动配置
 
 自 v0.6.2 起默认无需文件：`redapp` 和 `redapp serve` 等价；`redapp healthcheck` 使用相同解析规则。镜像 CMD 为 `serve`，HEALTHCHECK 为 `healthcheck`，都不硬编码 `--config`。
 
-文件路径按 **`--config FILE` > `REDAPP_CONFIG` > `/etc/redapp/config.yaml`** 选择，只读取一个文件。空配置路径环境变量视为未指定。默认文件不存在允许继续；默认文件存在但非法/不可读，或手动指定文件缺失/非法，都失败退出。不读取默认 `config.json`，不搜索工作目录，不叠加默认文件。`.json` 按 JSON 解析，其他路径按 YAML 解析（也可承载 JSON 子集）。推荐 [config/example.yaml](../config/example.yaml)，旧 [JSON 示例](../config/example.json) 仍可显式选择。
+文件路径按 **`--config FILE` > `REDAPP_CONFIG` > `/etc/redapp/config.yaml`** 选择，只读取一个文件。空配置路径环境变量视为未指定。默认文件不存在允许继续；默认文件存在但非法/不可读，或手动指定文件缺失/非法，都失败退出。不读取默认 `config.json`，不搜索工作目录，不叠加默认文件。`.json` 按 JSON 解析，其他路径按 YAML 解析（也可承载 JSON 子集）。推荐 [config/example.yaml](../config/example.yaml)，[JSON 示例](../config/example.json) 也可显式选择。
 
 部署字段逐层覆盖：**CLI > env > 所选文件 > 默认值**。未提供字段保留低层值；列表整体替换。每个来源都必须合法，低层错误不能由高层值掩盖。`schema_version` 可省略，提供时只能为 1。配置最大 64 KiB，必须是一个对象/映射；拒绝未知字段、重复键、null、类型/范围错误、多 YAML 文档、锚点/别名/合并键及自定义标签。除下述制品容量字符串外，文件中的整数不接受字符串或浮点形式。
 
@@ -15,9 +15,8 @@
 | `schema_version` | — | — | 1（部署格式，与 SQLite schema 分开） |
 | `data_dir` | `REDAPP_DATA` | `--data` | `/var/lib/redapp`，必须为绝对路径 |
 | `listen` | `REDAPP_LISTEN` | `--listen` | `:8080` |
-| `allowed_hosts` | `REDAPP_ALLOWED_HOSTS` | `--allowed-hosts` | 监听端口上的 localhost、127.0.0.1、[::1] |
 | `trusted_proxies` | `REDAPP_TRUSTED_PROXIES` | `--trusted-proxies` | 空列表 |
-| `download_limits.max_active_writers` | `REDAPP_MAX_ACTIVE_WRITERS` | `--max-active-writers` | 16，范围 1–1024 |
+| `download_limits.max_writers` | `REDAPP_MAX_WRITERS` | `--max-writers` | 16，范围 1–1024 |
 | `download_limits.max_readers` | `REDAPP_MAX_READERS` | `--max-readers` | 512，范围 1–65536 |
 | `download_limits.max_artifact_bytes` | `REDAPP_MAX_ARTIFACT_BYTES` | `--max-artifact-bytes` | 4 GiB（4294967296 字节），范围 1 字节–1 TiB |
 
@@ -25,7 +24,11 @@
 
 容量字符串去除首尾空白后，按 [go-humanize ParseBytes](https://pkg.go.dev/github.com/dustin/go-humanize@v1.1.0#ParseBytes) 解析，支持小数及大小写不敏感的单位。**GB = 10^9 字节，GiB = 2^30 字节**，所以 `4gb` 是 4000000000 字节，`4GiB` 是 4294967296 字节。推荐使用 `4GiB` 等明确单位，不使用逗号；纯数字表示字节。转换结果必须在 1–1099511627776 字节之间，非法或超范围值阻止启动。reader/writer 数量仍使用整数，不接受容量单位。
 
-Host/代理的环境变量与 CLI 使用逗号分隔列表，去除项两侧空白。显式 Host 列表需要 1–128 个精确 authority，不含 wildcard；不会再加入默认 localhost。监听 80 端口时默认 Host 同时接受带 `:80` 和省略端口的本地 authority。默认信任不来自任意请求 Host、绑定的网卡地址或 PUBLIC_URL。若镜像映射到不同宿主端口，应把实际访问 authority 写入 `REDAPP_ALLOWED_HOSTS`。`trusted_proxies` 最多 128 个有效 CIDR；空环境值/CLI 可清空列表。
+`trusted_proxies` 的环境变量与 CLI 使用逗号分隔列表，去除项两侧空白，最多 128 个有效 CIDR；空环境值/CLI 可清空列表。RedApp 接受语法合法的 Host，域名与网络访问策略由反向代理负责。PUBLIC_URL 只控制生成链接，不作为入站白名单。
+
+`max_writers` 和 `max_readers` 都是全应用共享的并发上限。writer 槽位覆盖回源、重试等待和校验，同一制品的多个 reader 共用一个 writer；reader 包含等待下载或客户端读取的请求，缓存命中仍占 reader。超限请求返回 503，不进入容量等待队列。
+
+从旧版升级配置时，删除 `allowed_hosts`、`REDAPP_ALLOWED_HOSTS`、`--allowed-hosts`，并将 writer 改用上表名称。旧 `max_active_writers` 文件字段、`--max-active-writers` 选项和已删除的 Host 文件字段/选项会报错；旧环境变量不再读取，不提供兼容别名。
 
 ```sh
 # 无文件验证和启动；数据目录须可写
@@ -36,7 +39,7 @@ REDAPP_CONFIG=/etc/redapp/custom.yaml redapp serve
 REDAPP_CONFIG=/ignored.yaml redapp config validate --config ./config.json
 ```
 
-`validate` 不打开或初始化数据目录。容器默认无需挂配置；可选挂载 `/etc/redapp/config.yaml`，或挂载自定义文件后设置 `REDAPP_CONFIG`，使服务及健康检查使用一致来源。单独修改容器 CMD 的 CLI 参数时也须调整 HEALTHCHECK；推荐环境变量方式。v0.6.0/0.6.1 自定义 JSON 部署升级后应继续显式选择其 JSON，不能依赖自动发现。旧数据目录仍在初始化写入之前被拒绝，权限失败直接退出，不寻找备用目录。
+`validate` 不打开或初始化数据目录。容器默认无需挂配置；可选挂载 `/etc/redapp/config.yaml`，或挂载自定义文件后设置 `REDAPP_CONFIG`，使服务及健康检查使用一致来源。单独修改容器 CMD 的 CLI 参数时也须调整 HEALTHCHECK；推荐环境变量方式。使用 JSON 的部署应先按当前字段更新文件，再显式选择其路径，不能依赖自动发现。旧数据目录仍在初始化写入之前被拒绝，权限失败直接退出，不寻找备用目录。
 
 上游地址、应用协议和信任根仍来自受审查的编译期定义，不恢复任意上游 URL 覆盖。`REDAPP_PUBLIC_URL` 不属于上述字段覆盖链，只给后台公共 URL 设置提供环境默认值；文件/CLI 不增加新的 public_origin 来源。
 
@@ -48,7 +51,7 @@ REDAPP_CONFIG=/ignored.yaml redapp config validate --config ./config.json
 
 公共地址仅接受 HTTP(S) origin，允许规范化一个尾 `/`，拒绝凭据、子路径、query、fragment 和注入字符。保存时不探测网络；持久化成功后新请求立即采用该地址，失败不改变运行状态。公共 bootstrap 和动态 installer 使用 no-store；已经复制出去的旧命令不会自动改写。
 
-**请求 origin、公共地址、上游 origin 独立。** 请求 origin 按入站 Host、可信代理和 `allowed_hosts` 校验，决定同源校验与 Cookie Secure。改变公共地址不扩大 Host allowlist、不改变上游授权，也不跳转当前后台。
+**请求 origin、公共地址、上游 origin 独立。** 请求 origin 按入站 Host 语法和可信代理链校验，决定同源校验与 Cookie Secure。改变公共地址不限制入站 Host、不改变上游授权，也不跳转当前后台。管理 API 仍检查会话、Origin 和写操作的 CSRF；会话 Cookie 保持 host-only、`/admin`、HttpOnly、SameSite Strict，并按有效请求 origin 设置 Secure。
 
 ```nginx
 location / {
@@ -60,7 +63,7 @@ location / {
 }
 ```
 
-将实际代理网段写入 `trusted_proxies`，并把 `downloads.example.internal` 写入 `allowed_hosts`。仅可信 peer 的转发头生效；合法 Forwarded 优先于 X-Forwarded-*，沿链从右向左选择信任边界。多值 Host/Proto 必须与 XFF 长度一致，单值须由直连可信代理覆盖。畸形可信 origin 返回 400，不混用两套头。代理必须删除或覆盖客户端转发头，不应信任覆盖公网客户端的 CIDR。
+将实际代理网段写入 `trusted_proxies`，并在反向代理配置域名及访问策略。仅可信 peer 的转发头生效；合法 Forwarded 优先于 X-Forwarded-*，沿链从右向左选择信任边界。多值 Host/Proto 必须与 XFF 长度一致，单值须由直连可信代理覆盖。畸形可信 origin 返回 400，不混用两套头。代理必须删除或覆盖客户端转发头，不应信任覆盖公网客户端的 CIDR。
 
 首次随机管理员密码只输出一次；登录后修改并保护日志。会话 Cookie 为 HttpOnly、SameSite=Strict、Path=/admin，按请求安全 origin 决定 Secure；管理写入要求会话、同源校验和 `X-CSRF-Token`。修改密码使现有会话失效。
 

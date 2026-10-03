@@ -29,6 +29,8 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
     env["REDAPP_DATA"] = str(directory / "data")
     env["REDAPP_LISTEN"] = f"127.0.0.1:{port}"
     env["REDAPP_MAX_ARTIFACT_BYTES"] = "4gb"
+    env["REDAPP_MAX_WRITERS"] = "20"
+    env["REDAPP_MAX_READERS"] = "600"
     args = [binary]  # No arguments and no configuration file.
     log = (directory / "server.log").open("w+")
     process = subprocess.Popen(args, env=env, stdout=log, stderr=log)
@@ -78,11 +80,20 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         ready()
         # Healthcheck must work even though publication origin differs from listener.
         subprocess.run([binary, "healthcheck"], env=env, check=True)
-        # Public URL is a link setting, not permission to accept that incoming Host.
-        for host in ["untrusted.example", "environment.example.test"]:
+        # Valid incoming authorities do not require a deployment allowlist.
+        # PUBLIC_URL only selects generated links; authentication still applies.
+        for host in ["remote.example:9443", "environment.example.test", "[2001:db8::1]:8080"]:
+            with opener.open(urllib.request.Request(base + "/api/bootstrap", headers={"Host": host}), timeout=5) as response:
+                assert json.load(response)["public_origin"] == env["REDAPP_PUBLIC_URL"]
             try:
-                opener.open(urllib.request.Request(base + "/api/bootstrap", headers={"Host": host}), timeout=5)
-                raise AssertionError("default Host trust expanded")
+                opener.open(urllib.request.Request(base + "/admin/api/status", headers={"Host": host}), timeout=5)
+                raise AssertionError("custom Host bypassed authentication")
+            except urllib.error.HTTPError as error:
+                assert error.code == 401, error.code
+        for host in ["bad_host", "example.com:0", "example.com:65536"]:
+            try:
+                opener.open(urllib.request.Request(base + "/health/ready", headers={"Host": host}), timeout=5)
+                raise AssertionError("invalid Host accepted")
             except urllib.error.HTTPError as error:
                 assert error.code == 400, error.code
         log.flush()
@@ -169,9 +180,9 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         log = (directory / "restart.log").open("w+")
         env["REDAPP_PUBLIC_URL"] = ""
         config_path = directory / "restart.yaml"
-        config_path.write_text(f"# YAML-selected restart of the same data\nlisten: '127.0.0.1:{port}'\ndata_dir: {json.dumps(str(directory / 'data'))}\nallowed_hosts: ['127.0.0.1:{port}']\ndownload_limits: {{max_artifact_bytes: '4GiB'}}\n")
+        config_path.write_text(f"# YAML-selected restart of the same data\nlisten: '127.0.0.1:{port}'\ndata_dir: {json.dumps(str(directory / 'data'))}\ndownload_limits: {{max_writers: 20, max_readers: 600, max_artifact_bytes: '4GiB'}}\n")
         env["REDAPP_CONFIG"] = str(config_path)
-        del env["REDAPP_DATA"], env["REDAPP_LISTEN"], env["REDAPP_MAX_ARTIFACT_BYTES"]
+        del env["REDAPP_DATA"], env["REDAPP_LISTEN"], env["REDAPP_MAX_ARTIFACT_BYTES"], env["REDAPP_MAX_WRITERS"], env["REDAPP_MAX_READERS"]
         process = subprocess.Popen(args, env=env, stdout=log, stderr=log)
         ready()
         bootstrap = read("/api/bootstrap")
@@ -179,6 +190,9 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         subprocess.run([binary, "healthcheck"], env=env, check=True)
         with opener.open(urllib.request.Request(base + "/api/bootstrap", headers={"Forwarded": "proto=https;host=untrusted.example"}), timeout=5) as response:
             assert json.load(response)["public_origin"] == base, "untrusted proxy header affected origin"
+        for host in ["remote.example:9443", "[2001:db8::1]:8080"]:
+            with opener.open(urllib.request.Request(base + "/api/bootstrap", headers={"Host": host}), timeout=5) as response:
+                assert json.load(response)["public_origin"] == "http://" + host
         process.terminate()
         assert process.wait(timeout=20) == 0
         log.flush()

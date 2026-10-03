@@ -29,7 +29,7 @@ with tempfile.TemporaryDirectory(prefix="redapp-data-cli-") as temp:
     config_path = directory / "config.json"
     data = directory / "new-data"
     config = {"schema_version": 1, "data_dir": str(data),
-              "allowed_hosts": ["localhost:8080"]}
+              "download_limits": {"max_writers": 16, "max_readers": 512}}
     config_path.write_text(json.dumps(config))
     result = invoke(["config", "validate", "--config", str(config_path)], directory)
     assert result.returncode == 0 and not data.exists(), result.stderr
@@ -46,6 +46,20 @@ with tempfile.TemporaryDirectory(prefix="redapp-data-cli-") as temp:
         assert result.returncode == expected and not data.exists(), result.stderr
         if expected:
             assert "max_artifact_bytes" in result.stderr
+    for args, overrides, expected in [
+        (["--max-writers", "24", "--max-readers", "768"], {}, 0),
+        ([], {"REDAPP_MAX_WRITERS": "24", "REDAPP_MAX_READERS": "768"}, 0),
+        (["--max-writers", "1025"], {}, 1),
+        (["--max-active-writers", "24"], {}, 1),
+        (["--allowed-hosts", "example.com"], {}, 1),
+    ]:
+        result = invoke(["config", "validate", "--config", str(config_path), *args], directory, overrides)
+        assert result.returncode == expected and not data.exists(), result.stderr
+    for removed in [{"allowed_hosts": ["example.com"]}, {"download_limits": {"max_active_writers": 24}}]:
+        config_path.write_text(json.dumps({**config, **removed}))
+        result = invoke(["config", "validate", "--config", str(config_path)], directory)
+        assert result.returncode == 1 and "unknown" in result.stderr and not data.exists(), result.stderr
+    config_path.write_text(json.dumps(config))
     # Explicit CLI path wins over a missing environment-selected path.
     result = invoke(["config", "validate", "--config", str(config_path)], directory,
                     {"REDAPP_CONFIG": str(directory / "missing.yaml")})

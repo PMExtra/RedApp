@@ -2,7 +2,6 @@ package httpserver
 
 import (
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -61,16 +60,12 @@ func newTestServer(t *testing.T, upstream *distributor.Client) (*Server, *store.
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Server{DB: db, Registry: registry, Catalog: catalog.New(db, registry), Downloads: manager, Auth: a, History: h, PublicConfig: p, AllowedHosts: []string{"internal", "internal:8080", "redapp.local", "example.com"}, Dir: dir, Started: time.Now()}, db, password
+	return &Server{DB: db, Registry: registry, Catalog: catalog.New(db, registry), Downloads: manager, Auth: a, History: h, PublicConfig: p, Dir: dir, Started: time.Now()}, db, password
 }
 func startTestServer(t *testing.T, s *Server) *httptest.Server {
 	t.Helper()
 	h := httptest.NewUnstartedServer(s)
-	s.AllowedHosts = append(s.AllowedHosts, h.Listener.Addr().String())
 	h.Start()
 	t.Cleanup(h.Close)
 	return h
-}
-func allowTestOrigin(s *Server, origin string) {
-	s.AllowedHosts = append(s.AllowedHosts, strings.TrimPrefix(strings.TrimPrefix(origin, "http://"), "https://"))
 }

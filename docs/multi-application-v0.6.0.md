@@ -7,7 +7,7 @@ v0.6.0 将 Codex CLI 和 Claude Code 的应用身份统一为 `openai/codex`、`
 ## 数据和部署变化
 
 1. 保留旧版本和完整旧数据目录备份，不删除或原地修改旧目录。
-2. 从 [config/example.json](../config/example.json) 创建显式 JSON 配置，为 `data_dir` 指定全新空目录，配置 `allowed_hosts`；反向代理场景还需明确 `trusted_proxies`。
+2. 从 [v0.6.0 的 config/example.json](https://github.com/PMExtra/RedApp/blob/v0.6.0/config/example.json) 创建显式 JSON 配置，为 `data_dir` 指定全新空目录，配置 `allowed_hosts`；反向代理场景还需明确 `trusted_proxies`。
 3. 运行 `redapp config validate --config /etc/redapp/config.json`。验证本身不打开或创建数据目录。
 4. 使用新数据卷启动 v0.6.0，配置只读挂载；首次启动重新初始化管理员身份，再在后台设置站点、代理、PUBLIC_URL 和应用 TTL。
 5. 重新配置下游安装链接并验证所需平台。缓存按需重新填充，历史从新实例运行时开始采集。

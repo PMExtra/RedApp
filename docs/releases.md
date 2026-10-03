@@ -2,7 +2,11 @@
 
 ## 待发布
 
-单制品大小上限支持容量字符串，环境变量、CLI、YAML 和显式 JSON 使用统一的 `go-humanize v1.1.0` 解析规则，兼容原有整数字节值。GB 使用十进制、GiB 使用二进制，推荐 `4GiB`；默认仍为 4294967296 字节，范围仍为 1 字节至 1 TiB。此设置不限制整个应用或缓存总体积。未改变配置优先级、数据格式、Host 策略、writer/reader 名称或默认 8080 端口。
+单制品大小上限支持容量字符串，环境变量、CLI、YAML 和显式 JSON 使用统一的 `go-humanize v1.1.0` 解析规则，兼容原有整数字节值。GB 使用十进制、GiB 使用二进制，推荐 `4GiB`；默认仍为 4294967296 字节，范围仍为 1 字节至 1 TiB。此设置不限制整个应用或缓存总体积。配置优先级、数据格式和默认 8080 端口保持不变。
+
+彻底删除入站 Host 白名单配置、环境变量和 CLI。接受语法合法的 Host，保留可信代理链、安全 origin 推导、会话认证、Origin/CSRF 和 Cookie 保护；PUBLIC_URL 只控制生成链接。域名与网络访问策略由反向代理负责，healthcheck 使用本地监听地址。
+
+writer 统一更名为 `download_limits.max_writers` / `REDAPP_MAX_WRITERS` / `--max-writers`，reader 继续使用 `max_readers` / `REDAPP_MAX_READERS` / `--max-readers`。这是 1.0 前的破坏性配置调整，没有旧别名；删除的文件字段和 CLI 会报错，旧环境变量不再读取。升级配置时删除 Host 白名单并更名 writer，参考[当前配置表](operations.md#启动配置)。
 
 ## v0.6.2
 

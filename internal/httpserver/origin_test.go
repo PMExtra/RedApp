@@ -3,6 +3,7 @@ package httpserver
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -43,7 +44,7 @@ func TestRequestOriginTrustBoundary(t *testing.T) {
 			if tc.proto != "" {
 				r.Header.Set("X-Forwarded-Proto", tc.proto)
 			}
-			s := Server{Proxy: p, AllowedHosts: []string{"internal:8080", "external.example"}}
+			s := Server{Proxy: p}
 			got, err := s.origin(r)
 			if (err != nil) != tc.invalid || !tc.invalid && got != tc.want {
 				t.Fatalf("got=%q err=%v", got, err)
@@ -53,6 +54,14 @@ func TestRequestOriginTrustBoundary(t *testing.T) {
 	for _, h := range []string{"a:0", "a:65536", "a:", "a..b", "-a", "a_foo", "a'", "[not-ip]", "::1", "a%20b", "a/<x>"} {
 		if validHost(h) {
 			t.Fatalf("accepted unsafe Host %q", h)
+		}
+		// A valid trusted forwarded authority must not hide an invalid raw Host.
+		r := httptest.NewRequest("GET", "http://internal:8080/health/ready", nil)
+		r.Host, r.RemoteAddr = h, "10.0.0.1:8080"
+		r.Header.Set("Forwarded", "host=external.example;proto=https")
+		s := Server{Proxy: p}
+		if _, err := s.origin(r); err == nil {
+			t.Fatalf("forwarded header hid unsafe Host %q", h)
 		}
 	}
 	for _, h := range []string{"localhost:8080", "example.com", "127.0.0.1", "[::1]:8080", "example.com."} {
@@ -65,7 +74,6 @@ func TestRequestOriginTrustBoundary(t *testing.T) {
 func TestAutomaticOriginHTTPIsolationAndSecurity(t *testing.T) {
 	s, _, password := newTestServer(t, nil)
 	s.Proxy, _ = NewProxy("10.0.0.0/8")
-	s.AllowedHosts = []string{"one.example", "two.example"}
 	request := func(host, path, method, body, origin string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, "http://"+host+path, strings.NewReader(body))
 		r.RemoteAddr = "10.0.0.1:8080"
@@ -90,6 +98,16 @@ func TestAutomaticOriginHTTPIsolationAndSecurity(t *testing.T) {
 		}(host)
 	}
 	wg.Wait()
+	for _, host := range []string{"remote.example:9443", "192.0.2.25:8080", "[2001:db8::1]:8080"} {
+		for _, path := range []string{"/health/ready", "/", "/admin/overview"} {
+			if w := request(host, path, "GET", "", ""); w.Code != 200 {
+				t.Fatalf("valid custom Host %s at %s: %d", host, path, w.Code)
+			}
+		}
+		if w := request(host, "/admin/api/status", "GET", "", ""); w.Code != 401 {
+			t.Fatalf("custom Host bypassed authentication: %d", w.Code)
+		}
+	}
 	public := "https://published.example"
 	if _, err := s.PublicConfig.Set(&public, 0); err != nil {
 		t.Fatal(err)
@@ -99,14 +117,29 @@ func TestAutomaticOriginHTTPIsolationAndSecurity(t *testing.T) {
 		t.Fatal("public origin granted CSRF trust")
 	}
 	w := request("one.example", "/admin/api/login", "POST", string(body), "https://one.example")
-	if w.Code != 200 || len(w.Result().Cookies()) != 1 || !w.Result().Cookies()[0].Secure {
+	if w.Code != 200 || len(w.Result().Cookies()) != 1 {
 		t.Fatalf("login %d %s", w.Code, w.Body)
+	}
+	cookie := w.Result().Cookies()[0]
+	if !cookie.Secure || !cookie.HttpOnly || cookie.Domain != "" || cookie.Path != "/admin" || cookie.SameSite != http.SameSiteStrictMode {
+		t.Fatal("login cookie protection changed")
 	}
 	if w = request("one.example", "/openai/codex/install.sh", "GET", "", ""); w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte(public+"/openai/codex")) {
 		t.Fatal("public override not used", w.Code)
 	}
-	if w = request("published.example", "/openai/codex/install.sh", "GET", "", ""); w.Code != 400 {
-		t.Fatal("public override expanded allowed hosts", w.Code)
+	if w = request("published.example", "/openai/codex/install.sh", "GET", "", ""); w.Code != 200 {
+		t.Fatal("valid publication Host rejected", w.Code)
+	}
+	if w = request("another.example", "/api/bootstrap", "GET", "", ""); w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte(public)) {
+		t.Fatal("public override restricted the request Host", w.Code)
+	}
+	// Public settings never bypass Host syntax validation, even for health checks.
+	r := httptest.NewRequest("GET", "http://internal/health/ready", nil)
+	r.Host = "bad_host"
+	w = httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	if w.Code != 400 {
+		t.Fatal("invalid Host accepted with public override", w.Code)
 	}
 	if s.Auth.Secure {
 		t.Fatal("request changed global cookie state")

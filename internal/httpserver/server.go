@@ -43,7 +43,6 @@ type Server struct {
 	Upstream     *distributor.Client
 	History      *history.History
 	PublicConfig *config.PublicSettings
-	AllowedHosts []string
 	Dir          string
 	Started      time.Time
 }

@@ -90,15 +90,5 @@ func (s *Server) origin(r *http.Request) (string, error) {
 	if (proto != "http" && proto != "https") || !validHost(host) {
 		return "", errors.New("Invalid request origin")
 	}
-	allowed := false
-	for _, candidate := range s.AllowedHosts {
-		if strings.EqualFold(candidate, host) {
-			allowed = true
-			break
-		}
-	}
-	if !allowed {
-		return "", errors.New("Request Host is not allowed by deployment configuration")
-	}
 	return proto + "://" + host, nil
 }
