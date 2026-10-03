@@ -47,8 +47,16 @@ def compile_fixture(root, provider, version):
     source = root / f'{provider}-{version}.cs'
     binary = source.with_suffix('.exe')
     version_branch = f'if (args.Length == 1 && args[0] == "--version") {{ Console.WriteLine("codex-cli {version}"); return 0; }}' if provider == 'codex' else ''
-    source.write_text('using System; class Fixture { static int Main(string[] args) { '+version_branch+
-                      ' Console.WriteLine(Environment.GetEnvironmentVariable("DISABLE_UPDATES")); foreach (string arg in args) Console.WriteLine(arg); return 23; }')
+    source.write_text("""using System;
+class Fixture {
+    static int Main(string[] args) {
+        @VERSION_BRANCH@
+        Console.WriteLine(Environment.GetEnvironmentVariable("DISABLE_UPDATES"));
+        foreach (string arg in args) Console.WriteLine(arg);
+        return 23;
+    }
+}
+""".replace('@VERSION_BRANCH@', version_branch), encoding='utf-8')
     result = run(['powershell.exe','-NoProfile','-NonInteractive','-Command',
                   "$ErrorActionPreference='Stop'; Add-Type -Path $env:FIXTURE_SOURCE -OutputAssembly $env:FIXTURE_BINARY -OutputType ConsoleApplication"],
                  env={**os.environ,'FIXTURE_SOURCE':str(source),'FIXTURE_BINARY':str(binary)})
