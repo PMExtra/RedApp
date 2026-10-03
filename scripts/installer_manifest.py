@@ -16,7 +16,7 @@ APP_ID = re.compile(r'[a-z0-9]+(?:-[a-z0-9]+)*/[a-z0-9]+(?:-[a-z0-9]+)*')
 
 
 def applications(root=ROOT):
-    manifest = json.loads((root / MANIFEST).read_text())
+    manifest = json.loads((root / MANIFEST).read_text(encoding="utf-8"))
     if manifest.get('schema_version') != 1:
         raise ValueError('Unsupported builtin application manifest schema')
     apps = manifest.get('applications')

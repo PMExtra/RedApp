@@ -26,7 +26,7 @@ def bundle(path, baseline, broken=False):
             if broken and app == 'openai/codex': generated = b'param(\n'
             files[f'installers/{app}/upstream/{name}'] = raw
             files[f'installers/{app}/generated/{name}'] = generated
-            provenance = json.loads((base/'provenance.json').read_text())
+            provenance = json.loads((base/'provenance.json').read_text(encoding='utf-8'))
             provenance['files'][name].update(bytes=len(raw),sha256=sha(raw))
             files[f'installers/{app}/provenance.json'] = json.dumps(provenance).encode()
     payload = dict(baseline=baseline,rows=rows,files={name:sha(data) for name,data in files.items()})

@@ -12,7 +12,7 @@ def run(command, **kwargs):
     if Path(command[0]).name.lower() == 'powershell.exe':
         # WinPS must rebuild its own defaults, not inherit PS7 module paths.
         kwargs['env'] = {k:v for k,v in kwargs.get('env', os.environ).items() if k.upper() != 'PSMODULEPATH'}
-    return subprocess.run(command, capture_output=True, text=True, timeout=60, **kwargs)
+    return subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60, **kwargs)
 
 
 def succeeded(result):
