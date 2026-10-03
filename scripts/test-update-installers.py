@@ -1,35 +1,37 @@
 #!/usr/bin/env python3
-"""证明源码摘要/补丁冲突不会覆盖已发布安装器。"""
-import hashlib
+"""Both providers share check/apply/digest/context contracts in disposable copies."""
 from pathlib import Path
+import json
 import shutil
 import subprocess
 import tempfile
+from installer_manifest import ROOT, applications
+from installer_test_support import sha, file_state
 
-root = Path(__file__).resolve().parents[1]
-target = root / "installers/openai/codex"
-before = {p.relative_to(target): hashlib.sha256(p.read_bytes()).digest() for p in target.rglob("*") if p.is_file()}
-with tempfile.TemporaryDirectory(prefix="redapp-updater-test-") as temp:
-    source = Path(temp)
-    for file in (target / "upstream").iterdir():
-        shutil.copyfile(file, source / file.name)
-    # Published assets must exactly equal the current baseline plus strict patches.
-    for name in ["install.sh", "install.ps1"]:
-        generated = source / (name + ".generated")
-        shutil.copyfile(source / name, generated)
-        result = subprocess.run(["patch", "--batch", "--forward", "--fuzz=0", str(generated), str(target / "patches" / (name + ".patch"))], capture_output=True, text=True)
-        assert result.returncode == 0 and "offset" not in result.stdout and "fuzz" not in result.stdout, result.stdout
-        assert generated.read_bytes() == (target / "generated" / name).read_bytes(), "generated assets drifted from patches"
-    result = subprocess.run(["python3", str(root / "scripts/update-installers.py"), "--source", str(source)], capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-    shell = source / "install.sh"
-    shell.write_bytes(shell.read_bytes().replace(b"RELEASES_BASE_URL=", b"CHANGED_RELEASES_BASE_URL=", 1))
-    # Hash failure must stop even before patch application.
-    result = subprocess.run(["python3", str(root / "scripts/update-installers.py"), "--source", str(source), "--apply"], capture_output=True, text=True)
-    assert result.returncode != 0, "bad source digest accepted"
-    # Explicitly trusted changed digest still cannot bypass strict patch context.
-    result = subprocess.run(["python3", str(root / "scripts/update-installers.py"), "--source", str(source), "--shell-sha256", hashlib.sha256(shell.read_bytes()).hexdigest(), "--apply"], capture_output=True, text=True)
-    assert result.returncode != 0, "patch conflict ignored"
-after = {p.relative_to(target): hashlib.sha256(p.read_bytes()).digest() for p in target.rglob("*") if p.is_file()}
-assert before == after, "failed updater changed published installer tree"
-print("更新器检查模式、源码摘要拒绝、严格补丁冲突保留旧目录：通过")
+for app in applications():
+    with tempfile.TemporaryDirectory(prefix='installer-updater-test-') as tmp:
+        fixture=Path(tmp)
+        for name in ('installers','scripts'):
+            shutil.copytree(ROOT/name,fixture/name,ignore=shutil.ignore_patterns('__pycache__'))
+        manifest=fixture/'internal/apps/builtin';manifest.mkdir(parents=True)
+        shutil.copyfile(ROOT/'internal/apps/builtin/manifest.json',manifest/'manifest.json')
+        target=fixture/'installers'/app['id']
+        before=file_state(target)
+        command=['python3',str(fixture/'scripts/update-installers.py'),'--application',app['id']]
+        def execute(options):
+            return subprocess.run(command+options,capture_output=True,text=True,timeout=180)
+        checked=execute(['--source',str(target/'upstream')])
+        assert checked.returncode==0,checked.stderr
+        assert file_state(target)==before,'check mode changed files'
+        source=fixture/'changed';shutil.copytree(target/'upstream',source)
+        file=source/'install.sh';file.write_bytes(file.read_bytes().replace(b'BASE_URL=',b'CHANGED_BASE_URL=',1))
+        for options in [[],['--shell-sha256',sha(file.read_bytes())]]:
+            failed=execute(['--source',str(source),'--apply']+options)
+            assert failed.returncode!=0,'digest/patch context failure accepted'
+            assert file_state(target)==before,'failure changed existing installer tree'
+        applied=execute(['--source',str(target/'upstream'),'--apply'])
+        assert applied.returncode==0,applied.stderr
+        after=file_state(target)
+        assert {k:v for k,v in after.items() if k!='provenance.json'}=={k:v for k,v in before.items() if k!='provenance.json'}
+        assert json.loads(after['provenance.json'])['retrieved_at']!=json.loads(before['provenance.json'])['retrieved_at']
+        print(app['id']+': check-only, digest/context protection and isolated atomic apply PASS')

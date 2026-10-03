@@ -10,7 +10,7 @@ import urllib.parse
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = Path('internal/apps/builtin/manifest.json')
-VALIDATORS = {'codex': 'test-installers.py', 'claude-code': 'test-claude-installers.py'}
+VALIDATORS = frozenset(('codex', 'claude-code'))
 SCRIPT_NAMES = frozenset(('install.sh', 'install.ps1'))
 APP_ID = re.compile(r'[a-z0-9]+(?:-[a-z0-9]+)*/[a-z0-9]+(?:-[a-z0-9]+)*')
 

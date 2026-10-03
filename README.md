@@ -14,7 +14,7 @@ No configuration file is required. The native executable accepts `redapp` or `re
 docker run -d --name redapp --read-only \
   -p 127.0.0.1:8080:8080 \
   -v redapp-v06-data:/var/lib/redapp \
-  ghcr.io/pmextra/redapp:0.6.3
+  ghcr.io/pmextra/redapp:0.6.4
 ```
 
 Defaults are `:8080`, `/var/lib/redapp`, and no trusted proxies. RedApp accepts any syntactically valid request Host; configure domain and network access policy at the reverse proxy. New deployments need a new empty data directory/volume; existing v0.6 data can be reused. Directory permission failures never fall back elsewhere.

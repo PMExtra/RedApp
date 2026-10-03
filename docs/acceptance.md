@@ -42,7 +42,7 @@ git diff --check
 | 命令 / 子项 | 结果 |
 | --- | --- |
 | `go test -race ./... -count=1 -timeout=120s` | 全部通过；Codex 1.050s、Auth 36.205s、Distributor 1.008s、Download 2.374s、HTTP 18.557s、Instance 1.015s；未报告 data race |
-| `python3 scripts/test-installers.py` | 25 个真实 shell 离线场景通过；PowerShell 静态出口检查通过 |
+| `python3 scripts/test-installers.py`（历史入口；当前需 `--platform shell`） | 25 个真实 shell 离线场景通过；PowerShell 静态出口检查通过 |
 | `python3 scripts/test-update-installers.py` | 检查模式、摘要拒绝、patch 冲突保留旧目录通过 |
 | `gofmt -l` / `go vet ./...` | 无格式差异；vet 通过 |
 | `make build` | 静态 Linux/amd64 二进制 `bin/redapp`；`file` 确认为 statically linked，`ldd` 无动态依赖 |
@@ -276,7 +276,7 @@ make check test build frontend-test
 # gofmt / vet / 全量 go test -race ./... -count=1 -timeout=120s
 # Codex 25 场景与失败保护，Claude 64 场景，维护工具测试
 # Vue 类型检查、13 文件 / 33 DOM 测试、嵌入资源与静态二进制
-python3 scripts/test-update-claude-installers.py
+python3 scripts/test-update-installers.py # 当前统一入口；本节记录历史版本结果
 python3 scripts/test-installer-maintenance.py
 python3 scripts/test-data-cli.py
 python3 scripts/test-http-cli.py

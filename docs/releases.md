@@ -1,5 +1,13 @@
 # 版本说明
 
+## v0.6.4
+
+统一 Codex/Claude 的安装器测试入口、公共 HTTP/制品夹具、候选包校验和维护命令；保留两种下载协议及平台行为差异，移除废弃的 Claude 专用测试/更新命令。官方 upstream、patch、generated、许可证、公钥以及应用配置/数据库格式均不变。
+
+删除所有 PowerShell-on-Linux 解析及镜像依赖。PS7/Windows PowerShell 5.1 统一在 Windows Server 2022 执行，补齐 Codex 原生安装/junction/摘要/升级/更新标记测试，强化 Claude 各下载阶段失败与旧文件保护，并缩减重复生命周期组合。自动更新在 Linux 生成和复核候选包后，必须由 Windows 验证同一 baseline 与包摘要，再创建草稿 PR，不依赖机器人 PR 是否触发普通 CI，不引入新 token 或修改安全设置。
+
+Windows 原生行为当前覆盖 AMD64；Claude ARM64 只模拟下载路径，Codex 不模拟 OSArchitecture。所有二进制均为本地无害桩；未执行官方 Claude/Codex、GUI、原生 Windows ARM64 或 macOS 验收。发布仍要求精确 main 提交完整 CI 及双架构镜像按 digest 运行验证。测试入口与边界见[安装器维护](installers-maintenance.md#统一测试与平台边界v064)。
+
 ## v0.6.3
 
 单制品大小上限支持容量字符串，环境变量、CLI、YAML 和显式 JSON 使用统一的 `go-humanize v1.1.0` 解析规则，兼容原有整数字节值。GB 使用十进制、GiB 使用二进制，推荐 `4GiB`；默认仍为 4294967296 字节，范围仍为 1 字节至 1 TiB。此设置不限制整个应用或缓存总体积。配置优先级、数据格式和默认 8080 端口保持不变。

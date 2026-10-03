@@ -7,17 +7,15 @@ build: frontend
 	CGO_ENABLED=1 go build -tags netgo,osusergo,sqlite_omit_load_extension -trimpath -ldflags='-linkmode external -extldflags "-static" -X main.version=$(VERSION) -X main.revision=$(REVISION)' -o bin/redapp ./cmd/redapp
 test:
 	go test -race ./... -count=1 -timeout=120s
-	python3 scripts/test-installers.py
+	python3 scripts/test-installers.py --platform shell
 	python3 scripts/test-update-installers.py
-	python3 scripts/test-claude-installers.py
-	python3 scripts/test-update-claude-installers.py
 	python3 scripts/test-installer-maintenance.py
 check:
 	test -z "$$(gofmt -l cmd internal installers)"
 	go vet ./...
 installers:
-	python3 scripts/update-installers.py --source installers/openai/codex/upstream
-	python3 scripts/update-claude-installers.py --source installers/anthropic/claude-code/upstream
+	python3 scripts/update-installers.py --application openai/codex --source installers/openai/codex/upstream
+	python3 scripts/update-installers.py --application anthropic/claude-code --source installers/anthropic/claude-code/upstream
 docker:
 	docker build -t redapp:local .
 

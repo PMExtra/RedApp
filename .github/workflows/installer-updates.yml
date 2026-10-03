@@ -9,8 +9,9 @@ on:
     paths:
       - '.github/workflows/installer-updates.yml'
       - '.github/installer-check/Dockerfile'
-      - 'scripts/installer_maintenance.py'
-      - 'scripts/installer_manifest.py'
+      - '.github/workflows/windows-installers.yml'
+      - 'scripts/installer*.py'
+      - 'scripts/test-installer*.py'
       - 'internal/apps/builtin/manifest.json'
 
 permissions:
@@ -65,8 +66,17 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
-  draft-pr:
+  windows-installers:
     needs: validate
+    if: needs.validate.outputs.changed == 'true'
+    uses: ./.github/workflows/windows-installers.yml
+    with:
+      revision: ${{ needs.validate.outputs.baseline }}
+      artifact: installer-update
+      bundle_sha256: ${{ needs.validate.outputs.sha256 }}
+
+  draft-pr:
+    needs: [validate, windows-installers]
     if: needs.validate.outputs.changed == 'true' && github.repository == 'PMExtra/RedApp'
     runs-on: ubuntu-24.04
     timeout-minutes: 5

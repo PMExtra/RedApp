@@ -144,16 +144,6 @@ class CheckTests(unittest.TestCase):
                 return original_run(args,**kwargs)
             with patch.object(m,'run',side_effect=failing),self.assertRaises(subprocess.CalledProcessError):m.validate(prepared,tmp/'out')
             self.assertFalse(list((tmp/'out').glob('*')))
-    def test_missing_powershell_parser_cannot_pass_validation(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp=Path(tmp);prepared=tmp/'prepared';m.prepare(prepared,fetch=self.original)
-            original_run=m.run
-            def only_patch(args,**kwargs):
-                return original_run(args,**kwargs) if args[0]=='patch' else ''
-            with patch.object(m,'run',side_effect=only_patch),patch.object(m.shutil,'which',return_value=None),self.assertRaisesRegex(ValueError,'PowerShell parser required'):
-                m.validate(prepared,tmp/'out')
-            self.assertFalse(list((tmp/'out').glob('*')))
-
     def test_readonly_package_rejects_changed_validation_output(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp=Path(tmp);prepared=tmp/'prepared';m.prepare(prepared,fetch=self.original)
@@ -207,6 +197,21 @@ class PublishTests(unittest.TestCase):
         self.files['installers/anthropic/claude-code/patches/install.sh.patch']=b'unapproved'
         path,sha=self.bundle()
         with self.assertRaises(ValueError):p.load_bundle(path,sha,self.baseline)
+    def test_exact_candidate_materialization_and_baseline_preservation(self):
+        from installer_bundle import materialize
+        path,sha=self.bundle()
+        before={p.relative_to(self.root):p.read_bytes() for p in (self.root/'installers').rglob('*') if p.is_file()}
+        destination=Path(self.temp.name)/'candidate'
+        materialize(path,sha,self.baseline,destination,self.root)
+        for name,data in self.files.items():
+            self.assertEqual((destination/Path(name).relative_to('installers')).read_bytes(),data)
+        for name,data in before.items():
+            self.assertEqual((self.root/name).read_bytes(),data)
+            if str(name) not in self.files:
+                self.assertEqual((destination/name.relative_to('installers')).read_bytes(),data)
+        with self.assertRaises(ValueError):materialize(path,sha,'0'*40,Path(self.temp.name)/'bad',self.root)
+        self.assertFalse((Path(self.temp.name)/'bad').exists())
+
     def test_create_idempotent_update_and_fast_forward(self):
         result=self.publish();first=result['head']['sha'];self.assertTrue(result['draft'])
         self.files['installers/anthropic/claude-code/provenance.json']=b'{"script_baseline":{"checked_at":"tomorrow"}}\n'

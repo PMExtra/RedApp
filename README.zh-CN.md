@@ -14,7 +14,7 @@ v0.6.0 统一使用 `openai/codex`、`anthropic/claude-code` 应用身份，是*
 docker run -d --name redapp --read-only \
   -p 127.0.0.1:8080:8080 \
   -v redapp-v06-data:/var/lib/redapp \
-  ghcr.io/pmextra/redapp:0.6.3
+  ghcr.io/pmextra/redapp:0.6.4
 ```
 
 默认监听 `:8080`、数据目录 `/var/lib/redapp`、不信任任何反向代理。RedApp 接受语法合法的请求 Host，域名和网络访问策略由反向代理控制。首次部署使用新的空目录/卷，已有 v0.6 数据可继续使用；权限失败不会寻找备用目录。

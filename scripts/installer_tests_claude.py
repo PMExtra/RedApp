@@ -1,55 +1,22 @@
 #!/usr/bin/env python3
 """离线 CLI：无害二进制桩、真实 Bash/curl/wget、受控本地 HTTP；不运行上游二进制。"""
-import argparse
-import hashlib
-import http.server
-import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
-import threading
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--directory', type=Path, default=Path(__file__).resolve().parents[1] / 'installers/anthropic/claude-code/generated')
-    args = parser.parse_args()
-    # Both parser and downloader branches are acceptance requirements, not optional skips.
+from installer_test_support import InstallerServer
+
+
+def test_shell(directory, application):
     for dependency in ['bash', 'curl', 'wget', 'jq']:
         assert shutil.which(dependency), f'{dependency} is required for installer contracts'
-    seen, config = [], {}
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def log_message(self, *_): pass
-        def do_GET(self):
-            if not self.path.startswith('/anthropic/claude-code/'):
-                seen.append(self.path);self.send_error(404);return
-            path=self.path[len('/anthropic/claude-code'):]
-            seen.append(path)
-            version = config['version']
-            redirect_path = {
-                'redirect-channel': '/latest',
-                'redirect-manifest': f'/{version}/manifest.json',
-                'redirect-artifact': f'/{version}/{config["platform"]}/claude',
-            }.get(config.get('failure'))
-            if path == redirect_path:
-                self.send_response(302); self.send_header('Location', '/escaped'); self.end_headers(); return
-            if path in ['/latest', '/stable']:
-                body = version.encode() if config.get('failure') != 'channel' else b'2.1.285/../../escape'
-            elif path == f'/{version}/manifest.json':
-                body = json.dumps({'version': version, 'platforms': {config['platform']: {'binary': 'claude', 'checksum': hashlib.sha256(config['body']).hexdigest(), 'size': len(config['body'])}}}).encode()
-                if config.get('failure') == 'manifest': body = b'<html>Error</html>'
-            elif path == f'/{version}/{config["platform"]}/claude':
-                body = config['body'].replace(b'exit 23', b'exit 24') if config.get('failure') == 'hash' else config['body']
-                if config.get('failure') == 'download': self.send_error(503); return
-            else:
-                self.send_error(404); return
-            self.send_response(200); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
-    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
-    base = f'http://127.0.0.1:{server.server_port}/anthropic/claude-code'
-    script = (args.directory / 'install.sh').read_text().replace('@REDAPP_BASE_URL@', base)
+    fixture = InstallerServer(application, 'claude-code')
+    fixture.__enter__()
+    config, seen, base = fixture.config, fixture.seen, fixture.base
+    script = (directory / 'install.sh').read_text().replace('@REDAPP_BASE_URL@', base)
     try:
         with tempfile.TemporaryDirectory(prefix='claude-installer-test-') as temp:
             root = Path(temp)
@@ -92,17 +59,7 @@ def main():
                 run(failure=failure)
             print('Failure protection: PASS (jq/fallback × curl/wget; malformed data, hash, download, redirects, conflicts)')
     finally:
-        server.shutdown(); server.server_close(); thread.join()
-    ps = (args.directory / 'install.ps1').read_text()
-    assert '& $binaryPath install' not in ps
-    assert "$env:DISABLE_UPDATES = '1'" in ps and 'finally { $env:DISABLE_UPDATES = $previous }' in ps
-    assert '-MaximumRedirection 0' in ps and 'https://downloads.claude.ai' not in ps
-    assert '[IO.File]::Replace' in ps and '@VERSION@.exe" @args' in ps
-    if shutil.which('pwsh'):
-        env={**os.environ,'REDAPP_INSTALLER_SYNTAX_PATH':str(args.directory/'install.ps1')}
-        subprocess.run(['pwsh','-NoProfile','-NonInteractive','-Command',"$e=$null;$t=$null;[System.Management.Automation.Language.Parser]::ParseFile($env:REDAPP_INSTALLER_SYNTAX_PATH,[ref]$t,[ref]$e)|Out-Null;if($e.Count){$e;exit 1}"],env=env,check=True,timeout=30)
-        print('PowerShell parser: PASS; Windows execution not covered here')
-    else: print('PowerShell static checks: PASS; parser/Windows execution not available')
+        fixture.__exit__()
     print('Claude Shell contracts: PASS (no official binary executed)')
 
 
@@ -177,5 +134,3 @@ def case(root, script, config, seen, base, *, osname='Linux', arch='x86_64',
     if failure != 'target':
         assert set(download_log.read_text().splitlines()) == {downloader}
 
-
-if __name__=='__main__': main()

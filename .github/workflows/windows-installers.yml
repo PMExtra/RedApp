@@ -1,0 +1,50 @@
+name: Windows installer contracts
+
+on:
+  workflow_call:
+    inputs:
+      revision:
+        required: true
+        type: string
+      artifact:
+        default: ''
+        type: string
+      bundle_sha256:
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.revision }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: inputs.artifact != ''
+        with:
+          name: ${{ inputs.artifact }}
+          path: ${{ runner.temp }}/installer-bundle
+      - name: Validate exact installer candidate with PowerShell 7 and 5.1
+        shell: pwsh
+        env:
+          CANDIDATE_ARTIFACT: ${{ inputs.artifact }}
+          CANDIDATE_SHA256: ${{ inputs.bundle_sha256 }}
+          BASELINE_SHA: ${{ inputs.revision }}
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          $guard = [guid]::NewGuid().ToString('N')
+          Write-Output "::stop-commands::$guard"
+          try {
+            if ($env:CANDIDATE_ARTIFACT) {
+              python scripts/test-installers.py --platform windows --bundle "$env:RUNNER_TEMP/installer-bundle/installer-update.zip" --sha256 $env:CANDIDATE_SHA256 --baseline $env:BASELINE_SHA
+            } else {
+              python scripts/test-installer-candidates.py
+            }
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          } finally { Write-Output "::$guard::" }

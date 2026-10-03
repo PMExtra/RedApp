@@ -2,9 +2,8 @@
 """Publish only a verified installer bundle as a draft PR; never execute its contents."""
 import argparse
 import base64
-import hashlib
-import io
 import json
+from installer_bundle import load_bundle
 import os
 from pathlib import Path
 import re
@@ -16,48 +15,10 @@ import zipfile
 
 BRANCH = 'automation/installer-updates'
 BOT = 'github-actions[bot]'
-from installer_manifest import ROOT, allowed_paths, inventory
-SHA = re.compile(r'[0-9a-f]{40}')
+from installer_manifest import ROOT, allowed_paths
 MARKER = re.compile(r'<!-- redapp-installer-update-head: ([0-9a-f]{40}) -->')
 BASE_MARKER = re.compile(r'<!-- redapp-installer-update-base: ([0-9a-f]{40}) -->')
 
-
-def load_bundle(path, expected_sha, baseline, root=ROOT):
-    allowed=allowed_paths(root)
-    raw = path.read_bytes()
-    if len(raw) > 8*1024*1024 or hashlib.sha256(raw).hexdigest() != expected_sha:
-        raise ValueError('Bundle digest/size differs from the read-only validation job')
-    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
-        entries = archive.infolist()
-        names = [x.filename for x in entries]
-        if len(names) != len(set(names)) or set(names) - allowed - {'update.json'} or 'update.json' not in names:
-            raise ValueError('Bundle has duplicate or unapproved paths')
-        if sum(x.file_size for x in entries) > 8*1024*1024 or any((x.external_attr >> 16) & 0o170000 == 0o120000 for x in entries):
-            raise ValueError('Bundle has oversized files or symbolic links')
-        payload = json.loads(archive.read('update.json'))
-        files = {name:archive.read(name) for name in names if name != 'update.json'}
-    if payload.get('baseline') != baseline or not SHA.fullmatch(baseline):
-        raise ValueError('Bundle baseline differs from the pinned main commit')
-    if not files or payload.get('files') != {name:hashlib.sha256(body).hexdigest() for name,body in files.items()}:
-        raise ValueError('Bundle file digests are incomplete or inconsistent')
-    rows = payload.get('rows', [])
-    expected = {(x['application'],x['name']):x['url'] for x in inventory(root)}
-    if len(rows) != len(expected) or {(r['application'],r['name']) for r in rows} != set(expected):
-        raise ValueError('Bundle does not report every declared official installer exactly once')
-    expected_files=set()
-    for row in rows:
-        app,name = row['application'],row['name']
-        source=expected[(app,name)]
-        if row['url']!=source or row['status'] not in ('changed','unchanged') or any(not re.fullmatch('[0-9a-f]{64}',row[key]) for key in ('baseline_sha256','current_sha256')):
-            raise ValueError('Untrusted upstream result')
-        if row['status']=='changed':
-            expected_files.update({f'installers/{app}/upstream/{name}',f'installers/{app}/generated/{name}',f'installers/{app}/provenance.json'})
-            if hashlib.sha256(files.get(f'installers/{app}/upstream/{name}',b'')).hexdigest()!=row['current_sha256']:
-                raise ValueError('Upstream digest differs from the check report')
-        elif row['baseline_sha256'] != row['current_sha256']:
-            raise ValueError('Unchanged script has inconsistent digests')
-    if set(files)!=expected_files: raise ValueError('Changed file set differs from the check report')
-    return payload,files
 
 
 class GitHub:
@@ -97,10 +58,10 @@ def body_for(payload,head,run_url):
     lines=['Updates official installer originals and generated files using the patches already reviewed on main.','',f"Baseline main: `{payload['baseline']}`",'', '| Script | Official source | Previous SHA256 | New SHA256 |','| --- | --- | --- | --- |']
     for row in payload['rows']:
         if row['status']=='changed':lines.append(f"| {row['application']}/{row['name']} | {row['url']} | `{row['baseline_sha256']}` | `{row['current_sha256']}` |")
-    lines+=['','Validation: strict zero-offset patch application, isolated offline descriptor-selected Shell tests, PowerShell parser, and a trusted file/digest recheck.',
-        'Windows/macOS real-machine behavior and official binary runtime were not tested.',
+    lines+=['','Validation: strict zero-offset patch application, isolated offline Shell tests, a trusted file/digest recheck, and Windows PowerShell 7/5.1 parsing and harmless-executable tests of this exact candidate bundle.',
+        'Windows AMD64 behavior was tested; Claude ARM64 selection was simulated. Native Windows ARM64, macOS, and official binary runtime were not tested.',
         f'Updater run: {run_url}',
-        'PRs created with GITHUB_TOKEN may not trigger ordinary PR CI. The validation above ran in the updater workflow; it does not claim a separate CI run.',
+        'PR CI for GITHUB_TOKEN-created updates may require manual approval. The required candidate Windows job ran before this PR was created; this does not claim a separate PR CI run.',
         'This PR stays a draft and is never automatically merged. Review source changes, generated diffs, licensing and platform behavior before merging. To make manual branch changes, take ownership first; subsequent automation will stop.',
         f"<!-- redapp-installer-update-base: {payload['baseline']} -->",f'<!-- redapp-installer-update-head: {head} -->']
     return '\n'.join(lines)+'\n'

@@ -20,7 +20,7 @@ import urllib.request
 import urllib.parse
 import zipfile
 
-from installer_manifest import ROOT, VALIDATORS, applications, inventory
+from installer_manifest import ROOT, applications, inventory
 MAX_SCRIPT = 256 * 1024
 MAX_REDIRECTS = 5
 
@@ -95,7 +95,6 @@ def script_shape(name,data):
     text=data.decode('utf-8-sig')
     if re.match(r'\s*<(?:!doctype|html|head|body)\b',text,re.I): raise ValueError('Upstream returned an HTML error page')
     if name=='install.sh' and not re.match(r'^#![^\n]{0,100}\b(?:ba)?sh\b',text): raise ValueError('Response is not the expected Shell script')
-    if name=='install.ps1' and not re.search(r'^\s*param\s*\(',text,re.M): raise ValueError('Response is not the expected PowerShell script')
 
 def inspect(root=ROOT,fetch=download):
     rows=[]
@@ -152,19 +151,31 @@ def strict_patch(original,patch):
         if re.search(r'offset|fuzz|FAILED|Reversed',result,re.I): raise ValueError('Patch context moved; maintainer review is required')
         return file.read_bytes()
 
-def audit_claude(directory):
-    shell=(directory/'install.sh').read_text();ps=(directory/'install.ps1').read_text()
-    if '"$binary_path" install' in shell or '& $binaryPath install' in ps: raise ValueError('Unexpected second-stage public installer')
-    if 'DISABLE_UPDATES=1 exec' not in shell or "$env:DISABLE_UPDATES = '1'" not in ps: raise ValueError('Managed launcher update policy is missing')
-    for text in [shell,ps]:
-        if 'https://downloads.claude.ai' in text or 'https://claude.ai/install.' in text or '@REDAPP_BASE_URL@' not in text: raise ValueError('Unexpected installer download origin')
-    run(['bash','-n',str(directory/'install.sh')])
+def audit_shell(directory, provider):
+    shell = (directory / 'install.sh').read_text()
+    if '@REDAPP_BASE_URL@' not in shell: raise ValueError('Missing installer origin placeholder')
+    if provider == 'claude-code':
+        if '"$binary_path" install' in shell or 'DISABLE_UPDATES=1 exec' not in shell:
+            raise ValueError('Unexpected second-stage installer or missing managed update policy')
+        if 'https://downloads.claude.ai' in shell or 'https://claude.ai/install.' in shell:
+            raise ValueError('Unexpected installer download origin')
+    else:
+        if re.search(r'https?://', shell) or 'rm -f "$AUTO_UPDATE_VERSION"' not in shell or 'AUTO_UPDATE_VERSION.tmp' in shell:
+            raise ValueError('Unexpected Codex origin or update policy')
+    run(['bash' if provider == 'claude-code' else 'sh', '-n', str(directory / 'install.sh')])
+
+
+def validate_shell(directory, descriptor, root=ROOT):
+    audit_shell(directory, descriptor['installer_validator'])
+    print(run(['python3', str(root / 'scripts/test-installers.py'), '--platform', 'shell',
+               '--application', descriptor['id'], '--directory', str(directory)]), end='')
+
 
 def validate(prepared,output,root=ROOT):
     # Called inside the network-disabled container, with /src read-only and no GitHub credentials.
     plan=json.loads((prepared/'plan.json').read_text());output.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='redapp-installer-validation-') as tmp:
-        work=Path(tmp);shutil.copytree(root/'scripts',work/'scripts');shutil.copytree(root/'installers',work/'installers')
+        work=Path(tmp);shutil.copytree(root/'installers',work/'installers')
         for descriptor in applications(root):
             app=descriptor['id'];names=[x['file'] for x in descriptor['installers']]
             stage=work/'installers'/app
@@ -174,13 +185,7 @@ def validate(prepared,output,root=ROOT):
                 if digest(raw)!=row['current_sha256']:raise ValueError('Prepared source digest changed')
                 (stage/'upstream'/name).write_bytes(raw)
                 (stage/'generated'/name).write_bytes(strict_patch(raw,root/'installers'/app/'patches'/(name+'.patch')))
-            if descriptor['installer_validator']=='claude-code': audit_claude(stage/'generated')
-            script=VALIDATORS[descriptor['installer_validator']]
-            print(run(['python3',str(root/'scripts'/script),'--directory',str(stage/'generated')]),end='')
-            # A changed PowerShell script must parse in the validation image; never skip this gate.
-            if not shutil.which('pwsh'):raise ValueError('PowerShell parser required for automatic updates')
-            env={**os.environ,'REDAPP_INSTALLER_SYNTAX_PATH':str(stage/'generated/install.ps1')}
-            run(['pwsh','-NoProfile','-NonInteractive','-Command',"$e=$null;$t=$null;[System.Management.Automation.Language.Parser]::ParseFile($env:REDAPP_INSTALLER_SYNTAX_PATH,[ref]$t,[ref]$e)|Out-Null;if($e.Count){$e;exit 1}"],env=env)
+            validate_shell(stage/'generated', descriptor, root)
             target=output/app;target.mkdir(parents=True,exist_ok=True)
             for name in names:shutil.copyfile(stage/'generated'/name,target/name)
 
@@ -203,7 +208,7 @@ def package(prepared,validated,bundle,root=ROOT):
         if changed:
             manifest['script_baseline']={'kind':'official-live','checked_at':plan['checked_at'],'previous_main_commit':plan['baseline']}
             files[f'installers/{app}/provenance.json']=(json.dumps(manifest,indent=2,ensure_ascii=False)+'\n').encode()
-    payload={'baseline':plan['baseline'],'rows':plan['rows'],'files':{name:digest(body) for name,body in files.items()},'validation':'Strict zero-offset patches; isolated offline descriptor-selected Shell tests; PowerShell syntax parsing. Windows/macOS real-machine behavior and official binary runtime were not tested.'}
+    payload={'baseline':plan['baseline'],'rows':plan['rows'],'files':{name:digest(body) for name,body in files.items()},'validation':'Strict zero-offset patches; isolated offline descriptor-selected Shell tests. This candidate still requires the Windows PowerShell 7/5.1 job before draft publication.'}
     with zipfile.ZipFile(bundle,'w',compression=zipfile.ZIP_DEFLATED) as archive:
         for name,body in files.items():archive.writestr(name,body)
         archive.writestr('update.json',json.dumps(payload,indent=2))

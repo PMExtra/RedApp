@@ -56,6 +56,16 @@ jobs:
           python3 scripts/test-http-cli.py
           git diff --exit-code -- internal/httpserver/web
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build and exercise Shell-only installer validation image
+        if: matrix.arch == 'amd64'
+        run: |
+          docker build -t installer-validator -f .github/installer-check/Dockerfile .github/installer-check
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 256 --memory 1g \
+            --user "$(id -u):$(id -g)" --tmpfs /tmp:rw,exec,size=512m \
+            -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 \
+            -v "$GITHUB_WORKSPACE:/src:ro" \
+            installer-validator python3 /src/scripts/test-installers.py --platform shell
       - name: Build complete Dockerfile without publishing
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
@@ -77,28 +87,6 @@ jobs:
           sh scripts/test-docker-local.sh
 
   windows-installers:
-    runs-on: windows-2022
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - name: Parse every declared PowerShell installer
-        shell: pwsh
-        run: |
-          $manifest = Get-Content internal/apps/builtin/manifest.json -Raw | ConvertFrom-Json
-          foreach ($app in $manifest.applications) {
-            foreach ($installer in $app.installers | Where-Object shell -eq 'powershell') {
-              $file = "installers/$($app.id)/generated/$($installer.file)"
-              $errors = $null; $tokens = $null
-              [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $file), [ref]$tokens, [ref]$errors) | Out-Null
-              if ($errors.Count) { $errors | Write-Error; exit 1 }
-            }
-          }
-      - name: Test Claude installation with harmless Windows executable
-        shell: pwsh
-        run: |
-          python scripts/test-claude-installers-windows.py --shell pwsh
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          python scripts/test-claude-installers-windows.py --shell powershell.exe
-          exit $LASTEXITCODE
+    uses: ./.github/workflows/windows-installers.yml
+    with:
+      revision: ${{ github.sha }}
