@@ -285,6 +285,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, 503, "Failed to record request")
 		return
 	}
+	r, finish, err := s.applicationResponse(w, r, entry.StorageID())
+	if err != nil {
+		problem(w, 404, "APPLICATION_NOT_FOUND", "Application not found")
+		return
+	}
+	defer finish()
 	appRoot := public + "/" + id
 	switch op.Kind {
 	case application.InstallerOperation:

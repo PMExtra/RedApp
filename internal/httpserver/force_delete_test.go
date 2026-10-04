@@ -4,12 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -328,4 +331,50 @@ func newForceHarness(t *testing.T, dir string, configure ...func(*Server)) *dire
 	h := newDirectoryHarnessWithStore(t, dir, db, configure...)
 	h.password = password
 	return h
+}
+
+// Metadata and installer writes can block too, even without an active origin.
+type heldApplicationResponse struct {
+	headers          http.Header
+	started, stopped chan struct{}
+	start, stop      sync.Once
+}
+
+func (w *heldApplicationResponse) Header() http.Header { return w.headers }
+func (w *heldApplicationResponse) WriteHeader(int)     {}
+func (w *heldApplicationResponse) Write(p []byte) (int, error) {
+	w.start.Do(func() { close(w.started) })
+	<-w.stopped
+	return 0, context.Canceled
+}
+func (w *heldApplicationResponse) SetWriteDeadline(time.Time) error {
+	w.stop.Do(func() { close(w.stopped) })
+	return nil
+}
+func (w *heldApplicationResponse) SetReadDeadline(time.Time) error { return nil }
+func TestForceDeleteDrainsCachedMetadataResponse(t *testing.T) {
+	var calls atomic.Int64
+	var base string
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		fmt.Fprintf(w, `{"tag_name":"rust-v1.0.0","assets":[{"name":"asset.tgz","digest":"sha256:%s","browser_download_url":"%s/releases/1.0.0/asset.tgz"}]}`, strings.Repeat("a", 64), base)
+	}))
+	defer origin.Close()
+	base = origin.URL
+	h := newForceHarness(t, t.TempDir())
+	h.login(h.password)
+	h.createVendor("force")
+	a := h.createApp("force", "release", "codex", map[string]any{"base_url": base})
+	path := "/force/release/releases/1.0.0/release.json"
+	h.request("GET", path, nil, 200, nil)
+	held := &heldApplicationResponse{headers: make(http.Header), started: make(chan struct{}), stopped: make(chan struct{})}
+	defer held.SetWriteDeadline(time.Now())
+	done := make(chan struct{})
+	go func() { defer close(done); h.server.ServeHTTP(held, httptest.NewRequest("GET", h.http.URL+path, nil)) }()
+	awaitClosed(t, held.started)
+	if calls.Load() != 1 {
+		t.Fatal("fixture must serve durable metadata cache")
+	}
+	h.request("DELETE", "/admin/api/apps/"+a.Key, deleteBody(a), 200, nil)
+	awaitClosed(t, done)
 }
