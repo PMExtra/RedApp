@@ -4,7 +4,7 @@
 
 RedApp distributes **HTTP files, Codex CLI and Claude Code** through one service. Administrators manage vendors and applications, choose a provider and upstream base URL, and inspect cache, traffic and service settings.
 
-This branch implements **0.7.1** locally (not published). SQLite schema is **5**. An exact published v0.7.0 schema-4 directory upgrades atomically in place, preserving application identities, configuration, sources, cache and history. Older or unrecognized schemas still require a new empty directory and are refused without modification. Stop the instance and back up its complete data directory before upgrading. See [0.7.1 runtime changes](docs/admin-experience-v0.7.1.md).
+RedApp **0.7.1** uses SQLite schema **5**. An exact published v0.7.0 schema-4 directory upgrades atomically in place, preserving application identities, configuration, sources, cache and history. Older or unrecognized schemas still require a new empty directory and are refused without modification. Stop the instance and back up its complete data directory before upgrading. See [0.7.1 runtime changes](docs/admin-experience-v0.7.1.md).
 
 ## Start the service
 

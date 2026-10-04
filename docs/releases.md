@@ -1,5 +1,15 @@
 # 版本说明
 
+## v0.7.1
+
+**v0.7.0 可保留原数据目录原地升级。** 精确匹配已发布 schema 4 的目录在独占锁下事务升级到 schema 5，保留应用 UID、revision、source epoch、配置、缓存、事件和指标历史；`general-http` 应用及历史源记录统一迁移为 `http-cache`，增加空的说明与持久文件表。更早或未知结构仍在只读预检时拒绝且不修改。升级前停止旧实例并备份完整目录（含 WAL/SHM、对象和图标），随后用新镜像或程序启动同一目录；回退须恢复完整旧备份与旧程序。配置字段、端口、卷路径、UID/GID 和 healthcheck 不变。详见 [0.7.1 运行说明](admin-experience-v0.7.1.md)。
+
+新增 App Info / 应用介绍和 Hosted Files / 文件托管 Provider；HTTP Cache、Codex、Claude Code 保留各自分发能力。所有 Provider 共用双语纯文本使用说明。Hosted 支持流式上传和一次性 URL 导入，校验后原子发布到独立持久文件区，无 TTL 或自动清理；本地下载支持 Range/ETag。取消、替换、删除与发布通过同一锁及资源身份校验决定先后，失败不公开半成品，已打开的读者可完成；已提交文件不会被迟到取消误报为已取消。新实例没有预置业务应用，升级保留已有条目。
+
+后台采用厂商分页卡片、统一应用头部和按 Provider 能力提供的独立页面；版本与资源采用左右布局，分页支持总数、跳页和数据减少后的末页夹取。搜索先过滤后分页，迟到请求不能覆盖新应用或筛选结果。语言与账户共享弹出层外观并保留 listbox/menu 语义。设置表单不轮询；错误详情、41 项活动指标与历史交互继续保留。18 项安装器原文、patch、生成物及信任材料与 v0.7.0 字节一致。
+
+验证覆盖真实 schema-4 数据及 WAL 升级后重启、未知目录只读保护、Hosted 流式导入取消与删除/替换竞态、后端能力绕过拒绝、分页搜索、Go race/vet、CLI HTTP、前端类型/DOM/非 UTC、嵌入资源重建和隔离容器。发布须通过精确 main 提交的原生 Linux amd64/arm64 与 Windows PowerShell 7/5.1 CI，再验证双架构发布镜像的不可变 digest。无 GUI、真实官方 CLI、原生 Windows ARM64 或 macOS 验收；不修改 stacks 或用户部署，不包含 0.8 规划功能。
+
 ## v0.7.0
 
 **破坏性数据模型升级：包括 v0.6 在内的旧版本均须使用全新空数据目录或卷。** SQLite schema 升为 4；不迁移或导入旧设置、缓存和历史，旧目录在写入前被拒绝且保留。部署 YAML/JSON 仍为 schema_version=1，默认端口 8080、容器目录 `/var/lib/redapp`、UID/GID 65532 和健康检查方式不变。完整升级边界见 [Provider 运行说明](provider-runtime-v0.7.0.md)与[运维说明](operations.md)。
