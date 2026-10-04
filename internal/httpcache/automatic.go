@@ -125,7 +125,7 @@ func (s *Service) cleanupPass(ctx context.Context, registry *application.Registr
 		if ctx.Err() != nil {
 			break
 		}
-		if entry.Provider != application.GeneralHTTP || !entry.Active() {
+		if entry.Provider != application.HttpCache || !entry.Active() {
 			continue
 		}
 		alive[entry.StorageID()] = true

@@ -10,6 +10,7 @@ export interface Application {
   name: LocalizedText;
   publisher: string;
   summary: LocalizedText;
+  instructions?: LocalizedText;
   icon: string;
   channels: string[];
   installers: { file: string; shell: "sh" | "bash" | "powershell" }[];
@@ -19,17 +20,29 @@ export interface Application {
   capabilities?: ProviderCapabilities;
 }
 export interface ProviderCapabilities {
+  details?: boolean;
+  instructions?: boolean;
+  files?: boolean;
+  hosted_files?: boolean;
   versions: boolean;
   installers: boolean;
   time_cleanup: boolean;
 }
-export function applicationCapabilities(app: Application): ProviderCapabilities {
+export function applicationCapabilities(
+  app: Application,
+): ProviderCapabilities {
   if (app.capabilities) return app.capabilities;
-  // Compatibility for descriptors produced before capabilities were explicit.
-  // An unknown provider never inherits another provider's behavior.
-  const release = app.provider === "codex" || app.provider === "claude-code" ||
-    (!app.provider && (app.id === "openai/codex" || app.id === "anthropic/claude-code"));
-  return { versions: release, installers: release && !!app.installers?.length, time_cleanup: app.provider === "general-http" };
+  // Capabilities are supplied by the compiled provider registry. Missing or
+  // unrecognized metadata must never grant release or file behavior.
+  return {
+    details: true,
+    instructions: true,
+    files: false,
+    hosted_files: false,
+    versions: false,
+    installers: false,
+    time_cleanup: false,
+  };
 }
 export interface Bootstrap {
   version: string;

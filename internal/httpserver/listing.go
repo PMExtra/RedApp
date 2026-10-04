@@ -113,6 +113,10 @@ func (s *Server) applicationList(w http.ResponseWriter, r *http.Request, app, en
 		fail(w, 404, "Application list not found")
 		return
 	}
+	if r.URL.Query().Has("page") {
+		s.numberedApplicationList(w, r, entry, endpoint)
+		return
+	}
 	limit, version, last, err := parseListQuery(r, app, endpoint, entry.SourceEpoch)
 	if err != nil {
 		fail(w, 400, err.Error())

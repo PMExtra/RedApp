@@ -27,7 +27,7 @@ type sourceCursor struct {
 // does not fetch, health-check, or rotate on cache hits. Callers decide which
 // response classes may advance to the next source.
 func (s *Service) sourceAttempts(entry application.Entry) ([]sourceAttempt, error) {
-	if entry.Provider != application.GeneralHTTP {
+	if entry.Provider != application.HttpCache {
 		return nil, errors.New("Multiple source selection requires GeneralHttp")
 	}
 	clients := entry.Upstreams

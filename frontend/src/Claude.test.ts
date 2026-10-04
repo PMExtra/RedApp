@@ -1,5 +1,7 @@
 import { mount, flushPromises } from "@vue/test-utils";
 import { afterEach, expect, it, vi } from "vitest";
+import { defineComponent } from "vue";
+import ChannelSettings from "./components/ChannelSettings.vue";
 import Resources from "./components/Resources.vue";
 import Maintenance from "./components/Maintenance.vue";
 import { response } from "./testSupport";
@@ -38,7 +40,10 @@ it("paginates scoped resources, retries errors, resets server filtering, and dis
               bytes: 0,
             },
           ],
-          next_cursor: null,
+          page: 1,
+          limit: 25,
+          total: 1,
+          total_pages: 1,
         }),
       );
     if (pending && app === "anthropic/claude-code")
@@ -64,15 +69,15 @@ it("paginates scoped resources, retries errors, resets server filtering, and dis
           : [
               resource(
                 app,
-                query.searchParams.has("cursor")
+                query.searchParams.get("page") === "2"
                   ? "second-resource"
                   : `${app}-file`,
               ),
             ],
-        next_cursor:
-          query.searchParams.has("version") || query.searchParams.has("cursor")
-            ? null
-            : "cursor/+==",
+        page: Number(query.searchParams.get("page") || 1),
+        limit: 25,
+        total: query.searchParams.has("version") ? 0 : 26,
+        total_pages: query.searchParams.has("version") ? 1 : 2,
       }),
     );
   });
@@ -99,8 +104,8 @@ it("paginates scoped resources, retries errors, resets server filtering, and dis
     new URL(
       fetch.mock.calls.at(-1)![0],
       "https://test.example",
-    ).searchParams.get("cursor"),
-  ).toBe("cursor/+==");
+    ).searchParams.get("page"),
+  ).toBe("2");
   await nav()
     .findAll("button")
     .find((b) => b.text() === "Previous page")!
@@ -129,11 +134,15 @@ it("paginates scoped resources, retries errors, resets server filtering, and dis
   await flushPromises();
   expect(wrapper.text()).toContain("openai/codex-file");
   expect(wrapper.text()).not.toContain("late-old-app");
-  expect(wrapper.find("[role=combobox]").text()).toContain("All versions");
+  expect(
+    wrapper
+      .get(".version-panel .section-heading button")
+      .attributes("aria-pressed"),
+  ).toBe("true");
   expect(
     fetch.mock.calls.every(
       ([url]) =>
-        new URL(url, "https://test.example").searchParams.get("limit") === "50",
+        new URL(url, "https://test.example").searchParams.get("limit") === "25",
     ),
   ).toBe(true);
   wrapper.unmount();
@@ -148,25 +157,34 @@ it("clears TTL on failed app switch, rejects late results, and binds cleanup to 
     url.endsWith("/sources")
       ? Promise.resolve(response({ sources: [] }))
       : url.endsWith("/settings")
-      ? fail
-        ? Promise.resolve(response({}, 503))
-        : delay
+        ? fail
+          ? Promise.resolve(response({}, 503))
+          : delay
+            ? new Promise((r) => {
+                resolveLoad = r;
+              })
+            : Promise.resolve(
+                response({ channel_ttl_seconds: 60, revision: 0 }),
+              )
+        : url.endsWith("/preview")
           ? new Promise((r) => {
-              resolveLoad = r;
+              resolvePreview = r;
             })
-          : Promise.resolve(response({ channel_ttl_seconds: 60, revision: 0 }))
-      : url.endsWith("/preview")
-        ? new Promise((r) => {
-            resolvePreview = r;
-          })
-        : new Promise((r) => {
-            resolveExecute = r;
-          }),
+          : new Promise((r) => {
+              resolveExecute = r;
+            }),
   );
   vi.stubGlobal("fetch", fetch);
-  const wrapper = mount(Maintenance, {
-    props: { application: "openai/codex" },
-  });
+  const wrapper = mount(
+    defineComponent({
+      props: ["application"],
+      components: { Maintenance, ChannelSettings },
+      template: `<ChannelSettings :application="application"/><Maintenance :application="application"/>`,
+    }),
+    {
+      props: { application: "openai/codex" },
+    },
+  );
   await flushPromises();
   fail = true;
   await wrapper.setProps({ application: "anthropic/claude-code" });

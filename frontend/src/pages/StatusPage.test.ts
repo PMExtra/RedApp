@@ -1,7 +1,15 @@
 import { flushPromises } from "@vue/test-utils";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Metric } from "../api";
-import { adminApplications, managedVendors, boot, mountPage, resetStores, response, status } from "../testSupport";
+import {
+  adminApplications,
+  managedVendors,
+  boot,
+  mountPage,
+  resetStores,
+  response,
+  status,
+} from "../testSupport";
 
 beforeEach(resetStores);
 afterEach(() => {
@@ -24,7 +32,16 @@ it("refreshes collapsed diagnostics and routes version history through the activ
   let value = 2;
   const fetch = vi.fn(async (url: string) => {
     if (url === "/api/bootstrap") return response(boot);
-    if (url === "/admin/api/vendors") return response({ vendors: managedVendors });
+    const app = adminApplications.find(
+      (item) => url === `/admin/api/apps/${item.key}`,
+    );
+    if (app) return response({ app });
+    const vendor = managedVendors.find(
+      (item) => url === `/admin/api/vendors/${item.id}`,
+    );
+    if (vendor) return response({ vendor });
+    if (url === "/admin/api/vendors")
+      return response({ vendors: managedVendors });
     if (url === "/admin/api/apps") return response({ apps: adminApplications });
     if (url.endsWith("/session")) return response({ csrf: "token" });
     if (url.includes("/history?"))
@@ -38,7 +55,13 @@ it("refreshes collapsed diagnostics and routes version history through the activ
       });
     if (url.endsWith("/status"))
       return response({ ...status, metrics: [{ ...metric, value }] });
-    return response({ items: [], next_cursor: null });
+    return response({
+      items: [],
+      page: 1,
+      limit: 25,
+      total: 0,
+      total_pages: 1,
+    });
   });
   vi.stubGlobal("fetch", fetch);
   const { wrapper, router } = await mountPage("/admin/overview");
@@ -56,14 +79,15 @@ it("refreshes collapsed diagnostics and routes version history through the activ
   expect(
     fetch.mock.calls.some(
       ([url]) =>
-        url === "/admin/api/history?metric=versions.total&range=7d&scope=global",
+        url ===
+        "/admin/api/history?metric=versions.total&range=7d&scope=global",
     ),
   ).toBe(true);
   expect(wrapper.get(".version-scope-note").text()).toContain(
     "Includes all applications",
   );
 
-  await router.push("/admin/apps/anthropic/claude-code/versions");
+  await router.push("/admin/vendors/anthropic/apps/claude-code/versions");
   await flushPromises();
   expect(wrapper.find(".history-dialog").exists()).toBe(false);
   expect(wrapper.get('[data-metric="versions.total"]').text()).toContain(
@@ -84,7 +108,7 @@ it("refreshes collapsed diagnostics and routes version history through the activ
   expect(wrapper.get(".version-scope-note").text()).toContain(
     "Includes only this application",
   );
-  await router.push("/admin/apps/openai/codex/versions");
+  await router.push("/admin/vendors/openai/apps/codex/versions");
   await flushPromises();
   expect(wrapper.find(".history-dialog").exists()).toBe(false);
   wrapper.unmount();

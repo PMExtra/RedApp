@@ -4,12 +4,18 @@ import { api, bytes, type CleanupPreview } from "../api";
 import { appAPI } from "../bootstrap";
 import { useSourceEpoch } from "../composables/useSourceEpoch";
 import SourceEpochSelect from "./SourceEpochSelect.vue";
-import ChannelSettings from "./ChannelSettings.vue";
 import { errorText, t, type Message } from "../i18n";
-const props = withDefaults(defineProps<{ application: string; showSettings?: boolean }>(), { showSettings: true });
+const props = defineProps<{ application: string }>();
 const emit = defineEmits<{ error: [unknown]; changed: [] }>();
 const application = computed(() => props.application);
-const { sources, selected: sourceEpoch, query: sourceQuery, loading: sourcesLoading, error: sourcesError, load: loadSources } = useSourceEpoch(application);
+const {
+  sources,
+  selected: sourceEpoch,
+  query: sourceQuery,
+  loading: sourcesLoading,
+  error: sourcesError,
+  load: loadSources,
+} = useSourceEpoch(application);
 const minimum = ref(""),
   preview = ref<CleanupPreview>(),
   cleanupBusy = ref(false),
@@ -106,10 +112,15 @@ onUnmounted(reset);
     <p v-if="message" class="notice" role="status">
       {{ t(message) }}
     </p>
-    <ChannelSettings v-if="showSettings" :application="application" />
     <section class="panel">
       <h2>{{ t("Version cleanup") }}</h2>
-      <SourceEpochSelect v-model="sourceEpoch" :sources="sources" :loading="sourcesLoading" :error="sourcesError" @reload="loadSources" />
+      <SourceEpochSelect
+        v-model="sourceEpoch"
+        :sources="sources"
+        :loading="sourcesLoading"
+        :error="sourcesError"
+        @reload="loadSources"
+      />
       <p class="muted">
         {{
           t(

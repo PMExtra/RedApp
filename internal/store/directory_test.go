@@ -12,7 +12,7 @@ func directoryVendor(id string) VendorInput {
 	return VendorInput{ID: id, Name: LocalizedText{En: "Publisher", ZhCN: "发布者"}, Enabled: true}
 }
 func directoryApplication(id string) ApplicationInput {
-	return ApplicationInput{ID: id, Name: LocalizedText{En: "Download", ZhCN: "下载"}, Provider: "general-http", BaseURL: "http://files.internal:8080/packages/", CacheTTLSeconds: 300, Enabled: true}
+	return ApplicationInput{ID: id, Name: LocalizedText{En: "Download", ZhCN: "下载"}, Provider: "http-cache", BaseURL: "http://files.internal:8080/packages/", CacheTTLSeconds: 300, Enabled: true}
 }
 func vendorChanges(v Vendor) VendorChanges {
 	return VendorChanges{Name: v.Name, Description: v.Description, Icon: v.Icon, Enabled: v.Enabled}

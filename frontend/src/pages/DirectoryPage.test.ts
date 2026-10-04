@@ -1,44 +1,151 @@
 import { flushPromises } from "@vue/test-utils";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { adminApplications, managedVendors, boot, mountPage, resetStores, response } from "../testSupport";
-import type { ManagedApplication, ProviderDefinition, Vendor } from "../directory";
+import {
+  adminApplications,
+  managedVendors,
+  boot,
+  mountPage,
+  resetStores,
+  response,
+} from "../testSupport";
+import type {
+  ManagedApplication,
+  ProviderDefinition,
+  Vendor,
+} from "../directory";
 import { setLanguage } from "../i18n";
 
 const providers: ProviderDefinition[] = [
-  { key: "general-http", name: { en: "GeneralHttp", "zh-CN": "GeneralHttp" }, default_base_url: "", capabilities: { versions: false, installers: false, time_cleanup: true } },
-  { key: "codex", name: { en: "Codex", "zh-CN": "Codex" }, default_base_url: "https://releases.openai.com/codex/", capabilities: { versions: true, installers: true, time_cleanup: false } },
-  { key: "claude-code", name: { en: "ClaudeCode", "zh-CN": "ClaudeCode" }, default_base_url: "https://downloads.claude.ai/claude-code-releases/", capabilities: { versions: true, installers: true, time_cleanup: false } },
+  {
+    key: "http-cache",
+    name: { en: "HTTP Cache", "zh-CN": "HTTP 缓存" },
+    default_base_url: "",
+    capabilities: { versions: false, installers: false, time_cleanup: true },
+  },
+  {
+    key: "codex",
+    name: { en: "Codex", "zh-CN": "Codex" },
+    default_base_url: "https://releases.openai.com/codex/",
+    capabilities: { versions: true, installers: true, time_cleanup: false },
+  },
+  {
+    key: "claude-code",
+    name: { en: "Claude Code", "zh-CN": "Claude Code" },
+    default_base_url: "https://downloads.claude.ai/claude-code-releases/",
+    capabilities: { versions: true, installers: true, time_cleanup: false },
+  },
+  {
+    key: "info",
+    name: { en: "App Info", "zh-CN": "应用介绍" },
+    default_base_url: "",
+    capabilities: { versions: false, installers: false, time_cleanup: false },
+  },
+  {
+    key: "hosted",
+    name: { en: "Hosted Files", "zh-CN": "文件托管" },
+    default_base_url: "",
+    capabilities: { versions: false, installers: false, time_cleanup: false },
+  },
 ];
 let vendors: Vendor[], apps: ManagedApplication[];
-beforeEach(() => { resetStores(); vendors = structuredClone(managedVendors); apps = structuredClone(adminApplications); });
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); setLanguage("en"); document.body.innerHTML = ""; });
+beforeEach(() => {
+  resetStores();
+  vendors = structuredClone(managedVendors);
+  apps = structuredClone(adminApplications);
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  setLanguage("en");
+  document.body.innerHTML = "";
+});
 function read(url: string) {
   if (url === "/api/bootstrap") return response(boot);
   if (url.endsWith("/session")) return response({ csrf: "directory-token" });
-  if (url === "/admin/api/vendors") return response({ vendors: structuredClone(vendors) });
-  if (url === "/admin/api/apps") return response({ apps: structuredClone(apps) });
+  if (new URL(url, "https://test").pathname === "/admin/api/vendors") {
+    const deleted =
+      new URL(url, "https://test").searchParams.get("state") === "deleted";
+    const items = vendors
+      .map((v) => ({
+        ...v,
+        apps: apps.filter(
+          (a) => a.vendor_id === v.id && !!a.deleted_at === deleted,
+        ),
+        app_total: apps.filter(
+          (a) => a.vendor_id === v.id && !!a.deleted_at === deleted,
+        ).length,
+      }))
+      .filter((v) => !deleted || v.app_total > 0);
+    return response({
+      items,
+      page: 1,
+      limit: 12,
+      total: items.length,
+      total_pages: 1,
+    });
+  }
+  if (url === "/admin/api/apps")
+    return response({ apps: structuredClone(apps) });
   if (url === "/admin/api/providers") return response({ providers });
-  if (url.endsWith("/sources")) return response({ sources: [{ epoch: 1, base_url: "https://upstream.example/releases/", current: true, active: true, created_at: "2026-10-01T00:00:00Z" }] });
-  if (url.endsWith("/cache/policy")) return response({ revision: 1, stale_fallback: true, rules: [], auto_cleanup: [] });
+  if (url.endsWith("/sources"))
+    return response({
+      sources: [
+        {
+          epoch: 1,
+          base_url: "https://upstream.example/releases/",
+          current: true,
+          active: true,
+          created_at: "2026-10-01T00:00:00Z",
+        },
+      ],
+    });
+  if (url.endsWith("/cache/policy"))
+    return response({
+      revision: 1,
+      stale_fallback: true,
+      rules: [],
+      auto_cleanup: [],
+    });
   const app = apps.find((item) => url === `/admin/api/apps/${item.key}`);
   if (app) return response({ app: structuredClone(app) });
-  const vendor = vendors.find((item) => url === `/admin/api/vendors/${item.id}`);
+  const vendor = vendors.find(
+    (item) => url === `/admin/api/vendors/${item.id}`,
+  );
   if (vendor) return response({ vendor: structuredClone(vendor) });
-  if (url.endsWith("/settings")) return response({ channel_ttl_seconds: 60, revision: 0 });
+  if (url.endsWith("/instructions"))
+    return response({ en: "", "zh-CN": "", revision: 0 });
+  if (url.endsWith("/settings"))
+    return response({ channel_ttl_seconds: 60, revision: 0 });
   return response({}, 404);
 }
 
 it("creates a bilingual vendor and application with explicit provider defaults and CSRF-protected icon upload", async () => {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
-    if (init?.method === "POST" && url === "/admin/api/assets/icons") return response({ icon: "/assets/icons/example.png" });
+    if (init?.method === "POST" && url === "/admin/api/assets/icons")
+      return response({ icon: "/assets/icons/example.png" });
     if (init?.method === "POST" && url === "/admin/api/vendors") {
-      const vendor = { ...JSON.parse(init.body as string), uid: "vendor-acme", revision: 1 } as Vendor;
-      vendors.push(vendor); return response({ vendor });
+      const vendor = {
+        ...JSON.parse(init.body as string),
+        uid: "vendor-acme",
+        revision: 1,
+      } as Vendor;
+      vendors.push(vendor);
+      return response({ vendor });
     }
     if (init?.method === "POST" && url === "/admin/api/vendors/acme/apps") {
       const fields = JSON.parse(init.body as string);
-      const app = { ...fields, base_url: fields.base_urls?.[0] || fields.base_url, uid: "app-tools", key: `acme/${fields.id}`, vendor_id: "acme", vendor_uid: "vendor-acme", revision: 1, source_epoch: 1 } as ManagedApplication;
-      apps.push(app); return response({ app });
+      const app = {
+        ...fields,
+        base_url: fields.base_urls?.[0] || fields.base_url,
+        uid: "app-tools",
+        key: `acme/${fields.id}`,
+        vendor_id: "acme",
+        vendor_uid: "vendor-acme",
+        revision: 1,
+        source_epoch: 1,
+      } as ManagedApplication;
+      apps.push(app);
+      return response({ app });
     }
     return read(url);
   });
@@ -49,66 +156,141 @@ it("creates a bilingual vendor and application with explicit provider defaults a
   await wrapper.get('[name="name-zh-CN"]').setValue("示例厂商");
   await wrapper.get('[name="description-en"]').setValue("Tools for teams");
   const upload = wrapper.get('input[type="file"]');
-  Object.defineProperty(upload.element, "files", { value: [new File(["fixture"], "icon.png", { type: "image/png" })] });
-  await upload.trigger("change"); await flushPromises();
-  const iconRequest = fetch.mock.calls.find(([url]) => url.endsWith("/assets/icons"))![1]!;
+  Object.defineProperty(upload.element, "files", {
+    value: [new File(["fixture"], "icon.png", { type: "image/png" })],
+  });
+  await upload.trigger("change");
+  await flushPromises();
+  const iconRequest = fetch.mock.calls.find(([url]) =>
+    url.endsWith("/assets/icons"),
+  )![1]!;
   expect(iconRequest.body).toBeInstanceOf(FormData);
-  expect(iconRequest.headers).toMatchObject({ "X-CSRF-Token": "directory-token" });
+  expect(iconRequest.headers).toMatchObject({
+    "X-CSRF-Token": "directory-token",
+  });
   expect(iconRequest.headers).not.toHaveProperty("Content-Type");
   await wrapper.get(".directory-editor form").trigger("submit");
-  await flushPromises(); await flushPromises();
+  await flushPromises();
+  await flushPromises();
   expect(router.currentRoute.value.path).toBe("/admin/vendors/acme/settings");
   expect(vendors.at(-1)?.name["zh-CN"]).toBe("示例厂商");
   expect(vendors.at(-1)?.icon).toBe("/assets/icons/example.png");
   expect(wrapper.get('[name="id"]').attributes("readonly")).toBeDefined();
-  await router.push("/admin/vendors/acme/apps/new"); await flushPromises();
-  expect((wrapper.get('[name="base_url"]').element as HTMLInputElement).value).toBe("");
-  await wrapper.get('[name="provider"]').setValue("codex");
-  expect((wrapper.get('[name="base_url"]').element as HTMLInputElement).value).toBe(providers[1]!.default_base_url);
-  await wrapper.get('[name="provider"]').setValue("claude-code");
-  expect((wrapper.get('[name="base_url"]').element as HTMLInputElement).value).toBe(providers[2]!.default_base_url);
-  await wrapper.get('[name="provider"]').setValue("general-http");
-  expect((wrapper.get('[name="base_url"]').element as HTMLInputElement).value).toBe("");
-  await wrapper.get('[name="base_url"]').setValue("http://packages.internal/tools/");
+  await router.push("/admin/vendors/acme/apps/new");
+  await flushPromises();
+  expect(wrapper.find('[name="base_url"]').exists()).toBe(false);
+  async function selectProvider(name: string) {
+    await wrapper.get('[aria-label="Provider"]').trigger("click");
+    await wrapper
+      .findAll('[role="option"]')
+      .find((option) => option.text() === name)!
+      .trigger("click");
+  }
+  await selectProvider("Codex");
+  expect(
+    (wrapper.get('[name="base_url"]').element as HTMLInputElement).value,
+  ).toBe(providers[1]!.default_base_url);
+  await selectProvider("Claude Code");
+  expect(
+    (wrapper.get('[name="base_url"]').element as HTMLInputElement).value,
+  ).toBe(providers[2]!.default_base_url);
+  await selectProvider("HTTP Cache");
+  expect(
+    (wrapper.get('[name="base_url"]').element as HTMLInputElement).value,
+  ).toBe("");
+  await wrapper
+    .get('[name="base_url"]')
+    .setValue("http://packages.internal/tools/");
   await wrapper.get('[name="id"]').setValue("tools");
   await wrapper.get('[name="name-en"]').setValue("Tools");
   await wrapper.get('[name="name-zh-CN"]').setValue("工具");
   await wrapper.get(".directory-editor form").trigger("submit");
-  await flushPromises(); await flushPromises();
-  await vi.waitFor(() => expect(router.currentRoute.value.path).toBe("/admin/apps/acme/tools/settings"));
   await flushPromises();
-  expect(wrapper.get('[name="provider"]').attributes("disabled")).toBeDefined();
-  expect(apps.at(-1)).toMatchObject({ provider: "general-http", base_url: "http://packages.internal/tools/", base_urls: ["http://packages.internal/tools/"], source_strategy: 'ordered', cache_ttl_seconds: 300 });
+  await flushPromises();
+  await vi.waitFor(() =>
+    expect(router.currentRoute.value.path).toBe(
+      "/admin/vendors/acme/apps/tools/cache",
+    ),
+  );
+  await router.push("/admin/vendors/acme/apps/tools/settings");
+  await flushPromises();
+  expect(
+    wrapper.get('[aria-label="Provider"]').attributes("disabled"),
+  ).toBeDefined();
+  expect(apps.at(-1)).toMatchObject({
+    provider: "http-cache",
+    base_url: "http://packages.internal/tools/",
+    base_urls: ["http://packages.internal/tools/"],
+    source_strategy: "ordered",
+    cache_ttl_seconds: 300,
+  });
   expect(wrapper.find(".ttl-form").exists()).toBe(false);
-  expect(wrapper.find('a[href="/admin/apps/acme/tools/versions"]').exists()).toBe(false);
+  expect(
+    wrapper.find('a[href="/admin/vendors/acme/apps/tools/versions"]').exists(),
+  ).toBe(false);
   wrapper.unmount();
 });
 
 it("preserves a revision-conflict draft, guards navigation and discards an old application's late load", async () => {
-  let delayed = false, resolveOld: ((value: unknown) => void) | undefined;
+  let delayed = false,
+    resolveOld: ((value: unknown) => void) | undefined;
   const fetch = vi.fn((url: string, init?: RequestInit) => {
-    if (init?.method === "PATCH") return Promise.resolve(response({ error: { code: "DIRECTORY_REVISION_CONFLICT" } }, 409));
-    if (delayed && url === "/admin/api/apps/openai/codex") return new Promise((resolve) => { resolveOld = resolve; });
+    if (init?.method === "PATCH")
+      return Promise.resolve(
+        response({ error: { code: "DIRECTORY_REVISION_CONFLICT" } }, 409),
+      );
+    if (delayed && url === "/admin/api/apps/openai/codex")
+      return new Promise((resolve) => {
+        resolveOld = resolve;
+      });
     return Promise.resolve(read(url));
   });
   vi.stubGlobal("fetch", fetch);
-  const confirm = vi.fn().mockReturnValue(false); vi.stubGlobal("confirm", confirm);
-  const { wrapper, router } = await mountPage("/admin/apps/openai/codex/settings");
+  const confirm = vi.fn().mockReturnValue(false);
+  vi.stubGlobal("confirm", confirm);
+  const { wrapper, router } = await mountPage(
+    "/admin/vendors/openai/apps/codex/settings",
+  );
   await wrapper.get('[name="name-en"]').setValue("Unsaved Codex");
-  await wrapper.get(".directory-editor form").trigger("submit"); await flushPromises();
-  const request = fetch.mock.calls.find(([, init]) => init?.method === "PATCH")![1]!;
-  expect(JSON.parse(request.body as string)).toMatchObject({ revision: 1, name: { en: "Unsaved Codex" } });
+  await wrapper.get(".directory-editor form").trigger("submit");
+  await flushPromises();
+  const request = fetch.mock.calls.find(
+    ([, init]) => init?.method === "PATCH",
+  )![1]!;
+  expect(JSON.parse(request.body as string)).toMatchObject({
+    revision: 1,
+    name: { en: "Unsaved Codex" },
+  });
   expect(JSON.parse(request.body as string)).not.toHaveProperty("id");
   expect(JSON.parse(request.body as string)).not.toHaveProperty("provider");
-  expect(wrapper.get(".directory-editor [role=alert]").text()).toContain("Your draft is preserved");
-  await router.push("/admin/apps/anthropic/claude-code/settings");
-  expect(router.currentRoute.value.path).toBe("/admin/apps/openai/codex/settings");
-  expect((wrapper.get('[name="name-en"]').element as HTMLInputElement).value).toBe("Unsaved Codex");
-  confirm.mockReturnValue(true); delayed = true;
-  await wrapper.get(".directory-editor").findAll("button").find((button) => button.text() === "Reload")!.trigger("click");
-  await router.push("/admin/apps/anthropic/claude-code/settings"); await flushPromises();
-  resolveOld?.(response({ app: { ...apps[0], name: { en: "Late wrong app", "zh-CN": "错误应用" } } })); await flushPromises();
-  expect((wrapper.get('[name="name-en"]').element as HTMLInputElement).value).toBe("Claude Code");
+  expect(wrapper.get(".directory-editor [role=alert]").text()).toContain(
+    "Your draft is preserved",
+  );
+  await router.push("/admin/vendors/anthropic/apps/claude-code/settings");
+  expect(router.currentRoute.value.path).toBe(
+    "/admin/vendors/openai/apps/codex/settings",
+  );
+  expect(
+    (wrapper.get('[name="name-en"]').element as HTMLInputElement).value,
+  ).toBe("Unsaved Codex");
+  confirm.mockReturnValue(true);
+  delayed = true;
+  await wrapper
+    .get(".directory-editor")
+    .findAll("button")
+    .find((button) => button.text() === "Reload")!
+    .trigger("click");
+  await router.push("/admin/vendors/anthropic/apps/claude-code/settings");
+  await flushPromises();
+  resolveOld?.(
+    response({
+      app: { ...apps[0], name: { en: "Late wrong app", "zh-CN": "错误应用" } },
+    }),
+  );
+  await flushPromises();
+  expect(
+    (wrapper.get('[name="name-en"]').element as HTMLInputElement).value,
+  ).toBe("Claude Code");
   expect(wrapper.text()).not.toContain("Late wrong app");
   expect(wrapper.find(".directory-editor [role=alert]").exists()).toBe(false);
   wrapper.unmount();
@@ -122,7 +304,8 @@ it("keeps disabled and deleted applications manageable independently of public b
     if (init?.method === "DELETE") {
       expect(JSON.parse(init.body as string)).toEqual({ revision: 1 });
       apps[0]!.deleted_at = "2026-10-03T13:00:00Z";
-      apps[0]!.revision++; return response({ app: apps[0] });
+      apps[0]!.revision++;
+      return response({ app: apps[0] });
     }
     return read(url);
   });
@@ -131,24 +314,52 @@ it("keeps disabled and deleted applications manageable independently of public b
   expect(wrapper.get(".directory-page").text()).toContain("Codex CLI");
   expect(wrapper.get(".directory-page").text()).toContain("Disabled");
   expect(wrapper.get(".directory-page").text()).not.toContain("Claude Code");
-  await wrapper.get(".directory-toolbar select").setValue("deleted");
+  await wrapper.get(".directory-toolbar [role=combobox]").trigger("click");
+  await wrapper
+    .findAll("[role=option]")
+    .find((option) => option.text() === "Deleted")!
+    .trigger("click");
+  await flushPromises();
   expect(wrapper.get(".directory-page").text()).toContain("Claude Code");
-  await router.push("/admin/apps/openai/codex/settings"); await flushPromises();
+  await router.push("/admin/vendors/openai/apps/codex/settings");
+  await flushPromises();
   expect(wrapper.find('[name="name-en"]').exists()).toBe(true);
-  await wrapper.get(".directory-editor").findAll("button").find((button) => button.text() === "Delete")!.trigger("click");
+  await wrapper
+    .get(".directory-editor")
+    .findAll("button")
+    .find((button) => button.text() === "Delete")!
+    .trigger("click");
   expect(wrapper.get(".delete-review").text()).toContain("keeps stored data");
-  await wrapper.get(".delete-review .danger").trigger("click"); await flushPromises();
-  expect(wrapper.get(".directory-editor").text()).toContain("this record is read-only");
-  expect(wrapper.get(".directory-editor fieldset").attributes("disabled")).toBeDefined();
+  await wrapper.get(".delete-review .danger").trigger("click");
+  await flushPromises();
+  expect(wrapper.get(".directory-editor").text()).toContain(
+    "this record is read-only",
+  );
+  expect(
+    wrapper.get(".directory-editor fieldset").attributes("disabled"),
+  ).toBeDefined();
   expect(wrapper.find(".ttl-form").exists()).toBe(false);
   wrapper.unmount();
 });
 
 it("presents GeneralHttp as a download prefix without installer commands or vendor-supplied markup", async () => {
-  const general = { ...boot.apps[0]!, id: "acme/files", provider: "general-http", capabilities: providers[0]!.capabilities, name: { en: "<script>Files</script>", "zh-CN": "文件" }, installers: [], channels: [] };
-  vi.stubGlobal("fetch", vi.fn(async () => response({ ...boot, apps: [general] })));
+  const general = {
+    ...boot.apps[0]!,
+    id: "acme/files",
+    provider: "http-cache",
+    capabilities: { ...providers[0]!.capabilities, files: true },
+    name: { en: "<script>Files</script>", "zh-CN": "文件" },
+    installers: [],
+    channels: [],
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => response({ ...boot, apps: [general] })),
+  );
   const { wrapper } = await mountPage("/acme/files");
-  expect(wrapper.get(".download-prefix pre").text()).toBe("https://downloads.example:8443/acme/files/");
+  expect(wrapper.get(".download-prefix pre").text()).toBe(
+    "https://downloads.example:8443/acme/files/",
+  );
   expect(wrapper.find(".installation-layout").exists()).toBe(false);
   expect(wrapper.find("script").exists()).toBe(false);
   expect(wrapper.text()).toContain("<script>Files</script>");
@@ -156,39 +367,81 @@ it("presents GeneralHttp as a download prefix without installer commands or vend
 });
 
 it("reorders GeneralHttp upstreams with buttons and drag controls and saves only the canonical list and strategy", async () => {
-  apps[0] = { ...apps[0]!, provider: 'general-http', base_url: 'https://first.example/releases/', base_urls: ['https://first.example/releases/', 'https://second.example/releases/'], source_strategy: 'ordered' };
+  apps[0] = {
+    ...apps[0]!,
+    provider: "http-cache",
+    base_url: "https://first.example/releases/",
+    base_urls: [
+      "https://first.example/releases/",
+      "https://second.example/releases/",
+    ],
+    source_strategy: "ordered",
+  };
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
-    if (init?.method === 'PATCH') {
+    if (init?.method === "PATCH") {
       const changes = JSON.parse(init.body as string);
-      apps[0] = { ...apps[0]!, ...changes, base_url: changes.base_urls[0], revision: 2, source_epoch: 2 };
+      apps[0] = {
+        ...apps[0]!,
+        ...changes,
+        base_url: changes.base_urls[0],
+        revision: 2,
+        source_epoch: 2,
+      };
       return response({ app: structuredClone(apps[0]) });
     }
     return read(url);
   });
-  vi.stubGlobal('fetch', fetch);
-  const { wrapper } = await mountPage('/admin/apps/openai/codex/settings');
-  const editor = wrapper.get('.directory-editor');
-  expect(editor.text()).toContain('Default TTL without Cache-Control');
-  expect(editor.text()).toContain('1 to 16');
-  await editor.findAll('button').find((button) => button.text() === 'Add source')!.trigger('click');
-  await editor.get('[name="base_url_3"]').setValue('https://third.example/releases/');
-  const rows = () => editor.findAll('[data-source-row]');
-  await rows()[0]!.findAll('button').find((button) => button.text() === 'Move down')!.trigger('click');
-  expect((rows()[0]!.get('input').element as HTMLInputElement).value).toBe('https://second.example/releases/');
-  const transfer = { setData: vi.fn(), effectAllowed: '' };
-  await rows()[2]!.get('.source-drag').trigger('dragstart', { dataTransfer: transfer });
-  await rows()[0]!.trigger('drop', { dataTransfer: transfer });
-  expect(transfer.setData).toHaveBeenCalledWith('text/plain', '2');
-  expect(rows().map((row) => (row.get('input').element as HTMLInputElement).value)).toEqual(['https://third.example/releases/', 'https://second.example/releases/', 'https://first.example/releases/']);
-  await editor.get('[name="source_strategy"]').setValue('round_robin');
-  await editor.get('form').trigger('submit'); await flushPromises();
-  const request = fetch.mock.calls.find(([, init]) => init?.method === 'PATCH')![1]!;
+  vi.stubGlobal("fetch", fetch);
+  const { wrapper } = await mountPage(
+    "/admin/vendors/openai/apps/codex/settings",
+  );
+  const editor = wrapper.get(".directory-editor");
+  expect(editor.text()).toContain("Default TTL without Cache-Control");
+  expect(editor.text()).toContain("1 to 16");
+  await editor
+    .findAll("button")
+    .find((button) => button.text() === "Add source")!
+    .trigger("click");
+  await editor
+    .get('[name="base_url_3"]')
+    .setValue("https://third.example/releases/");
+  const rows = () => editor.findAll("[data-source-row]");
+  await rows()[0]!
+    .findAll("button")
+    .find((button) => button.text() === "Move down")!
+    .trigger("click");
+  expect((rows()[0]!.get("input").element as HTMLInputElement).value).toBe(
+    "https://second.example/releases/",
+  );
+  const transfer = { setData: vi.fn(), effectAllowed: "" };
+  await rows()[2]!
+    .get(".source-drag")
+    .trigger("dragstart", { dataTransfer: transfer });
+  await rows()[0]!.trigger("drop", { dataTransfer: transfer });
+  expect(transfer.setData).toHaveBeenCalledWith("text/plain", "2");
+  expect(
+    rows().map((row) => (row.get("input").element as HTMLInputElement).value),
+  ).toEqual([
+    "https://third.example/releases/",
+    "https://second.example/releases/",
+    "https://first.example/releases/",
+  ]);
+  await editor.get('[name="source_strategy"]').setValue("round_robin");
+  await editor.get("form").trigger("submit");
+  await flushPromises();
+  const request = fetch.mock.calls.find(
+    ([, init]) => init?.method === "PATCH",
+  )![1]!;
   const sent = JSON.parse(request.body as string);
-  expect(sent.base_urls).toEqual(['https://third.example/releases/', 'https://second.example/releases/', 'https://first.example/releases/']);
-  expect(sent.source_strategy).toBe('round_robin');
+  expect(sent.base_urls).toEqual([
+    "https://third.example/releases/",
+    "https://second.example/releases/",
+    "https://first.example/releases/",
+  ]);
+  expect(sent.source_strategy).toBe("round_robin");
   expect(sent.revision).toBe(1);
-  expect(sent).not.toHaveProperty('base_url');
-  expect(sent).not.toHaveProperty('provider');
+  expect(sent).not.toHaveProperty("base_url");
+  expect(sent).not.toHaveProperty("provider");
   expect(apps[0].source_epoch).toBe(2);
   wrapper.unmount();
 });

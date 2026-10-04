@@ -21,7 +21,7 @@ func sourceEntry(t *testing.T) application.Entry {
 		}
 		clients = append(clients, client)
 	}
-	return application.Entry{UID: "00000000000000000000000000000001", SourceEpoch: 1, Provider: application.GeneralHTTP, Upstream: clients[0], Upstreams: clients, SourceStrategy: "ordered"}
+	return application.Entry{UID: "00000000000000000000000000000001", SourceEpoch: 1, Provider: application.HttpCache, Upstream: clients[0], Upstreams: clients, SourceStrategy: "ordered"}
 }
 func checkPermutation(t *testing.T, attempts []sourceAttempt) {
 	t.Helper()

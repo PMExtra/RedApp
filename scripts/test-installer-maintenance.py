@@ -235,7 +235,7 @@ class PublishTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'main advanced'):self.publish()
     def test_branch_with_code_change_stops(self):
         self.publish();head=self.api.pr['head']['sha']
-        p.git(self.root,'checkout','-b','manual',head)
+        p.git(self.root,'checkout','-b','hosted',head)
         (self.root/'not-allowed.py').write_text('do not publish')
         p.git(self.root,'add','.');p.git(self.root,'commit','-m','extra code');manual=p.git(self.root,'rev-parse','HEAD').decode().strip()
         p.git(self.root,'push','origin',manual+':refs/heads/'+p.BRANCH)

@@ -128,7 +128,7 @@ func (s *Service) begin(entry application.Entry) error {
 	if s.closed {
 		return ErrClosed
 	}
-	if entry.Provider != application.GeneralHTTP || entry.Upstream == nil || !entry.Active() {
+	if entry.Provider != application.HttpCache || entry.Upstream == nil || !entry.Active() {
 		return store.ErrSourceInactive
 	}
 	if err := s.db.CheckSourceActive(entry.StorageID(), fence(entry)); err != nil {

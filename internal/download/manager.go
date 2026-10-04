@@ -767,13 +767,16 @@ func (m *Manager) run(g *Generation) {
 		}
 	}
 }
-func (m *Manager) Snapshot() []View {
+func (m *Manager) Snapshot() []View { return m.SnapshotFor("", "") }
+
+// SnapshotFor scopes listing copies before materializing their runtime state.
+func (m *Manager) SnapshotFor(app, version string) []View {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now()
 	out := []View{}
 	for _, g := range m.all {
-		if g.State == "deleted" {
+		if g.State == "deleted" || app != "" && g.Resource.Application != app || version != "" && g.Resource.Version != version {
 			continue
 		}
 		v := View{Generation: *g, ActiveWriter: g.running, Readers: g.readers, Current: !g.dormant && m.current[g.Resource.ID] == g, SampledAt: now}

@@ -22,6 +22,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/history"
+	"github.com/PMExtra/RedApp/internal/hosted"
 	"github.com/PMExtra/RedApp/internal/httpcache"
 	"github.com/PMExtra/RedApp/internal/media"
 	"github.com/PMExtra/RedApp/internal/store"
@@ -37,8 +38,8 @@ type directoryHarness struct {
 	close    func()
 }
 
-// This fixture follows production startup: the persisted directory is seeded
-// once, then both the public registry and historical source clients are built.
+// This fixture explicitly installs release examples for route coverage.
+// Production initializes an empty directory; runtime wiring is otherwise shared.
 func newDirectoryHarness(t *testing.T, dir string) *directoryHarness {
 	t.Helper()
 	db, err := store.Open(dir)
@@ -92,6 +93,10 @@ func newDirectoryHarness(t *testing.T, dir string) *directoryHarness {
 	if err != nil {
 		t.Fatal(err)
 	}
+	hostedFiles, err := hosted.New(dir, db, manager)
+	if err != nil {
+		t.Fatal(err)
+	}
 	h := &directoryHarness{t: t}
 	a, err := auth.New(db, false, func(password string) { h.password = password })
 	if err != nil {
@@ -105,7 +110,7 @@ func newDirectoryHarness(t *testing.T, dir string) *directoryHarness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h.server = &Server{Version: "directory-test", DB: db, Registry: registry, Catalog: catalog.New(db, registry), Downloads: manager, HTTPCache: httpCache, Auth: a, Pool: pool, Upstream: pool, Icons: icons, History: metricHistory, PublicConfig: public, Dir: dir, Started: time.Now()}
+	h.server = &Server{Version: "directory-test", DB: db, Registry: registry, Catalog: catalog.New(db, registry), Downloads: manager, HTTPCache: httpCache, Hosted: hostedFiles, Auth: a, Pool: pool, Upstream: pool, Icons: icons, History: metricHistory, PublicConfig: public, Dir: dir, Started: time.Now()}
 	h.http = httptest.NewServer(h.server)
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -116,6 +121,7 @@ func newDirectoryHarness(t *testing.T, dir string) *directoryHarness {
 	h.close = func() {
 		once.Do(func() {
 			h.http.Close()
+			hostedFiles.Close()
 			httpCache.Close()
 			manager.Close()
 			icons.Close()
@@ -250,7 +256,7 @@ func TestDirectoryHTTPProviderCreationCASAndSettings(t *testing.T) {
 	for _, definition := range definitions {
 		providers[definition.Key] = definition
 	}
-	if len(providers) != 3 || providers[application.GeneralHTTP].Capabilities.Versions || !providers[application.GeneralHTTP].Capabilities.TimeCleanup || providers[application.Codex].DefaultBaseURL == "" || providers[application.ClaudeCode].DefaultBaseURL == "" {
+	if len(providers) != 5 || providers[application.HttpCache].Capabilities.Versions || !providers[application.HttpCache].Capabilities.TimeCleanup || providers[application.Codex].DefaultBaseURL == "" || providers[application.ClaudeCode].DefaultBaseURL == "" {
 		t.Fatal("provider API lost its peer capability/default contract", providers)
 	}
 	input := map[string]any{"id": "blocked", "name": store.LocalizedText{En: "Blocked", ZhCN: "阻止"}}
@@ -266,13 +272,13 @@ func TestDirectoryHTTPProviderCreationCASAndSettings(t *testing.T) {
 			t.Fatal("release provider defaults were not persisted", app)
 		}
 	}
-	missingBase := map[string]any{"id": "missing-base", "provider": application.GeneralHTTP, "name": store.LocalizedText{En: "Files", ZhCN: "文件"}}
+	missingBase := map[string]any{"id": "missing-base", "provider": application.HttpCache, "name": store.LocalizedText{En: "Files", ZhCN: "文件"}}
 	h.request("POST", "/admin/api/vendors/enterprise/apps", missingBase, 400, nil)
-	general := h.createApp(vendor.ID, "files", application.GeneralHTTP, map[string]any{"base_url": "http://intranet.example:8081/packages/", "cache_ttl_seconds": 0})
+	general := h.createApp(vendor.ID, "files", application.HttpCache, map[string]any{"base_url": "http://intranet.example:8081/packages/", "cache_ttl_seconds": 0})
 	if general.BaseURL != "http://intranet.example:8081/packages" || general.CacheTTLSeconds != 0 {
 		t.Fatal("explicit zero TTL or enterprise BaseURL was lost", general)
 	}
-	defaultTTL := h.createApp(vendor.ID, "files-default", application.GeneralHTTP, map[string]any{"base_url": "http://intranet.example/packages"})
+	defaultTTL := h.createApp(vendor.ID, "files-default", application.HttpCache, map[string]any{"base_url": "http://intranet.example/packages"})
 	if defaultTTL.CacheTTLSeconds != 300 {
 		t.Fatal("omitted GeneralHttp TTL did not use the provider default")
 	}
@@ -297,7 +303,7 @@ func TestDirectoryHTTPProviderCreationCASAndSettings(t *testing.T) {
 		t.Fatal("API source edit did not isolate the cache namespace", rebound)
 	}
 	currentRevision, public := h.bootstrap()
-	if initialRevision == currentRevision || public[general.Key].Provider != application.GeneralHTTP || public[general.Key].Capabilities.Versions || len(public[general.Key].Installers) != 0 || public[general.Key].Vendor.Name["zh-CN"] != "企业" {
+	if initialRevision == currentRevision || public[general.Key].Provider != application.HttpCache || public[general.Key].Capabilities.Versions || len(public[general.Key].Installers) != 0 || public[general.Key].Vendor.Name["zh-CN"] != "企业" {
 		t.Fatal("dynamic public bootstrap did not reflect directory/provider metadata", public)
 	}
 
@@ -356,7 +362,7 @@ func TestDirectoryHTTPDisableDeleteAndEmptyRestart(t *testing.T) {
 	if !retained.Enabled || retained.Revision != app.Revision {
 		t.Fatal("vendor disable rewrote the app enable flag or revision")
 	}
-	h.request("GET", "/admin/apps/enterprise/codex/settings", nil, 200, nil)
+	h.request("GET", "/admin/vendors/enterprise/apps/codex/settings", nil, 200, nil)
 	h.request("PATCH", "/admin/api/vendors/enterprise", map[string]any{"revision": disabledVendor.Revision, "enabled": true}, 200, nil)
 	h.request("GET", "/enterprise/codex", nil, 200, nil)
 	h.request("PATCH", "/admin/api/apps/enterprise/codex", map[string]any{"revision": app.Revision, "enabled": false}, 200, nil)
@@ -368,12 +374,12 @@ func TestDirectoryHTTPDisableDeleteAndEmptyRestart(t *testing.T) {
 	// Deleting all apps/vendors reserves their identities and leaves history and
 	// source records available, while an empty active registry still serves admin.
 	data, _ = h.request("GET", "/admin/api/apps", nil, 200, nil)
-	apps := directoryDecode[[]store.Application](t, data, "apps")
+	apps := directoryDecode[[]store.Application](t, data, "items")
 	for _, row := range apps {
 		h.request("DELETE", "/admin/api/apps/"+row.Key, map[string]int64{"revision": row.Revision}, 200, nil)
 	}
 	data, _ = h.request("GET", "/admin/api/vendors", nil, 200, nil)
-	allVendors := directoryDecode[[]store.Vendor](t, data, "vendors")
+	allVendors := directoryDecode[[]store.Vendor](t, data, "items")
 	for _, row := range allVendors {
 		h.request("DELETE", "/admin/api/vendors/"+row.ID, map[string]int64{"revision": row.Revision}, 200, nil)
 	}
@@ -395,8 +401,8 @@ func TestDirectoryHTTPDisableDeleteAndEmptyRestart(t *testing.T) {
 	}
 	h.request("GET", "/admin/api/providers", nil, 200, nil)
 	h.request("GET", "/admin/api/settings/proxy", nil, 200, nil)
-	data, _ = h.request("GET", "/admin/api/apps", nil, 200, nil)
-	tombstones := directoryDecode[[]store.Application](t, data, "apps")
+	data, _ = h.request("GET", "/admin/api/apps?state=deleted", nil, 200, nil)
+	tombstones := directoryDecode[[]store.Application](t, data, "items")
 	if len(tombstones) != len(apps) {
 		t.Fatal("restart lost management records")
 	}
@@ -411,7 +417,7 @@ func TestDirectoryHTTPDisableDeleteAndEmptyRestart(t *testing.T) {
 	}
 	h.request("POST", "/admin/api/vendors", map[string]any{"id": "enterprise", "name": vendor.Name}, 409, nil)
 	h.createVendor("after-restart")
-	h.createApp("after-restart", "files", application.GeneralHTTP, map[string]any{"base_url": "http://intranet.example/files"})
+	h.createApp("after-restart", "files", application.HttpCache, map[string]any{"base_url": "http://intranet.example/files"})
 	_, public = h.bootstrap()
 	if len(public) != 1 || public["after-restart/files"].ID == "" {
 		t.Fatal("empty runtime could not admit a new application")
@@ -462,7 +468,7 @@ func TestDirectoryHTTPIconUploadAndPublicBoundary(t *testing.T) {
 	}
 	h.request("PATCH", "/admin/api/vendors/enterprise", map[string]any{"revision": vendor.Revision, "icon": media.PublicPrefix + strings.Repeat("f", 64) + ".png"}, 400, nil)
 	h.request("PATCH", "/admin/api/vendors/enterprise", map[string]any{"revision": vendor.Revision, "icon": path}, 200, nil)
-	app := h.createApp(vendor.ID, "files", application.GeneralHTTP, map[string]any{"base_url": "http://intranet.example/files"})
+	app := h.createApp(vendor.ID, "files", application.HttpCache, map[string]any{"base_url": "http://intranet.example/files"})
 	_, public := h.bootstrap()
 	if public[app.Key].Icon != path {
 		t.Fatal("application without its own icon did not inherit vendor icon")

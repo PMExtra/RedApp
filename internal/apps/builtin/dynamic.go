@@ -64,6 +64,9 @@ func Seeds() ([]store.VendorInput, []store.ApplicationSeed, error) {
 // NewSourceClient is also used for retired source records during recovery.
 // A historical client is never implicitly admitted as an active public app.
 func NewSourceClient(provider, baseURL string, pool *distributor.Pool) (*distributor.Client, error) {
+	if provider == application.Info || provider == application.Hosted {
+		return nil, nil
+	}
 	if pool == nil {
 		return nil, errors.New("A shared upstream transport pool is required")
 	}
@@ -75,7 +78,7 @@ func NewSourceClient(provider, baseURL string, pool *distributor.Pool) (*distrib
 		baseURL = definition.DefaultBaseURL
 	}
 	mode := distributor.ConfiguredRelease
-	if provider == application.GeneralHTTP {
+	if provider == application.HttpCache {
 		mode = distributor.GeneralHTTP
 	}
 	normalized, err := distributor.NormalizeBase(baseURL, mode)
@@ -133,8 +136,10 @@ func EntriesFromRecords(vendors []store.Vendor, apps []store.Application, pool *
 			return nil, err
 		}
 		entry := application.Entry{Provider: app.Provider, Upstream: client}
-		if app.Provider == application.GeneralHTTP {
-			entry.Descriptor = application.Descriptor{Protocol: application.GeneralHTTP}
+		if app.Provider == application.Info || app.Provider == application.Hosted {
+			entry.Descriptor = application.Descriptor{Protocol: app.Provider}
+		} else if app.Provider == application.HttpCache {
+			entry.Descriptor = application.Descriptor{Protocol: application.HttpCache}
 			entry.SourceStrategy = config.SourceStrategy
 			entry.Upstreams = make([]*distributor.Client, len(config.BaseURLs))
 			for i, base := range config.BaseURLs {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick } from "vue";
 import { t } from "../i18n";
+import PopoverPanel from "./PopoverPanel.vue";
 import Icon from "./Icon.vue";
 import { usePopover } from "../composables/usePopover";
 defineProps<{ busy?: boolean }>();
@@ -67,16 +68,22 @@ function select(action: "password" | "logout") {
       <Icon name="user" /><span>{{ t("Administrator") }}</span
       ><Icon name="chevron" :size="14" />
     </button>
-    <div
+    <PopoverPanel
       v-if="open"
       :id="`${id}-menu`"
       role="menu"
       :aria-label="t('Account actions')"
-      class="account-menu popover-panel"
+      class="account-menu"
     >
-      <button role="menuitem" type="button" @click="select('password')">
+      <button
+        class="popover-option"
+        role="menuitem"
+        type="button"
+        @click="select('password')"
+      >
         <Icon name="lock" />{{ t("Change password") }}</button
       ><button
+        class="popover-option"
         role="menuitem"
         type="button"
         :disabled="busy"
@@ -84,6 +91,6 @@ function select(action: "password" | "logout") {
       >
         <Icon name="exit" />{{ t("Sign out") }}
       </button>
-    </div>
+    </PopoverPanel>
   </div>
 </template>

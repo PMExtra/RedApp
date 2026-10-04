@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
+import PopoverPanel from "./PopoverPanel.vue";
 import Icon from "./Icon.vue";
 import { usePopover } from "../composables/usePopover";
 const props = defineProps<{
   modelValue: string;
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; description?: string }[];
   label: string;
   disabled?: boolean;
   icon?: boolean;
@@ -164,10 +165,11 @@ watch(
       <Icon v-if="icon" name="globe" :size="16" /><span>{{ shown }}</span
       ><Icon name="chevron" :size="14" />
     </button>
-    <ul
+    <PopoverPanel
+      as="ul"
       v-if="open"
       :id="`${id}-list`"
-      class="select-options popover-panel"
+      class="select-options"
       role="listbox"
       :aria-label="label"
     >
@@ -177,14 +179,21 @@ watch(
         :id="`${id}-${index}`"
         role="option"
         :aria-selected="active === index"
-        :class="{ active: active === index, chosen: item.value === modelValue }"
+        :class="[
+          'popover-option',
+          { active: active === index, chosen: item.value === modelValue },
+        ]"
         @pointerdown.prevent
         @pointermove="active = index"
         @click="choose(index)"
       >
-        {{ item.label
-        }}<span v-if="item.value === modelValue" aria-hidden="true">✓</span>
+        <span
+          >{{ item.label
+          }}<small v-if="item.description" class="select-description">{{
+            item.description
+          }}</small></span
+        ><span v-if="item.value === modelValue" aria-hidden="true">✓</span>
       </li>
-    </ul>
+    </PopoverPanel>
   </div>
 </template>

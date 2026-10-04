@@ -167,14 +167,19 @@ func validateApplication(a *ApplicationInput) error {
 		return err
 	}
 	switch a.Provider {
-	case "general-http", "codex", "claude-code":
+	case "info", "hosted":
+		if a.BaseURL != "" || len(a.BaseURLs) != 0 || a.SourceStrategy != "" || a.CacheTTLSeconds != 0 {
+			return fmt.Errorf("%w: Content applications cannot configure upstream caching", ErrInvalidDirectory)
+		}
+		return nil
+	case "http-cache", "codex", "claude-code":
 	default:
 		return fmt.Errorf("%w: unknown provider", ErrInvalidDirectory)
 	}
-	if a.CacheTTLSeconds < 0 || a.CacheTTLSeconds > 86400 || (a.Provider != "general-http" && a.CacheTTLSeconds == 0) {
+	if a.CacheTTLSeconds < 0 || a.CacheTTLSeconds > 86400 || (a.Provider != "http-cache" && a.CacheTTLSeconds == 0) {
 		return fmt.Errorf("%w: cache TTL must be 0..86400 seconds (release providers require at least 1)", ErrInvalidDirectory)
 	}
-	if a.Provider != "general-http" {
+	if a.Provider != "http-cache" {
 		if len(a.BaseURLs) != 0 || a.SourceStrategy != "" {
 			return fmt.Errorf("%w: multiple sources are supported only by GeneralHttp", ErrInvalidDirectory)
 		}
@@ -447,7 +452,9 @@ func createApplication(tx *sql.Tx, vendorID string, in ApplicationInput) (Applic
 	if err != nil {
 		return Application{}, directoryError(err)
 	}
-	_, err = tx.Exec(`INSERT INTO application_sources(app_uid,epoch,provider,base_url,base_urls_json,source_strategy,created_at_s) VALUES(?,1,?,?,?,?,?)`, uid, in.Provider, in.BaseURL, string(bases), in.SourceStrategy, time.Now().UTC().Unix())
+	if in.Provider != "info" && in.Provider != "hosted" {
+		_, err = tx.Exec(`INSERT INTO application_sources(app_uid,epoch,provider,base_url,base_urls_json,source_strategy,created_at_s) VALUES(?,1,?,?,?,?,?)`, uid, in.Provider, in.BaseURL, string(bases), in.SourceStrategy, time.Now().UTC().Unix())
+	}
 	if err != nil {
 		return Application{}, err
 	}
@@ -491,7 +498,7 @@ func (s *Store) UpdateApplication(key string, expectedRevision int64, in Applica
 		return Application{}, ErrConflict
 	}
 	validated := ApplicationInput{ID: a.ID, Name: in.Name, Description: in.Description, Icon: in.Icon, Provider: a.Provider, BaseURL: in.BaseURL, BaseURLs: in.BaseURLs, SourceStrategy: in.SourceStrategy, CacheTTLSeconds: in.CacheTTLSeconds, Enabled: in.Enabled}
-	if a.Provider == "general-http" {
+	if a.Provider == "http-cache" {
 		if validated.BaseURLs == nil {
 			base, err := normalizeDirectoryBase(in.BaseURL)
 			if err != nil {

@@ -57,7 +57,7 @@ func policyHTTPApp(t *testing.T, source string) (*directoryHarness, store.Applic
 	h := newDirectoryHarness(t, t.TempDir())
 	h.login(h.password)
 	vendor := h.createVendor("policy-test")
-	app := h.createApp(vendor.ID, "files", application.GeneralHTTP, map[string]any{"base_url": source})
+	app := h.createApp(vendor.ID, "files", application.HttpCache, map[string]any{"base_url": source})
 	return h, app, "/admin/api/apps/" + app.Key
 }
 
@@ -68,7 +68,7 @@ func TestHTTPCachePolicyAPIAuthorizationCASAndPersistence(t *testing.T) {
 	h.login(h.password)
 	h.request("GET", "/admin/api/apps/openai/codex/cache/policy", nil, 404, nil)
 	vendor := h.createVendor("policy-test")
-	app := h.createApp(vendor.ID, "files", application.GeneralHTTP, map[string]any{"base_url": "http://127.0.0.1:9/files"})
+	app := h.createApp(vendor.ID, "files", application.HttpCache, map[string]any{"base_url": "http://127.0.0.1:9/files"})
 	endpoint := "/admin/api/apps/" + app.Key + "/cache/policy"
 	initial := readPolicyAPI(t, h, endpoint)
 	if initial.Revision != app.Revision || len(initial.Rules) != 0 || len(initial.AutoCleanup) != 0 || !*initial.StaleFallback {
@@ -185,7 +185,7 @@ func TestHTTPCacheMatchAPIUsesCanonicalDecodedPaths(t *testing.T) {
 	}
 	h.request("PUT", api+"/cache/policy?source_epoch=1", map[string]any{"rules": []any{}, "auto_cleanup": []any{}}, 400, map[string]string{"If-Match": `"1"`})
 	h.request("POST", endpoint+"?source_epoch=1", map[string]any{"match": pathmatch.Spec{Type: "glob", Pattern: "/"}, "path": "/a"}, 400, nil)
-	other := h.createApp("policy-test", "other", application.GeneralHTTP, map[string]any{"base_url": "http://127.0.0.1:9/other"})
+	other := h.createApp("policy-test", "other", application.HttpCache, map[string]any{"base_url": "http://127.0.0.1:9/other"})
 	body, _ := h.request("GET", api+"/cache/cleanup/status", nil, 200, nil)
 	var status httpcache.AutomaticCleanupStatus
 	if err := json.Unmarshal(body, &status); err != nil || status.IntervalSeconds != 900 || status.ScanLimitPerApp != 1000 || status.RetireLimitPerApp != 100 {
@@ -323,14 +323,14 @@ func TestHTTPCacheMultiSourceAPIValidationAndEpochs(t *testing.T) {
 		tooMany[i] = fmt.Sprintf("http://127.0.0.1:9/source-%d", i)
 	}
 	for _, values := range [][]string{{}, tooMany, {base[0], base[0]}, {base[0], base[0] + "/"}, {"https://user:password@example.test/files"}} {
-		h.request("POST", create, map[string]any{"id": "invalid", "name": name, "provider": application.GeneralHTTP, "base_urls": values, "source_strategy": "ordered"}, 400, nil)
+		h.request("POST", create, map[string]any{"id": "invalid", "name": name, "provider": application.HttpCache, "base_urls": values, "source_strategy": "ordered"}, 400, nil)
 	}
-	h.request("POST", create, map[string]any{"id": "invalid-strategy", "name": name, "provider": application.GeneralHTTP, "base_urls": base, "source_strategy": "fastest"}, 400, nil)
+	h.request("POST", create, map[string]any{"id": "invalid-strategy", "name": name, "provider": application.HttpCache, "base_urls": base, "source_strategy": "fastest"}, 400, nil)
 	for _, provider := range []string{application.Codex, application.ClaudeCode} {
 		h.request("POST", create, map[string]any{"id": "not-multi-" + provider, "name": name, "provider": provider, "base_urls": base}, 400, nil)
 		h.request("POST", create, map[string]any{"id": "not-strategy-" + provider, "name": name, "provider": provider, "source_strategy": "ordered"}, 400, nil)
 	}
-	body, _ := h.request("POST", create, map[string]any{"id": "files", "name": name, "provider": application.GeneralHTTP, "base_urls": base}, 201, nil)
+	body, _ := h.request("POST", create, map[string]any{"id": "files", "name": name, "provider": application.HttpCache, "base_urls": base}, 201, nil)
 	app := directoryDecode[sourcesAPIApplication](t, body, "app")
 	if app.SourceEpoch != 1 || !reflect.DeepEqual(app.BaseURLs, base) || app.SourceStrategy != "ordered" {
 		t.Fatal("multi-source defaults/order lost", app)

@@ -18,7 +18,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/identity"
 )
 
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 var ErrFreshDirectory = errors.New("This data directory belongs to an old or unknown database; use a new empty data directory. Configuration, cache and history are not migrated. Keep the old directory unchanged")
 var ErrConflict = errors.New("Setting revision changed; reload before saving")
@@ -27,6 +27,11 @@ var ErrExpired = errors.New("Cleanup preview expired")
 
 //go:embed schema.sql
 var schema string
+
+// Only the exact published v0.7.0 schema is eligible for the v0.7.1 upgrade.
+//
+//go:embed schema_v4.sql
+var schemaV4 string
 
 type Store struct {
 	DB    *sql.DB
@@ -40,10 +45,9 @@ func sqliteURL(path string, query string) string {
 	return (&url.URL{Scheme: "file", Path: path}).String() + "?" + query
 }
 
-// Open never migrates old data. The immutable main-file schema is checked
-// before a connection capable of modifying the source. The caller must hold
-// the instance directory lock for the Store lifetime. Product code never alters
-// a successfully initialized schema; external schema edits are unsupported.
+// Open checks the immutable main-file schema before any writable connection.
+// Only the reviewed v4-to-v5 upgrade is supported, under the instance lock.
+// Older or externally altered schemas are refused without modification.
 func Open(dir string) (*Store, error) {
 	path, err := filepath.Abs(filepath.Join(dir, "state.sqlite"))
 	if err != nil {
@@ -97,12 +101,15 @@ func Open(dir string) (*Store, error) {
 	} else {
 		err = db.Ping()
 	}
+	if err == nil && !fresh {
+		err = upgradeV071(db)
+	}
 	if err == nil {
 		// Validate the authoritative WAL view before readiness too. This is a
 		// read-only check after the main file established schema ownership.
 		err = checkSchema(db)
 	}
-	if err == nil && fresh {
+	if err == nil {
 		// Persist the immutable schema to the main file before a first successful
 		// startup. Later WAL transactions contain data only, so read-only preflight
 		// needs no writable sidecar or full database copy.
@@ -121,7 +128,7 @@ func Open(dir string) (*Store, error) {
 func probeExisting(path string) error {
 	// immutable=1 guarantees SQLite neither creates nor updates WAL/SHM/journal
 	// files. It deliberately reads the main file, whose schema is checkpointed
-	// before the first successful startup and never changed by the product.
+	// before startup, including after the supported atomic upgrade.
 	for _, suffix := range []string{"", "-wal", "-shm"} {
 		info, err := os.Lstat(path + suffix)
 		if errors.Is(err, os.ErrNotExist) && suffix != "" {
@@ -140,18 +147,22 @@ func probeExisting(path string) error {
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	return checkSchema(db)
+	if err := checkSchema(db); err == nil {
+		return nil
+	}
+	return checkSchemaDefinition(db, schemaV4, 4)
 }
-func checkSchema(db *sql.DB) error {
+func checkSchema(db *sql.DB) error { return checkSchemaDefinition(db, schema, SchemaVersion) }
+func checkSchemaDefinition(db *sql.DB, definition string, expectedVersion int) error {
 	var count, version int
-	if err := db.QueryRow("SELECT COUNT(*),COALESCE(MAX(version),0) FROM schema_version").Scan(&count, &version); err != nil || count != 1 || version != SchemaVersion {
+	if err := db.QueryRow("SELECT COUNT(*),COALESCE(MAX(version),0) FROM schema_version").Scan(&count, &version); err != nil || count != 1 || version != expectedVersion {
 		return ErrFreshDirectory
 	}
 	// A version marker alone is not enough to authorize opening an unknown
 	// database read/write. Require the table and constraint definitions written
 	// by this schema; auxiliary diagnostic triggers are intentionally ignored.
 	required := map[string]string{}
-	for _, match := range regexp.MustCompile(`(?s)CREATE (?:UNIQUE )?(?:TABLE|INDEX)\s+([a-z_]+)[^;]*;`).FindAllStringSubmatch(schema, -1) {
+	for _, match := range regexp.MustCompile(`(?s)CREATE (?:UNIQUE )?(?:TABLE|INDEX)\s+([a-z_]+)[^;]*;`).FindAllStringSubmatch(definition, -1) {
 		required[match[1]] = strings.Join(strings.Fields(strings.TrimSuffix(match[0], ";")), " ")
 	}
 	rows, err := db.Query("SELECT type,name,sql FROM sqlite_schema WHERE type IN ('table','index') AND name NOT LIKE 'sqlite_%'")
@@ -171,6 +182,8 @@ func checkSchema(db *sql.DB) error {
 			}
 			continue
 		}
+		definition = strings.Replace(definition, `CREATE TABLE "applications"`, `CREATE TABLE applications`, 1)
+		definition = strings.Replace(definition, `CREATE TABLE "application_sources"`, `CREATE TABLE application_sources`, 1)
 		if strings.Join(strings.Fields(definition), " ") != expected {
 			return ErrFreshDirectory
 		}
@@ -256,4 +269,59 @@ func Preflight(dir string) error {
 		}
 	}
 	return nil
+}
+
+// The DDL and version change commit together. A previous committed upgrade may
+// still be in WAL when the read-only main-file preflight observes v4.
+func upgradeV071(db *sql.DB) error {
+	if checkSchema(db) == nil {
+		return nil
+	}
+	if err := checkSchemaDefinition(db, schemaV4, 4); err != nil {
+		return err
+	}
+	// Rebuild the application CHECK constraint without touching other tables or
+	// changing their foreign-key targets. This connection remains exclusively owned.
+	if _, err := db.Exec(`PRAGMA foreign_keys=OFF`); err != nil {
+		return err
+	}
+	defer db.Exec(`PRAGMA foreign_keys=ON`)
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, spec := range []struct{ name, columns string }{
+		{"applications", "uid,vendor_uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,provider,base_url,cache_ttl_seconds,base_urls_json,source_strategy,enabled,revision,source_epoch,deleted_at_s"},
+		{"application_sources", "app_uid,epoch,provider,base_url,created_at_s,base_urls_json,source_strategy"},
+	} {
+		start := strings.Index(schema, "CREATE TABLE "+spec.name+"(")
+		end := start + strings.Index(schema[start:], ";") + 1
+		table := strings.Replace(schema[start:end], "CREATE TABLE "+spec.name+"(", "CREATE TABLE "+spec.name+"_next(", 1)
+		selection := strings.Replace(spec.columns, "provider", `CASE provider WHEN 'general-http' THEN 'http-cache' ELSE provider END`, 1)
+		if _, err = tx.Exec(table + ` INSERT INTO ` + spec.name + `_next (` + spec.columns + `) SELECT ` + selection + ` FROM ` + spec.name + `; DROP TABLE ` + spec.name + `; ALTER TABLE ` + spec.name + `_next RENAME TO ` + spec.name + `;`); err != nil {
+			return err
+		}
+	}
+	ddl := schema[strings.Index(schema, "CREATE TABLE application_instructions("):]
+	if _, err = tx.Exec(ddl); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DROP TABLE schema_version; CREATE TABLE schema_version(version INTEGER NOT NULL CHECK(version=5)); INSERT INTO schema_version VALUES(5);`); err != nil {
+		return err
+	}
+	rows, err := tx.Query(`PRAGMA foreign_key_check`)
+	if err != nil {
+		return err
+	}
+	broken := rows.Next()
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if broken {
+		return errors.New("Application upgrade violated referential integrity")
+	}
+	return tx.Commit()
 }

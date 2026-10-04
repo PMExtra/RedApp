@@ -47,6 +47,64 @@ watch(
   { immediate: true, flush: "sync" },
 );
 export const messages = {
+  Source: "来源",
+  "File pages": "文件分页",
+  "Delete this saved file? It cannot be downloaded again unless you add it.":
+    "删除此文件？删除后需重新添加才能再次下载。",
+  "Saved at": "保存时间",
+  "No files saved yet.": "尚未保存文件。",
+  "Saving file": "正在保存文件",
+  "Save file": "保存文件",
+  "Replace file": "替换文件",
+  "HTTP(S) URL": "HTTP(S) 网址",
+  "Cancel replacement": "取消替换",
+  "This explicitly replaces the selected file. A newer change will be rejected.":
+    "将明确替换所选文件。如果该文件已被更新，本次替换会被拒绝。",
+  "Resource path": "资源相对路径",
+  "Import from URL": "从网址导入",
+  "Upload file": "上传文件",
+  "Transfer cancellation requested. Refreshing saved files.":
+    "已请求取消传输，正在刷新已保存文件。",
+  "The file changed. Select the current file explicitly before replacing it.":
+    "文件已变化，请重新选择当前文件后再明确替换。",
+  "Transfer cancelled.": "传输已取消。",
+  "File saved.": "文件已保存。",
+  "Files stay available until you delete or explicitly replace them. Import URLs are used only once.":
+    "文件会持续保留，直到手动删除或明确替换。导入网址仅用于一次性获取。",
+  "Add a file": "添加文件",
+  "Hosted files": "托管文件",
+  "HTTP Cache": "HTTP 缓存",
+  "Hosted Files": "文件托管",
+  "App Info": "应用介绍",
+  Copied: "已复制",
+  "Sources and delivery": "上游源与分发",
+  "Save instructions": "保存使用说明",
+  "Plain text shown on the public application page. Generated installation commands are managed separately.":
+    "以纯文本展示在公开应用页面。自动生成的安装命令单独维护。",
+  "Usage instructions": "使用说明",
+  "Application settings": "应用设置",
+  "Cache management": "缓存管理",
+  "Application sections": "应用功能",
+  "Copy download URL": "复制下载地址",
+  "Public application page": "公开应用页面",
+  "General HTTP": "通用 HTTP",
+  "Application location": "应用位置",
+  "Add a vendor, then create an application and choose its provider. No applications are created automatically.":
+    "添加厂商后，创建应用并选择 Provider。系统不会自动创建应用。",
+  "Try another search or view.": "请尝试其他搜索词或筛选条件。",
+  "Create your first vendor": "创建第一个厂商",
+  "Search by ID or name": "按 ID 或名称搜索",
+  "Search vendors and applications": "搜索厂商与应用",
+  "Show all applications": "展开全部应用",
+  Collapse: "收起",
+  "{count} applications": "{count} 个应用",
+  "Vendor pages": "厂商分页",
+  "Application pages": "应用分页",
+  "Enter a page from 1 to {pages}.": "请输入 1 到 {pages} 之间的页码。",
+  Go: "跳转",
+  "Page number": "页码",
+  "Page {page} of {pages}": "第 {page} 页，共 {pages} 页",
+  "{count} items": "{count} 项",
   "Building preview": "正在构建预览",
   Ready: "就绪",
   Running: "正在执行",
@@ -60,34 +118,46 @@ export const messages = {
   "Accessed since preview": "预览后被访问",
   "Generation changed": "代次已变化",
   "Selected files": "所选文件",
-  "This page shows up to 25 files. Execution applies to the entire frozen selection, not only this page.": "每页最多显示 25 个文件；执行会处理整个冻结的选择集合，而不只是当前页。",
-  "Result": "结果",
+  "This page shows up to 25 files. Execution applies to the entire frozen selection, not only this page.":
+    "每页最多显示 25 个文件；执行会处理整个冻结的选择集合，而不只是当前页。",
+  Result: "结果",
   "No files on this page.": "当前页没有文件。",
   "Preview file pages": "预览文件分页",
   "Refresh cached files": "刷新缓存文件",
-  "The refresh selection changed or is no longer available. Create a new preview and try again.": "刷新选择已变化或不可用，请重新预览后重试。",
-  "Refresh checks the selected files with their current upstream source. Cached files remain available according to the stale fallback setting.": "刷新会向当前回源地址检查所选文件，已有缓存是否可用于失败回退由过期缓存开关决定。",
+  "The refresh selection changed or is no longer available. Create a new preview and try again.":
+    "刷新选择已变化或不可用，请重新预览后重试。",
+  "Refresh checks the selected files with their current upstream source. Cached files remain available according to the stale fallback setting.":
+    "刷新会向当前回源地址检查所选文件，已有缓存是否可用于失败回退由过期缓存开关决定。",
   "Preview refresh": "预览刷新",
   "Refresh selection": "刷新选择",
-  "{completed} completed · {failed} failed": "已完成 {completed} 个 · 失败 {failed} 个",
-  "{refreshed} refreshed · {unchanged} not modified · {stale} stale fallbacks · {failed} failed · {skipped} skipped": "已刷新 {refreshed} 个 · 未变化 {unchanged} 个 · 过期缓存回退 {stale} 个 · 失败 {failed} 个 · 跳过 {skipped} 个",
-  "Refresh runs in the background. Leaving this page does not cancel the job.": "刷新任务在后台执行，离开此页不会取消任务。",
+  "{completed} completed · {failed} failed":
+    "已完成 {completed} 个 · 失败 {failed} 个",
+  "{refreshed} refreshed · {unchanged} not modified · {stale} stale fallbacks · {failed} failed · {skipped} skipped":
+    "已刷新 {refreshed} 个 · 未变化 {unchanged} 个 · 过期缓存回退 {stale} 个 · 失败 {failed} 个 · 跳过 {skipped} 个",
+  "Refresh runs in the background. Leaving this page does not cancel the job.":
+    "刷新任务在后台执行，离开此页不会取消任务。",
   "Confirm refresh for all selected files": "确认刷新全部所选文件",
-  "Actions": "操作",
+  Actions: "操作",
   "Refresh file": "刷新文件",
   "Actual source": "实际来源",
-  "This preview is no longer available. Create a new preview and try again.": "此预览已不可用，请重新预览后重试。",
-  "Refresh is available only for the current enabled source. Historical files remain available for cleanup.": "仅可刷新当前启用的来源，历史文件仍可清理。",
+  "This preview is no longer available. Create a new preview and try again.":
+    "此预览已不可用，请重新预览后重试。",
+  "Refresh is available only for the current enabled source. Historical files remain available for cleanup.":
+    "仅可刷新当前启用的来源，历史文件仍可清理。",
   "Match type": "匹配类型",
   Glob: "Glob",
   "RE2 regular expression": "RE2 正则表达式",
   "Path pattern": "路径模式",
-  "Paths start with / relative to this application, exclude query strings and are decoded once. Matching is case-sensitive.": "路径以 / 开头，相对于当前应用，不含查询参数并解码一次；匹配区分大小写。",
-  "Glob matches a file or its parent directories: / matches all; /releases matches that file or subtree; /releases/ matches only the directory subtree; /releases/*/ matches immediate child-directory subtrees.": "Glob 匹配文件或其父目录：/ 匹配全部；/releases 匹配同名文件或目录子树；/releases/ 仅匹配目录子树；/releases/*/ 匹配其直接子目录下的子树。",
-  "RE2 matches the complete path, not a substring. Matching is evaluated by the server.": "RE2 匹配完整路径，而非子字符串；匹配由服务器执行。",
+  "Paths start with / relative to this application, exclude query strings and are decoded once. Matching is case-sensitive.":
+    "路径以 / 开头，相对于当前应用，不含查询参数并解码一次；匹配区分大小写。",
+  "Glob matches a file or its parent directories: / matches all; /releases matches that file or subtree; /releases/ matches only the directory subtree; /releases/*/ matches immediate child-directory subtrees.":
+    "Glob 匹配文件或其父目录：/ 匹配全部；/releases 匹配同名文件或目录子树；/releases/ 仅匹配目录子树；/releases/*/ 匹配其直接子目录下的子树。",
+  "RE2 matches the complete path, not a substring. Matching is evaluated by the server.":
+    "RE2 匹配完整路径，而非子字符串；匹配由服务器执行。",
   "Test a sample path": "测试示例路径",
   "Sample path": "示例路径",
-  "Enter the decoded path, for example /releases/文件.zip, without URL encoding.": "输入已解码的路径，例如 /releases/文件.zip，不要使用 URL 编码。",
+  "Enter the decoded path, for example /releases/文件.zip, without URL encoding.":
+    "输入已解码的路径，例如 /releases/文件.zip，不要使用 URL 编码。",
   "Test match": "测试匹配",
   Matches: "匹配",
   "Does not match": "不匹配",
@@ -100,21 +170,29 @@ export const messages = {
   "Cache rules": "缓存规则",
   "Cache rules saved.": "缓存规则已保存。",
   "Path TTL rules": "路径 TTL 规则",
-  "Rules run from top to bottom. The first matching path sets its TTL. Otherwise Cache-Control takes priority; the application default TTL applies only when Cache-Control is absent.": "规则自上而下匹配，首条匹配路径的规则决定 TTL；否则优先遵循 Cache-Control，仅当该头不存在时使用应用默认 TTL。",
-  "TTL 0 checks the origin on every request and retains a complete copy. The stale fallback setting controls reuse on failure. Positive TTL rules can cache responses marked no-store or private by the origin.": "TTL 为 0 时每次请求先回源，并保留完整副本；失败时是否回退由过期缓存开关决定。正数 TTL 规则可缓存上游标为 no-store 或 private 的响应。",
-  "Used only when no path rule matches and Cache-Control is absent. TTL 0 checks the origin every time and retains a complete copy; the stale fallback setting controls reuse on failure.": "仅在没有匹配路径规则且没有 Cache-Control 时使用；TTL 为 0 时每次先回源并保留完整副本，失败时是否回退由过期缓存开关决定。",
+  "Rules run from top to bottom. The first matching path sets its TTL. Otherwise Cache-Control takes priority; the application default TTL applies only when Cache-Control is absent.":
+    "规则自上而下匹配，首条匹配路径的规则决定 TTL；否则优先遵循 Cache-Control，仅当该头不存在时使用应用默认 TTL。",
+  "TTL 0 checks the origin on every request and retains a complete copy. The stale fallback setting controls reuse on failure. Positive TTL rules can cache responses marked no-store or private by the origin.":
+    "TTL 为 0 时每次请求先回源，并保留完整副本；失败时是否回退由过期缓存开关决定。正数 TTL 规则可缓存上游标为 no-store 或 private 的响应。",
+  "Used only when no path rule matches and Cache-Control is absent. TTL 0 checks the origin every time and retains a complete copy; the stale fallback setting controls reuse on failure.":
+    "仅在没有匹配路径规则且没有 Cache-Control 时使用；TTL 为 0 时每次先回源并保留完整副本，失败时是否回退由过期缓存开关决定。",
   "Use stale cache on origin failure": "回源失败时使用过期缓存",
-  "Enabled by default for all paths, including TTL 0. Disabling fallback returns an error on origin failure and keeps stored files.": "默认开启，适用于所有路径，包括 TTL 为 0 的路径；关闭后回源失败会返回错误，但保留已存储文件。",
+  "Enabled by default for all paths, including TTL 0. Disabling fallback returns an error on origin failure and keeps stored files.":
+    "默认开启，适用于所有路径，包括 TTL 为 0 的路径；关闭后回源失败会返回错误，但保留已存储文件。",
   "Rule {number}": "规则 {number}",
   "Move up": "上移",
   "Move down": "下移",
   "Remove rule": "移除规则",
   "TTL (seconds)": "TTL（秒）",
-  "Cache-Control determines freshness; the application default TTL applies only when that header is absent.": "Cache-Control 决定时效；仅当该头不存在时使用应用默认 TTL。",
-  "Patterns may contain at most 1,024 UTF-8 bytes.": "路径模式最多包含 1,024 个 UTF-8 字节。",
-  "Default TTL without Cache-Control (seconds)": "无 Cache-Control 时的默认 TTL（秒）",
+  "Cache-Control determines freshness; the application default TTL applies only when that header is absent.":
+    "Cache-Control 决定时效；仅当该头不存在时使用应用默认 TTL。",
+  "Patterns may contain at most 1,024 UTF-8 bytes.":
+    "路径模式最多包含 1,024 个 UTF-8 字节。",
+  "Default TTL without Cache-Control (seconds)":
+    "无 Cache-Control 时的默认 TTL（秒）",
   "Upstream sources": "回源地址列表",
-  "Add 1 to 16 HTTP or HTTPS directory URLs. Drag to reorder, or use Move up and Move down. Duplicate URLs are rejected.": "添加 1 至 16 个 HTTP 或 HTTPS 目录地址，可拖拽排序或使用上移、下移按钮；不允许重复地址。",
+  "Add 1 to 16 HTTP or HTTPS directory URLs. Drag to reorder, or use Move up and Move down. Duplicate URLs are rejected.":
+    "添加 1 至 16 个 HTTP 或 HTTPS 目录地址，可拖拽排序或使用上移、下移按钮；不允许重复地址。",
   "Source URL {number}": "回源地址 {number}",
   "Drag to reorder": "拖拽排序",
   "Remove source": "移除地址",
@@ -125,56 +203,76 @@ export const messages = {
   Random: "随机",
   "Add TTL rule": "添加 TTL 规则",
   "Automatic cleanup rules": "自动清理规则",
-  "The first matching path rule owns the file. If its age is not reached, later rules do not apply.": "文件由首条匹配路径的规则处理；尚未达到保留时长时，也不会继续匹配后续规则。",
-  "Saved rules run every 15 minutes for current active sources only. Each application pass scans at most 1,000 files and retires at most 100.": "保存后的规则每 15 分钟执行一次，仅针对当前启用的来源；每轮每应用最多扫描 1,000 个文件、退役 100 个文件。",
-  "Files accessed during cleanup are checked again and retained.": "清理期间再次被访问的文件会重新检查并保留。",
-  "Automatic cleanup is disabled until rules are added and saved.": "添加并保存规则前，自动清理保持关闭。",
+  "The first matching path rule owns the file. If its age is not reached, later rules do not apply.":
+    "文件由首条匹配路径的规则处理；尚未达到保留时长时，也不会继续匹配后续规则。",
+  "Saved rules run every 15 minutes for current active sources only. Each application pass scans at most 1,000 files and retires at most 100.":
+    "保存后的规则每 15 分钟执行一次，仅针对当前启用的来源；每轮每应用最多扫描 1,000 个文件、退役 100 个文件。",
+  "Files accessed during cleanup are checked again and retained.":
+    "清理期间再次被访问的文件会重新检查并保留。",
+  "Automatic cleanup is disabled until rules are added and saved.":
+    "添加并保存规则前，自动清理保持关闭。",
   "Add automatic cleanup rule": "添加自动清理规则",
-  "Up to 32 rules per list. Save explicitly to apply these rules.": "每个列表最多 32 条规则，点击保存后才会生效。",
+  "Up to 32 rules per list. Save explicitly to apply these rules.":
+    "每个列表最多 32 条规则，点击保存后才会生效。",
   "Save cache rules": "保存缓存规则",
   "Automatic cleanup service": "自动清理服务",
-  "Service-wide last pass; includes all configured applications.": "服务最近一轮的状态，包含所有已配置应用。",
+  "Service-wide last pass; includes all configured applications.":
+    "服务最近一轮的状态，包含所有已配置应用。",
   "Cleanup running": "清理正在执行",
   "Cleanup idle": "清理空闲",
   "Last attempt": "最近尝试时间",
   "Last successful pass": "最近成功轮次",
   "Last failed pass": "最近失败轮次",
-  "{apps} configured applications · {scanned} files scanned · {retired} files retired · {size}": "{apps} 个已配置应用 · 已扫描 {scanned} 个文件 · 已退役 {retired} 个文件 · {size}",
-  "{passes} total passes · {failures} failed passes": "共 {passes} 轮 · 失败 {failures} 轮",
+  "{apps} configured applications · {scanned} files scanned · {retired} files retired · {size}":
+    "{apps} 个已配置应用 · 已扫描 {scanned} 个文件 · 已退役 {retired} 个文件 · {size}",
+  "{passes} total passes · {failures} failed passes":
+    "共 {passes} 轮 · 失败 {failures} 轮",
   "Cache source": "缓存来源",
   "Current source": "当前来源",
   "Historical source": "历史来源",
   "Source {epoch}": "来源代次 {epoch}",
   "Refresh sources": "刷新来源",
-  "Historical sources retain cached files after the upstream URL changes. Cleanup affects only the selected source.": "回源地址更改后，历史来源仍保留缓存文件；清理仅影响所选来源。",
+  "Historical sources retain cached files after the upstream URL changes. Cleanup affects only the selected source.":
+    "回源地址更改后，历史来源仍保留缓存文件；清理仅影响所选来源。",
   "Cached files": "缓存文件",
-  "Freshness determines revalidation. Cleanup retires stored files separately.": "时效决定何时重新验证；清理操作独立退役已存储文件。",
+  "Freshness determines revalidation. Cleanup retires stored files separately.":
+    "时效决定何时重新验证；清理操作独立退役已存储文件。",
   File: "文件",
   Size: "大小",
   Generation: "代次",
   "Fetched at": "获取时间",
   "Last accessed": "最后访问时间",
   "Validated / fresh until": "验证时间 / 新鲜期截止",
-  "No cached files yet. Files are fetched on demand.": "尚无缓存文件，文件会在请求时按需回源。",
-  "Last access is stored conservatively in minute buckets. Times are shown in your local time zone.": "最后访问时间按分钟桶保守记录，所有时间以本地时区显示。",
+  "No cached files yet. Files are fetched on demand.":
+    "尚无缓存文件，文件会在请求时按需回源。",
+  "Last access is stored conservatively in minute buckets. Times are shown in your local time zone.":
+    "最后访问时间按分钟桶保守记录，所有时间以本地时区显示。",
   "Time-based cleanup": "按时间清理",
   "Select files by": "文件筛选依据",
-  "Fetched-time cleanup can retire files that are still frequently accessed.": "按获取时间清理可能退役仍被频繁访问的文件。",
-  "Files accessed after the preview are checked again and skipped when you confirm.": "确认时会再次检查访问时间，跳过预览后又被访问的文件。",
+  "Fetched-time cleanup can retire files that are still frequently accessed.":
+    "按获取时间清理可能退役仍被频繁访问的文件。",
+  "Files accessed after the preview are checked again and skipped when you confirm.":
+    "确认时会再次检查访问时间，跳过预览后又被访问的文件。",
   "Before local time": "早于本地时间",
   "UTC cutoff": "UTC 截止时间",
-  "{count} files · {size} logical bytes · {active} active": "{count} 个文件 · 逻辑大小 {size} · {active} 个活跃文件",
+  "{count} files · {size} logical bytes · {active} active":
+    "{count} 个文件 · 逻辑大小 {size} · {active} 个活跃文件",
   "Preview expires": "预览过期时间",
-  "Retired {count} of {selected} files · {size} logical bytes": "已退役 {selected} 个所选文件中的 {count} 个 · 逻辑大小 {size}",
-  "Skipped: {accessed} accessed since preview; {changed} changed generations.": "跳过：{accessed} 个预览后被访问的文件；{changed} 个代次已变化的文件。",
+  "Retired {count} of {selected} files · {size} logical bytes":
+    "已退役 {selected} 个所选文件中的 {count} 个 · 逻辑大小 {size}",
+  "Skipped: {accessed} accessed since preview; {changed} changed generations.":
+    "跳过：{accessed} 个预览后被访问的文件；{changed} 个代次已变化的文件。",
   "Vendors and applications": "厂商与应用",
-  "Manage application details, providers and availability.": "管理应用资料、Provider 与启用状态。",
+  "Manage application details, providers and availability.":
+    "管理应用资料、Provider 与启用状态。",
   "Add vendor": "添加厂商",
   "Add application": "添加应用",
   "Vendor details": "厂商资料",
   "Application details": "应用资料",
-  "IDs, vendor and provider are fixed after creation.": "创建后不能更改 ID、所属厂商与 Provider。",
-  "Deleted. Stored data is retained; this record is read-only.": "已删除；保留存储数据，此记录仅供查看。",
+  "IDs, vendor and provider are fixed after creation.":
+    "创建后不能更改 ID、所属厂商与 Provider。",
+  "Deleted. Stored data is retained; this record is read-only.":
+    "已删除；保留存储数据，此记录仅供查看。",
   "Changes saved.": "更改已保存。",
   ID: "ID",
   Name: "名称",
@@ -186,25 +284,32 @@ export const messages = {
   "Remove icon": "移除图标",
   "Uploading…": "正在上传…",
   "The uploaded file exceeds the size limit.": "上传文件超过大小限制。",
-  "Use lowercase letters, numbers and single hyphens. This ID cannot be changed later.": "使用小写字母、数字和单个连字符，创建后不可更改。",
-  "Files are fetched relative to this HTTP or HTTPS directory URL.": "文件路径相对于此 HTTP 或 HTTPS 目录地址。",
-  "The provider supplies a default upstream URL. You can replace it for this application.": "Provider 提供默认回源地址，可为此应用覆盖。",
+  "Use lowercase letters, numbers and single hyphens. This ID cannot be changed later.":
+    "使用小写字母、数字和单个连字符，创建后不可更改。",
+  "Files are fetched relative to this HTTP or HTTPS directory URL.":
+    "文件路径相对于此 HTTP 或 HTTPS 目录地址。",
+  "The provider supplies a default upstream URL. You can replace it for this application.":
+    "Provider 提供默认回源地址，可为此应用覆盖。",
   Enabled: "启用",
   Disabled: "已禁用",
   Deleted: "已删除",
   Show: "显示",
   Current: "当前记录",
   "No vendors in this view.": "当前视图没有厂商。",
-  "Disabling a vendor hides all its applications. Stored data is retained.": "禁用厂商会隐藏其下所有应用，保留存储数据。",
-  "Disabled applications remain manageable here. Stored data is retained.": "禁用应用仍可在此管理，保留存储数据。",
+  "Disabling a vendor hides all its applications. Stored data is retained.":
+    "禁用厂商会隐藏其下所有应用，保留存储数据。",
+  "Disabled applications remain manageable here. Stored data is retained.":
+    "禁用应用仍可在此管理，保留存储数据。",
   "Save changes": "保存更改",
   Delete: "删除",
   "Confirm deletion": "确认删除",
-  "Deletion disables access and keeps stored data. The ID remains reserved.": "删除会停止访问并保留存储数据，ID 仍被保留。",
+  "Deletion disables access and keeps stored data. The ID remains reserved.":
+    "删除会停止访问并保留存储数据，ID 仍被保留。",
   "Delete applications under this vendor first.": "请先删除此厂商下的应用。",
   "Download files": "下载文件",
   "Download URL prefix": "下载地址前缀",
-  "Append the relative file path to this address. Files are fetched and cached when requested.": "在此地址后添加文件的相对路径，文件会在请求时回源并缓存。",
+  "Append the relative file path to this address. Files are fetched and cached when requested.":
+    "在此地址后添加文件的相对路径，文件会在请求时回源并缓存。",
   Resources: "资源",
   "Previous page": "上一页",
   "Next page": "下一页",
@@ -599,8 +704,12 @@ export function label(value: string): string {
   return Object.hasOwn(messages, value) ? t(value as Message) : value;
 }
 const errorCodes: Record<string, Message> = {
-  PREVIEW_INVALID: "This preview is no longer available. Create a new preview and try again.",
-  REFRESH_INVALID: "The refresh selection changed or is no longer available. Create a new preview and try again.",
+  RESOURCE_CONFLICT:
+    "The file changed. Select the current file explicitly before replacing it.",
+  PREVIEW_INVALID:
+    "This preview is no longer available. Create a new preview and try again.",
+  REFRESH_INVALID:
+    "The refresh selection changed or is no longer available. Create a new preview and try again.",
   PAYLOAD_TOO_LARGE: "The uploaded file exceeds the size limit.",
   DIRECTORY_REVISION_CONFLICT:
     "Settings changed elsewhere. Your draft is preserved. Reload before saving again.",
@@ -629,7 +738,8 @@ export function errorText(reason: unknown): string {
     reason && typeof reason === "object" && "code" in reason
       ? reason.code
       : undefined;
-  if (typeof code === "string" && Object.hasOwn(errorCodes, code)) return t(errorCodes[code]!);
+  if (typeof code === "string" && Object.hasOwn(errorCodes, code))
+    return t(errorCodes[code]!);
   const status =
     reason && typeof reason === "object" && "status" in reason
       ? Number(reason.status)

@@ -7,12 +7,22 @@ import (
 )
 
 const (
-	GeneralHTTP = "general-http"
-	Codex       = "codex"
-	ClaudeCode  = "claude-code"
+	Info       = "info"
+	Hosted     = "hosted"
+	HttpCache  = "http-cache"
+	Codex      = "codex"
+	ClaudeCode = "claude-code"
 )
 
+// InfoCapabilities is the shared content layer composed by every provider.
+type InfoCapabilities struct {
+	Details      bool `json:"details"`
+	Instructions bool `json:"instructions"`
+}
 type Capabilities struct {
+	HostedFiles bool `json:"hosted_files"`
+	InfoCapabilities
+	Files       bool `json:"files"`
 	Versions    bool `json:"versions"`
 	Installers  bool `json:"installers"`
 	TimeCleanup bool `json:"time_cleanup"`
@@ -20,10 +30,11 @@ type Capabilities struct {
 
 // Definition is compiled product metadata, not a runtime plugin or executable
 // configuration schema. Provider-specific release code composes the same HTTP
-// transport used by GeneralHttp.
+// transport used by HTTP Cache.
 type Definition struct {
 	Key                    string       `json:"key"`
 	Name                   Localized    `json:"name"`
+	Description            Localized    `json:"description"`
 	DefaultBaseURL         string       `json:"default_base_url"`
 	DefaultCacheTTLSeconds int          `json:"default_cache_ttl_seconds"`
 	Capabilities           Capabilities `json:"capabilities"`
@@ -31,12 +42,22 @@ type Definition struct {
 
 func Definitions() []Definition {
 	return []Definition{
-		{Key: GeneralHTTP, Name: Localized{"en": "General HTTP", "zh-CN": "通用 HTTP"}, DefaultCacheTTLSeconds: 300, Capabilities: Capabilities{TimeCleanup: true}},
-		{Key: Codex, Name: Localized{"en": "Codex", "zh-CN": "Codex"}, DefaultBaseURL: "https://releases.openai.com/codex", DefaultCacheTTLSeconds: 60, Capabilities: Capabilities{Versions: true, Installers: true}},
-		{Key: ClaudeCode, Name: Localized{"en": "Claude Code", "zh-CN": "Claude Code"}, DefaultBaseURL: "https://downloads.claude.ai/claude-code-releases", DefaultCacheTTLSeconds: 60, Capabilities: Capabilities{Versions: true, Installers: true}},
+		{Key: Info, Name: Localized{"en": "App Info", "zh-CN": "应用介绍"}, Description: Localized{"en": "Application details and instructions, without file hosting or caching.", "zh-CN": "展示应用资料与使用说明，不托管或缓存文件。"}, Capabilities: contentCapabilities(false, false, false, false)},
+		{Key: Hosted, Name: Localized{"en": "Hosted Files", "zh-CN": "文件托管"}, Description: Localized{"en": "Upload files or import a URL for permanent storage and downloads.", "zh-CN": "上传文件或从网址导入，持久保存并提供下载。"}, Capabilities: hostedCapabilities()},
+		{Key: HttpCache, Name: Localized{"en": "HTTP Cache", "zh-CN": "HTTP 缓存"}, Description: Localized{"en": "Fetch and cache HTTP upstream files on demand.", "zh-CN": "按需获取并缓存 HTTP 上游文件。"}, DefaultCacheTTLSeconds: 300, Capabilities: contentCapabilities(true, false, false, true)},
+		{Key: Codex, Name: Localized{"en": "Codex", "zh-CN": "Codex"}, Description: Localized{"en": "Distribute Codex releases and installation resources.", "zh-CN": "分发 Codex 版本及安装资源。"}, DefaultBaseURL: "https://releases.openai.com/codex", DefaultCacheTTLSeconds: 60, Capabilities: contentCapabilities(true, true, true, false)},
+		{Key: ClaudeCode, Name: Localized{"en": "Claude Code", "zh-CN": "Claude Code"}, Description: Localized{"en": "Distribute Claude Code releases and installation resources.", "zh-CN": "分发 Claude Code 版本及安装资源。"}, DefaultBaseURL: "https://downloads.claude.ai/claude-code-releases", DefaultCacheTTLSeconds: 60, Capabilities: contentCapabilities(true, true, true, false)},
 	}
 }
 
+func hostedCapabilities() Capabilities {
+	c := contentCapabilities(true, false, false, false)
+	c.HostedFiles = true
+	return c
+}
+func contentCapabilities(files, versions, installers, cleanup bool) Capabilities {
+	return Capabilities{InfoCapabilities: InfoCapabilities{Details: true, Instructions: true}, Files: files, Versions: versions, Installers: installers, TimeCleanup: cleanup}
+}
 func ProviderDefinition(key string) (Definition, bool) {
 	for _, d := range Definitions() {
 		if d.Key == key {
@@ -63,12 +84,18 @@ func NormalizeConfig(provider string, config ProviderConfig) (ProviderConfig, er
 	if !ok {
 		return ProviderConfig{}, errors.New("Unknown provider")
 	}
-	if provider == GeneralHTTP {
+	if provider == Info || provider == Hosted {
+		if config.BaseURL != "" || len(config.BaseURLs) != 0 || config.SourceStrategy != "" || config.CacheTTLSeconds != 0 {
+			return ProviderConfig{}, errors.New("Content applications do not have upstream or cache settings")
+		}
+		return ProviderConfig{}, nil
+	}
+	if provider == HttpCache {
 		if config.BaseURLs == nil && config.BaseURL != "" {
 			config.BaseURLs = []string{config.BaseURL}
 		}
 		if len(config.BaseURLs) < 1 || len(config.BaseURLs) > MaxSources {
-			return ProviderConfig{}, errors.New("GeneralHttp requires 1..16 base URLs")
+			return ProviderConfig{}, errors.New("HTTP Cache requires 1..16 base URLs")
 		}
 		if config.SourceStrategy == "" {
 			config.SourceStrategy = "ordered"
@@ -93,19 +120,19 @@ func NormalizeConfig(provider string, config ProviderConfig) (ProviderConfig, er
 		}
 		config.BaseURLs, config.BaseURL = bases, bases[0]
 	} else if len(config.BaseURLs) != 0 || config.SourceStrategy != "" {
-		return ProviderConfig{}, errors.New("Multiple sources are supported only by GeneralHttp")
+		return ProviderConfig{}, errors.New("Multiple sources are supported only by HTTP Cache")
 	}
 	if config.BaseURL == "" {
 		config.BaseURL = definition.DefaultBaseURL
 	}
 	if config.BaseURL == "" {
-		return ProviderConfig{}, errors.New("GeneralHttp requires a base URL")
+		return ProviderConfig{}, errors.New("HTTP Cache requires a base URL")
 	}
 	if config.CacheTTLSeconds < 0 || config.CacheTTLSeconds > 86400 || (definition.Capabilities.Versions && config.CacheTTLSeconds == 0) {
 		return ProviderConfig{}, errors.New("Cache TTL is outside the provider limits")
 	}
 	mode := distributor.ConfiguredRelease
-	if provider == GeneralHTTP {
+	if provider == HttpCache {
 		mode = distributor.GeneralHTTP
 	}
 	base, err := distributor.NormalizeBase(config.BaseURL, mode)

@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/history"
 	"time"
@@ -87,6 +88,9 @@ func (s *Server) SampleHistory(ctx context.Context, onError func(error)) {
 			at = status["sampled_at"].(time.Time)
 			observations := []history.Observation{{Scope: "global", Metrics: status["metrics"].([]history.Metric)}}
 			for _, entry := range s.Registry.Entries() {
+				if entry.Provider == application.Info || entry.Provider == application.Hosted {
+					continue
+				}
 				appStatus, e := s.appStatus(entry.Descriptor.ID, "")
 				if e != nil {
 					err = e

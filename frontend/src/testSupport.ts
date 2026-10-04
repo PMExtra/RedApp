@@ -19,10 +19,21 @@ import {
   signedIn,
 } from "./session";
 import { setCSRF } from "./api";
-import { resetDirectory, type ManagedApplication, type Vendor } from "./directory";
+import {
+  resetDirectory,
+  type ManagedApplication,
+  type Vendor,
+} from "./directory";
 export const applications: Application[] = [
   {
     id: "openai/codex",
+    provider: "codex",
+    capabilities: {
+      versions: true,
+      installers: true,
+      time_cleanup: false,
+      files: true,
+    },
     name: { en: "Codex CLI", "zh-CN": "Codex CLI" },
     publisher: "OpenAI",
     summary: { en: "OpenAI coding agent", "zh-CN": "OpenAI 编程助手" },
@@ -39,6 +50,13 @@ export const applications: Application[] = [
   },
   {
     id: "anthropic/claude-code",
+    provider: "claude-code",
+    capabilities: {
+      versions: true,
+      installers: true,
+      time_cleanup: false,
+      files: true,
+    },
     name: { en: "Claude Code", "zh-CN": "Claude Code" },
     publisher: "Anthropic",
     summary: { en: "Anthropic coding agent", "zh-CN": "Anthropic 编程助手" },
@@ -64,16 +82,32 @@ export const boot = {
   revision: "1",
 };
 export const managedVendors: Vendor[] = applications.map((app) => ({
-  uid: app.id.split("/")[0]!, id: app.id.split("/")[0]!,
+  uid: app.id.split("/")[0]!,
+  id: app.id.split("/")[0]!,
   name: { en: app.publisher, "zh-CN": app.publisher },
-  description: { en: "", "zh-CN": "" }, icon: "", enabled: true, revision: 1,
+  description: { en: "", "zh-CN": "" },
+  icon: "",
+  enabled: true,
+  revision: 1,
 }));
-export const adminApplications: ManagedApplication[] = applications.map((app, index) => ({
-  uid: app.id, id: app.id.split("/")[1]!, key: app.id,
-  vendor_id: app.id.split("/")[0]!, vendor_uid: app.id.split("/")[0]!,
-  name: app.name, description: app.summary, icon: app.icon, enabled: true, revision: 1,
-  provider: index === 0 ? "codex" : "claude-code", base_url: "https://upstream.example/releases/", cache_ttl_seconds: 300, source_epoch: 1,
-}));
+export const adminApplications: ManagedApplication[] = applications.map(
+  (app, index) => ({
+    uid: app.id,
+    id: app.id.split("/")[1]!,
+    key: app.id,
+    vendor_id: app.id.split("/")[0]!,
+    vendor_uid: app.id.split("/")[0]!,
+    name: app.name,
+    description: app.summary,
+    icon: app.icon,
+    enabled: true,
+    revision: 1,
+    provider: index === 0 ? "codex" : "claude-code",
+    base_url: "https://upstream.example/releases/",
+    cache_ttl_seconds: 300,
+    source_epoch: 1,
+  }),
+);
 export const status = {
   name: "RedApp",
   sampled_at: "2026-10-02T08:01:00Z",

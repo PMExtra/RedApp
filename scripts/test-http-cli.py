@@ -100,34 +100,39 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         log.seek(0)
         match = re.search(r"Initial admin password: ([0-9a-f]+)", log.read())
         assert match, "initial password missing"
-        for path in ["/", "/openai/codex", "/anthropic/claude-code", "/admin/settings/site",
-                     "/admin/apps/openai/codex/settings"]:
-            with request(path) as response:
-                assert response.status == 200 and "text/html" in response.headers["Content-Type"]
-                assert "script-src 'self'" in response.headers["Content-Security-Policy"]
-                assert response.headers["Cache-Control"] == "no-store"
-                assert "/assets/" in response.read().decode()
         bootstrap = read("/api/bootstrap")
         assert bootstrap["version"] == version_output.split()[1]
         assert bootstrap["public_origin"] == env["REDAPP_PUBLIC_URL"]
         apps = bootstrap["apps"]
-        assert {app["id"] for app in apps} == {"openai/codex", "anthropic/claude-code"}
-        assert all(app["origin"] == env["REDAPP_PUBLIC_URL"] + "/" + app["id"] for app in apps)
+        assert apps == [], "fresh instance seeded business applications"
         for path in ["/api/info", "/apps/codex", "/install.sh"]:
             reject(path, 404)
         reject("/admin/api/status", 401)
         with request("/admin/api/login", {"password": match.group(1)}, "POST") as response:
             csrf = json.load(response)["csrf"]
         assert read("/admin/api/session")["csrf"] == csrf
+        assert read("/admin/api/vendors?page=1&limit=12")["total"] == 0
+        for vendor, app, provider in [("openai", "codex", "codex"), ("anthropic", "claude-code", "claude-code")]:
+            with request("/admin/api/vendors", {"id": vendor, "name": {"en": vendor, "zh-CN": vendor}}, "POST") as response:
+                assert response.status == 201
+            with request(f"/admin/api/vendors/{vendor}/apps", {"id": app, "provider": provider, "name": {"en": app, "zh-CN": app}}, "POST") as response:
+                assert response.status == 201
+        for path in ["/", "/openai/codex", "/anthropic/claude-code", "/admin/settings/site",
+                     "/admin/vendors/openai/apps/codex/settings"]:
+            with request(path) as response:
+                assert response.status == 200 and "text/html" in response.headers["Content-Type"]
+                assert "script-src 'self'" in response.headers["Content-Security-Policy"]
+                assert response.headers["Cache-Control"] == "no-store"
+                assert "/assets/" in response.read().decode()
         # The dynamic directory is independent of public catalog ordering. These
         # management-only fixtures never contact the configured upstream.
-        assert {provider["key"] for provider in read("/admin/api/providers")["providers"]} == {"general-http", "codex", "claude-code"}
+        assert {provider["key"] for provider in read("/admin/api/providers")["providers"]} == {"info", "hosted", "http-cache", "codex", "claude-code"}
         with request("/admin/api/vendors", {"id": "cli-example", "name": {"en": "CLI fixture", "zh-CN": "CLI 测试"}}, "POST") as response:
             vendor = json.load(response)["vendor"]
         assert vendor["revision"] == 1 and vendor["enabled"]
         app_create = "/admin/api/vendors/cli-example/apps"
-        app_input = {"id": "files", "name": {"en": "Files", "zh-CN": "文件"}, "provider": "general-http"}
-        reject(app_create, 400, app_input, "POST")  # GeneralHttp has no implicit BaseUrl.
+        app_input = {"id": "files", "name": {"en": "Files", "zh-CN": "文件"}, "provider": "http-cache"}
+        reject(app_create, 400, app_input, "POST")  # HTTP Cache has no implicit BaseUrl.
         app_input["base_url"] = "http://127.0.0.1:9/files"
         with request(app_create, app_input, "POST") as response:
             dynamic_app = json.load(response)["app"]

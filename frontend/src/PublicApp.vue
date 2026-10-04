@@ -10,6 +10,7 @@ import {
 } from "./bootstrap";
 import { language, t } from "./i18n";
 import { siteTitle } from "./site";
+import HostedDownloads from "./components/HostedDownloads.vue";
 import InstallCommands from "./components/InstallCommands.vue";
 import Icon from "./components/Icon.vue";
 const route = useRoute();
@@ -53,12 +54,28 @@ watchEffect(() => {
         /><Icon v-else name="box" :size="48" />
       </div>
       <div class="public-heading">
-        <span class="eyebrow">{{ applicationCapabilities(selected).installers ? t("Installation instructions") : t("Download files") }}</span>
+        <span class="eyebrow">{{
+          applicationCapabilities(selected).installers
+            ? t("Installation instructions")
+            : selected.provider === "info"
+              ? t("Usage instructions")
+              : t("Download files")
+        }}</span>
         <h1>{{ selected.name[language] }}</h1>
         <p class="public-lead">{{ selected.summary[language] }}</p>
       </div>
     </div>
-    <div v-if="applicationCapabilities(selected).installers" class="installation-layout">
+    <section
+      v-if="selected.instructions?.[language]"
+      class="panel usage-instructions"
+    >
+      <h2>{{ t("Usage instructions") }}</h2>
+      <div class="plain-text">{{ selected.instructions[language] }}</div>
+    </section>
+    <div
+      v-if="applicationCapabilities(selected).installers"
+      class="installation-layout"
+    >
       <InstallCommands
         :origin="bootstrap.public_origin"
         :application="selected"
@@ -85,10 +102,23 @@ watchEffect(() => {
         </section>
       </aside>
     </div>
-    <section v-else class="panel download-prefix">
+    <HostedDownloads
+      v-else-if="selected.provider === 'hosted'"
+      :application="selected.id"
+    />
+    <section
+      v-else-if="applicationCapabilities(selected).files"
+      class="panel download-prefix"
+    >
       <h2>{{ t("Download URL prefix") }}</h2>
       <pre tabindex="0">{{ bootstrap.public_origin }}/{{ selected.id }}/</pre>
-      <p class="muted">{{ t("Append the relative file path to this address. Files are fetched and cached when requested.") }}</p>
+      <p class="muted">
+        {{
+          t(
+            "Append the relative file path to this address. Files are fetched and cached when requested.",
+          )
+        }}
+      </p>
     </section></template
   >
   <section v-else-if="detail" class="panel empty-state">
@@ -120,7 +150,13 @@ watchEffect(() => {
         <h2>{{ app.name[language] }}</h2>
         <p>{{ app.summary[language] }}</p>
         <span class="card-action"
-          >{{ applicationCapabilities(app).installers ? t("Installation instructions") : t("Download files") }}<Icon name="arrow" /></span
+          >{{
+            applicationCapabilities(app).installers
+              ? t("Installation instructions")
+              : app.provider === "info"
+                ? t("Usage instructions")
+                : t("Download files")
+          }}<Icon name="arrow" /></span
       ></RouterLink>
     </div>
     <p v-if="bootstrap && !bootstrap.apps.length" class="empty">

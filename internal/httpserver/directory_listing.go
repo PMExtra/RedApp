@@ -1,0 +1,101 @@
+package httpserver
+
+import (
+	"github.com/PMExtra/RedApp/internal/store"
+	"net/http"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+)
+
+func positivePage(raw string, fallback int) (int, bool) {
+	if raw == "" {
+		return fallback, true
+	}
+	n, e := strconv.Atoi(raw)
+	return n, e == nil && n >= 1 && n <= 1000000000 && strconv.Itoa(n) == raw
+}
+func (s *Server) directoryList(w http.ResponseWriter, r *http.Request, parts []string) {
+	if !queryAllowed(r, "page", "limit", "q", "state") {
+		fail(w, 400, "Invalid directory query")
+		return
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	state := r.URL.Query().Get("state")
+	if state == "" {
+		state = "current"
+	}
+	page, ok := positivePage(r.URL.Query().Get("page"), 1)
+	limit, okLimit := positivePage(r.URL.Query().Get("limit"), 12)
+	if !ok || !okLimit || limit > 100 || !utf8.ValidString(q) || utf8.RuneCountInString(q) > 128 || (state != "current" && state != "disabled" && state != "deleted") {
+		fail(w, 400, "Invalid directory page or search")
+		return
+	}
+	if len(parts) == 1 && parts[0] == "vendors" {
+		value, err := s.DB.DirectoryPage(page, limit, q, state)
+		if err != nil {
+			directoryError(w, err)
+			return
+		}
+		reply(w, 200, value)
+		return
+	}
+	vendor := ""
+	if len(parts) == 3 {
+		vendor = parts[1]
+		if _, err := s.DB.Vendor(vendor); err != nil {
+			directoryError(w, err)
+			return
+		}
+	}
+	value, err := s.DB.ApplicationPage(vendor, page, limit, q, state)
+	if err != nil {
+		directoryError(w, err)
+		return
+	}
+	reply(w, 200, value)
+}
+func (s *Server) instructionsAPI(w http.ResponseWriter, r *http.Request, key string) {
+	if !queryAllowed(r) {
+		fail(w, 400, "Unexpected query parameters")
+		return
+	}
+	app, err := s.DB.Application(key)
+	if err != nil {
+		directoryError(w, err)
+		return
+	}
+	if r.Method == http.MethodGet {
+		value, err := s.DB.Instructions(app.UID)
+		if err != nil {
+			directoryError(w, err)
+			return
+		}
+		revisionReply(w, value.Revision, value)
+		return
+	}
+	if r.Method != http.MethodPut {
+		fail(w, 405, "Method not allowed")
+		return
+	}
+	var value store.Instructions
+	if err = decodeLimit(w, r, &value, 128<<10); err != nil {
+		fail(w, 400, "Invalid instructions")
+		return
+	}
+	if r.Header.Get("If-Match") != "" {
+		value.Revision, err = expectedRevision(r)
+		if err != nil {
+			fail(w, 400, "Invalid revision")
+			return
+		}
+	}
+	s.directoryMu.Lock()
+	defer s.directoryMu.Unlock()
+	value, err = s.DB.SaveInstructions(key, value.Revision, value.LocalizedText)
+	if err != nil {
+		directoryError(w, err)
+		return
+	}
+	revisionReply(w, value.Revision, value)
+}

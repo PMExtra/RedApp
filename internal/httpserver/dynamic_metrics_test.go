@@ -41,7 +41,7 @@ func TestDynamicMetricsAndListsKeepStorageAndPublicNamespacesSeparate(t *testing
 	}
 	app := makeApp("codex", "codex")
 	other := makeApp("claude", "claude-code")
-	general := makeApp("files", "general-http")
+	general := makeApp("files", "http-cache")
 	pool := distributor.NewPool()
 	s := &Server{DB: db, Dir: dir, Started: time.Now()}
 	reload := func() {

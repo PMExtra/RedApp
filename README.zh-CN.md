@@ -4,7 +4,7 @@
 
 RedApp 通过同一服务分发 **HTTP 文件、Codex CLI 和 Claude Code**。管理员维护厂商与应用资料、选择 Provider 和 BaseUrl，并管理缓存、流量与站点设置。
 
-本文描述 **v0.7.0 的运行方式**。SQLite schema 为 **4**，包括 v0.6 在内的旧版本都必须改用**全新空数据目录**。不提供迁移工具，不导入旧数据库设置、缓存或历史；旧目录保留，启动只读检测后拒绝继续，不修改、不删除。匹配当前格式的 v0.7 目录可以正常重启。详见 [Provider 运行说明与数据边界](docs/provider-runtime-v0.7.0.md)。
+本分支实现 **0.7.1（尚未发布）**，SQLite schema 为 **5**。精确匹配已发布 v0.7.0 的 schema 4 数据目录可原子升级，保留应用身份、配置、源记录、缓存和历史。更早或未知格式仍须使用全新空目录，启动拒绝时不修改旧内容。升级前停止实例并备份完整数据目录。详见 [0.7.1 运行变更](docs/admin-experience-v0.7.1.md)。
 
 ## 快速上手
 
@@ -53,21 +53,23 @@ writer 使用 `REDAPP_MAX_WRITERS`、`download_limits.max_writers`、`--max-writ
 
 | Provider | BaseUrl | 缓存与清理 |
 | --- | --- | --- |
-| GeneralHttp（`general-http`） | 必填；支持 HTTP(S)、端口和企业内网源 | 有序路径 TTL 规则；无匹配规则且无 Cache-Control 时默认 300 秒；按获取或最后访问时间手动或自动清理 |
+| 应用介绍 / App Info（`info`） | 无 | 资料和双语纯文本使用说明；无文件路由 |
+| 文件托管 / Hosted Files（`hosted`） | 无 | 管理员上传或一次性 URL 导入，持久保存直到手动删除 |
+| HTTP Cache（`http-cache`） | 必填；支持 HTTP(S)、端口和企业内网源 | 有序路径 TTL 规则；无匹配规则且无 Cache-Control 时默认 300 秒；按获取或最后访问时间手动或自动清理 |
 | Codex（`codex`） | 默认 `https://releases.openai.com/codex`，可覆盖 | 保留发布元数据和制品校验；渠道 TTL 默认 60 秒；按版本清理 |
-| ClaudeCode（`claude-code`） | 默认 `https://downloads.claude.ai/claude-code-releases`，可覆盖 | 保留现有签名和摘要校验；渠道 TTL 默认 60 秒；按版本清理 |
+| Claude Code（`claude-code`） | 默认 `https://downloads.claude.ai/claude-code-releases`，可覆盖 | 保留现有签名和摘要校验；渠道 TTL 默认 60 秒；按版本清理 |
 
-新目录只初始化一次 `openai/codex` 和 `anthropic/claude-code`，重启不会重新创建已删除条目。修改 BaseUrl 会开启独立 source epoch，保留旧缓存供显式管理。禁用或删除停止新的公开请求，保留已有数据；删除后的 ID 仍保留，不等同于清空缓存。
+新目录不创建任何厂商或应用，只提供编译内置的 Provider 定义。管理员自行创建厂商和应用；升级保留现有条目，重启不会重新创建已删除条目。修改 BaseUrl 会开启独立 source epoch，保留旧缓存供显式管理。禁用或删除停止新的公开请求，保留已有数据；删除后的 ID 仍保留，不等同于清空缓存。
 
-GeneralHttp 将 `/<vendor>/<app>/<relative-path>` 映射到 BaseUrl 下，支持 GET/HEAD、验证器和单段字节 Range，拒绝查询参数和路径穿越。可缓存的冷请求先完整落盘再开始响应，冷 Range 请求也如此；不能共享的响应走有大小限制的直接传输。文件以下载附件返回，不作为可执行网页托管。
+HTTP Cache 将 `/<vendor>/<app>/<relative-path>` 映射到 BaseUrl 下，支持 GET/HEAD、验证器和单段字节 Range，拒绝查询参数和路径穿越。可缓存的冷请求先完整落盘再开始响应，冷 Range 请求也如此；不能共享的响应走有大小限制的直接传输。文件以下载附件返回，不作为可执行网页托管。
 
-GeneralHttp 支持 1–16 个有序镜像 URL，可选择逐个回落、轮询或随机。来源内容、顺序和策略变更会创建新缓存代际；验证器绑定实际来源，跨源重试完整获取。后台可刷新单个缓存资源或 pattern；刷新和清理预览采用服务端分页，执行处理完整冻结集合。
+HTTP Cache 支持 1–16 个有序镜像 URL，可选择逐个回落、轮询或随机。来源内容、顺序和策略变更会创建新缓存代际；验证器绑定实际来源，跨源重试完整获取。后台可刷新单个缓存资源或 pattern；刷新和清理预览采用服务端分页，执行处理完整冻结集合。
 
-GeneralHttp 设置提供有序缓存规则、默认开启的 `stale_fallback` 开关和可选自动清理规则。匹配对象是解码后、以 `/` 开头的应用相对路径：doublestar glob 匹配文件或目录祖先，Go RE2 正则匹配完整路径，均采用第一条命中的规则。显式规则 TTL 优先于源 Cache-Control，不扣源 Age、不受应用默认 TTL 上限限制；未匹配时，有效 `s-maxage/max-age` 决定新鲜期并扣除 Age/Date。仅完全没有 Cache-Control 时使用应用默认 TTL；存在 Cache-Control 却无有效寿命时取 TTL 0，Expires 不增加另一层优先级。TTL 0 每次先回源，仍可保留完整正文用于故障回退，没有独立 bypass 模式。
+HTTP Cache 设置提供有序缓存规则、默认开启的 `stale_fallback` 开关和可选自动清理规则。匹配对象是解码后、以 `/` 开头的应用相对路径：doublestar glob 匹配文件或目录祖先，Go RE2 正则匹配完整路径，均采用第一条命中的规则。显式规则 TTL 优先于源 Cache-Control，不扣源 Age、不受应用默认 TTL 上限限制；未匹配时，有效 `s-maxage/max-age` 决定新鲜期并扣除 Age/Date。仅完全没有 Cache-Control 时使用应用默认 TTL；存在 Cache-Control 却无有效寿命时取 TTL 0，Expires 不增加另一层优先级。TTL 0 每次先回源，仍可保留完整正文用于故障回退，没有独立 bypass 模式。
 
 显式路径规则可以覆盖源 `no-store/private`，这是管理员主动选择在公开下载入口复用该表示；Set-Cookie、不支持的 Vary 和认证表示隔离边界保持不变。TTL 大于 0 且实际回源覆盖源策略时，每次回源记录一次警告；TTL 0 不产生此覆盖警告。网络失败、超时或上游 5xx 时，`stale_fallback=true` 返回同应用、同 source epoch 下已有的有效完整过期缓存，不设置最大过期年龄；每次实际回退按一次共享回源记一条警告，不去重、不限频，缓存命中不警告。关闭开关则报错，不使用过期缓存。源重验证指令不额外强制验证或禁止回退，但保留 ETag/Last-Modified 条件验证；回退不推进时间戳，404/410 不触发回退。更细控制、提示和观测仍见 [issue #2](https://github.com/PMExtra/RedApp/issues/2)。
 
-手动清理将路径模式、时基和截止时间冻结为预览。自动清理默认规则为空，保存规则后每 15 分钟运行，不在启动时立即删除；仅处理活动 GeneralHttp 应用的当前 source epoch，每应用每轮最多扫描 1000 个文件、退出当前缓存 100 个文件，并通过游标避免后面的文件一直未被扫描。清理按第一条路径命中规则判断年龄，未达到年龄也不继续尝试后面的规则。规则示例、限制和 API 见[运行说明](docs/provider-runtime-v0.7.0.md)。本版不增加源认证、私有 CA 或签名配置；保留基本 TLS 验证以及现有后台和发布校验。
+手动清理将路径模式、时基和截止时间冻结为预览。自动清理默认规则为空，保存规则后每 15 分钟运行，不在启动时立即删除；仅处理活动 HTTP Cache 应用的当前 source epoch，每应用每轮最多扫描 1000 个文件、退出当前缓存 100 个文件，并通过游标避免后面的文件一直未被扫描。清理按第一条路径命中规则判断年龄，未达到年龄也不继续尝试后面的规则。规则示例、限制和 API 见[运行说明](docs/provider-runtime-v0.7.0.md)。本版不增加源认证、私有 CA 或签名配置；保留基本 TLS 验证以及现有后台和发布校验。
 
 ## 公共地址与代理
 
@@ -99,6 +101,6 @@ irm 'https://downloads.example.internal/anthropic/claude-code/install.ps1' | iex
 
 在 `frontend/` 执行 `npm ci && npm run build` 后，Go 构建会嵌入前端产物。构建前运行 Go 测试和前端类型/DOM 检查；`scripts/test-data-cli.py`、`scripts/test-http-cli.py` 使用 `bin/redapp` 和隔离临时目录验证实际 CLI。
 
-当前数据模型、API 边界和限制见 [v0.7 Provider 运行说明](docs/provider-runtime-v0.7.0.md)。带旧版本号的文档描述对应历史版本，不是当前开发架构的配置指南。
+当前变更、Provider ID 和 API 边界见 [0.7.1 运行说明](docs/admin-experience-v0.7.1.md)。[v0.7.0 说明](docs/provider-runtime-v0.7.0.md)保留作为缓存规则的历史参考。带旧版本号的文档描述对应历史版本，不是当前开发架构的配置指南。
 
 RedApp 原创代码采用 [MIT 许可](LICENSE)。[第三方许可](third_party/README.md)，包括上游安装器 LICENSE/NOTICE，独立保留。

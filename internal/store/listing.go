@@ -97,3 +97,39 @@ func (s *Store) EventPage(app string, beforeID int64, limit int) ([]ListedEvent,
 	}
 	return out, rows.Err()
 }
+
+func (s *Store) VersionNumberPage(app string, page, limit int) (Page[VersionStats], error) {
+	if requireApp(app) != nil || page < 1 || page > 1000000000 || limit < 1 || limit > 100 {
+		return Page[VersionStats]{}, errors.New("Invalid version page")
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return Page[VersionStats]{}, err
+	}
+	defer tx.Rollback()
+	var total int64
+	if err = tx.QueryRow(`SELECT COUNT(*) FROM app_versions WHERE app_id=?`, app).Scan(&total); err != nil {
+		return Page[VersionStats]{}, err
+	}
+	result := NewPage[VersionStats](page, limit, total)
+	rows, err := tx.Query(`SELECT version,first_seen_s,artifact_requests,downstream_bytes FROM app_versions WHERE app_id=? ORDER BY version ASC LIMIT ? OFFSET ?`, app, limit, (result.Page-1)*limit)
+	if err != nil {
+		return result, err
+	}
+	for rows.Next() {
+		var v VersionStats
+		var at int64
+		if err = rows.Scan(&v.Version, &at, &v.ArtifactRequests, &v.DownstreamBytes); err != nil {
+			rows.Close()
+			return result, err
+		}
+		v.FirstSeen = time.Unix(at, 0).UTC()
+		result.Items = append(result.Items, v)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return result, err
+	}
+	return result, tx.Commit()
+}

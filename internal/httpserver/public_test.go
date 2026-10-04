@@ -12,7 +12,7 @@ import (
 func TestPublicPagesBootstrapAndApplicationIsolation(t *testing.T) {
 	s, _, _ := newTestServer(t, nil)
 	s.Version = "test-build"
-	for _, path := range []string{"/", "/openai/codex", "/anthropic/claude-code", "/admin/login", "/admin/overview", "/admin/settings/site", "/admin/apps/anthropic/claude-code/settings"} {
+	for _, path := range []string{"/", "/openai/codex", "/anthropic/claude-code", "/admin/login", "/admin/overview", "/admin/settings/site", "/admin/vendors/anthropic/apps/claude-code/settings"} {
 		w := httptest.NewRecorder()
 		s.ServeHTTP(w, httptest.NewRequest("GET", "http://internal"+path, nil))
 		if w.Code != 200 || !strings.Contains(w.Header().Get("Content-Type"), "text/html") || !strings.Contains(w.Header().Get("Content-Security-Policy"), "script-src 'self'") {

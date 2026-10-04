@@ -5,7 +5,7 @@ import AppShell from "../components/AppShell.vue";
 import AccountMenu from "../components/AccountMenu.vue";
 import PasswordDialog from "../components/PasswordDialog.vue";
 import Icon from "../components/Icon.vue";
-import { managedApps, loadDirectory, resetDirectory, providerHasVersions, providerHasTimeCleanup } from "../directory";
+import { resetDirectory } from "../directory";
 import {
   checkSession,
   cancelSessionCheck,
@@ -17,9 +17,10 @@ import {
   sessionNotice,
   signedIn,
 } from "../session";
-import { errorText, language, t } from "../i18n";
+import { errorText, t } from "../i18n";
 import { siteTitle } from "../site";
 import { confirmDirtyDrafts } from "../composables/useDirtyDraft";
+import { adminReturnPath } from "../router";
 const router = useRouter(),
   route = useRoute();
 const passwordOpen = ref(false),
@@ -27,18 +28,24 @@ const passwordOpen = ref(false),
   actionError = ref<unknown>();
 function redirect() {
   if (sessionChecked.value && !signedIn.value && route.path !== "/admin/login")
-    void router.replace("/admin/login");
+    void router.replace({
+      path: "/admin/login",
+      query: { returnTo: route.fullPath },
+    });
   if (signedIn.value && route.path === "/admin/login")
-    void router.replace("/admin/overview");
+    void router.replace(adminReturnPath(route.query.returnTo));
 }
 watch([signedIn, sessionChecked, () => route.path], () => {
   if (!signedIn.value) passwordOpen.value = false;
   redirect();
 });
-watch(signedIn, (active) => {
-  if (active) void loadDirectory();
-  else resetDirectory();
-}, { immediate: true });
+watch(
+  signedIn,
+  (active) => {
+    if (!active) resetDirectory();
+  },
+  { immediate: true },
+);
 watchEffect(() => {
   document.title = `${t("Administration")} · ${siteTitle.value}`;
 });
@@ -96,16 +103,8 @@ onUnmounted(() => {
           <RouterLink to="/admin/settings/proxy"
             ><Icon name="settings" />{{ t("Upstream proxy") }}</RouterLink
           >
-          <RouterLink to="/admin/vendors"><Icon name="box" />{{ t("Vendors and applications") }}</RouterLink>
-          <template v-for="app in managedApps.filter((item) => !item.deleted_at)" :key="app.uid"
-            ><span class="sidebar-app-name">{{ app.name[language] }}</span
-            ><RouterLink v-if="providerHasVersions(app.provider)" :to="`/admin/apps/${app.key}/versions`"
-              ><Icon name="box" />{{ t("Versions") }}</RouterLink
-            ><RouterLink v-if="providerHasTimeCleanup(app.provider)" :to="`/admin/apps/${app.key}/cache`"
-              ><Icon name="box" />{{ t("Cache") }}</RouterLink
-            ><RouterLink :to="`/admin/apps/${app.key}/settings`"
-              ><Icon name="settings" />{{ t("Settings") }}</RouterLink
-            ></template
+          <RouterLink to="/admin/vendors"
+            ><Icon name="box" />{{ t("Vendors and applications") }}</RouterLink
           >
         </nav>
         <RouterLink to="/" class="sidebar-public"

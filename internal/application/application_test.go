@@ -17,7 +17,7 @@ func generalEntry(t *testing.T, id, uid string) Entry {
 	}
 	return Entry{
 		Descriptor: Descriptor{ID: id, Name: Localized{"en": "Files", "zh-CN": "文件"}, DefaultChannelTTLSeconds: 0},
-		UID:        uid, Provider: GeneralHTTP, Revision: 1, VendorRevision: 1, SourceEpoch: 1, Enabled: true, Upstream: client,
+		UID:        uid, Provider: HttpCache, Revision: 1, VendorRevision: 1, SourceEpoch: 1, Enabled: true, Upstream: client,
 	}
 }
 
@@ -117,7 +117,7 @@ func TestRegistryPublicationIsAtomicForReaders(t *testing.T) {
 
 func TestProviderConfigurationsHaveExplicitCapabilities(t *testing.T) {
 	definitions := Definitions()
-	if len(definitions) != 3 || definitions[0].Capabilities.Versions || !definitions[0].Capabilities.TimeCleanup {
+	if len(definitions) != 5 || definitions[0].Capabilities.Files || !definitions[0].Capabilities.Instructions || !definitions[1].Capabilities.HostedFiles || !definitions[2].Capabilities.TimeCleanup {
 		t.Fatal("unexpected provider capability contract")
 	}
 	for _, provider := range []string{Codex, ClaudeCode} {
@@ -128,13 +128,13 @@ func TestProviderConfigurationsHaveExplicitCapabilities(t *testing.T) {
 		}
 	}
 	for _, config := range []ProviderConfig{{BaseURL: "http://10.0.0.7:8081/releases/", CacheTTLSeconds: 0}, {BaseURL: "https://intranet.example/releases", CacheTTLSeconds: 86400}} {
-		if _, err := NormalizeConfig(GeneralHTTP, config); err != nil {
+		if _, err := NormalizeConfig(HttpCache, config); err != nil {
 			t.Fatal("enterprise source rejected", err)
 		}
 	}
 	for i, config := range []ProviderConfig{{}, {BaseURL: "file:///tmp/releases"}, {BaseURL: "https://user:secret@example/files"}, {BaseURL: "https://example/files?url=x"}, {BaseURL: "https://example/a/../b"}, {BaseURL: "https://example/files", CacheTTLSeconds: -1}} {
 		t.Run(fmt.Sprint(i), func(t *testing.T) {
-			if _, err := NormalizeConfig(GeneralHTTP, config); err == nil {
+			if _, err := NormalizeConfig(HttpCache, config); err == nil {
 				t.Fatal("invalid provider input accepted")
 			}
 		})

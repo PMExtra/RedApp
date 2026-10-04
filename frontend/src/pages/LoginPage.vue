@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { onUnmounted, ref } from "vue";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { loginSession } from "../session";
 import { errorText, t } from "../i18n";
 import Icon from "../components/Icon.vue";
 const password = ref(""),
   busy = ref(false),
   error = ref<unknown>();
-const router = useRouter();
+import { adminReturnPath } from "../router";
+const router = useRouter(),
+  route = useRoute();
 let disposed = false;
 const controller = new AbortController();
 async function login() {
@@ -18,7 +20,7 @@ async function login() {
     await loginSession(password.value, controller.signal);
     if (!disposed) {
       password.value = "";
-      await router.replace("/admin/overview");
+      await router.replace(adminReturnPath(route.query.returnTo));
     }
   } catch (reason) {
     if (!disposed) error.value = reason;

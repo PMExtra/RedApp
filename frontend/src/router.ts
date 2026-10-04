@@ -1,6 +1,14 @@
 import { createRouter, createWebHistory, type RouterHistory } from "vue-router";
 import { nextTick } from "vue";
 import { validApplicationID } from "./bootstrap";
+export function adminReturnPath(value: unknown): string {
+  return typeof value === "string" &&
+    value.startsWith("/admin/") &&
+    !value.startsWith("/admin/login") &&
+    !/[\\\r\n]/.test(value)
+    ? value
+    : "/admin/vendors";
+}
 export function makeRouter(history: RouterHistory = createWebHistory()) {
   const router = createRouter({
     history,
@@ -29,7 +37,6 @@ export function makeRouter(history: RouterHistory = createWebHistory()) {
           {
             path: "overview",
             component: () => import("./pages/StatusPage.vue"),
-            props: { kind: "overview" },
           },
           {
             path: "events",
@@ -63,17 +70,20 @@ export function makeRouter(history: RouterHistory = createWebHistory()) {
             props: { kind: "vendor" },
           },
           {
-            path: "apps/:vendor/:app",
+            path: "vendors/:vendor/apps/:app",
             component: () => import("./layouts/ApplicationLayout.vue"),
             children: [
               {
+                path: "files",
+                component: () => import("./pages/HostedFilesPage.vue"),
+              },
+              {
                 path: "cache",
-                component: () => import("./pages/GeneralCachePage.vue"),
+                component: () => import("./pages/ApplicationCachePage.vue"),
               },
               {
                 path: "versions",
-                component: () => import("./pages/StatusPage.vue"),
-                props: { kind: "versions" },
+                component: () => import("./pages/ApplicationResourcesPage.vue"),
               },
               {
                 path: "settings",

@@ -24,7 +24,7 @@ func (s *Server) generalFile(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	entry, ok := s.Registry.Lookup(parts[0] + "/" + parts[1])
-	if !ok || entry.Provider != application.GeneralHTTP || parts[2] == "" {
+	if !ok || entry.Provider != application.HttpCache || parts[2] == "" {
 		return false
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -121,7 +121,7 @@ func (s *Server) cacheAPI(w http.ResponseWriter, r *http.Request, app, endpoint 
 		directoryError(w, err)
 		return true
 	}
-	if entry.Provider != application.GeneralHTTP {
+	if entry.Provider != application.HttpCache {
 		fail(w, 404, "HTTP cache is not supported by this application")
 		return true
 	}

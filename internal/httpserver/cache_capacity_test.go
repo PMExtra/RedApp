@@ -10,7 +10,7 @@ func TestManualRefreshReportsTransferCapacity(t *testing.T) {
 	h := newDirectoryHarness(t, t.TempDir())
 	h.login(h.password)
 	h.createVendor("enterprise")
-	app := h.createApp("enterprise", "files", application.GeneralHTTP, map[string]any{"base_url": "http://127.0.0.1:1"})
+	app := h.createApp("enterprise", "files", application.HttpCache, map[string]any{"base_url": "http://127.0.0.1:1"})
 	if err := h.server.Downloads.ConfigureLimits(1, 1, 1<<20); err != nil {
 		t.Fatal(err)
 	}

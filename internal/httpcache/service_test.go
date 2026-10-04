@@ -61,13 +61,13 @@ func newFixture(t *testing.T, h http.Handler, ttl int) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := db.CreateApplication(vendor.ID, store.ApplicationInput{ID: "app", Name: store.LocalizedText{En: "App", ZhCN: "应用"}, Provider: application.GeneralHTTP, BaseURL: server.URL + "/files", CacheTTLSeconds: ttl, Enabled: true})
+	app, err := db.CreateApplication(vendor.ID, store.ApplicationInput{ID: "app", Name: store.LocalizedText{En: "App", ZhCN: "应用"}, Provider: application.HttpCache, BaseURL: server.URL + "/files", CacheTTLSeconds: ttl, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	client, _ := distributor.NewPool().NewClient(app.BaseURL, distributor.GeneralHTTP)
 	f := &fixture{db: db, app: app, vendor: vendor, budget: &testBudget{limit: 1024}}
-	f.entry = application.Entry{Descriptor: application.Descriptor{ID: app.Key, DefaultChannelTTLSeconds: ttl}, UID: app.UID, SourceEpoch: app.SourceEpoch, Revision: app.Revision, VendorRevision: vendor.Revision, Provider: application.GeneralHTTP, Enabled: true, Upstream: client}
+	f.entry = application.Entry{Descriptor: application.Descriptor{ID: app.Key, DefaultChannelTTLSeconds: ttl}, UID: app.UID, SourceEpoch: app.SourceEpoch, Revision: app.Revision, VendorRevision: vendor.Revision, Provider: application.HttpCache, Enabled: true, Upstream: client}
 	f.clock.Store(time.Now().Unix())
 	f.s, err = New(dir, db, f.budget)
 	if err != nil {

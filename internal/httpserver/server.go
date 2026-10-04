@@ -25,6 +25,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/history"
+	"github.com/PMExtra/RedApp/internal/hosted"
 	"github.com/PMExtra/RedApp/internal/httpcache"
 	"github.com/PMExtra/RedApp/internal/jsoncheck"
 	"github.com/PMExtra/RedApp/internal/media"
@@ -42,6 +43,7 @@ type Server struct {
 	Catalog   *catalog.Service
 	Downloads *download.Manager
 	HTTPCache *httpcache.Service
+	Hosted    *hosted.Service
 	Auth      *auth.Auth
 	Proxy     Proxy
 	Upstream  interface {
@@ -137,6 +139,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "ORIGIN_REJECTED", err.Error())
 		return
 	}
+	if s.hostedFile(w, r) {
+		return
+	}
 	if s.generalFile(w, r) {
 		return
 	}
@@ -221,7 +226,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.page(w, 404)
 			return
 		}
-		if !queryAllowed(r, "return") {
+		if !queryAllowed(r, "returnTo", "q", "state", "page") {
 			fail(w, 400, "Invalid query")
 			return
 		}
@@ -335,18 +340,16 @@ func (s *Server) validUI(path string) bool {
 	}
 	if strings.HasPrefix(path, "/admin/vendors/") {
 		p := strings.Split(strings.TrimPrefix(path, "/admin/vendors/"), "/")
-		if !(len(p) == 2 && p[1] == "settings") && !(len(p) == 3 && p[1] == "apps" && p[2] == "new") {
-			return false
+		if len(p) == 2 && p[1] == "settings" || len(p) == 3 && p[1] == "apps" && p[2] == "new" {
+			_, err := s.DB.Vendor(p[0])
+			return err == nil
 		}
-		_, err := s.DB.Vendor(p[0])
-		return err == nil
+		if len(p) == 4 && p[1] == "apps" {
+			e, ok := s.Registry.LookupAny(p[0] + "/" + p[2])
+			return ok && (p[3] == "settings" || p[3] == "files" && e.Provider == application.Hosted || p[3] == "cache" && e.Provider != application.Info && e.Provider != application.Hosted || p[3] == "versions" && e.Protocol != nil)
+		}
 	}
-	p := strings.Split(strings.TrimPrefix(path, "/admin/apps/"), "/")
-	if !strings.HasPrefix(path, "/admin/apps/") || len(p) != 3 || (p[2] != "versions" && p[2] != "settings" && p[2] != "cache") {
-		return false
-	}
-	e, ok := s.Registry.LookupAny(p[0] + "/" + p[1])
-	return ok && (p[2] != "versions" || e.Protocol != nil) && (p[2] != "cache" || e.Provider == "general-http")
+	return false
 }
 func (s *Server) page(w http.ResponseWriter, status int) {
 	body, err := web.ReadFile("web/index.html")
@@ -515,6 +518,14 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 			return
 		}
 		endpoint = p[2]
+		if s.hostedAPI(w, r, app, endpoint) {
+			return
+		}
+		entry, _ := s.Registry.LookupAny(app)
+		if entry.Provider == application.Info || entry.Provider == application.Hosted {
+			fail(w, 404, "Content applications do not provide distribution endpoints")
+			return
+		}
 	}
 	if endpoint == "history" {
 		if !queryAllowed(r, "scope", "metric", "range") {
@@ -531,6 +542,9 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 		}
 	} else if r.Method == "GET" && (endpoint == "versions" || endpoint == "resources" || endpoint == "events") {
 		allowed := []string{"limit", "cursor"}
+		if endpoint != "events" {
+			allowed = append(allowed, "page")
+		}
 		if endpoint == "resources" {
 			allowed = append(allowed, "version")
 		}

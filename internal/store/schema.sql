@@ -1,6 +1,6 @@
 PRAGMA foreign_keys=ON;
 
-CREATE TABLE schema_version(version INTEGER NOT NULL CHECK(version=4));
+CREATE TABLE schema_version(version INTEGER NOT NULL CHECK(version=5));
 
 CREATE TABLE directory_state(
   id INTEGER PRIMARY KEY CHECK(id=1), seeded INTEGER NOT NULL CHECK(seeded IN (0,1))
@@ -20,7 +20,7 @@ CREATE TABLE applications(
   name_en TEXT NOT NULL, name_zh_cn TEXT NOT NULL,
   description_en TEXT NOT NULL, description_zh_cn TEXT NOT NULL,
   icon TEXT NOT NULL,
-  provider TEXT NOT NULL CHECK(provider IN ('general-http','codex','claude-code')),
+  provider TEXT NOT NULL CHECK(provider IN ('info','hosted','http-cache','codex','claude-code')),
   base_url TEXT NOT NULL, cache_ttl_seconds INTEGER NOT NULL CHECK(cache_ttl_seconds BETWEEN 0 AND 86400),
   base_urls_json TEXT NOT NULL,
   source_strategy TEXT NOT NULL CHECK(source_strategy IN ('','ordered','round_robin','random')),
@@ -31,7 +31,7 @@ CREATE TABLE applications(
 );
 CREATE TABLE application_sources(
   app_uid TEXT NOT NULL, epoch INTEGER NOT NULL CHECK(epoch>=1),
-  provider TEXT NOT NULL CHECK(provider IN ('general-http','codex','claude-code')),
+  provider TEXT NOT NULL CHECK(provider IN ('http-cache','codex','claude-code')),
   base_url TEXT NOT NULL, created_at_s INTEGER NOT NULL,
   base_urls_json TEXT NOT NULL,
   source_strategy TEXT NOT NULL CHECK(source_strategy IN ('','ordered','round_robin','random')),
@@ -148,7 +148,7 @@ CREATE TABLE admin(
   id INTEGER PRIMARY KEY CHECK(id=1), hash BLOB NOT NULL, revision INTEGER NOT NULL
 );
 
-INSERT INTO schema_version VALUES(4);
+INSERT INTO schema_version VALUES(5);
 INSERT INTO directory_state VALUES(1,0);
 INSERT INTO metric_history_state VALUES(1,0);
 CREATE INDEX metric_samples_time ON metric_samples(t_s);
@@ -204,3 +204,21 @@ CREATE TABLE http_cleanup_preview_items(
   FOREIGN KEY(preview_id) REFERENCES http_cleanup_previews(id) ON DELETE CASCADE
 );
 CREATE INDEX http_cleanup_preview_pending ON http_cleanup_preview_items(preview_id,result_status,ordinal);
+
+CREATE TABLE application_instructions(
+  app_uid TEXT PRIMARY KEY,
+  revision INTEGER NOT NULL CHECK(revision>=1),
+  en TEXT NOT NULL, zh_cn TEXT NOT NULL,
+  FOREIGN KEY(app_uid) REFERENCES applications(uid)
+);
+
+CREATE TABLE hosted_files(
+  app_uid TEXT NOT NULL,
+  path TEXT NOT NULL,
+  id TEXT NOT NULL UNIQUE,
+  sha256 TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL CHECK(size_bytes>=0),
+  created_at_s INTEGER NOT NULL,
+  PRIMARY KEY(app_uid,path),
+  FOREIGN KEY(app_uid) REFERENCES applications(uid)
+);

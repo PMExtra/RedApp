@@ -1,6 +1,6 @@
 # RedApp 运维说明
 
-本文对应 v0.7.0 的运行方式。SQLite schema=4，**v0.6 的 schema=3 也不能复用**；所有旧版本必须选择全新空目录。没有迁移工具，不导入旧数据库设置、缓存或历史，旧目录保留且拒绝写入。匹配当前 schema 的目录可正常重启。部署配置文件仍是 schema_version=1，与 SQLite schema 分开。旧版本应阅读其标签下的文档。Provider、动态目录与缓存策略边界见 [v0.7 运行说明](provider-runtime-v0.7.0.md)。
+本文对应 0.7.1 本地实现（尚未发布）。SQLite schema=5，精确匹配已发布 v0.7.0 schema 4 的目录可在独占锁下事务升级，保留现有数据；更早或未知目录仍在写入之前拒绝，须选择全新空目录。升级前停止实例并备份完整目录；部署配置 schema_version 仍为 1。详见 [0.7.1 运行变更](admin-experience-v0.7.1.md)，缓存规则历史参考见 [v0.7.0 运行说明](provider-runtime-v0.7.0.md)。
 
 ## 启动配置
 
@@ -26,7 +26,7 @@
 
 `trusted_proxies` 的环境变量与 CLI 使用逗号分隔列表，去除项两侧空白，最多 128 个有效 CIDR；空环境值/CLI 可清空列表。RedApp 接受语法合法的 Host，域名与网络访问策略由反向代理负责。PUBLIC_URL 只控制生成链接，不作为入站白名单。
 
-`max_writers` 和 `max_readers` 都是全应用共享的并发上限。发布下载的 writer 槽位覆盖回源、重试等待和校验；GeneralHttp 回源及 HEAD 同样占用 writer。reader 包含等待下载或客户端读取的请求，缓存命中、HEAD 和 304 仍占 reader。可共享响应的跟随者不各占一个 writer；不可共享响应独立回源。超限请求返回 503，不进入容量等待队列。
+`max_writers` 和 `max_readers` 都是全应用共享的并发上限。发布下载的 writer 槽位覆盖回源、重试等待和校验；HTTP Cache 回源及 HEAD 同样占用 writer。reader 包含等待下载或客户端读取的请求，缓存命中、HEAD 和 304 仍占 reader。可共享响应的跟随者不各占一个 writer；不可共享响应独立回源。超限请求返回 503，不进入容量等待队列。
 
 从旧版升级配置时，删除 `allowed_hosts`、`REDAPP_ALLOWED_HOSTS`、`--allowed-hosts`，并将 writer 改用上表名称。旧 `max_active_writers` 文件字段、`--max-active-writers` 选项和已删除的 Host 文件字段/选项会报错；旧环境变量不再读取，不提供兼容别名。
 
@@ -41,9 +41,9 @@ REDAPP_CONFIG=/ignored.yaml redapp config validate --config ./config.json
 
 `validate` 不打开或初始化数据目录。容器默认无需挂配置；可选挂载 `/etc/redapp/config.yaml`，或挂载自定义文件后设置 `REDAPP_CONFIG`，使服务及健康检查使用一致来源。单独修改容器 CMD 的 CLI 参数时也须调整 HEALTHCHECK；推荐环境变量方式。使用 JSON 的部署应先按当前字段更新文件，再显式选择其路径，不能依赖自动发现。旧数据目录仍在初始化写入之前被拒绝，权限失败直接退出，不寻找备用目录。
 
-GeneralHttp、Codex、ClaudeCode 是编译期 Provider，通过组合复用传输和全局容量限制；应用 BaseUrl 可在后台配置，不加载运行时插件。Codex/ClaudeCode 保留受审查的元数据、签名或摘要验证规则。`REDAPP_PUBLIC_URL` 不属于上述字段覆盖链，只给后台公共 URL 设置提供环境默认值；文件/CLI 不增加新的 public_origin 来源。
+Info、Hosted、HttpCache、Codex、ClaudeCode 是编译期 Provider，通过组合复用传输和全局容量限制；应用 BaseUrl 可在后台配置，不加载运行时插件。Codex/ClaudeCode 保留受审查的元数据、签名或摘要验证规则。`REDAPP_PUBLIC_URL` 不属于上述字段覆盖链，只给后台公共 URL 设置提供环境默认值；文件/CLI 不增加新的 public_origin 来源。
 
-站点文案、回源代理和公共地址覆盖保存在全局 settings；应用 BaseUrl 与 TTL 保存在动态应用记录。发布 Provider 的渠道 TTL 默认 60 秒、范围 1–86400；GeneralHttp 默认 300 秒、范围 0–86400，0 表示每次重新验证。应用创建时 revision 从 1 开始。更新校验读取时的 revision，冲突返回 409；应用资料、TTL 和启用状态共享应用 revision，不能用旧表单覆盖新设置。
+站点文案、回源代理和公共地址覆盖保存在全局 settings；应用 BaseUrl 与 TTL 保存在动态应用记录。发布 Provider 的渠道 TTL 默认 60 秒、范围 1–86400；HTTP Cache 默认 300 秒、范围 0–86400，0 表示每次重新验证。应用创建时 revision 从 1 开始。更新校验读取时的 revision，冲突返回 409；应用资料、TTL 和启用状态共享应用 revision，不能用旧表单覆盖新设置。
 
 ## 公共地址与入站信任
 
@@ -79,11 +79,11 @@ location / {
 
 ## Vendor/App 与可变 HTTP 缓存
 
-`/admin/vendors` 管理全小写厂商 ID、中英文名称/描述和图标，再在厂商下创建应用并选择 Provider。初始两款应用只 seed 一次；全部删除后可以保持空目录，重启不恢复默认条目。ID、隶属和 Provider 暂不改动，删除后 ID 仍保留；有未删除应用的厂商须先处理其应用。
+`/admin/vendors` 管理全小写厂商 ID、中英文名称/描述和图标，再在厂商下创建应用并选择 Provider。全新实例不创建任何业务厂商或应用；升级保留已有条目，重启不恢复已删除条目。ID、隶属和 Provider 暂不改动，删除后 ID 仍保留；有未删除应用的厂商须先处理其应用。
 
-启用状态同时受厂商与应用控制。禁用厂商不会覆盖应用自身开关；禁用或删除停止新的公开请求，不删除缓存、历史或图标。GeneralHttp 支持 1–16 个有序 `base_urls`，以及 `ordered`、`round_robin`、`random` 策略；列表内容、顺序和策略改变都会创建新 source epoch，不搬运旧缓存。发布 Provider 仍为单 BaseUrl。已进入的请求可结束，但旧 revision 的写入不能成为新缓存头；历史 source 可显式选择并清理。
+启用状态同时受厂商与应用控制。禁用厂商不会覆盖应用自身开关；禁用或删除停止新的公开请求，不删除缓存、历史或图标。HTTP Cache 支持 1–16 个有序 `base_urls`，以及 `ordered`、`round_robin`、`random` 策略；列表内容、顺序和策略改变都会创建新 source epoch，不搬运旧缓存。发布 Provider 仍为单 BaseUrl。已进入的请求可结束，但旧 revision 的写入不能成为新缓存头；历史 source 可显式选择并清理。
 
-GeneralHttp 路径位于 `/<vendor>/<app>/<relative-path>`。TTL 只决定新鲜度，不等于磁盘保留期；优先级为首次命中的路径规则、源 Cache-Control 寿命、完全没有 Cache-Control 时的应用默认值；有 Cache-Control 却无有效寿命按 TTL 0 每次验证。304 只刷新验证时间，不伪造获取时间。TTL 0 仍保留完整副本供失败回退。
+HTTP Cache 路径位于 `/<vendor>/<app>/<relative-path>`。TTL 只决定新鲜度，不等于磁盘保留期；优先级为首次命中的路径规则、源 Cache-Control 寿命、完全没有 Cache-Control 时的应用默认值；有 Cache-Control 却无有效寿命按 TTL 0 每次验证。304 只刷新验证时间，不伪造获取时间。TTL 0 仍保留完整副本供失败回退。
 
 手动清理组合 `match={type:glob|re2,pattern}`、`basis=fetched_at|last_access`、带时区的 `before` 及可选 `source_epoch`。清理与刷新共用服务端分页冻结预览：默认每页 25、最多 100，执行整个集合而非当前页；构建/执行分批短事务。自动清理默认空规则，每 15 分钟处理活动当前来源，每应用每轮最多扫描 1000、退休 100。第一条路径匹配规则拥有文件，即使年龄未到也不继续下一条。最后访问按分钟桶持久化，执行重新检查访问及配置 revision。完整匹配示例、刷新 API、上限和故障行为见 [Provider 运行说明](provider-runtime-v0.7.0.md)。
 
@@ -91,12 +91,12 @@ GET 支持完整响应、条件请求和单段 Range，多段 Range 忽略后返
 
 网络、超时、上游 5xx 时按策略尝试后续镜像；每源最长 5 分钟，整次回源预算 9 分钟。可尝试源全部失败后，按每 App `stale_fallback` 开关决定是否返回已有同应用、同 epoch 的完整副本；默认 true，false 返回错误。无额外 stale 年龄上限，不受源重验证指令禁止 stale 的限制；回退不推进 fetched_at/validated_at。404/410 不视为临时故障。显式规则可有意覆盖 no-store/private 供公开分发复用，正 TTL 真实覆盖时记录警告，TTL 0 不记覆盖警告；真实回退另记一次共享回源警告，cache hit 无警告，不新增限频。发布验证和表示隔离边界不受影响，更多细粒度控制仍见 [backlog #2](https://github.com/PMExtra/RedApp/issues/2)。
 
-图标仅接受实际可解码 JPG/PNG 或静态 SVG 子集；上传上限 2 MiB、栅格边长上限 4096、像素上限 4 Mi，拒绝活动 SVG 内容或外部引用。图标按独立资源返回，正文不插入管理页执行。GeneralHttp 文件也以附件返回；不托管活动 HTML/SVG 页面。
+图标仅接受实际可解码 JPG/PNG 或静态 SVG 子集；上传上限 2 MiB、栅格边长上限 4096、像素上限 4 Mi，拒绝活动 SVG 内容或外部引用。图标按独立资源返回，正文不插入管理页执行。HTTP Cache 文件也以附件返回；不托管活动 HTML/SVG 页面。
 
 ## 数据目录、清理与恢复
 
 - `instance.lock` 是保留的内核锁文件；进程退出或崩溃后内核释放锁，禁止人为删除锁 inode。获取写锁前先以只读方式检查已有目录，拒绝旧 schema 或未知内容，不创建锁来污染被拒绝的旧目录。
-- SQLite schema=4，包含 Vendor/App、历史 source snapshots、全局设置、发布 metadata/渠道/资源/generation/blob、HTTP 缓存、指标、事件、清理快照和管理员记录。没有迁移命令；schema=2、schema=3 和未知目录均在写入前被拒绝。
+- SQLite schema=5，增加应用说明与 Hosted 持久文件，包含 Vendor/App、历史 source snapshots、全局设置、发布 metadata/渠道/资源/generation/blob、HTTP 缓存、指标、事件、清理快照和管理员记录。没有迁移命令；schema=2、schema=3 和未知目录均在写入前被拒绝。
 - 应用有稳定内部 UID；BaseUrl 变更创建新的 source epoch。发布逻辑资源身份为 `(app_uid,source_epoch,version,resource_key)`，完整 blob 仅在同一 source namespace 内按摘要复用，不跨应用/epoch 复用。每次下载拥有独立随机 generation。未完成文件位于 `objects/parts/<generation>.part`，完整文件位于 `objects/blobs/<app摘要>/<内容摘要>.blob`，URL 不直接映射磁盘路径。
 - 活动下载仅按精确逻辑资源合流。完整校验、fsync 和文件发布后才能标记 complete；重启核对磁盘和数据库，损坏/缺失文件不能作为已验证缓存返回。续传使用强 ETag/If-Range 并验证范围、编码、长度和最终摘要。
 - 清理预览冻结指定应用/source epoch 的精确 generation 集合及 App/Vendor revision，有效 10 分钟；执行不能跨应用、不能扩大到新 epoch，配置改变需要重新预览。成功回执支持重试。旧代退出当前状态后等待已有读写租约排空；应用内共享 blob 只在最后引用结束后回收。版本发现、可信 metadata 和累计指标不随缓存清理删除。
@@ -106,9 +106,9 @@ GET 支持完整响应、条件请求和单段 Range，多段 Range 忽略后返
 
 ## 路由、管理 API 与指标
 
-公开目录为 `/`；应用详情为 `/<vendor>/<app>`，制品及 installer 位于 `/<vendor>/<app>/<file_path>`，默认初始化 `/openai/codex` 和 `/anthropic/claude-code`，其余应用由后台创建。`admin`、`api`、`assets`、`health` 为保留命名空间。旧 `/apps/codex`、根 `/install.sh` 和 `/api/info` 不提供兼容别名。`GET /api/bootstrap` 返回公开站点、应用定义和公共地址，不依赖管理 status。
+公开目录为 `/`；应用详情为 `/<vendor>/<app>`，制品及 installer 位于 `/<vendor>/<app>/<file_path>`，所有应用由后台创建，不默认初始化业务应用。`admin`、`api`、`assets`、`health` 为保留命名空间。旧 `/apps/codex`、根 `/install.sh` 和 `/api/info` 不提供兼容别名。`GET /api/bootstrap` 返回公开站点、应用定义和公共地址，不依赖管理 status。
 
-后台页面有真实路径：`/admin/overview`、`/admin/events`、`/admin/settings/site`、`/admin/settings/proxy`、`/admin/vendors`、`/admin/apps/<vendor>/<app>/versions`、`.../cache`、`.../settings`，可以刷新和直接打开。设置页不订阅全局 status 轮询。
+后台页面有真实路径：`/admin/overview`、`/admin/events`、`/admin/settings/site`、`/admin/settings/proxy`、`/admin/vendors`、`/admin/vendors/<vendor>/apps/<app>/versions`、`.../files`、`.../cache`、`.../settings`，可以刷新和直接打开。设置页不订阅全局 status 轮询。
 
 | API | 用途 |
 | --- | --- |
@@ -117,11 +117,13 @@ GET 支持完整响应、条件请求和单段 Range，多段 Range 忽略后返
 | `GET/PUT /admin/api/settings/site`、`.../proxy`、`.../public-url` | 带 revision 的全局设置 |
 | `GET /admin/api/providers` | 固定 Provider 定义、默认值与能力 |
 | `GET/POST /admin/api/vendors`、`GET/PATCH/DELETE /admin/api/vendors/<vendor>` | 厂商列表、创建、资料与启用状态、删除 |
-| `POST /admin/api/vendors/<vendor>/apps`、`GET /admin/api/apps`、`GET/PATCH/DELETE /admin/api/apps/<vendor>/<app>` | 动态应用管理；ID、隶属、Provider 固定 |
+| `POST /admin/api/vendors/<vendor>/apps`、`GET /admin/api/apps`、`GET/PATCH/DELETE /admin/api/apps/<vendor>/<app>` | 动态应用管理；列表服务端分页；ID、隶属、Provider 固定 |
 | `POST /admin/api/assets/icons` | 单个 multipart JPG/PNG/静态 SVG 图标 |
 | `GET/PUT /admin/api/apps/<vendor>/<app>/settings` | 发布 Provider 的 channel_ttl_seconds 与应用 revision |
+| `GET/PUT /admin/api/apps/<vendor>/<app>/instructions` | 独立 revision 的双语纯文本说明 |
+| `GET/POST/DELETE /admin/api/apps/<vendor>/<app>/files...` | Hosted 分页、上传/一次性导入、进度/取消和明确删除，见 0.7.1 运行变更 |
 | `GET /admin/api/apps/<vendor>/<app>/sources` | 当前与历史 source epoch |
-| `GET /admin/api/apps/<vendor>/<app>/cache` | GeneralHttp 文件缓存，支持 source_epoch 选择 |
+| `GET /admin/api/apps/<vendor>/<app>/cache` | HTTP Cache 文件缓存，支持 source_epoch 选择 |
 | `POST /admin/api/apps/<vendor>/<app>/cache/cleanup/preview`、`.../<id>/execute` | 按 fetched_at 或 last_access 的 before 时刻预览/执行 |
 | `GET /admin/api/apps/<vendor>/<app>/status`、`.../versions`、`.../resources` | 明确应用状态 |
 | `POST /admin/api/apps/<vendor>/<app>/cleanup/preview` | minimum_version 清理预览 |
@@ -131,17 +133,17 @@ GET 支持完整响应、条件请求和单段 Range，多段 Range 忽略后返
 
 不存在默认 Codex 应用，也不接受应用选择 header 作为身份替代。资源 path、query、应用和授权均须通过服务端校验，未知 API 不回退成成功 HTML。
 
-status 仅返回摘要和指标，列表从 versions、resources、events 单独读取。列表响应为 `{"items":[],"next_cursor":null}`；`limit` 默认 50、最大 100，下一页提交返回的非空 `cursor`。resources 可用 `version` 精确筛选。游标绑定应用、端点和筛选条件，不能在切换应用或版本后复用；版本按文本升序、资源按 generation ID 升序、事件按 ID 降序。分页是实时视图，不承诺跨请求冻结快照。
+status 仅返回摘要和指标，列表从 versions、resources、events 单独读取。版本/资源在新界面通过 `page` 参数使用 `items,page,limit,total,total_pages` 的编号分页，默认 25、最大 100；越界自动夹到末页，不能同时携带 cursor。事件和旧游标 API 的列表响应为 `{"items":[],"next_cursor":null}`；`limit` 默认 50、最大 100，下一页提交返回的非空 `cursor`。resources 可用 `version` 精确筛选。游标绑定应用、端点和筛选条件，不能在切换应用或版本后复用；版本按文本升序、资源按 generation ID 升序、事件按 ID 降序。分页是实时视图，不承诺跨请求冻结快照。
 
 `/health/live` 不依赖上游；`/health/ready` 检查 SQLite 和目录可写，不要求外网在线。CLI healthcheck 按相同的路径/字段优先级解析配置，连接实际监听地址并使用允许的 Host，不受公共发布地址改变影响。健康请求不计入业务访问。
 
-当前 active 采集目录为 41 项。16 个常用/25 个诊断前端分组及图表 tooltip 已整合。`reuse_requests` 不再独立写入/采样/展示；`events.recent_total` 不再采样/展示，事件详情保留。应用指标使用稳定 UID，换源不拆分累计历史；版本指标仅适用于发布 Provider，GeneralHttp 不伪造版本。旧样本（若新格式库已有）自然过期，不通过未知 ID 删除历史；本次架构切换本身不导入旧库历史。
+当前 active 采集目录为 41 项。16 个常用/25 个诊断前端分组及图表 tooltip 已整合。`reuse_requests` 不再独立写入/采样/展示；`events.recent_total` 不再采样/展示，事件详情保留。应用指标使用稳定 UID，换源不拆分累计历史；版本指标仅适用于发布 Provider，HTTP Cache 不伪造版本。旧样本（若新格式库已有）自然过期，不通过未知 ID 删除历史；本次架构切换本身不导入旧库历史。
 
 默认每分钟采样，每小时聚合；24h 使用分钟点，7d/30d 使用小时汇总，保留期分别 24h/30d。缺失点留空、当前未完整小时标记 partial；计数器不平均累计量，也不把重启或断档视为零增量。磁盘 used 为已分配块，free 为文件系统可用空间，清理释放累计为逻辑字节。计数和磁盘状态不是每字节原子事务，完整性校验与发布不依赖统计。单个版本/资源不扩展成无限历史标签。
 
 ## 上游与安装器边界
 
-Codex/ClaudeCode 适配器继续校验版本、渠道、metadata、原有签名或摘要以及授权制品。BaseUrl 可以覆盖为兼容的 HTTP(S) 企业源；请求者只能提供相对路径，不能用 URL 参数选择任意目的地址。GeneralHttp 支持有限的 HTTPS 跨源重定向和 HTTP→HTTPS 升级，禁止 HTTPS 降级并剥离跨源凭据；发布 Provider 仍限制到配置的源和路径。新源认证、私有 CA、可配置信任/签名与高级安全机制不在本版范围；不提供跳过证书验证开关。相关增强记录在 [backlog #1](https://github.com/PMExtra/RedApp/issues/1)，这不删除现有后台认证、CSRF、签名或摘要校验。
+Codex/ClaudeCode 适配器继续校验版本、渠道、metadata、原有签名或摘要以及授权制品。BaseUrl 可以覆盖为兼容的 HTTP(S) 企业源；请求者只能提供相对路径，不能用 URL 参数选择任意目的地址。HTTP Cache 支持有限的 HTTPS 跨源重定向和 HTTP→HTTPS 升级，禁止 HTTPS 降级并剥离跨源凭据；发布 Provider 仍限制到配置的源和路径。新源认证、私有 CA、可配置信任/签名与高级安全机制不在本版范围；不提供跳过证书验证开关。相关增强记录在 [backlog #1](https://github.com/PMExtra/RedApp/issues/1)，这不删除现有后台认证、CSRF、签名或摘要校验。
 
 安装器原文、patch、generated、provenance 和许可分离保存；统一 descriptor 驱动产物清单和固定验证器。更新须通过严格 patch、隔离离线检查及宿主重验，daily PR 不可顺带改 descriptor、信任根或验证代码。详见[安装器维护](installers-maintenance.md)。
 

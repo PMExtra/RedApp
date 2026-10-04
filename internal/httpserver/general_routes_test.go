@@ -34,7 +34,7 @@ func TestGeneralHTTPRouteEncodingMethodsAndRanges(t *testing.T) {
 	h := newDirectoryHarness(t, t.TempDir())
 	h.login(h.password)
 	h.createVendor("enterprise")
-	app := h.createApp("enterprise", "files", application.GeneralHTTP, map[string]any{"base_url": upstream.URL + "/packages"})
+	app := h.createApp("enterprise", "files", application.HttpCache, map[string]any{"base_url": upstream.URL + "/packages"})
 	path := "/enterprise/files/" + url.PathEscape("资料") + "/" + url.PathEscape("file name.bin")
 	body, headers := h.request("GET", path, nil, 200, nil)
 	if string(body) != "abcdefghij" || headers.Get("Content-Type") != "application/octet-stream" || !strings.HasPrefix(headers.Get("Content-Disposition"), "attachment") || !strings.Contains(headers.Get("Content-Security-Policy"), "sandbox") {
@@ -120,7 +120,7 @@ func TestGeneralHTTPCacheAdminHistoricalSourceCleanup(t *testing.T) {
 	h.request("GET", "/admin/api/apps/openai/codex/sources", nil, 401, nil)
 	h.login(h.password)
 	h.createVendor("enterprise")
-	app := h.createApp("enterprise", "files", application.GeneralHTTP, map[string]any{"base_url": oldSource.URL + "/files"})
+	app := h.createApp("enterprise", "files", application.HttpCache, map[string]any{"base_url": oldSource.URL + "/files"})
 	api := "/admin/api/apps/" + app.Key
 	publicPath := "/" + app.Key + "/object.bin"
 	body, _ := h.request("GET", publicPath, nil, 200, nil)
@@ -172,7 +172,7 @@ func TestGeneralHTTPCacheAdminHistoricalSourceCleanup(t *testing.T) {
 	}
 	execute := api + "/cache/cleanup/" + preview.ID + "/execute"
 	h.request("POST", execute, map[string]any{}, 409, nil)
-	other := h.createApp("enterprise", "other", application.GeneralHTTP, map[string]any{"base_url": oldSource.URL + "/files"})
+	other := h.createApp("enterprise", "other", application.HttpCache, map[string]any{"base_url": oldSource.URL + "/files"})
 	h.request("POST", "/admin/api/apps/"+other.Key+"/cache/cleanup/"+preview.ID+"/execute?source_epoch=1", map[string]any{}, 409, nil)
 	body, _ = h.request("POST", execute+"?source_epoch=1", map[string]any{}, 200, nil)
 	result := directoryDecode[httpcache.CleanupResult](t, body, "result")

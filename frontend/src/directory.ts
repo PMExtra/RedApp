@@ -3,8 +3,13 @@ import { api } from "./api";
 import type { LocalizedText } from "./site";
 import type { ProviderCapabilities } from "./bootstrap";
 
-export type ProviderKey = "general-http" | "codex" | "claude-code";
-export type SourceStrategy = "ordered" | "round_robin" | "random";
+export type ProviderKey =
+  | "info"
+  | "hosted"
+  | "http-cache"
+  | "codex"
+  | "claude-code";
+export type SourceStrategy = "" | "ordered" | "round_robin" | "random";
 export interface Vendor {
   uid: string;
   id: string;
@@ -29,41 +34,60 @@ export interface ManagedApplication extends Vendor {
 export interface ProviderDefinition {
   key: ProviderKey;
   name: LocalizedText;
+  description?: LocalizedText;
   default_base_url: string;
   default_cache_ttl_seconds?: number;
   capabilities: ProviderCapabilities;
 }
-export const vendors = ref<Vendor[]>([]);
-export const managedApps = ref<ManagedApplication[]>([]);
+// Detail state contains exactly one application and its parent, never all pages.
+export const applicationRecord = ref<ManagedApplication>();
+export const vendorRecord = ref<Vendor>();
 export const directoryLoading = ref(false);
 export const directoryError = ref<unknown>();
-let ticket = 0;
-let controller: AbortController | undefined;
+let ticket = 0,
+  controller: AbortController | undefined;
+let selectedKey = "";
 export function resetDirectory() {
   ticket++;
   controller?.abort();
   controller = undefined;
-  vendors.value = [];
-  managedApps.value = [];
+  selectedKey = "";
+  applicationRecord.value = undefined;
+  vendorRecord.value = undefined;
   directoryLoading.value = false;
   directoryError.value = undefined;
 }
-export async function loadDirectory() {
-  controller?.abort();
-  const request = new AbortController(), attempt = ++ticket;
+export async function loadApplication(key: string, preserve = false) {
+  if (!preserve || selectedKey !== key) resetDirectory();
+  else {
+    ticket++;
+    controller?.abort();
+    controller = undefined;
+  }
+  selectedKey = key;
+  directoryError.value = undefined;
+  const request = new AbortController(),
+    attempt = ++ticket;
   controller = request;
   directoryLoading.value = true;
-  directoryError.value = undefined;
   try {
-    const [vendorList, appList] = await Promise.all([
-      api<{ vendors: Vendor[] }>("vendors", undefined, request.signal),
-      api<{ apps: ManagedApplication[] }>("apps", undefined, request.signal),
+    const [a, v] = await Promise.all([
+      api<{ app: ManagedApplication }>(
+        `apps/${key}`,
+        undefined,
+        request.signal,
+      ),
+      api<{ vendor: Vendor }>(
+        `vendors/${key.split("/")[0]}`,
+        undefined,
+        request.signal,
+      ),
     ]);
     if (attempt !== ticket) return;
-    if (!Array.isArray(vendorList.vendors) || !Array.isArray(appList.apps))
-      throw Error("Invalid application directory");
-    vendors.value = vendorList.vendors;
-    managedApps.value = appList.apps;
+    if (a.app?.key !== key || v.vendor?.uid !== a.app.vendor_uid)
+      throw Error("Invalid application details");
+    applicationRecord.value = a.app;
+    vendorRecord.value = v.vendor;
   } catch (reason) {
     if (attempt === ticket) directoryError.value = reason;
   } finally {
@@ -73,13 +97,19 @@ export async function loadDirectory() {
     }
   }
 }
+export function refreshApplication() {
+  return selectedKey ? loadApplication(selectedKey, true) : Promise.resolve();
+}
+export function applicationPath(app: ManagedApplication, tab?: string) {
+  return `/admin/vendors/${app.vendor_id}/apps/${app.id}/${tab || (providerHasVersions(app.provider) ? "versions" : app.provider === "info" ? "settings" : app.provider === "hosted" ? "files" : "cache")}`;
+}
 export function providerHasVersions(provider: string) {
   return provider === "codex" || provider === "claude-code";
 }
-export function providerHasTimeCleanup(provider: string) {
-  return provider === "general-http";
-}
 export function applicationEnabled(app: ManagedApplication) {
-  const vendor = vendors.value.find((item) => item.uid === app.vendor_uid);
-  return app.enabled && !app.deleted_at && !!vendor?.enabled && !vendor.deleted_at;
+  const vendor =
+    vendorRecord.value?.uid === app.vendor_uid ? vendorRecord.value : undefined;
+  return (
+    app.enabled && !app.deleted_at && !!vendor?.enabled && !vendor.deleted_at
+  );
 }

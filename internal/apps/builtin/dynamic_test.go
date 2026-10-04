@@ -31,7 +31,7 @@ func TestDynamicProviderInstancesAndDirectoryLifecycle(t *testing.T) {
 		{ID: "codex-one", Provider: application.Codex, BaseURL: "http://10.0.0.7:8081/mirror", CacheTTLSeconds: 60},
 		{ID: "codex-two", Provider: application.Codex, BaseURL: "https://mirror.example/codex", CacheTTLSeconds: 60},
 		{ID: "claude", Provider: application.ClaudeCode, CacheTTLSeconds: 60},
-		{ID: "files", Provider: application.GeneralHTTP, BaseURL: "http://intranet.example/files", CacheTTLSeconds: 0},
+		{ID: "files", Provider: application.HttpCache, BaseURL: "http://intranet.example/files", CacheTTLSeconds: 0},
 	} {
 		input.Name = store.LocalizedText{En: input.ID, ZhCN: input.ID}
 		input.Enabled = true
@@ -114,7 +114,7 @@ func TestDynamicProviderInstancesAndDirectoryLifecycle(t *testing.T) {
 
 func TestRetiredSourceClientsDoNotDependOnPublicRegistry(t *testing.T) {
 	pool := distributor.NewPool()
-	for _, input := range [][2]string{{application.Codex, "http://intranet.example:8081/codex"}, {application.ClaudeCode, "https://intranet.example/claude"}, {application.GeneralHTTP, "http://intranet.example/files"}} {
+	for _, input := range [][2]string{{application.Codex, "http://intranet.example:8081/codex"}, {application.ClaudeCode, "https://intranet.example/claude"}, {application.HttpCache, "http://intranet.example/files"}} {
 		client, err := NewSourceClient(input[0], input[1], pool)
 		if err != nil || client.Base.String() != input[1] {
 			t.Fatal("independent historical source binding unavailable", err)
@@ -123,7 +123,7 @@ func TestRetiredSourceClientsDoNotDependOnPublicRegistry(t *testing.T) {
 	if _, err := NewSourceClient("unknown", "https://example/files", pool); err == nil {
 		t.Fatal("unregistered provider constructed")
 	}
-	if _, err := NewSourceClient(application.GeneralHTTP, "https://example/files", nil); err == nil {
+	if _, err := NewSourceClient(application.HttpCache, "https://example/files", nil); err == nil {
 		t.Fatal("dynamic source accepted independent/nil transport")
 	}
 }

@@ -235,10 +235,14 @@ func (r *Registry) Replace(entries []Entry) error {
 			}
 			uids[e.UID] = true
 		}
-		if e.Upstream == nil || d.DefaultChannelTTLSeconds < 0 || d.DefaultChannelTTLSeconds > 86400 {
+		if e.Upstream == nil && e.Provider != Info && e.Provider != Hosted || d.DefaultChannelTTLSeconds < 0 || d.DefaultChannelTTLSeconds > 86400 {
 			return fmt.Errorf("Incomplete application %s", d.ID)
 		}
-		if e.Provider == GeneralHTTP {
+		if e.Provider == Info || e.Provider == Hosted {
+			if e.Upstream != nil || len(e.Upstreams) != 0 || e.Protocol != nil || len(d.Channels) != 0 || len(d.Installers) != 0 || len(d.Assets) != 0 || len(e.PublicAssets) != 0 || d.Upstream != "" || d.DefaultChannelTTLSeconds != 0 || d.TrustRevision != 0 || e.TemplateID != "" {
+				return fmt.Errorf("Content providers cannot declare upstream capabilities for %s", d.ID)
+			}
+		} else if e.Provider == HttpCache {
 			if e.Protocol != nil || len(d.Channels) != 0 || len(d.Installers) != 0 || d.TrustRevision != 0 || e.TemplateID != "" {
 				return fmt.Errorf("GeneralHttp cannot declare release capabilities for %s", d.ID)
 			}
@@ -422,7 +426,7 @@ func (e Entry) ParsePath(path string) (Operation, error) {
 			return Operation{Kind: StaticOperation, Name: path}, nil
 		}
 	}
-	if e.Provider == GeneralHTTP {
+	if e.Provider == HttpCache {
 		return Operation{Kind: HTTPOperation, Resource: path}, nil
 	}
 	if e.Protocol == nil {

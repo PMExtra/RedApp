@@ -170,6 +170,15 @@ func directoryError(w http.ResponseWriter, err error) {
 func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 	endpoint := strings.TrimPrefix(r.URL.Path, "/admin/api/")
 	parts := strings.Split(endpoint, "/")
+	if len(parts) == 4 && parts[0] == "apps" && parts[3] == "instructions" {
+		s.instructionsAPI(w, r, parts[1]+"/"+parts[2])
+		return true
+	}
+	if r.Method == http.MethodGet && (endpoint == "vendors" || endpoint == "apps" || len(parts) == 3 && parts[0] == "vendors" && parts[2] == "apps") {
+		s.directoryList(w, r, parts)
+		return true
+	}
+
 	isVendor := parts[0] == "vendors" && (len(parts) == 1 || len(parts) == 2 || len(parts) == 3 && parts[2] == "apps")
 	isApp := parts[0] == "apps" && (len(parts) == 1 || len(parts) == 3)
 	if endpoint != "providers" && endpoint != "assets/icons" && !isVendor && !isApp {
@@ -195,14 +204,6 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 		var result any
 		var err error
 		switch {
-		case endpoint == "vendors":
-			var rows []store.Vendor
-			rows, err = s.DB.Vendors(true)
-			result = map[string]any{"vendors": rows}
-		case endpoint == "apps":
-			var rows []store.Application
-			rows, err = s.DB.Applications(true)
-			result = map[string]any{"apps": rows}
 		case isVendor && len(parts) == 2:
 			var row store.Vendor
 			row, err = s.DB.Vendor(parts[1])
@@ -345,7 +346,7 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 			}
 			if in.BaseURL != nil {
 				input.BaseURL = *in.BaseURL
-				if row.Provider == application.GeneralHTTP {
+				if row.Provider == application.HttpCache {
 					var base string
 					base, err = distributor.NormalizeBase(*in.BaseURL, distributor.GeneralHTTP)
 					if err != nil {
