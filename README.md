@@ -4,7 +4,7 @@
 
 RedApp distributes **HTTP files, Codex CLI and Claude Code** through one service. Administrators manage vendors and applications, choose a provider and upstream base URL, and inspect cache, traffic and service settings.
 
-RedApp **0.7.1** uses SQLite schema **5**. An exact published v0.7.0 schema-4 directory upgrades atomically in place, preserving application identities, configuration, sources, cache and history. Older or unrecognized schemas still require a new empty directory and are refused without modification. Stop the instance and back up its complete data directory before upgrading. See [0.7.1 runtime changes](docs/admin-experience-v0.7.1.md).
+This local **0.7.2** implementation uses SQLite schema **6**. Exact published v0.7.1 schema-5 and v0.7.0 schema-4 directories upgrade in place while preserving existing application identities, configuration, sources, cache and history. Earlier or unrecognized schemas remain refused without modification. Stop the instance and back up its complete data directory before upgrading. A pre-existing vendor ID `all` blocks the upgrade with an explicit collision error. See [0.7.2 runtime changes](docs/admin-experience-v0.7.2.md). No 0.7.2 release is published by this local work.
 
 ## Start the service
 
@@ -53,13 +53,15 @@ Open `/admin/vendors` to add a vendor and its applications. Both have lowercase 
 
 | Provider | BaseUrl | Cache and cleanup |
 | --- | --- | --- |
-| App Info (`info`) | None | Details and bilingual plain-text usage instructions; no file routes |
+| App Info (`info`) | None | Details and bilingual Markdown/HTML/JavaScript usage instructions; no file routes |
 | Hosted Files (`hosted`) | None | Administrator uploads or one-time URL imports; permanent local downloads until manual deletion |
 | HTTP Cache (`http-cache`) | Required; HTTP(S), ports and internal sources supported | Ordered path TTL rules; 300-second default when no rule or Cache-Control applies; manual or optional automatic cleanup by fetched time or last access |
 | Codex (`codex`) | Defaults to `https://releases.openai.com/codex`; overridable | Verified release metadata/artifacts; channel TTL default 60 seconds; version cleanup |
 | Claude Code (`claude-code`) | Defaults to `https://downloads.claude.ai/claude-code-releases`; overridable | Existing signed metadata and digest checks; channel TTL default 60 seconds; version cleanup |
 
-A fresh directory has no vendors or applications; only compiled provider definitions are available. Create your own vendor and application in the administrator UI. Existing entries are retained on upgrade, and restarting never recreates deleted entries. A BaseUrl change creates a separate source epoch; old cache remains available for explicit management. Disabling or deleting an entry stops new public requests and retains stored data. Deletion reserves the ID; it is not a cache purge.
+Missing built-in vendor/application templates are inserted disabled on startup; existing full-key records and explicit blank instructions are preserved. Enable both the vendor and its application to make it public. IDs are scoped as `vendor_id/app_id`; `all` is reserved for the public directory. Built-in application keys cannot be deleted even when their provider differs. Custom applications can be permanently deleted after confirmation, including owned files, cache and history; deletion requires an idle transfer pool and has no undo. Shared uploaded icons remain independent. A BaseUrl change creates a separate source epoch and retains older cache for explicit management. Template reset previews selected field differences and uses revision checks; it never removes stored files or history.
+
+The homepage shows ordered administrator pins and an approximate rolling seven-day download-client ranking. `/all` supports shareable search and pagination; `/<vendor>` shows vendor details and enabled applications. Navigation search offers bounded vendor/application suggestions. Instructions run as trusted HTML documents, including administrator-authored JavaScript and external resources, under a separate policy; see the runtime guide for the trust boundary.
 
 HTTP Cache maps `/<vendor>/<app>/<relative-path>` below its configured BaseUrl. It supports GET/HEAD, validators and single byte ranges, and rejects query strings and path traversal. Cacheable cold downloads are fully spooled before the response starts, including cold range requests. Responses that cannot be shared use a bounded direct stream. Downloaded files are attachments rather than executable pages.
 
@@ -83,7 +85,7 @@ Clearing the administrator override restores the environment default, if present
 
 For enterprise access, use an HTTPS reverse proxy. Configure the proxy's CIDRs in `trusted_proxies` and make the proxy overwrite forwarded headers. Headers from untrusted peers are ignored. RedApp validates Host syntax and derives the request origin from the trusted proxy chain; the proxy controls accepted domains. Health checks connect to the configured local listener, independently of the public address.
 
-Site branding, outbound proxy, and public address are global settings. Cache TTL and provider configuration are per application. Every administrator update uses a revision check so stale browser forms cannot silently overwrite another update. Proxy credentials are never returned by read APIs.
+Site branding, outbound proxy, and public address are global settings. Cache TTL and provider configuration are per application. Every administrator update uses a revision check so stale browser forms cannot silently overwrite another update. The proxy setting is one full URL, including percent-encoded user information, returned unchanged by the protected administrator API. Public responses, logs and events exclude proxy credentials. Existing separate proxy credentials migrate once into that URL.
 
 ## Install applications
 
@@ -99,7 +101,7 @@ irm 'https://downloads.example.internal/openai/codex/install.ps1' | iex
 irm 'https://downloads.example.internal/anthropic/claude-code/install.ps1' | iex
 ```
 
-These commands execute downloaded installers. Inspect scripts first when required by your deployment policy. Codex uses `CODEX_RELEASE` when supplied, otherwise `latest`; for unattended shell installation, put `CODEX_NON_INTERACTIVE=1` before `sh`. The application page provides version-specific commands. Old public routes and implicit/default-Codex management APIs are not aliases in this architecture.
+These commands execute downloaded installers. Inspect scripts first when required by your deployment policy. Codex uses `CODEX_RELEASE` when supplied, otherwise `latest`; for unattended shell installation, put `CODEX_NON_INTERACTIVE=1` before `sh`. The application instructions provide commands generated from the public service address. Old public routes and implicit/default-Codex management APIs are not aliases in this architecture.
 
 Installer downloads stay on the service; application runtime/API traffic is not redirected. Validate Windows/macOS installation and the production upstream chain before rollout, and apply enterprise egress policy independently.
 
@@ -107,6 +109,6 @@ Installer downloads stay on the service; application runtime/API traffic is not 
 
 The Go executable embeds the frontend built by `npm ci && npm run build` in `frontend/`. Run Go tests and the frontend's typecheck/DOM tests before building `./cmd/redapp`. CLI smoke checks in `scripts/test-data-cli.py` and `scripts/test-http-cli.py` use `bin/redapp` and isolated temporary data.
 
-The current changes, provider IDs and API boundaries are in [the 0.7.1 runtime guide](docs/admin-experience-v0.7.1.md). The [v0.7.0 guide](docs/provider-runtime-v0.7.0.md) remains the historical cache-policy reference. Older versioned operational references describe their respective releases and are not configuration instructions for this architecture.
+The current changes, provider IDs and API boundaries are in [the 0.7.2 runtime guide](docs/admin-experience-v0.7.2.md). The [v0.7.0 guide](docs/provider-runtime-v0.7.0.md) remains the historical cache-policy reference. Older versioned operational references describe their respective releases and are not configuration instructions for this architecture.
 
 Original RedApp code is [MIT licensed](LICENSE). [Third-party licenses](third_party/README.md), including upstream installer LICENSE/NOTICE, remain separate.

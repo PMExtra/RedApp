@@ -1,5 +1,12 @@
 import { ref } from "vue";
-import { api, ApiError, setCSRF, setUnauthorizedHandler } from "./api";
+import {
+  api,
+  ApiError,
+  isCancellation,
+  recheckCSRF,
+  setCSRF,
+  setUnauthorizedHandler,
+} from "./api";
 import type { Message } from "./i18n";
 export const signedIn = ref(false),
   sessionChecked = ref(false),
@@ -39,15 +46,17 @@ export async function checkSession() {
       undefined,
       request.signal,
     );
+    if (typeof data.csrf !== "string" || !data.csrf)
+      throw new ApiError({ code: "INVALID_RESPONSE" }, 200);
     if (attempt === ticket) {
-      setCSRF(data.csrf);
+      recheckCSRF(data.csrf);
       signedIn.value = true;
     }
   } catch (reason) {
     if (attempt === ticket) {
       if (reason instanceof ApiError && reason.status === 401)
         signedIn.value = false;
-      else sessionError.value = reason;
+      else if (!isCancellation(reason)) sessionError.value = reason;
     }
   } finally {
     if (attempt === ticket) {

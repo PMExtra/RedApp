@@ -1,10 +1,13 @@
 <script setup lang="ts">
+import TemplateReset from "./TemplateReset.vue";
+import SwitchControl from "./SwitchControl.vue";
 import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import SelectMenu from "./SelectMenu.vue";
-import { api } from "../api";
+import { api, isCancellation } from "../api";
 import { invalidateBootstrap, loadBootstrap } from "../bootstrap";
 import {
+  directoryIcon,
   refreshApplication,
   applicationPath,
   type ManagedApplication,
@@ -144,7 +147,7 @@ async function load(confirm = true) {
       throw Error("Application details unavailable");
     accept(value);
   } catch (reason) {
-    if (attempt === ticket) error.value = reason;
+    if (attempt === ticket && !isCancellation(reason)) error.value = reason;
   } finally {
     if (attempt === ticket) {
       loading.value = false;
@@ -206,7 +209,7 @@ async function synchronize() {
   void loadBootstrap();
 }
 async function save(remove = false) {
-  if (!draft.value || busy.value || readOnly.value) return;
+  if (!draft.value || busy.value || (!remove && readOnly.value)) return;
   const request = new AbortController(),
     attempt = ++ticket;
   controller = request;
@@ -233,7 +236,13 @@ async function save(remove = false) {
     cache_ttl_seconds,
   } = draft.value;
   const body = remove
-    ? { revision: record.value?.revision }
+    ? {
+        revision: record.value?.revision,
+        confirm_key:
+          kind === "vendor"
+            ? record.value?.id
+            : `${route.params.vendor}/${record.value?.id}`,
+      }
     : {
         name,
         description,
@@ -256,7 +265,11 @@ async function save(remove = false) {
           : {}),
       };
   try {
-    const response = await api<{ vendor?: Vendor; app?: ManagedApplication }>(
+    const response = await api<{
+      vendor?: Vendor;
+      app?: ManagedApplication;
+      cleanup_pending?: boolean;
+    }>(
       target,
       body,
       request.signal,
@@ -264,6 +277,16 @@ async function save(remove = false) {
       remove ? "DELETE" : wasCreating ? "POST" : "PATCH",
     );
     if (attempt !== ticket) return;
+    if (remove) {
+      baseline.value = JSON.stringify(draft.value);
+      invalidateBootstrap();
+      void loadBootstrap();
+      await router.push({
+        path: "/admin/vendors",
+        query: response.cleanup_pending ? { cleanup: "pending" } : {},
+      });
+      return;
+    }
     const value = response[kind];
     if (!value) throw Error("Saved record unavailable");
     accept(value);
@@ -278,7 +301,7 @@ async function save(remove = false) {
           : applicationPath(value as ManagedApplication),
       );
   } catch (reason) {
-    if (attempt === ticket) error.value = reason;
+    if (attempt === ticket && !isCancellation(reason)) error.value = reason;
   } finally {
     if (attempt === ticket) {
       saving.value = false;
@@ -305,7 +328,7 @@ async function upload(event: Event) {
     );
     if (attempt === ticket && draft.value) draft.value.icon = response.icon;
   } catch (reason) {
-    if (attempt === ticket) error.value = reason;
+    if (attempt === ticket && !isCancellation(reason)) error.value = reason;
   } finally {
     if (attempt === ticket) {
       uploading.value = false;
@@ -364,7 +387,7 @@ onUnmounted(() => {
             required
             pattern="[a-z0-9]+(-[a-z0-9]+)*"
             maxlength="63"
-            :readonly="!creating"
+            :disabled="!creating"
             autocapitalize="none"
             spellcheck="false"
         /></label>
@@ -402,7 +425,7 @@ onUnmounted(() => {
         <div class="icon-field">
           <img
             v-if="draft.icon"
-            :src="draft.icon"
+            :src="directoryIcon(draft.icon)"
             alt=""
             width="48"
             height="48"
@@ -526,12 +549,16 @@ onUnmounted(() => {
             </div>
             <label
               >{{ t("Source selection")
-              }}<select v-model="draft.source_strategy" name="source_strategy">
-                <option value="ordered">{{ t("In order") }}</option>
-                <option value="round_robin">{{ t("Round robin") }}</option>
-                <option value="random">{{ t("Random") }}</option>
-              </select></label
-            >
+              }}<SelectMenu
+                v-model="draft.source_strategy"
+                name="source_strategy"
+                :label="t('Source selection')"
+                :options="[
+                  { value: 'ordered', label: t('In order') },
+                  { value: 'round_robin', label: t('Round robin') },
+                  { value: 'random', label: t('Random') },
+                ]"
+            /></label>
             <label
               >{{ t("Default TTL without Cache-Control (seconds)")
               }}<input
@@ -570,11 +597,12 @@ onUnmounted(() => {
             </p></template
           >
         </template>
-        <label class="checkbox-field"
-          ><input v-model="draft.enabled" name="enabled" type="checkbox" />{{
-            t("Enabled")
-          }}</label
-        >
+        <SwitchControl
+          v-model="draft.enabled"
+          name="enabled"
+          :label="t('Enabled')"
+          :disabled="busy"
+        />
         <p class="muted small-text">
           {{
             kind === "vendor"
@@ -600,7 +628,9 @@ onUnmounted(() => {
           {{ t("Reload") }}
         </button>
         <button
-          v-if="record && !readOnly"
+          v-if="
+            record && !('builtin_template' in record && record.builtin_template)
+          "
           type="button"
           class="secondary"
           :disabled="busy"
@@ -619,7 +649,7 @@ onUnmounted(() => {
       <p>
         {{
           t(
-            "Deletion disables access and keeps stored data. The ID remains reserved.",
+            "Permanently delete this record and its files, settings and history? This cannot be undone.",
           )
         }}
       </p>
@@ -633,5 +663,11 @@ onUnmounted(() => {
         {{ t("Cancel") }}
       </button>
     </div>
+    <TemplateReset
+      v-if="kind === 'vendor' && record?.has_template && !readOnly"
+      kind="vendor"
+      :application="record.id"
+      @saved="load(false)"
+    />
   </section>
 </template>

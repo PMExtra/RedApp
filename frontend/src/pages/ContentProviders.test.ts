@@ -110,7 +110,7 @@ it("keeps Info settings content-only, preserves instruction conflicts and does n
   ).toBe("<script>literal text</script>");
   wrapper.unmount();
 });
-it("publishes bilingual instructions as literal text without downloads for Info", async () => {
+it("embeds localized executable instruction documents without downloads for Info", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () =>
@@ -138,15 +138,20 @@ it("publishes bilingual instructions as literal text without downloads for Info"
     ),
   );
   const { wrapper } = await mountPage("/openai/codex");
-  expect(wrapper.get(".usage-instructions").text()).toContain(
-    "<img src=x onerror=alert(1)>",
+  expect(wrapper.get(".usage-instructions iframe").attributes("src")).toBe(
+    "/api/apps/openai/codex/instructions/document?lang=en",
   );
+  expect(
+    wrapper.get(".usage-instructions iframe").attributes("sandbox"),
+  ).toBeUndefined();
   expect(wrapper.find(".usage-instructions img").exists()).toBe(false);
   expect(wrapper.find(".download-prefix").exists()).toBe(false);
   expect(wrapper.find(".installation-layout").exists()).toBe(false);
   setLanguage("zh-CN");
   await flushPromises();
-  expect(wrapper.get(".usage-instructions").text()).toContain("中文说明");
+  expect(wrapper.get(".usage-instructions iframe").attributes("src")).toContain(
+    "lang=zh-CN",
+  );
   wrapper.unmount();
 });
 it("uploads with explicit replacement identity, shows progress and cancels without losing the draft", async () => {
@@ -241,7 +246,8 @@ it("bounds previews to five and shows a matching sixth app in expanded search", 
   await flushPromises();
   expect(wrapper.text()).toContain("Tool 6");
   expect(wrapper.text()).not.toContain("Tool 1");
-  expect(fetch.mock.calls[0]?.[0]).toContain("limit=20");
+  expect(fetch).not.toHaveBeenCalled();
+  expect(wrapper.findAll(".directory-apps li")).toHaveLength(2);
   expect(wrapper.find(".vendor-actions button").exists()).toBe(false);
   wrapper.unmount();
 });

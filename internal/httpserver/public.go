@@ -16,29 +16,37 @@ import (
 func (s *Server) publicApplications(origin string) ([]map[string]any, error) {
 	out := make([]map[string]any, 0, len(s.Registry.Entries()))
 	for _, e := range s.Registry.Entries() {
-		usage, err := s.DB.Instructions(e.UID)
+		item, err := s.publicApplication(e, origin)
 		if err != nil {
 			return nil, err
-		}
-		d := e.Descriptor
-		root := origin + "/" + d.ID
-		icon := ""
-		if d.Icon != "" {
-			if strings.HasPrefix(d.Icon, "/") {
-				icon = d.Icon
-			} else {
-				icon = "/" + d.ID + "/" + d.Icon
-			}
-		}
-		definition, _ := application.ProviderDefinition(e.Provider)
-		item := map[string]any{"id": d.ID, "name": d.Name, "publisher": d.Publisher, "vendor": map[string]any{"id": e.VendorID, "name": e.VendorName, "description": e.VendorDescription, "icon": e.VendorIcon}, "summary": d.Summary, "origin": root, "detail_url": "/" + d.ID, "distribution_url": root, "icon": icon, "channels": d.Channels, "installers": publicInstallers(d.Installers), "update_policy": d.UpdatePolicy, "provider": e.Provider, "capabilities": definition.Capabilities, "instructions": usage.LocalizedText}
-		if !definition.Capabilities.Files {
-			delete(item, "distribution_url")
 		}
 		out = append(out, item)
 	}
 	return out, nil
 }
+func (s *Server) publicApplication(e application.Entry, origin string) (map[string]any, error) {
+	usage, err := s.DB.Instructions(e.UID)
+	if err != nil {
+		return nil, err
+	}
+	d := e.Descriptor
+	root := origin + "/" + d.ID
+	icon := ""
+	if d.Icon != "" {
+		if strings.HasPrefix(d.Icon, "/") {
+			icon = d.Icon
+		} else {
+			icon = "/" + d.ID + "/" + d.Icon
+		}
+	}
+	definition, _ := application.ProviderDefinition(e.Provider)
+	item := map[string]any{"id": d.ID, "name": d.Name, "publisher": d.Publisher, "vendor": map[string]any{"id": e.VendorID, "name": e.VendorName, "description": e.VendorDescription, "icon": e.VendorIcon}, "summary": d.Summary, "origin": root, "detail_url": "/" + d.ID, "distribution_url": root, "icon": icon, "channels": d.Channels, "installers": publicInstallers(d.Installers), "update_policy": d.UpdatePolicy, "provider": e.Provider, "capabilities": definition.Capabilities, "instructions": usage.LocalizedText}
+	if !definition.Capabilities.Files {
+		delete(item, "distribution_url")
+	}
+	return item, nil
+}
+
 func publicInstallers(items []application.Installer) []map[string]string {
 	out := make([]map[string]string, 0, len(items))
 	for _, item := range items {
@@ -51,6 +59,9 @@ func publicInstallers(items []application.Installer) []map[string]string {
 	return out
 }
 func (s *Server) publicAPI(w http.ResponseWriter, r *http.Request, publicView config.PublicView) {
+	if s.instructionsDocument(w, r, publicView.EffectiveURL) || s.publicCatalogAPI(w, r, publicView.EffectiveURL) {
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/apps/") && strings.HasSuffix(r.URL.Path, "/files") {
 		key := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/apps/"), "/files")
 		entry, ok := s.Registry.Lookup(key)

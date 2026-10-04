@@ -47,6 +47,9 @@ watch(
   { immediate: true, flush: "sync" },
 );
 export const messages = {
+  "Unexpected error. Reload and try again.": "发生意外错误，请重新加载后重试。",
+  "Deleted. Some stored files are awaiting cleanup; restart the server to retry cleanup.":
+    "已删除。部分存储文件等待清理，请重启服务重试清理。",
   Source: "来源",
   "File pages": "文件分页",
   "Delete this saved file? It cannot be downloaded again unless you add it.":
@@ -425,6 +428,48 @@ export const messages = {
   "Signed out": "已退出登录",
   "Your session expired. Sign in again.": "会话已过期，请重新登录。",
   "Request failed. Try again.": "请求失败，请重试。",
+  "Invalid server response. Reload and try again.":
+    "服务器返回了无效数据，请重新加载后重试。",
+  All: "全部",
+  "Add a vendor, then create an application and choose its provider. Built-in applications start disabled.":
+    "添加厂商后创建应用并选择提供方。内置应用默认禁用。",
+  Breadcrumb: "导航路径",
+  "About {count} download clients": "约 {count} 个下载客户端",
+  "Search applications": "搜索应用",
+  "Search suggestions": "搜索建议",
+  Vendor: "厂商",
+  "Search unavailable. Press Enter to open all applications.":
+    "搜索暂不可用，按回车打开全部应用。",
+  "No suggestions. Press Enter to search all applications.":
+    "暂无建议，按回车搜索全部应用。",
+  "Pinned applications": "置顶应用",
+  "No pinned applications.": "暂无置顶应用。",
+  "Popular downloads": "下载排行榜",
+  "Approximate unique download clients over the last seven days, using hourly summaries.":
+    "近七天下载客户端的近似去重数量，按小时汇总。",
+  "No downloads yet.": "暂无下载记录。",
+  "Choose application keys in display order. Disabled applications remain saved here and are hidden publicly.":
+    "按展示顺序填写应用完整键。禁用的应用会保留在此列表中，公开页面不展示。",
+  "Application key": "应用完整键",
+  Remove: "移除",
+  "Reset selected fields to template": "将所选字段重置为模板值",
+  "Select fields, review the differences, then save. Identity and provider stay fixed; stored files and history are retained.":
+    "选择字段、检查差异后再保存。标识和提供方保持不变，已存文件和历史记录保留。",
+  "Name and description": "名称和描述",
+  "Cache settings": "缓存设置",
+  "English instructions": "英文说明",
+  "Chinese instructions": "中文说明",
+  "Template value": "模板值",
+  "Review differences": "检查差异",
+  "Save selected fields": "保存所选字段",
+  "Permanently delete this record and its files, settings and history? This cannot be undone.":
+    "永久删除此记录及其文件、设置和历史？此操作无法撤销。",
+  "Markdown, HTML, JavaScript and external resources are supported. Only administrators can edit these instructions.":
+    "支持 Markdown、HTML、JavaScript 和外部资源，仅管理员可编辑说明。",
+  "Disabled by vendor": "厂商已禁用",
+  "Proxy URL": "代理 URL",
+  "Enter one complete URL with percent-encoded credentials. The saved URL is visible to administrators. Empty means direct.":
+    "输入包含百分号编码凭据的完整 URL。管理员可查看已保存的 URL。留空表示直连。",
   "Connection failed. Check your connection and retry.":
     "连接失败，请检查网络后重试。",
   "Request rejected. Check your input and retry.":
@@ -704,6 +749,7 @@ export function label(value: string): string {
   return Object.hasOwn(messages, value) ? t(value as Message) : value;
 }
 const errorCodes: Record<string, Message> = {
+  NETWORK_ERROR: "Connection failed. Check your connection and retry.",
   RESOURCE_CONFLICT:
     "The file changed. Select the current file explicitly before replacing it.",
   PREVIEW_INVALID:
@@ -722,6 +768,7 @@ const errorCodes: Record<string, Message> = {
     "This cleanup preview is no longer valid. Create a new preview and confirm it again.",
   INVALID_REQUEST: "Request rejected. Check your input and retry.",
   INVALID_QUERY: "Request rejected. Check your input and retry.",
+  INVALID_RESPONSE: "Invalid server response. Reload and try again.",
   INVALID_PATH: "Request rejected. Check your input and retry.",
   APPLICATION_NOT_FOUND: "Requested data is unavailable.",
   RESOURCE_NOT_FOUND: "Requested data is unavailable.",
@@ -734,6 +781,7 @@ const errorCodes: Record<string, Message> = {
   LOCAL_STORAGE_UNAVAILABLE: "Local storage is unavailable. Try again later.",
 };
 export function errorText(reason: unknown): string {
+  if (reason instanceof Error && reason.name === "AbortError") return "";
   const code =
     reason && typeof reason === "object" && "code" in reason
       ? reason.code
@@ -755,7 +803,7 @@ export function errorText(reason: unknown): string {
     );
   if (status === 404) return t("Requested data is unavailable.");
   if (status >= 500) return t("Service temporarily unavailable. Try again.");
-  return t("Connection failed. Check your connection and retry.");
+  return t("Unexpected error. Reload and try again.");
 }
 export function localDate(value: string | number | undefined): string {
   if (!value || String(value).startsWith("0001-")) return "—";

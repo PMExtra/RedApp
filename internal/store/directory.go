@@ -47,6 +47,7 @@ type VendorChanges struct {
 }
 
 type Vendor struct {
+	HasTemplate bool          `json:"has_template"`
 	UID         string        `json:"uid"`
 	ID          string        `json:"id"`
 	Name        LocalizedText `json:"name"`
@@ -82,6 +83,7 @@ type ApplicationChanges struct {
 }
 
 type Application struct {
+	BuiltinTemplate bool          `json:"builtin_template"`
 	UID             string        `json:"uid"`
 	ID              string        `json:"id"`
 	Key             string        `json:"key"`
@@ -271,6 +273,7 @@ func scanVendor(row directoryScanner) (Vendor, error) {
 	var v Vendor
 	var deleted sql.NullInt64
 	err := row.Scan(&v.UID, &v.ID, &v.Name.En, &v.Name.ZhCN, &v.Description.En, &v.Description.ZhCN, &v.Icon, &v.Enabled, &v.Revision, &deleted)
+	_, v.HasTemplate = BuiltinVendorTemplate(v.ID)
 	v.DeletedAt = timePointer(deleted)
 	return v, err
 }
@@ -282,6 +285,7 @@ func scanApplication(row directoryScanner) (Application, error) {
 	if err == nil {
 		err = json.Unmarshal(bases, &a.BaseURLs)
 	}
+	_, a.BuiltinTemplate = BuiltinApplicationTemplate(a.Key)
 	a.DeletedAt = timePointer(deleted)
 	return a, err
 }
@@ -369,14 +373,21 @@ func (s *Store) CreateVendor(in VendorInput) (Vendor, error) {
 	return v, nil
 }
 func (s *Store) UpdateVendor(id string, expectedRevision int64, in VendorChanges) (Vendor, error) {
-	if err := validatePresentation(in.Name, in.Description, in.Icon); err != nil {
-		return Vendor{}, err
-	}
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return Vendor{}, err
 	}
 	defer tx.Rollback()
+	v, err := updateVendor(tx, id, expectedRevision, in)
+	if err != nil {
+		return v, err
+	}
+	return v, tx.Commit()
+}
+func updateVendor(tx *sql.Tx, id string, expectedRevision int64, in VendorChanges) (Vendor, error) {
+	if err := validatePresentation(in.Name, in.Description, in.Icon); err != nil {
+		return Vendor{}, err
+	}
 	v, err := readVendor(tx, id)
 	if err != nil {
 		return Vendor{}, err
@@ -393,9 +404,6 @@ func (s *Store) UpdateVendor(id string, expectedRevision int64, in VendorChanges
 	}
 	v, err = readVendor(tx, id)
 	if err != nil {
-		return Vendor{}, err
-	}
-	if err = tx.Commit(); err != nil {
 		return Vendor{}, err
 	}
 	return v, nil
@@ -487,6 +495,13 @@ func (s *Store) UpdateApplication(key string, expectedRevision int64, in Applica
 		return Application{}, err
 	}
 	defer tx.Rollback()
+	a, err := updateApplication(tx, key, expectedRevision, in)
+	if err != nil {
+		return Application{}, err
+	}
+	return a, tx.Commit()
+}
+func updateApplication(tx *sql.Tx, key string, expectedRevision int64, in ApplicationChanges) (Application, error) {
 	a, err := readApplication(tx, key)
 	if err != nil {
 		return Application{}, err
@@ -535,12 +550,12 @@ func (s *Store) UpdateApplication(key string, expectedRevision int64, in Applica
 	if err != nil {
 		return Application{}, err
 	}
-	if err = tx.Commit(); err != nil {
-		return Application{}, err
-	}
 	return a, nil
 }
 func (s *Store) DeleteApplication(key string, expectedRevision int64) error {
+	if _, ok := BuiltinApplicationTemplate(key); ok {
+		return ErrBuiltinTemplate
+	}
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return err

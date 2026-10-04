@@ -22,7 +22,7 @@ const { draft, loading, saving, error, saved, load, save } =
     <p class="muted">
       {{
         t(
-          "Plain text shown on the public application page. Generated installation commands are managed separately.",
+          "Markdown, HTML, JavaScript and external resources are supported. Only administrators can edit these instructions.",
         )
       }}
     </p>

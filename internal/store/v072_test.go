@@ -1,0 +1,318 @@
+package store
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"database/sql"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"testing"
+	"time"
+)
+
+func TestV072TemplateInsertionProtectionAndSelectiveCAS(t *testing.T) {
+	s := openTest(t)
+	v, err := s.CreateVendor(VendorInput{ID: "openai", Name: LocalizedText{"Custom OpenAI", "自定义"}, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.CreateApplication(v.ID, ApplicationInput{ID: "codex", Name: LocalizedText{"My info", "我的介绍"}, Provider: "info", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SaveInstructions(a.Key, 0, LocalizedText{}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.EnsureEntityTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	same, _ := s.Application(a.Key)
+	if same.UID != a.UID || same.Provider != "info" || same.Name != a.Name || same.Revision != a.Revision || !same.Enabled {
+		t.Fatal("existing template key overwritten", same)
+	}
+	blank, _ := s.Instructions(a.UID)
+	if blank.Revision != 1 || blank.En != "" {
+		t.Fatal("explicit blank replaced", blank)
+	}
+	claude, _ := s.Application("anthropic/claude-code")
+	vendor, _ := s.Vendor("anthropic")
+	if claude.Enabled || vendor.Enabled {
+		t.Fatal("new templates must start disabled")
+	}
+	if err = s.PermanentlyDeleteApplication(a.Key, a.Revision); !errors.Is(err, ErrBuiltinTemplate) {
+		t.Fatal("provider mismatch bypassed protection", err)
+	}
+	if err = s.PermanentlyDeleteVendor(v.ID, v.Revision); !errors.Is(err, ErrVendorHasApplications) {
+		t.Fatal("vendor bypassed protection", err)
+	}
+	if _, err = s.ResetApplicationTemplate(a.Key, TemplateReset{Revision: a.Revision, Groups: []string{"source"}}); !errors.Is(err, ErrInvalidDirectory) {
+		t.Fatal("incompatible source reset", err)
+	}
+	if _, err = s.ResetApplicationTemplate(a.Key, TemplateReset{Revision: a.Revision}); !errors.Is(err, ErrInvalidDirectory) {
+		t.Fatal("empty selection mutated configuration", err)
+	}
+	if _, err = s.ResetApplicationTemplate(a.Key, TemplateReset{Revision: a.Revision, InstructionsRevision: 0, Groups: []string{"metadata", "instructions_en"}}); !errors.Is(err, ErrConflict) {
+		t.Fatal("instruction CAS missing", err)
+	}
+	after, _ := s.Application(a.Key)
+	if after.Name != a.Name || after.Revision != a.Revision {
+		t.Fatal("partial reset escaped rollback")
+	}
+	after, err = s.ResetApplicationTemplate(a.Key, TemplateReset{Revision: a.Revision, Groups: []string{"metadata"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Provider != a.Provider || after.SourceEpoch != a.SourceEpoch || after.Enabled != a.Enabled || after.UID != a.UID {
+		t.Fatal("unselected fields changed", after)
+	}
+	blank, _ = s.Instructions(a.UID)
+	if blank.En != "" || blank.Revision != 1 {
+		t.Fatal("unselected instructions changed")
+	}
+	if err = s.EnsureEntityTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := s.Application(a.Key)
+	if !reflect.DeepEqual(again, after) {
+		t.Fatal("restart rewrote existing template")
+	}
+}
+func TestV072UpgradePreservesV5AndReservedAllIsReadOnly(t *testing.T) {
+	for _, collision := range []bool{false, true} {
+		t.Run(fmt.Sprint(collision), func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "state.sqlite")
+			db, err := sql.Open("sqlite3", path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = db.Exec(schemaV5); err != nil {
+				t.Fatal(err)
+			}
+			id := "acme"
+			if collision {
+				id = "all"
+			}
+			if _, err = db.Exec(`INSERT INTO vendors VALUES('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',?,'Keep','保留','','','',1,9,NULL)`, id); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = db.Exec(`INSERT INTO settings VALUES('global','','upstream_proxy',7,'{"server":"http://proxy.example:8080","username":"legacy","password":"p@ss"}')`); err != nil {
+				t.Fatal(err)
+			}
+			db.Close()
+			before, _ := os.ReadFile(path)
+			upgraded, err := Open(dir)
+			if collision {
+				if !errors.Is(err, ErrReservedVendor) {
+					t.Fatal(err)
+				}
+				after, _ := os.ReadFile(path)
+				if sha256.Sum256(before) != sha256.Sum256(after) {
+					t.Fatal("collision mutated database")
+				}
+				entries, _ := os.ReadDir(dir)
+				if len(entries) != 1 {
+					t.Fatal("collision created sidecars")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer upgraded.DB.Close()
+			v, _ := upgraded.Vendor(id)
+			if v.Revision != 9 || v.Name.En != "Keep" {
+				t.Fatal(v)
+			}
+			var raw []byte
+			var revision int
+			if err = upgraded.DB.QueryRow(`SELECT payload,revision FROM settings WHERE key='upstream_proxy'`).Scan(&raw, &revision); err != nil || revision != 7 || !bytes.Contains(raw, []byte(`"password":"p@ss"`)) {
+				t.Fatal("schema upgrade touched proxy payload", err)
+			}
+			if err = checkSchema(upgraded.DB); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+func TestV072RankingMergesClientsAndExpiresBuckets(t *testing.T) {
+	s := openTest(t)
+	s.CreateVendor(directoryVendor("acme"))
+	a, err := s.CreateApplication("acme", directoryApplication("tool"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Fixed fixture salt makes approximation bounds reproducible; production salts remain random.
+	if _, err = s.DB.Exec(`UPDATE catalog_state SET ranking_salt=zeroblob(32)`); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+	var firstDay int64
+	for day := 6; day >= 0; day-- {
+		for ip := 1; ip <= 10; ip++ {
+			if err = s.RecordDownload(a.UID, fmt.Sprintf("192.0.2.%d", ip), now.Add(-time.Duration(day)*24*time.Hour)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if day == 6 {
+			first, e := s.DownloadRanking(now, 20)
+			if e != nil || len(first) != 1 {
+				t.Fatal(first, e)
+			}
+			firstDay = first[0].Clients
+		}
+	}
+	s.RecordDownload(a.UID, "::ffff:192.0.2.1", now)
+	scores, err := s.DownloadRanking(now, 20)
+	if err != nil || len(scores) != 1 || scores[0].Clients != firstDay || firstDay < 8 || firstDay > 12 {
+		t.Fatal("daily cardinalities were added instead of merged", scores, err)
+	}
+	var bytesStored int
+	if err = s.DB.QueryRow(`SELECT sum(length(registers)) FROM download_sketches`).Scan(&bytesStored); err != nil || bytesStored != 7*1024 {
+		t.Fatal("unbounded sketches", bytesStored, err)
+	}
+	scores, err = s.DownloadRanking(now.Add(7*24*time.Hour), 20)
+	if err != nil || len(scores) != 0 {
+		t.Fatal("expired clients remain ranked", scores, err)
+	}
+	for i := 0; i < 5000; i++ {
+		if err = s.RecordDownload(a.UID, fmt.Sprintf("10.%d.%d.%d", i/65536, (i/256)%256, i%256), now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scores, _ = s.DownloadRanking(now, 20)
+	if scores[0].Clients < 4500 || scores[0].Clients > 5500 {
+		t.Fatal("invalid estimate", scores)
+	}
+	if _, err = s.DB.Exec(`UPDATE vendors SET enabled=0`); err != nil {
+		t.Fatal(err)
+	}
+	scores, _ = s.DownloadRanking(now, 20)
+	if len(scores) != 0 {
+		t.Fatal("disabled vendor ranked")
+	}
+}
+func TestV072PermanentRemovalIsScopedAndRestartable(t *testing.T) {
+	dir := t.TempDir()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	s.CreateVendor(directoryVendor("acme"))
+	a, err := s.CreateApplication("acme", ApplicationInput{ID: "files", Name: LocalizedText{"Files", "文件"}, Provider: "hosted", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sibling, err := s.CreateApplication("acme", directoryApplication("codex"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.AddFor(a.MetricsID(), "artifact_requests", 4)
+	s.AddFor(sibling.MetricsID(), "artifact_requests", 7)
+	s.SaveInstructions(a.Key, 0, LocalizedText{"remove me", "移除"})
+	s.SaveHomepagePins(HomepagePins{Keys: []string{a.Key, sibling.Key}})
+	id := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	path := filepath.Join(dir, "objects", "hosted", id)
+	os.MkdirAll(filepath.Dir(path), 0700)
+	os.WriteFile(path, []byte("fixture"), 0600)
+	if _, err = s.DB.Exec(`INSERT INTO hosted_files VALUES(?,'file',?,'hash',7,1)`, a.UID, id); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.PermanentlyDeleteApplication(a.Key, a.Revision+1); !errors.Is(err, ErrConflict) {
+		t.Fatal(err)
+	}
+	if err = s.PermanentlyDeleteApplication(a.Key, a.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Application(a.Key); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal("record still exists", err)
+	}
+	if _, err = os.Stat(path); err != nil {
+		t.Fatal("transaction unexpectedly touched files before cleanup")
+	}
+	if err = s.ProcessPendingDeletes(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("owned body survived cleanup", err)
+	}
+	s.AddFor(a.MetricsID(), "download_success", 1)
+	s.RecordEvent(Event{AppID: a.MetricsID(), Category: "fixture", Code: "late", Message: "late"})
+	for _, table := range []string{"metric_counters", "events", "settings"} {
+		var n int
+		s.DB.QueryRow(`SELECT count(*) FROM `+table+` WHERE app_id=?`, a.MetricsID()).Scan(&n)
+		if n != 0 {
+			t.Fatal("private data recreated", table)
+		}
+	}
+	counts, _ := s.CountersFor(sibling.MetricsID())
+	if counts["artifact_requests"] != 7 {
+		t.Fatal("sibling changed", counts)
+	}
+	pins, _ := s.HomepagePins()
+	if !reflect.DeepEqual(pins.Keys, []string{sibling.Key}) {
+		t.Fatal(pins)
+	}
+	recreated, err := s.CreateApplication("acme", ApplicationInput{ID: a.ID, Name: a.Name, Provider: a.Provider})
+	if err != nil || recreated.UID == a.UID {
+		t.Fatal("public key not reusable with new private identity", err)
+	}
+}
+
+func TestV072CompatibleResetPreservesOtherLanguageAndOwnedData(t *testing.T) {
+	s := openTest(t)
+	if err := s.EnsureEntityTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	v, _ := s.Vendor("openai")
+	v, err := s.UpdateVendor(v.ID, v.Revision, VendorChanges{Name: LocalizedText{En: "Custom", ZhCN: "自定义"}, Description: v.Description, Icon: v.Icon, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.ResetVendorTemplate(v.ID, TemplateReset{Revision: v.Revision - 1, Groups: []string{"metadata"}}); !errors.Is(err, ErrConflict) {
+		t.Fatal(err)
+	}
+	resetVendor, err := s.ResetVendorTemplate(v.ID, TemplateReset{Revision: v.Revision, Groups: []string{"metadata"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resetVendor.Enabled || resetVendor.UID != v.UID || resetVendor.ID != v.ID || resetVendor.Name == v.Name {
+		t.Fatal("vendor reset changed unselected state", resetVendor)
+	}
+	a, _ := s.Application("openai/codex")
+	a, err = s.UpdateApplication(a.Key, a.Revision, ApplicationChanges{Name: a.Name, Description: a.Description, Icon: a.Icon, Enabled: true, BaseURL: a.BaseURL + "/custom", CacheTTLSeconds: 123})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instructions, _ := s.Instructions(a.UID)
+	instructions, err = s.SaveInstructions(a.Key, instructions.Revision, LocalizedText{En: "Custom English", ZhCN: "保留中文"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.AddFor(a.MetricsID(), "artifact_requests", 7); err != nil {
+		t.Fatal(err)
+	}
+	resource := releaseFixture(t, s, a.StorageID(), "1.0.0")
+	reset, err := s.ResetApplicationTemplate(a.Key, TemplateReset{Revision: a.Revision, InstructionsRevision: instructions.Revision, Groups: []string{"cache", "instructions_en"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reset.CacheTTLSeconds != 60 || reset.BaseURL != a.BaseURL || reset.SourceEpoch != a.SourceEpoch || reset.Enabled != a.Enabled || reset.UID != a.UID {
+		t.Fatal("reset changed unselected configuration", reset)
+	}
+	updated, _ := s.Instructions(a.UID)
+	if updated.ZhCN != "保留中文" || updated.En == instructions.En || updated.Revision != instructions.Revision+1 {
+		t.Fatal(updated)
+	}
+	if _, err = s.Release(resource.AppID, resource.Version); err != nil {
+		t.Fatal("reset deleted stored release", err)
+	}
+	counts, _ := s.CountersFor(a.MetricsID())
+	if counts["artifact_requests"] != 7 {
+		t.Fatal("reset removed history", counts)
+	}
+}

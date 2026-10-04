@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import SelectMenu from "./SelectMenu.vue";
+import SwitchControl from "./SwitchControl.vue";
 import { computed } from "vue";
 import { appAPI } from "../bootstrap";
 import { bytes } from "../api";
@@ -43,13 +45,12 @@ function add(kind: RuleList) {
     <p v-if="loading" role="status">{{ t("Loading…") }}</p>
     <form @submit.prevent="save">
       <fieldset v-if="draft" :disabled="busy">
-        <label class="checkbox-field"
-          ><input
-            v-model="draft.stale_fallback"
-            name="stale_fallback"
-            type="checkbox"
-          />{{ t("Use stale cache on origin failure") }}</label
-        >
+        <SwitchControl
+          v-model="draft.stale_fallback"
+          name="stale_fallback"
+          :label="t('Use stale cache on origin failure')"
+          :disabled="busy"
+        />
         <p class="muted small-text">
           {{
             t(
@@ -191,11 +192,15 @@ function add(kind: RuleList) {
             />
             <label
               >{{ t("Select files by")
-              }}<select v-model="rule.basis" name="rule_basis">
-                <option value="fetched_at">{{ t("Fetched at") }}</option>
-                <option value="last_access">{{ t("Last accessed") }}</option>
-              </select></label
-            >
+              }}<SelectMenu
+                v-model="rule.basis"
+                name="rule_basis"
+                :label="t('Select files by')"
+                :options="[
+                  { value: 'fetched_at', label: t('Fetched at') },
+                  { value: 'last_access', label: t('Last accessed') },
+                ]"
+            /></label>
             <p class="muted small-text">
               {{
                 rule.basis === "fetched_at"

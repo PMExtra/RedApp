@@ -55,3 +55,32 @@ it("preserves structured problem fields and localizes by stable code before stat
   expect(legacy.message).toBe("legacy message");
   expect(errorText(legacy)).toContain("Requested data is unavailable");
 });
+
+it("distinguishes malformed successful JSON from transport failure", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({
+      ...response({}),
+      json: async () => {
+        throw SyntaxError();
+      },
+    })),
+  );
+  const error = await api("broken").catch((e) => e);
+  expect(error).toMatchObject({ code: "INVALID_RESPONSE", status: 200 });
+  expect(errorText(error)).toContain("Invalid server response");
+  expect(errorText(new DOMException("cancelled", "AbortError"))).toBe("");
+});
+
+it("labels transport failures separately from unexpected application errors", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    }),
+  );
+  const error = await api("offline").catch((e) => e);
+  expect(error).toMatchObject({ code: "NETWORK_ERROR", status: 0 });
+  expect(errorText(error)).toContain("Connection failed");
+  expect(errorText(new Error("local bug"))).toContain("Unexpected error");
+});

@@ -15,7 +15,7 @@ npm run build
 
 Vite uses `/` as its asset base and writes `internal/httpserver/web`. Rebuild and commit those generated files with frontend changes; CI verifies the embedded output. `npm run dev` is a loopback source preview, not an authenticated deployment: API calls are same-origin. Run CLI HTTP integration against the embedded Go build.
 
-The DOM suite uses Vitest and happy-dom. It exercises canonical navigation, translated rendering and commands, session/CSRF behavior, visibility-aware polling, dirty drafts, conflict responses, failed application switches, late requests, cleanup previews, proxy credential actions, public URL precedence, and the distinct dropdown keyboard models. These checks do not claim browser layout, screen-reader, touch-device or native installer verification.
+The DOM suite uses Vitest and happy-dom. It exercises canonical navigation, translated rendering and commands, session/CSRF behavior, visibility-aware polling, dirty drafts, conflict responses, failed application switches, late requests, cleanup previews, full proxy URLs, public URL precedence, and the distinct dropdown keyboard models. These checks do not claim browser layout, screen-reader, touch-device or native installer verification.
 
 The obsolete v0.5 browser fixture was removed in v0.6.1: its database tables, routes and metric expectations no longer match this SPA. Current acceptance uses the DOM suite and real CLI HTTP tests. Historical screenshots do not validate the current SPA.
 
@@ -27,15 +27,17 @@ Vue Router is pinned to 4.6.4, compatible with Vue 3.5.43. Its history/router AP
 
 | UI route | Owner |
 | --- | --- |
-| `/` | Public application directory |
+| `/` | Ordered pins and rolling download-client ranking |
+| `/all` | Shareable application search and numbered pagination |
+| `/<vendor>` | Vendor details and enabled application pages |
 | `/<vendor>/<app>` | Descriptor-driven application instructions |
 | `/admin/login` | Administrator sign-in |
 | `/admin/overview` | Global metrics and history |
 | `/admin/events` | Structured failure details |
-| `/admin/settings/site` | Independent site appearance and public URL forms |
+| `/admin/settings/site` | Independent site appearance, public URL and homepage pin forms |
 | `/admin/settings/proxy` | Global upstream proxy form |
-| `/admin/apps/<vendor>/<app>/versions` | Application metrics/history, versions and resources |
-| `/admin/apps/<vendor>/<app>/settings` | Application channel TTL and cleanup |
+| `/admin/vendors/<vendor>/apps/<app>/versions` | Application metrics/history, versions and resources |
+| `/admin/vendors/<vendor>/apps/<app>/settings` | Application settings, bilingual instructions and selective template reset |
 
 The server serves the SPA only for recognized UI routes, including direct deep links. `/<vendor>/<app>/<file_path>` is a distribution route, not an SPA fallback. Application identity always includes both vendor and app; neither UI state nor API calls infer Codex from a missing identity.
 
@@ -53,9 +55,9 @@ Public URL priority is administrator override, then `REDAPP_PUBLIC_URL`, then th
 
 Only visible overview, events and versions pages poll, with a five-second delay after each completed request. Summary and each displayed cursor page refresh independently; a failed summary does not block version/resource lists. The events page does not request status. Requests never overlap. Hidden pages, route departure, logout and 401 stop their subscription; stale responses cannot restore it. History collection on the server is independent of UI polling. Forms own their errors, so successful status requests cannot clear a save error.
 
-The typed API client retains structured error `code`, `message`, `request_id` and `retryable` fields. Display messages use stable codes before HTTP status: settings revision conflicts preserve drafts, while invalid cleanup previews request a new preview. Unknown codes and older string errors have a generic status fallback; an arbitrary 409 is never labeled a settings conflict.
+The typed API client retains structured error `code`, `message`, `request_id` and `retryable` fields. Display messages use stable codes before HTTP status: settings revision conflicts preserve drafts, while invalid cleanup previews request a new preview. Unknown codes and older string errors have a status fallback; an arbitrary 409 is never labeled a settings conflict. Cancellation is silent, malformed JSON is an invalid-response error, failed fetch is a network error, and unexpected local failures have a separate message.
 
-The auth module owns session/CSRF state. Each API request captures the current session generation and checks it, along with cancellation, after JSON parsing. A late 401 from an earlier session cannot expire a newer login or clear its CSRF token, even if token text is reused. Mutations use session cookies and CSRF headers; the server remains authoritative for authentication and origin checks. Password and proxy credential inputs remain in component memory and clear on completion or unmount. Stored credentials are never displayed. A transient session-check failure is shown without discarding an already authenticated form; a current-session 401 expires it.
+The auth module owns session/CSRF state. Each API request captures the current session generation and checks it, along with cancellation, after JSON parsing. A late 401 from an earlier session cannot expire a newer login or clear its CSRF token, even if token text is reused. Mutations use session cookies and CSRF headers; the server remains authoritative for authentication and origin checks. Password inputs remain in component memory and clear on completion or unmount. The protected proxy form displays and saves its exact full URL, including encoded credentials. An unchanged visibility session recheck does not advance the generation; real login/logout transitions always do. A transient session-check failure is shown without discarding an already authenticated form; a current-session 401 expires it.
 
 ## Localization and controls
 
@@ -68,3 +70,11 @@ Custom site text loads asynchronously in a local header/footer skeleton. Bootstr
 Metrics retain stable IDs and backend-defined scope. Application charts request application history explicitly; global charts request global history. The overview shows 16 common metrics and 25 initially collapsed diagnostic metrics. Collapsing diagnostics leaves polling, collection and history available; the two retired cards remain hidden even in an older status payload, while error event details remain accessible. Version labels distinguish global and single-application counts without assuming imported Codex history.
 
 `HistoryDialog` and `historyChart` share descriptors for plotted values and exact point readouts. Hover, keyboard and touch show browser-local bucket time with an offset, base units and API precision, gap/coverage semantics, gauge/rate average-min-max or counter last/delta. UTC aggregation and the table remain explicit. Scope/range changes abort old requests and discard late results; language, mode and range changes clear the selection. Tests use DOM and mocked uPlot cursor events, not a GUI or physical input device. See [metric semantics](../docs/metrics-history.md).
+
+## 0.7.2 public discovery and instructions
+
+`/api/catalog` searches before pagination and exposes only effective enabled entries. `/api/search` returns at most four vendors and six applications. Query-only navigation retains scroll, focused inputs and text selection; route changes focus the main content. Suggestion requests cancel on edits, IME composition and departure. Enter selects the active suggestion or opens `/all?q=...`; browser Back restores query text. The homepage uses `/api/home`, with pins configured in `HomepageSettings`.
+
+`InstructionsDocument` uses a normal, unsandboxed same-origin iframe served from `/api/apps/<key>/instructions/document`. The server renders Markdown plus raw HTML with a dedicated document CSP; scripts execute through document parsing. This is trusted administrator content, not a security isolation boundary. Public document data excludes private settings. The existing admin SPA CSP is unchanged. A separate no-GUI integration (`node scripts/test-instructions-document.mjs`, from repository root after building) uses only local fixture scripts to check inline/external execution against the real server. Happy DOM does not prove real-browser CSP enforcement.
+
+Template reset defaults to no selection and renders current/template diffs before a revision-checked save. IDs and provider are immutable. `SwitchControl`, `AutoRefresh`, and `SelectMenu` provide common size, focus and disabled states while preserving the existing menu/listbox distinction. See [the 0.7.2 guide](../docs/admin-experience-v0.7.2.md) for data and deletion semantics.

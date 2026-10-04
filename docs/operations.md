@@ -1,6 +1,6 @@
 # RedApp 运维说明
 
-本文对应 0.7.1。SQLite schema=5，精确匹配已发布 v0.7.0 schema 4 的目录可在独占锁下事务升级，保留现有数据；更早或未知目录仍在写入之前拒绝，须选择全新空目录。升级前停止实例并备份完整目录；部署配置 schema_version 仍为 1。详见 [0.7.1 运行变更](admin-experience-v0.7.1.md)，缓存规则历史参考见 [v0.7.0 运行说明](provider-runtime-v0.7.0.md)。
+本文对应本地 0.7.2（未发布）。SQLite schema=6，精确 v0.7.0 schema 4 / v0.7.1 schema 5 在独占锁下按版本事务升级，保留已有数据；更早或未知目录在写入前拒绝。升级前停止实例并备份完整目录；已有厂商 ID `all` 会明确报冲突，不自动改名或删除。部署配置 schema_version 仍为 1。详见 [0.7.2 运行变更](admin-experience-v0.7.2.md)，缓存规则历史参考见 [v0.7.0 运行说明](provider-runtime-v0.7.0.md)。
 
 ## 启动配置
 
@@ -71,17 +71,17 @@ location / {
 
 `/admin/settings/site` 同时编辑英文、简体中文标题、副标题和声明，并提供独立公共地址表单。默认品牌保留 RedApp；副标题为 Application Redistribution Platform / 应用再分发平台。标题每语言必填、最多 80 字符，副标题最多 160、声明最多 500；文本不执行 HTML/Markdown。
 
-`GET/PUT /admin/api/settings/proxy` 管理共享出口代理，PUT 要求 revision 和会话/CSRF。server 为带端口的 `http://host:port`、`https://host:port` 或 `socks5://host:port`；URL 内禁止凭据、路径、查询、fragment，空 server 表示直连。不继承 HTTP_PROXY/HTTPS_PROXY。HTTP 代理以 CONNECT 访问 HTTPS 上游，SOCKS5 由代理端解析 DNS；应用配置的路径边界、Provider 重定向规则和基本 TLS 校验仍生效。
+`GET/PUT /admin/api/settings/proxy` 管理共享出口代理，PUT 要求 revision 和会话/CSRF。server 为带端口的 `http://host:port`、`https://host:port` 或 `socks5://host:port`；URL 可包含百分号编码的用户名/密码，禁止路径、查询、fragment，空 server 表示直连。不继承 HTTP_PROXY/HTTPS_PROXY。HTTP 代理以 CONNECT 访问 HTTPS 上游，SOCKS5 由代理端解析 DNS；应用配置的路径边界、Provider 重定向规则和基本 TLS 校验仍生效。
 
-`password_action` 为 keep、replace 或 clear。keep 不接受 username/password，且不能将已有凭据静默带到新地址；replace 使用本次凭据，clear 清空凭据。GET 只返回 server、has_credentials、has_password、dns、revision。凭据存放在受目录权限保护的 SQLite，备份须按敏感材料保管。
+配置仅保留 `server` 完整 URL；GET 返回原始完整 `server`、`dns`、`revision`，仅受保护后台可读。旧 `username/password` 在首次加载时编码进 URL 并 CAS 保存一次，后续不保留独立凭据字段或动作。空 server 清除代理。公共响应、日志与事件不包含代理凭据；SQLite 和完整备份按敏感材料保管。
 
 代理先 CAS 持久化，再切换所有应用共享的 transport；失败不生效。新请求使用新配置，已开始传输的响应自然结束。此操作不强制失效 metadata、缓存制品或正在进行的摘要校验。
 
 ## Vendor/App 与可变 HTTP 缓存
 
-`/admin/vendors` 管理全小写厂商 ID、中英文名称/描述和图标，再在厂商下创建应用并选择 Provider。全新实例不创建任何业务厂商或应用；升级保留已有条目，重启不恢复已删除条目。ID、隶属和 Provider 暂不改动，删除后 ID 仍保留；有未删除应用的厂商须先处理其应用。
+`/admin/vendors` 管理全小写厂商 ID、中英文名称/描述和图标，再在厂商下创建应用并选择 Provider。启动补齐缺失内置模板且默认禁用，已有完整键记录不覆盖。ID、隶属和 Provider 固定；内置完整键应用不可删除。自定义应用确认后永久删除并释放公开 ID，重新创建使用新内部 UID；仍有任何应用的厂商不可删除。模板重置先选字段、预览差异，再通过 CAS 保存，不删除文件或历史。
 
-启用状态同时受厂商与应用控制。禁用厂商不会覆盖应用自身开关；禁用或删除停止新的公开请求，不删除缓存、历史或图标。HTTP Cache 支持 1–16 个有序 `base_urls`，以及 `ordered`、`round_robin`、`random` 策略；列表内容、顺序和策略改变都会创建新 source epoch，不搬运旧缓存。发布 Provider 仍为单 BaseUrl。已进入的请求可结束，但旧 revision 的写入不能成为新缓存头；历史 source 可显式选择并清理。
+启用状态同时受厂商与应用控制。禁用厂商不会覆盖应用自身开关；禁用停止新的公开请求并保留数据；永久删除清除该应用拥有的缓存、文件和历史，全局共享图标独立保留。删除要求共享传输池空闲；物理清理回执持久化，可在重启时继续。HTTP Cache 支持 1–16 个有序 `base_urls`，以及 `ordered`、`round_robin`、`random` 策略；列表内容、顺序和策略改变都会创建新 source epoch，不搬运旧缓存。发布 Provider 仍为单 BaseUrl。已进入的请求可结束，但旧 revision 的写入不能成为新缓存头；历史 source 可显式选择并清理。
 
 HTTP Cache 路径位于 `/<vendor>/<app>/<relative-path>`。TTL 只决定新鲜度，不等于磁盘保留期；优先级为首次命中的路径规则、源 Cache-Control 寿命、完全没有 Cache-Control 时的应用默认值；有 Cache-Control 却无有效寿命按 TTL 0 每次验证。304 只刷新验证时间，不伪造获取时间。TTL 0 仍保留完整副本供失败回退。
 
@@ -96,17 +96,17 @@ GET 支持完整响应、条件请求和单段 Range，多段 Range 忽略后返
 ## 数据目录、清理与恢复
 
 - `instance.lock` 是保留的内核锁文件；进程退出或崩溃后内核释放锁，禁止人为删除锁 inode。获取写锁前先以只读方式检查已有目录，拒绝旧 schema 或未知内容，不创建锁来污染被拒绝的旧目录。
-- SQLite schema=5，增加应用说明与 Hosted 持久文件，包含 Vendor/App、历史 source snapshots、全局设置、发布 metadata/渠道/资源/generation/blob、HTTP 缓存、指标、事件、清理快照和管理员记录。没有迁移命令；schema=2、schema=3 和未知目录均在写入前被拒绝。
+- SQLite schema=6，包含应用说明、Hosted 持久文件、小时去重 sketch、首页置顶和待清理回执，包含 Vendor/App、历史 source snapshots、全局设置、发布 metadata/渠道/资源/generation/blob、HTTP 缓存、指标、事件、清理快照和管理员记录。没有迁移命令；schema=2、schema=3 和未知目录均在写入前被拒绝。
 - 应用有稳定内部 UID；BaseUrl 变更创建新的 source epoch。发布逻辑资源身份为 `(app_uid,source_epoch,version,resource_key)`，完整 blob 仅在同一 source namespace 内按摘要复用，不跨应用/epoch 复用。每次下载拥有独立随机 generation。未完成文件位于 `objects/parts/<generation>.part`，完整文件位于 `objects/blobs/<app摘要>/<内容摘要>.blob`，URL 不直接映射磁盘路径。
 - 活动下载仅按精确逻辑资源合流。完整校验、fsync 和文件发布后才能标记 complete；重启核对磁盘和数据库，损坏/缺失文件不能作为已验证缓存返回。续传使用强 ETag/If-Range 并验证范围、编码、长度和最终摘要。
 - 清理预览冻结指定应用/source epoch 的精确 generation 集合及 App/Vendor revision，有效 10 分钟；执行不能跨应用、不能扩大到新 epoch，配置改变需要重新预览。成功回执支持重试。旧代退出当前状态后等待已有读写租约排空；应用内共享 blob 只在最后引用结束后回收。版本发现、可信 metadata 和累计指标不随缓存清理删除。
 - 一个本地目录只由一个实例使用，不支持 NFS/SMB。Docker 可采用只读根文件系统加可写持久卷；镜像内 `/var/lib/redapp` 为 UID/GID 65532、模式 0700。已有宿主 bind mount 的权限需管理员预先设置，不递归自动 chown。
 
-备份先正常停止服务，再复制整个新格式数据目录，包括可能存在的 WAL/SHM。恢复到同格式目录前确认没有服务持锁，不在线单独复制 state.sqlite。启动不会把旧格式目录转为新格式，也不会将旧历史导入。
+备份先正常停止服务，再复制整个新格式数据目录，包括可能存在的 WAL/SHM。恢复到同格式目录前确认没有服务持锁，不在线单独复制 state.sqlite。只有精确匹配的 schema 4/5 原地升级；更早或未知格式不导入配置、缓存或历史。升级后不能用旧二进制打开 schema 6；回退须使用完整升级前备份。
 
 ## 路由、管理 API 与指标
 
-公开目录为 `/`；应用详情为 `/<vendor>/<app>`，制品及 installer 位于 `/<vendor>/<app>/<file_path>`，所有应用由后台创建，不默认初始化业务应用。`admin`、`api`、`assets`、`health` 为保留命名空间。旧 `/apps/codex`、根 `/install.sh` 和 `/api/info` 不提供兼容别名。`GET /api/bootstrap` 返回公开站点、应用定义和公共地址，不依赖管理 status。
+首页 `/` 为置顶与排行，全部目录为 `/all`，厂商详情为 `/<vendor>`；应用详情为 `/<vendor>/<app>`，制品及 installer 位于 `/<vendor>/<app>/<file_path>`，启动补齐的内置模板须管理员启用后公开。`all`、`admin`、`api`、`assets`、`health` 为保留命名空间。旧 `/apps/codex`、根 `/install.sh` 和 `/api/info` 不提供兼容别名。`GET /api/bootstrap` 返回公开站点、应用定义和公共地址，不依赖管理 status。
 
 后台页面有真实路径：`/admin/overview`、`/admin/events`、`/admin/settings/site`、`/admin/settings/proxy`、`/admin/vendors`、`/admin/vendors/<vendor>/apps/<app>/versions`、`.../files`、`.../cache`、`.../settings`，可以刷新和直接打开。设置页不订阅全局 status 轮询。
 
@@ -118,9 +118,13 @@ GET 支持完整响应、条件请求和单段 Range，多段 Range 忽略后返
 | `GET /admin/api/providers` | 固定 Provider 定义、默认值与能力 |
 | `GET/POST /admin/api/vendors`、`GET/PATCH/DELETE /admin/api/vendors/<vendor>` | 厂商列表、创建、资料与启用状态、删除 |
 | `POST /admin/api/vendors/<vendor>/apps`、`GET /admin/api/apps`、`GET/PATCH/DELETE /admin/api/apps/<vendor>/<app>` | 动态应用管理；列表服务端分页；ID、隶属、Provider 固定 |
+| `GET/PUT /admin/api/settings/homepage` | 有序置顶完整键列表与 revision CAS |
+| `GET/POST /admin/api/apps/<vendor>/<app>/template`、`/admin/api/vendors/<vendor>/template` | 兼容字段分组、当前值/模板值与选择性 CAS 重置 |
+| `GET /api/home`、`/api/catalog`、`/api/search`、`/api/vendors/<vendor>` | 有效启用目录、排行、分页搜索与建议 |
+| `GET /api/apps/<vendor>/<app>/instructions/document?lang=en` | 独立策略的受信任 HTML 说明文档 |
 | `POST /admin/api/assets/icons` | 单个 multipart JPG/PNG/静态 SVG 图标 |
 | `GET/PUT /admin/api/apps/<vendor>/<app>/settings` | 发布 Provider 的 channel_ttl_seconds 与应用 revision |
-| `GET/PUT /admin/api/apps/<vendor>/<app>/instructions` | 独立 revision 的双语纯文本说明 |
+| `GET/PUT /admin/api/apps/<vendor>/<app>/instructions` | 独立 revision 的双语 Markdown/HTML/JavaScript 说明 |
 | `GET/POST/DELETE /admin/api/apps/<vendor>/<app>/files...` | Hosted 分页、上传/一次性导入、进度/取消和明确删除，见 0.7.1 运行变更 |
 | `GET /admin/api/apps/<vendor>/<app>/sources` | 当前与历史 source epoch |
 | `GET /admin/api/apps/<vendor>/<app>/cache` | HTTP Cache 文件缓存，支持 source_epoch 选择 |

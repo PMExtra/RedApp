@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AutoRefresh from "../components/AutoRefresh.vue";
 import { computed, reactive, ref } from "vue";
 import { appAPI } from "../bootstrap";
 import { type DistributionEvent } from "../api";
@@ -20,14 +21,7 @@ const page = reactive(
 <template>
   <div class="page-heading">
     <h1>{{ t("Events") }}</h1>
-    <button
-      class="secondary auto-refresh"
-      :aria-pressed="automatic"
-      :title="t('Refresh every 5 seconds')"
-      @click="automatic = !automatic"
-    >
-      {{ t("Auto refresh") }} {{ automatic ? t("On") : t("Off") }}
-    </button>
+    <AutoRefresh v-model="automatic" />
   </div>
   <div v-if="page.error" class="error" role="alert">
     {{ errorText(page.error)

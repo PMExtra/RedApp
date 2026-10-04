@@ -11,7 +11,9 @@ const route = useRoute(),
 const query = ref(typeof route.query.q === "string" ? route.query.q : ""),
   search = ref(query.value),
   state = ref(
-    ["current", "disabled", "deleted"].includes(String(route.query.state))
+    ["current", "enabled", "disabled", "deleted"].includes(
+      String(route.query.state),
+    )
       ? String(route.query.state)
       : "current",
   );
@@ -35,10 +37,33 @@ watch(
       },
     }),
 );
+watch(
+  () => route.query,
+  (value) => {
+    const next = typeof value.q === "string" ? value.q : "";
+    if (next !== query.value) {
+      clearTimeout(debounce);
+      query.value = next;
+      search.value = next;
+    }
+    state.value = ["current", "enabled", "disabled", "deleted"].includes(
+      String(value.state),
+    )
+      ? String(value.state)
+      : "current";
+  },
+);
 onUnmounted(() => clearTimeout(debounce));
 </script>
 <template>
   <section class="directory-page">
+    <p v-if="route.query.cleanup === 'pending'" class="notice" role="status">
+      {{
+        t(
+          "Deleted. Some stored files are awaiting cleanup; restart the server to retry cleanup.",
+        )
+      }}
+    </p>
     <div class="page-heading">
       <div>
         <h1>{{ t("Vendors and applications") }}</h1>
@@ -52,8 +77,8 @@ onUnmounted(() => clearTimeout(debounce));
     </div>
     <div class="directory-toolbar">
       <label class="directory-search"
-        >{{ t("Search vendors and applications")
-        }}<input
+        ><span class="sr-only">{{ t("Search vendors and applications") }}</span
+        ><input
           v-model="search"
           type="search"
           maxlength="128"
@@ -65,7 +90,8 @@ onUnmounted(() => clearTimeout(debounce));
           v-model="state"
           :label="t('Show')"
           :options="[
-            { value: 'current', label: t('Current') },
+            { value: 'current', label: t('All') },
+            { value: 'enabled', label: t('Enabled') },
             { value: 'disabled', label: t('Disabled') },
             { value: 'deleted', label: t('Deleted') },
           ]"
@@ -101,7 +127,7 @@ onUnmounted(() => clearTimeout(debounce));
           query || state !== "current"
             ? t("Try another search or view.")
             : t(
-                "Add a vendor, then create an application and choose its provider. No applications are created automatically.",
+                "Add a vendor, then create an application and choose its provider. Built-in applications start disabled.",
               )
         }}
       </p>

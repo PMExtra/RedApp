@@ -7,6 +7,7 @@
 | Go 编译器和运行时 | 1.27.1 | [Go.LICENSE](Go.LICENSE) |
 | github.com/mattn/go-sqlite3 | 1.14.32 | [go-sqlite3.LICENSE](go-sqlite3.LICENSE) |
 | github.com/dustin/go-humanize | 1.1.0 | [go-humanize.LICENSE](go-humanize.LICENSE) |
+| github.com/yuin/goldmark | 1.7.13 | [goldmark.LICENSE](goldmark.LICENSE) |
 | Vue 前端运行时 | 3.5.43 | [vue.LICENSE](vue.LICENSE) |
 | uPlot 图表运行时 | 1.6.32 | [uplot.LICENSE](uplot.LICENSE) |
 | go.yaml.in/yaml/v3 | 3.0.5 | [go-yaml.LICENSE](go-yaml.LICENSE)、[go-yaml.NOTICE](go-yaml.NOTICE) |

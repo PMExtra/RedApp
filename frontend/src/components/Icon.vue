@@ -3,6 +3,7 @@ const props = withDefaults(defineProps<{ name: string; size?: number }>(), {
   size: 18,
 });
 const paths: Record<string, string> = {
+  plus: "M12 5v14 M5 12h14",
   grid: "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
   box: "M3 7l9-4 9 4v10l-9 4-9-4z M3 7l9 4 9-4 M12 11v10",
   activity: "M3 12h4l3-8 4 16 3-8h4",

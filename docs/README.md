@@ -1,6 +1,6 @@
 # RedApp 文档
 
-当前运行与配置说明见 [English quick start](../README.md)、[中文快速开始](../README.zh-CN.md) 与 [运维说明](operations.md)。0.7.1 本地实现的 Provider、界面与精确 v0.7.0 数据升级边界见 [运行变更](admin-experience-v0.7.1.md)。更旧或未知格式仍要求全新数据目录，旧目录不自动改删。
+当前运行与配置说明见 [English quick start](../README.md)、[中文快速开始](../README.zh-CN.md) 与 [运维说明](operations.md)。0.7.2 本地实现的模板、目录、排行、说明文档和精确 v0.7.0/v0.7.1 数据升级边界见 [运行变更](admin-experience-v0.7.2.md)。更旧或未知格式仍要求全新数据目录，旧目录不自动改删。
 
 - [多应用实施设计](multi-application-architecture-next.md)：规范身份、注册、协议、存储、配置、路由和实施边界。
 - [v0.6.0 发布说明](multi-application-v0.6.0.md)：破坏性升级、部署配置和发布验证边界。

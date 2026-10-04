@@ -91,12 +91,20 @@ func releaseEntry(descriptor application.Descriptor, client *distributor.Client)
 	}
 	// Brand resources are reviewed static files; an icon field never fetches a URL.
 	if descriptor.Icon != "" {
-		assets := map[string]application.Representation{"openai/codex/icon.svg": {ContentType: "image/svg+xml", Body: []byte(codex.OpenAISymbol())}}
-		asset, ok := assets[descriptor.ID+"/"+descriptor.Icon]
+		asset, ok := BrandAsset("/" + descriptor.ID + "/" + descriptor.Icon)
 		if !ok {
 			return application.Entry{}, fmt.Errorf("Unregistered icon for %s", descriptor.ID)
 		}
 		entry.PublicAssets = map[string]application.Representation{descriptor.Icon: asset}
 	}
 	return entry, nil
+}
+
+// BrandAsset serves only reviewed, compiled image bytes, independently of a
+// persisted application's availability. It never fetches the supplied path.
+func BrandAsset(path string) (application.Representation, bool) {
+	if path == "/openai/codex/icon.svg" {
+		return application.Representation{ContentType: "image/svg+xml", Body: []byte(codex.OpenAISymbol())}, true
+	}
+	return application.Representation{}, false
 }

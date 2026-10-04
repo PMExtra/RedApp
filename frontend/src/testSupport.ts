@@ -160,3 +160,21 @@ export async function mountPage(path: string) {
   await flushPromises();
   return { wrapper, router };
 }
+
+export async function selectValue(
+  control: Pick<
+    import("@vue/test-utils").DOMWrapper<Element>,
+    "get" | "findAll"
+  >,
+  value: string,
+) {
+  const trigger = control.get("[role=combobox]");
+  if (trigger.attributes("aria-expanded") !== "true")
+    await trigger.trigger("click");
+  const option = control
+    .findAll("[role=option]")
+    .find((item) => item.attributes("data-value") === value);
+  if (!option) throw Error(`Missing option ${value}`);
+  await option.trigger("click");
+  await flushPromises();
+}

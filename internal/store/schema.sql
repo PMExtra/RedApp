@@ -1,6 +1,6 @@
 PRAGMA foreign_keys=ON;
 
-CREATE TABLE schema_version(version INTEGER NOT NULL CHECK(version=5));
+CREATE TABLE schema_version(version INTEGER NOT NULL CHECK(version=6));
 
 CREATE TABLE directory_state(
   id INTEGER PRIMARY KEY CHECK(id=1), seeded INTEGER NOT NULL CHECK(seeded IN (0,1))
@@ -148,7 +148,7 @@ CREATE TABLE admin(
   id INTEGER PRIMARY KEY CHECK(id=1), hash BLOB NOT NULL, revision INTEGER NOT NULL
 );
 
-INSERT INTO schema_version VALUES(5);
+INSERT INTO schema_version VALUES(6);
 INSERT INTO directory_state VALUES(1,0);
 INSERT INTO metric_history_state VALUES(1,0);
 CREATE INDEX metric_samples_time ON metric_samples(t_s);
@@ -222,3 +222,21 @@ CREATE TABLE hosted_files(
   PRIMARY KEY(app_uid,path),
   FOREIGN KEY(app_uid) REFERENCES applications(uid)
 );
+
+-- Hourly HLL registers merge to estimate distinct download clients over seven days.
+CREATE TABLE download_sketches(
+ app_uid TEXT NOT NULL, hour_s INTEGER NOT NULL,
+ registers BLOB NOT NULL CHECK(length(registers)=1024),
+ PRIMARY KEY(app_uid,hour_s), FOREIGN KEY(app_uid) REFERENCES applications(uid)
+);
+CREATE TABLE catalog_state(
+ id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL CHECK(revision>=0),
+ ranking_salt BLOB NOT NULL CHECK(length(ranking_salt)=32)
+);
+CREATE TABLE homepage_pins(
+ app_uid TEXT PRIMARY KEY, position INTEGER NOT NULL UNIQUE CHECK(position>=0),
+ FOREIGN KEY(app_uid) REFERENCES applications(uid)
+);
+INSERT INTO catalog_state VALUES(1,0,randomblob(32));
+-- Transactional deletion receipts make physical cleanup restartable after a crash.
+CREATE TABLE pending_object_deletes(path TEXT PRIMARY KEY);

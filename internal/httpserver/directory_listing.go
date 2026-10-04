@@ -27,7 +27,7 @@ func (s *Server) directoryList(w http.ResponseWriter, r *http.Request, parts []s
 	}
 	page, ok := positivePage(r.URL.Query().Get("page"), 1)
 	limit, okLimit := positivePage(r.URL.Query().Get("limit"), 12)
-	if !ok || !okLimit || limit > 100 || !utf8.ValidString(q) || utf8.RuneCountInString(q) > 128 || (state != "current" && state != "disabled" && state != "deleted") {
+	if !ok || !okLimit || limit > 100 || !utf8.ValidString(q) || utf8.RuneCountInString(q) > 128 || (state != "enabled" && state != "current" && state != "disabled" && state != "deleted") {
 		fail(w, 400, "Invalid directory page or search")
 		return
 	}

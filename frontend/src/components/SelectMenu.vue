@@ -178,6 +178,7 @@ watch(
         :key="item.value"
         :id="`${id}-${index}`"
         role="option"
+        :data-value="item.value"
         :aria-selected="active === index"
         :class="[
           'popover-option',

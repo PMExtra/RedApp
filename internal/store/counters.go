@@ -32,6 +32,15 @@ func (s *Store) add(app, name string, n int64) error {
 		return err
 	}
 	defer tx.Rollback()
+	if app != "" {
+		exists, e := PrivateApplicationExists(tx, app)
+		if e != nil {
+			return e
+		}
+		if !exists {
+			return nil
+		}
+	}
 	at := time.Now().Unix()
 	if err = increment(tx, "global", "", key, n, at); err != nil {
 		return err

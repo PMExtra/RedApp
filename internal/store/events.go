@@ -24,6 +24,15 @@ func (s *Store) RecordEvent(e Event) error {
 		return err
 	}
 	defer tx.Rollback()
+	if e.AppID != "" {
+		exists, err := PrivateApplicationExists(tx, e.AppID)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return nil
+		}
+	}
 	var app any
 	if e.AppID != "" {
 		app = e.AppID

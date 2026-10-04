@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AutoRefresh from "../components/AutoRefresh.vue";
 import { ref } from "vue";
 import { type Metric } from "../api";
 import { usePageStatus } from "../composables/usePageStatus";
@@ -28,15 +29,11 @@ const activeMetric = ref<Metric>();
       ><span v-else>—</span></span
     >
     <div class="refresh-actions">
-      <button
-        class="secondary auto-refresh"
-        :aria-pressed="automatic"
-        :title="t('Refresh every 5 seconds')"
-        @click="automatic = !automatic"
+      <AutoRefresh v-model="automatic" /><button
+        class="secondary"
+        :disabled="loading"
+        @click="refresh"
       >
-        <Icon name="refresh" />{{ t("Auto refresh") }}
-        <span>{{ automatic ? t("On") : t("Off") }}</span></button
-      ><button class="secondary" :disabled="loading" @click="refresh">
         {{ loading ? t("Refreshing…") : t("Refresh") }}
       </button>
     </div>

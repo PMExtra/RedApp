@@ -20,7 +20,7 @@ func ValidVendor(id string) bool {
 		return false
 	}
 	switch id {
-	case "admin", "api", "assets", "health":
+	case "admin", "api", "assets", "health", "all":
 		return false
 	}
 	return true

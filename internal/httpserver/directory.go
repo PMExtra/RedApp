@@ -12,6 +12,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/apps/builtin"
 	"github.com/PMExtra/RedApp/internal/distributor"
+	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/media"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -72,6 +73,7 @@ func (s *Server) setDirectoryTTL(key string, expected int64, seconds int) (int64
 }
 
 type directoryInput struct {
+	ConfirmKey      string               `json:"confirm_key"`
 	Revision        int64                `json:"revision"`
 	ID              string               `json:"id"`
 	Name            *store.LocalizedText `json:"name"`
@@ -157,7 +159,7 @@ func directoryError(w http.ResponseWriter, err error) {
 		problem(w, 409, "DIRECTORY_REVISION_CONFLICT", "Configuration changed; reload before saving")
 	case errors.Is(err, sql.ErrNoRows):
 		problem(w, 404, "DIRECTORY_NOT_FOUND", "Vendor or application not found")
-	case errors.Is(err, store.ErrDirectoryExists), errors.Is(err, store.ErrDirectoryDeleted), errors.Is(err, store.ErrVendorHasApplications):
+	case errors.Is(err, download.ErrTransfersActive), errors.Is(err, store.ErrBuiltinTemplate), errors.Is(err, store.ErrDirectoryExists), errors.Is(err, store.ErrDirectoryDeleted), errors.Is(err, store.ErrVendorHasApplications):
 		problem(w, 409, "DIRECTORY_CONFLICT", err.Error())
 	case errors.Is(err, store.ErrInvalidDirectory):
 		problem(w, 400, "INVALID_DIRECTORY", err.Error())
@@ -170,6 +172,33 @@ func directoryError(w http.ResponseWriter, err error) {
 func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 	endpoint := strings.TrimPrefix(r.URL.Path, "/admin/api/")
 	parts := strings.Split(endpoint, "/")
+	if endpoint == "assets/builtin-icon" {
+		if r.Method != http.MethodGet || !queryAllowed(r, "path") {
+			fail(w, 400, "Invalid icon request")
+			return true
+		}
+		asset, ok := builtin.BrandAsset(r.URL.Query().Get("path"))
+		if !ok {
+			fail(w, 404, "Icon not found")
+			return true
+		}
+		w.Header().Set("Content-Type", asset.ContentType)
+		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
+		w.Write(asset.Body)
+		return true
+	}
+	if len(parts) == 3 && parts[0] == "vendors" && parts[2] == "template" {
+		s.vendorTemplateAPI(w, r, parts[1])
+		return true
+	}
+	if endpoint == "settings/homepage" {
+		s.homepageAPI(w, r)
+		return true
+	}
+	if len(parts) == 4 && parts[0] == "apps" && parts[3] == "template" {
+		s.templateAPI(w, r, parts[1]+"/"+parts[2])
+		return true
+	}
 	if len(parts) == 4 && parts[0] == "apps" && parts[3] == "instructions" {
 		s.instructionsAPI(w, r, parts[1]+"/"+parts[2])
 		return true
@@ -294,10 +323,11 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 			break
 		}
 		if r.Method == http.MethodDelete {
-			err = s.DB.DeleteVendor(parts[1], in.Revision)
-			if err == nil {
-				row, err = s.DB.Vendor(parts[1])
+			if in.ConfirmKey != parts[1] {
+				fail(w, 400, "Confirm the exact vendor ID for permanent deletion")
+				return true
 			}
+			err = s.DB.PermanentlyDeleteVendor(parts[1], in.Revision)
 		} else if r.Method == http.MethodPatch {
 			changes := store.VendorChanges{Name: row.Name, Description: row.Description, Icon: row.Icon, Enabled: row.Enabled}
 			if in.Name != nil {
@@ -326,9 +356,15 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 			break
 		}
 		if r.Method == http.MethodDelete {
-			err = s.DB.DeleteApplication(key, in.Revision)
-			if err == nil {
-				row, err = s.DB.Application(key)
+			if in.ConfirmKey != key {
+				fail(w, 400, "Confirm the exact application key for permanent deletion")
+				return true
+			}
+			remove := func() error { return s.DB.PermanentlyDeleteApplication(key, in.Revision) }
+			if s.Downloads != nil {
+				err = s.Downloads.PurgeApplication(row.UID, remove)
+			} else {
+				err = remove()
 			}
 		} else if r.Method == http.MethodPatch {
 			input := store.ApplicationInput{ID: row.ID, Name: row.Name, Description: row.Description, Icon: row.Icon, Provider: row.Provider, BaseURL: row.BaseURL, BaseURLs: row.BaseURLs, SourceStrategy: row.SourceStrategy, CacheTTLSeconds: row.CacheTTLSeconds, Enabled: row.Enabled}
@@ -390,6 +426,10 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 	if err != nil {
 		directoryError(w, err)
 	} else {
+		if r.Method == http.MethodDelete {
+			cleanupPending := s.DB.ProcessPendingDeletes(s.Dir) != nil
+			result = map[string]any{"deleted": true, "cleanup_pending": cleanupPending}
+		}
 		reply(w, status, result)
 	}
 	return true

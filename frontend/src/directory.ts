@@ -1,5 +1,5 @@
 import { ref } from "vue";
-import { api } from "./api";
+import { api, isCancellation } from "./api";
 import type { LocalizedText } from "./site";
 import type { ProviderCapabilities } from "./bootstrap";
 
@@ -11,6 +11,7 @@ export type ProviderKey =
   | "claude-code";
 export type SourceStrategy = "" | "ordered" | "round_robin" | "random";
 export interface Vendor {
+  has_template?: boolean;
   uid: string;
   id: string;
   name: LocalizedText;
@@ -21,6 +22,7 @@ export interface Vendor {
   deleted_at?: string | null;
 }
 export interface ManagedApplication extends Vendor {
+  builtin_template?: boolean;
   key: string;
   vendor_uid: string;
   vendor_id: string;
@@ -112,4 +114,11 @@ export function applicationEnabled(app: ManagedApplication) {
   return (
     app.enabled && !app.deleted_at && !!vendor?.enabled && !vendor.deleted_at
   );
+}
+
+// Compiled brand icons remain visible to administrators when an app is disabled.
+export function directoryIcon(path: string): string {
+  return path && !path.startsWith("/assets/icons/")
+    ? `/admin/api/assets/builtin-icon?path=${encodeURIComponent(path)}`
+    : path;
 }

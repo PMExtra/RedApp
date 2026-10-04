@@ -8,7 +8,7 @@ import (
 )
 
 // Instructions is portable application configuration, separate from generated
-// installer commands and source/cache identity. Text is rendered as plain text.
+// installer commands and source/cache identity. Rendering supports Markdown and trusted administrator-authored HTML documents.
 type Instructions struct {
 	LocalizedText
 	Revision int64 `json:"revision"`
@@ -19,6 +19,12 @@ func (s *Store) Instructions(uid string) (Instructions, error) {
 	err := s.DB.QueryRow(`SELECT en,zh_cn,revision FROM application_instructions WHERE app_uid=?`, uid).Scan(&out.En, &out.ZhCN, &out.Revision)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = nil
+		var key, provider string
+		if e := s.DB.QueryRow(`SELECT v.id||'/'||a.id,a.provider FROM applications a JOIN vendors v ON v.uid=a.vendor_uid WHERE a.uid=?`, uid).Scan(&key, &provider); e == nil {
+			if template, ok := BuiltinApplicationTemplate(key); ok && template.Application.Provider == provider {
+				out.LocalizedText = template.Instructions
+			}
+		}
 	}
 	return out, err
 }

@@ -50,7 +50,8 @@ func (s *Server) generalFile(w http.ResponseWriter, r *http.Request) bool {
 		fail(w, 503, "Failed to record request")
 		return true
 	}
-	if err = s.HTTPCache.Serve(w, r, entry, path); err != nil {
+	receipt := &downloadReceipt{ResponseWriter: w}
+	if err = s.HTTPCache.Serve(receipt, r, entry, path); err != nil {
 		switch {
 		case errors.Is(err, store.ErrSourceInactive):
 			problem(w, 409, "SOURCE_CHANGED", "Application source changed; retry the request")
@@ -59,6 +60,9 @@ func (s *Server) generalFile(w http.ResponseWriter, r *http.Request) bool {
 		default:
 			fail(w, 502, "Unable to serve the requested file")
 		}
+	}
+	if err == nil {
+		s.finishDownload(receipt, r, entry.UID)
 	}
 	return true
 }

@@ -7,7 +7,7 @@ import {
   watch,
   type Ref,
 } from "vue";
-import { api } from "../api";
+import { api, ApiError, isCancellation } from "../api";
 import { signedIn } from "../session";
 export interface NumberedPage<T> {
   items: T[];
@@ -85,7 +85,7 @@ export function useNumberedCollection<T>(
         !Number.isSafeInteger(data.total) ||
         data.total < 0
       )
-        throw Error("Invalid page response");
+        throw new ApiError({ code: "INVALID_RESPONSE" }, 200);
       items.value = data.items;
       page.value = data.page;
       total.value = data.total;
@@ -93,7 +93,7 @@ export function useNumberedCollection<T>(
       loaded.value = true;
       error.value = undefined;
     } catch (reason) {
-      if (attempt === ticket) error.value = reason;
+      if (attempt === ticket && !isCancellation(reason)) error.value = reason;
     } finally {
       if (attempt === ticket) {
         controller = undefined;

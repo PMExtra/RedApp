@@ -89,23 +89,26 @@ func TestDynamicProviderInstancesAndDirectoryLifecycle(t *testing.T) {
 	if entry, ok := registry.LookupAny(first.Descriptor.ID); !ok || entry.VendorRevision != 2 {
 		t.Fatal("disabled application or vendor admission revision disappeared")
 	}
-	// A deleted seed stays deleted after another seeding attempt.
+	// Template-key protection is independent of the provider implementation.
 	seed, err := db.Application("openai/codex")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.DeleteApplication(seed.Key, seed.Revision); err != nil {
+	if err = db.DeleteApplication(seed.Key, seed.Revision); err == nil {
+		t.Fatal("built-in template was deleted")
+	}
+	if _, err = db.UpdateApplication(seed.Key, seed.Revision, store.ApplicationChanges{Name: seed.Name, Description: seed.Description, Icon: seed.Icon, BaseURL: seed.BaseURL, CacheTTLSeconds: seed.CacheTTLSeconds, Enabled: false}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SeedDirectory(seedVendors, seedApps); err != nil {
+	if err = db.EnsureEntityTemplates(); err != nil {
 		t.Fatal(err)
 	}
 	registry = load()
 	if _, ok := registry.Lookup(seed.Key); ok {
-		t.Fatal("one-time seed resurrected a deleted app")
+		t.Fatal("template insertion re-enabled an existing application")
 	}
 	if _, ok := registry.LookupAny(seed.Key); !ok {
-		t.Fatal("deleted source disappeared from management/recovery")
+		t.Fatal("disabled template disappeared")
 	}
 	if empty, err := NewDynamic(nil, nil, pool); err != nil || len(empty.Entries()) != 0 {
 		t.Fatal("empty runtime directory is invalid", err)

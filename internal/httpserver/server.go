@@ -217,7 +217,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin/overview", http.StatusTemporaryRedirect)
 		return
 	}
-	if path == "/" || strings.HasPrefix(path, "/admin/") {
+	if path == "/all" || path == "/" || strings.HasPrefix(path, "/admin/") {
 		if r.Method != "GET" {
 			fail(w, 405, "Method not allowed")
 			return
@@ -235,6 +235,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	parts := strings.Split(strings.TrimPrefix(path, "/"), "/")
 	if len(parts) < 2 {
+		v, err := s.DB.Vendor(parts[0])
+		if err == nil && v.Enabled && v.DeletedAt == nil {
+			if r.Method != "GET" {
+				fail(w, 405, "Method not allowed")
+			} else if !queryAllowed(r, "q", "page") {
+				fail(w, 400, "Invalid query")
+			} else {
+				s.page(w, 200)
+			}
+			return
+		}
 		fail(w, 404, "Route not found")
 		return
 	}
@@ -319,7 +330,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.catalogError(w, e)
 			return
 		}
-		s.serveResource(w, r, resource)
+		receipt := &downloadReceipt{ResponseWriter: w}
+		s.serveResource(receipt, r, resource)
+		s.finishDownload(receipt, r, entry.UID)
 	default:
 		fail(w, 404, "Resource not found")
 	}
@@ -335,7 +348,7 @@ func (s *Server) catalogError(w http.ResponseWriter, err error) {
 }
 func (s *Server) validUI(path string) bool {
 	switch path {
-	case "/", "/admin/login", "/admin/overview", "/admin/events", "/admin/settings/site", "/admin/settings/proxy", "/admin/vendors", "/admin/vendors/new":
+	case "/all", "/", "/admin/login", "/admin/overview", "/admin/events", "/admin/settings/site", "/admin/settings/proxy", "/admin/vendors", "/admin/vendors/new":
 		return true
 	}
 	if strings.HasPrefix(path, "/admin/vendors/") {
@@ -432,6 +445,9 @@ func (s *Server) serveResource(w http.ResponseWriter, r *http.Request, resource 
 		if re != nil {
 			if re == io.EOF {
 				s.DB.AddFor(metricApp, "download_success", 1)
+				if receipt, ok := w.(*downloadReceipt); ok && receipt.status == 0 {
+					receipt.WriteHeader(200)
+				}
 				return
 			}
 			s.DB.AddFor(metricApp, "download_errors", 1)

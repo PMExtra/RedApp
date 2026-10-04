@@ -79,8 +79,6 @@ export interface CleanupPreview {
 }
 export interface ProxySettings {
   server: string;
-  has_credentials: boolean;
-  has_password: boolean;
   dns: string;
 }
 export interface APIProblem {
@@ -120,10 +118,32 @@ let unauthorized: (() => void) | undefined;
 export function setUnauthorizedHandler(handler: () => void) {
   unauthorized = handler;
 }
+export function isCancellation(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+// Revalidation adopts an unchanged session without revoking its active requests.
+export function recheckCSRF(value: string) {
+  if (value !== csrf) setCSRF(value);
+}
 export function setCSRF(value: string) {
   // Every session transition revokes old requests, even if a token is reused.
   sessionGeneration++;
   csrf = value;
+}
+export async function fetchResponse(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (reason) {
+    if (init?.signal?.aborted || isCancellation(reason))
+      throw new DOMException("Cancelled", "AbortError");
+    throw new ApiError(
+      { code: "NETWORK_ERROR", message: "Network request failed" },
+      0,
+    );
+  }
 }
 export async function api<T>(
   path: string,
@@ -133,18 +153,35 @@ export async function api<T>(
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
 ): Promise<T> {
   const generation = sessionGeneration;
-  const response = await fetch("/admin/api/" + path, {
+  const response = await fetchResponse("/admin/api/" + path, {
     method: method || (body === undefined ? "GET" : "POST"),
     credentials: "same-origin",
     headers: {
-      ...(body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+      ...(body instanceof FormData
+        ? {}
+        : { "Content-Type": "application/json" }),
       "X-CSRF-Token": csrf,
       ...extraHeaders,
     },
-    body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body),
+    body:
+      body === undefined
+        ? undefined
+        : body instanceof FormData
+          ? body
+          : JSON.stringify(body),
     signal,
+  }).catch((reason) => {
+    if (generation !== sessionGeneration)
+      throw new DOMException("Session changed", "AbortError");
+    throw reason;
   });
-  const data = await response.json().catch(() => ({}));
+  let data: any,
+    invalidJSON = false;
+  try {
+    data = await response.json();
+  } catch {
+    invalidJSON = true;
+  }
   // Fetch may have resolved before cancellation, while its JSON body was pending.
   // Check ownership before returning sensitive data or invoking the global 401 handler.
   if (signal?.aborted || generation !== sessionGeneration)
@@ -162,6 +199,11 @@ export async function api<T>(
       response.status,
     );
   }
+  if (invalidJSON)
+    throw new ApiError(
+      { code: "INVALID_RESPONSE", message: "Invalid server response" },
+      response.status,
+    );
   return data as T;
 }
 export function bytes(value: number | null | undefined): string {

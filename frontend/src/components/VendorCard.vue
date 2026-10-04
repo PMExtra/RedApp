@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import {
+  directoryIcon,
   applicationPath,
   type ManagedApplication,
   type Vendor,
@@ -13,18 +14,21 @@ export interface Card extends Vendor {
   app_total: number;
 }
 const props = defineProps<{ vendor: Card; query: string; state: string }>();
-const expanded = ref(!!props.query);
+const expanded = ref(false);
 watch(
   () => props.query,
-  (value) => (expanded.value = !!value),
+  () => (expanded.value = false),
 );
 </script>
 <template>
-  <article class="panel vendor-card">
+  <article
+    class="panel vendor-card"
+    :class="{ 'is-disabled': !vendor.enabled }"
+  >
     <div class="directory-heading">
       <img
         v-if="vendor.icon"
-        :src="vendor.icon"
+        :src="directoryIcon(vendor.icon)"
         alt=""
         width="40"
         height="40"
@@ -32,7 +36,10 @@ watch(
       <h2>
         <RouterLink :to="`/admin/vendors/${vendor.id}/settings`">{{
           vendor.name[language]
-        }}</RouterLink>
+        }}</RouterLink
+        ><span class="app-count">{{
+          t("{count} applications", { count: vendor.app_total })
+        }}</span>
       </h2>
       <span v-if="vendor.deleted_at" class="state-label">{{
         t("Deleted")
@@ -44,9 +51,6 @@ watch(
     <p v-if="vendor.description[language]" class="muted">
       {{ vendor.description[language] }}
     </p>
-    <p class="small-text muted">
-      {{ t("{count} applications", { count: vendor.app_total }) }}
-    </p>
     <DirectoryApps
       v-if="expanded"
       :vendor="vendor"
@@ -54,38 +58,49 @@ watch(
       :state="state"
     />
     <ul v-else class="directory-apps">
-      <li v-for="app in vendor.apps" :key="app.uid">
+      <li v-if="!vendor.deleted_at" class="add-application">
+        <RouterLink :to="`/admin/vendors/${vendor.id}/apps/new`"
+          ><Icon name="plus" :size="24" />{{ t("Add application") }}</RouterLink
+        >
+      </li>
+      <li
+        v-for="app in vendor.apps"
+        :key="app.uid"
+        :class="{ 'is-disabled': !app.enabled || !vendor.enabled }"
+      >
         <RouterLink
           :to="applicationPath(app, app.deleted_at ? 'settings' : undefined)"
           ><img
             v-if="app.icon"
-            :src="app.icon"
+            :src="directoryIcon(app.icon)"
             alt=""
             width="24"
             height="24"
-          /><span>{{ app.name[language] }}</span></RouterLink
+          /><Icon v-else name="box" :size="32" /><span>{{
+            app.name[language]
+          }}</span></RouterLink
         >
         <span v-if="app.deleted_at" class="state-label">{{ t("Deleted") }}</span
         ><span
           v-else-if="!app.enabled || !vendor.enabled"
           class="state-label"
-          >{{ t("Disabled") }}</span
+          >{{
+            app.enabled && !vendor.enabled
+              ? t("Disabled by vendor")
+              : t("Disabled")
+          }}</span
         >
       </li>
     </ul>
     <div class="vendor-actions">
       <button
-        v-if="vendor.app_total > 5 && !query"
+        v-if="vendor.app_total > 5"
         class="secondary"
         :aria-expanded="expanded"
         @click="expanded = !expanded"
       >
-        {{ expanded ? t("Collapse") : t("Show all applications") }}</button
-      ><RouterLink
-        v-if="!vendor.deleted_at"
-        :to="`/admin/vendors/${vendor.id}/apps/new`"
-        >{{ t("Add application") }}</RouterLink
-      >
+        {{ expanded ? t("Collapse") : t("Show all applications") }}
+      </button>
     </div>
   </article>
 </template>

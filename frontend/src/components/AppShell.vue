@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { inject } from "vue";
+import { routerKey } from "vue-router";
+const router = inject(routerKey, undefined);
 import {
   bootstrap,
   bootstrapError,
@@ -6,6 +9,7 @@ import {
   loadBootstrap,
 } from "../bootstrap";
 import { language, setLanguage, t, type Language } from "../i18n";
+import PublicSearch from "./PublicSearch.vue";
 import SelectMenu from "./SelectMenu.vue";
 import { siteSettings, siteTitle } from "../site";
 const props = defineProps<{ admin?: boolean }>();
@@ -25,6 +29,7 @@ const failed = bootstrapError;
           siteSettings.subtitle[language]
         }}</span></RouterLink
       >
+      <PublicSearch v-if="router" />
       <div class="topbar-actions">
         <div class="language-control">
           <SelectMenu

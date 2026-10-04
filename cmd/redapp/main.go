@@ -149,9 +149,11 @@ func serve(c config.Deployment) error {
 		return err
 	}
 	defer db.DB.Close()
-	// Initialization intentionally creates no vendors or applications. Mark it
-	// complete so restarting never restores old defaults or overrides edits.
-	if err = db.SeedDirectory(nil, nil); err != nil {
+	// Add missing entity templates disabled, preserving every existing configuration.
+	if err = db.ProcessPendingDeletes(guard.Directory); err != nil {
+		return err
+	}
+	if err = db.EnsureEntityTemplates(); err != nil {
 		return err
 	}
 	upstream := distributor.NewPool()

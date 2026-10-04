@@ -37,6 +37,8 @@ func appState(state string) string {
 	switch state {
 	case "deleted":
 		return `(a.deleted_at_s IS NOT NULL OR v.deleted_at_s IS NOT NULL)`
+	case "enabled":
+		return `(a.deleted_at_s IS NULL AND v.deleted_at_s IS NULL AND a.enabled=1 AND v.enabled=1)`
 	case "disabled":
 		return `(a.deleted_at_s IS NULL AND v.deleted_at_s IS NULL AND (a.enabled=0 OR v.enabled=0))`
 	default:
@@ -44,7 +46,7 @@ func appState(state string) string {
 	}
 }
 func validDirectoryPage(page, limit int, state string) bool {
-	return page >= 1 && page <= 1000000000 && limit >= 1 && limit <= 100 && (state == "current" || state == "disabled" || state == "deleted")
+	return page >= 1 && page <= 1000000000 && limit >= 1 && limit <= 100 && (state == "enabled" || state == "current" || state == "disabled" || state == "deleted")
 }
 func (s *Store) DirectoryPage(page, limit int, q, state string) (Page[VendorCard], error) {
 	if !validDirectoryPage(page, limit, state) {
@@ -56,6 +58,9 @@ func (s *Store) DirectoryPage(page, limit int, q, state string) (Page[VendorCard
 	}
 	defer tx.Rollback()
 	condition := "v.deleted_at_s IS NULL"
+	if state == "enabled" {
+		condition = `v.deleted_at_s IS NULL AND v.enabled=1 AND EXISTS(SELECT 1 FROM applications a WHERE a.vendor_uid=v.uid AND a.deleted_at_s IS NULL AND a.enabled=1)`
+	}
 	if state == "disabled" {
 		condition = `v.deleted_at_s IS NULL AND (v.enabled=0 OR EXISTS(SELECT 1 FROM applications a WHERE a.vendor_uid=v.uid AND a.deleted_at_s IS NULL AND a.enabled=0))`
 	}

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AutoRefresh from "../components/AutoRefresh.vue";
 import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { appAPI } from "../bootstrap";
@@ -28,13 +29,11 @@ watch(path, () => (activeMetric.value = undefined));
         }}</time></span
       >
       <div class="refresh-actions">
-        <button
+        <AutoRefresh v-model="automatic" /><button
           class="secondary"
-          :aria-pressed="automatic"
-          @click="automatic = !automatic"
+          :disabled="loading"
+          @click="refresh"
         >
-          {{ t("Auto refresh") }} {{ automatic ? t("On") : t("Off") }}</button
-        ><button class="secondary" :disabled="loading" @click="refresh">
           {{ t("Refresh") }}
         </button>
       </div>

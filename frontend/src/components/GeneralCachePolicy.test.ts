@@ -1,3 +1,4 @@
+import { selectValue } from "../testSupport";
 import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import GeneralCachePolicy from "./GeneralCachePolicy.vue";
@@ -72,8 +73,8 @@ it("preserves rule IDs and order, converts cleanup days to seconds, and saves th
   expect(wrapper.find(".auto-cleanup-status").exists()).toBe(false);
   expect(fetch.mock.calls.some(([url]) => url.endsWith("/status"))).toBe(false);
   expect(
-    (wrapper.get('[name="stale_fallback"]').element as HTMLInputElement)
-      .checked,
+    wrapper.get('[name="stale_fallback"]').attributes("aria-checked") ===
+      "true",
   ).toBe(true);
   const first = wrapper.get(".ttl-rules").findAll(".policy-rule")[0]!;
   await first
@@ -86,19 +87,17 @@ it("preserves rule IDs and order, converts cleanup days to seconds, and saves th
         .element as HTMLInputElement
     ).value,
   ).toBe("/");
-  await wrapper.get('[name="stale_fallback"]').setValue(false);
+  await wrapper.get('[name="stale_fallback"]').trigger("click");
   await wrapper
     .get(".auto-cleanup-rules")
     .findAll("button")
     .find((button) => button.text() === "Add automatic cleanup rule")!
     .trigger("click");
   const rule = wrapper.get(".auto-cleanup-rules .policy-rule");
-  await rule.get('[name="match_type"]').setValue("re2");
+  await selectValue(rule.get('[name="match_type"]'), "re2");
   await rule.get('[name="match_pattern"]').setValue("/releases/.*");
-  await rule.get('[name="rule_basis"]').setValue("fetched_at");
-  expect(
-    (rule.get('[name="cleanup_unit"]').element as HTMLSelectElement).value,
-  ).toBe("86400");
+  await selectValue(rule.get('[name="rule_basis"]'), "fetched_at");
+  expect(rule.get('[name="cleanup_unit"] [role=combobox]').text()).toBe("Days");
   await rule.get('[name="cleanup_age"]').setValue("7");
   await wrapper.get(".cache-policy form").trigger("submit");
   await flushPromises();
@@ -185,8 +184,8 @@ it("preserves a CAS conflict draft during status polling and cancels policy load
   await flushPromises();
   expect(wrapper.find('[name="rule_ttl"]').exists()).toBe(false);
   expect(
-    (wrapper.get('[name="stale_fallback"]').element as HTMLInputElement)
-      .checked,
+    wrapper.get('[name="stale_fallback"]').attributes("aria-checked") ===
+      "true",
   ).toBe(false);
   expect(wrapper.find(".policy-error").exists()).toBe(false);
   wrapper.unmount();

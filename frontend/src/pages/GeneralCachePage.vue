@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import SelectMenu from "../components/SelectMenu.vue";
+import AutoRefresh from "../components/AutoRefresh.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { api, ApiError, bytes } from "../api";
@@ -233,14 +235,7 @@ onUnmounted(invalidate);
         </p>
       </div>
       <div class="form-actions">
-        <button
-          class="secondary auto-refresh"
-          :aria-pressed="automatic"
-          :title="t('Refresh every 5 seconds')"
-          @click="automatic = !automatic"
-        >
-          {{ t("Auto refresh") }} {{ automatic ? t("On") : t("Off") }}</button
-        ><button
+        <AutoRefresh v-model="automatic" /><button
           class="secondary cache-refresh"
           :disabled="loading"
           @click="refresh"
@@ -370,11 +365,15 @@ onUnmounted(invalidate);
           />
           <label
             >{{ t("Select files by")
-            }}<select v-model="basis" name="basis">
-              <option value="fetched_at">{{ t("Fetched at") }}</option>
-              <option value="last_access">{{ t("Last accessed") }}</option>
-            </select></label
-          >
+            }}<SelectMenu
+              v-model="basis"
+              name="basis"
+              :label="t('Select files by')"
+              :options="[
+                { value: 'fetched_at', label: t('Fetched at') },
+                { value: 'last_access', label: t('Last accessed') },
+              ]"
+          /></label>
           <p class="muted">
             {{
               basis === "fetched_at"

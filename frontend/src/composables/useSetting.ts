@@ -1,5 +1,5 @@
 import { computed, onUnmounted, ref, watch, type Ref } from "vue";
-import { api, putSetting } from "../api";
+import { api, isCancellation, putSetting } from "../api";
 import { useDirtyDraft } from "./useDirtyDraft";
 export function useSetting<T extends object>(
   path: Ref<string>,
@@ -45,7 +45,7 @@ export function useSetting<T extends object>(
       );
       if (attempt === ticket) accept(value);
     } catch (reason) {
-      if (attempt === ticket) error.value = reason;
+      if (attempt === ticket && !isCancellation(reason)) error.value = reason;
     } finally {
       if (attempt === ticket) {
         controller = undefined;
@@ -79,7 +79,7 @@ export function useSetting<T extends object>(
         saved.value = true;
       }
     } catch (reason) {
-      if (attempt === ticket) error.value = reason;
+      if (attempt === ticket && !isCancellation(reason)) error.value = reason;
     } finally {
       if (attempt === ticket) {
         controller = undefined;

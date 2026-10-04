@@ -2024,3 +2024,218 @@ textarea {
 .download-list a {
   overflow-wrap: anywhere;
 }
+
+/* Shared control geometry and states across administration and public navigation. */
+:root {
+  --control-height: 40px;
+  --control-radius: 8px;
+}
+button,
+.button-link,
+input:not([type="file"]),
+.select-menu > button {
+  min-height: var(--control-height);
+  border-radius: var(--control-radius);
+  box-sizing: border-box;
+}
+button,
+.button-link {
+  align-items: center;
+  justify-content: center;
+  line-height: 1.3;
+}
+button:disabled,
+input:disabled,
+textarea:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+button:focus-visible,
+.button-link:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.page-heading,
+.application-header {
+  align-items: center;
+}
+.page-heading > .button-link,
+.page-heading > button {
+  flex: 0 0 auto;
+}
+button.switch-control {
+  display: inline-flex;
+  gap: 0.6rem;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  padding: 0.45rem 0.7rem;
+  font-size: 0.85rem;
+}
+.switch-track {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 32px;
+  height: 19px;
+  border-radius: 20px;
+  padding: 2px;
+  background: #8798a0;
+  box-sizing: border-box;
+}
+.switch-track > span {
+  width: 15px;
+  height: 15px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.15s;
+}
+[role="switch"][aria-checked="true"] .switch-track {
+  background: var(--accent);
+}
+[role="switch"][aria-checked="true"] .switch-track > span {
+  transform: translateX(13px);
+}
+.switch-state {
+  min-width: 2em;
+  color: var(--muted);
+}
+.refresh-actions button {
+  min-height: var(--control-height);
+}
+.directory-apps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  padding: 0;
+  list-style: none;
+}
+.directory-apps li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: 112px;
+  padding: 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  align-items: center;
+  text-align: center;
+}
+.directory-apps li > a {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  overflow-wrap: anywhere;
+}
+.directory-apps li img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+}
+.directory-apps .add-application {
+  border-style: dashed;
+  justify-content: center;
+}
+.vendor-card.is-disabled > .directory-heading,
+.directory-apps .is-disabled {
+  color: #88939b;
+}
+.vendor-card.is-disabled > .directory-heading a,
+.directory-apps .is-disabled a {
+  color: inherit;
+}
+.vendor-card.is-disabled > .directory-heading img,
+.directory-apps .is-disabled img {
+  filter: grayscale(1) brightness(0.7);
+  opacity: 0.7;
+}
+.directory-heading .app-count {
+  font-size: 0.82rem;
+  font-weight: 400;
+  color: var(--muted);
+  margin-left: 0.65rem;
+}
+.public-section {
+  margin: 2rem 0;
+}
+.public-search {
+  position: relative;
+  width: min(30vw, 360px);
+  margin-left: auto;
+}
+.public-search input {
+  width: 100%;
+}
+.search-popover {
+  position: absolute;
+  z-index: 35;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  min-width: 240px;
+  padding: 0.65rem;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px #182c371c;
+  max-height: 60vh;
+  overflow: auto;
+}
+.search-popover ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.search-popover li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.6rem;
+  cursor: pointer;
+  border-radius: 5px;
+}
+.search-popover li:hover,
+.search-popover li[aria-selected="true"] {
+  background: var(--soft);
+}
+.search-popover small {
+  color: var(--muted);
+}
+.breadcrumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 1.5rem;
+  color: var(--muted);
+}
+.instructions-document {
+  width: 100%;
+  border: 0;
+  min-height: 220px;
+}
+.catalog-search {
+  display: block;
+  max-width: 36rem;
+  margin-bottom: 1.5rem;
+}
+.ranking-count {
+  color: var(--accent);
+  font-size: 0.85rem;
+}
+@media (max-width: 680px) {
+  .topbar {
+    flex-wrap: wrap;
+  }
+  .public-search {
+    order: 3;
+    width: 100%;
+    margin: 0;
+  }
+  .search-popover {
+    min-width: 0;
+  }
+}

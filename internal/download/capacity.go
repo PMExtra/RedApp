@@ -2,6 +2,7 @@ package download
 
 import (
 	"errors"
+	"strings"
 	"sync"
 )
 
@@ -50,4 +51,36 @@ func (m *Manager) MaxArtifactBytes() int64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.maxBytes
+}
+
+// Permanent removal is rare and requires an idle shared transfer pool. Holding
+// admission prevents new uploads/readers while the relational deletion commits.
+// Existing transfers are never cancelled to make deletion succeed.
+var ErrTransfersActive = errors.New("Transfers are active; retry permanent deletion when they finish")
+
+func (m *Manager) PurgeApplication(uid string, remove func() error) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.jobs != 0 || m.readersLocked() != 0 {
+		return ErrTransfersActive
+	}
+	if err := remove(); err != nil {
+		return err
+	}
+	prefix := "app/" + uid + "-e"
+	for id, g := range m.all {
+		if strings.HasPrefix(g.Resource.Application, prefix) {
+			if g.file != nil {
+				g.file.Close()
+			}
+			delete(m.current, g.Resource.ID)
+			delete(m.all, id)
+		}
+	}
+	for key := range m.upstreams {
+		if strings.HasPrefix(key, prefix) {
+			delete(m.upstreams, key)
+		}
+	}
+	return nil
 }

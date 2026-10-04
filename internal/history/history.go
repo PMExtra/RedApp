@@ -55,6 +55,15 @@ func (h *History) RecordScoped(at time.Time, observations []Observation) error {
 		if observation.Scope != "global" && observation.Scope != "app" || observation.Scope == "global" && observation.AppID != "" || observation.Scope == "app" && !store.ValidAppID(observation.AppID) {
 			return errors.New("Invalid metric scope")
 		}
+		if observation.AppID != "" {
+			exists, e := store.PrivateApplicationExists(tx, observation.AppID)
+			if e != nil {
+				return e
+			}
+			if !exists {
+				continue
+			}
+		}
 		for _, metric := range observation.Metrics {
 			definition, ok := definitionFor(observation.Scope, metric.Key)
 			if !ok || definition.Retired {

@@ -1,46 +1,40 @@
 import { mount, flushPromises } from "@vue/test-utils";
 import { it, expect, vi } from "vitest";
 import ProxySettings from "./ProxySettings.vue";
-it("keeps secrets hidden and sends explicit preserve/replace/clear actions", async () => {
-  const fetch = vi.fn(async (_url: string, options?: RequestInit) => ({
-    ok: true,
-    status: 200,
-    json: async () => ({
-      revision: 0,
-      server: "http://proxy.example:3128",
-      has_credentials: true,
-      has_password: true,
-      dns: "proxy",
-    }),
-  }));
+it("edits the complete saved URL and clears it without credential actions", async () => {
+  let server = "http://user:p%40ss@proxy.example:3128",
+    revision = 4;
+  const fetch = vi.fn(async (_url: string, options?: RequestInit) => {
+    if (options?.body) {
+      expect(options.headers).toMatchObject({
+        "If-Match": '\"' + revision + '\"',
+      });
+      server = JSON.parse(options.body as string).server;
+      revision++;
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ server, revision, dns: server ? "proxy" : "local" }),
+    };
+  });
   vi.stubGlobal("fetch", fetch);
   const wrapper = mount(ProxySettings);
   await flushPromises();
-  expect(wrapper.find("input[type=password]").exists()).toBe(false);
-  await wrapper.find("form").trigger("submit");
+  expect((wrapper.get("input").element as HTMLInputElement).value).toBe(server);
+  expect(wrapper.findAll("input")).toHaveLength(1);
+  await wrapper
+    .get("input")
+    .setValue("socks5://next:secret@proxy.example:1080");
+  await wrapper.get("form").trigger("submit");
   await flushPromises();
   expect(JSON.parse(fetch.mock.calls.at(-1)![1]!.body as string)).toEqual({
-    server: "http://proxy.example:3128",
-    username: "",
-    password: "",
-    password_action: "keep",
+    server: "socks5://next:secret@proxy.example:1080",
   });
-  await wrapper.find("[role=combobox]").trigger("click");
-  await wrapper.findAll("[role=option]")[1]!.trigger("click");
-  await wrapper.find("input[type=password]").setValue("fixture-secret");
-  await wrapper.find("form").trigger("submit");
+  await wrapper.get("input").setValue("");
+  await wrapper.get("form").trigger("submit");
   await flushPromises();
-  expect(JSON.parse(fetch.mock.calls.at(-1)![1]!.body as string).password).toBe(
-    "fixture-secret",
-  );
-  expect(wrapper.html()).not.toContain("fixture-secret");
-  await wrapper.find("[role=combobox]").trigger("click");
-  await wrapper.findAll("[role=option]")[2]!.trigger("click");
-  await wrapper.find("form").trigger("submit");
-  await flushPromises();
-  expect(
-    JSON.parse(fetch.mock.calls.at(-1)![1]!.body as string).password_action,
-  ).toBe("clear");
+  expect(server).toBe("");
   wrapper.unmount();
   vi.unstubAllGlobals();
 });

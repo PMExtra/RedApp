@@ -104,19 +104,22 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         assert bootstrap["version"] == version_output.split()[1]
         assert bootstrap["public_origin"] == env["REDAPP_PUBLIC_URL"]
         apps = bootstrap["apps"]
-        assert apps == [], "fresh instance seeded business applications"
+        assert apps == [], "fresh templates must not be publicly enabled"
         for path in ["/api/info", "/apps/codex", "/install.sh"]:
             reject(path, 404)
         reject("/admin/api/status", 401)
         with request("/admin/api/login", {"password": match.group(1)}, "POST") as response:
             csrf = json.load(response)["csrf"]
         assert read("/admin/api/session")["csrf"] == csrf
-        assert read("/admin/api/vendors?page=1&limit=12")["total"] == 0
-        for vendor, app, provider in [("openai", "codex", "codex"), ("anthropic", "claude-code", "claude-code")]:
-            with request("/admin/api/vendors", {"id": vendor, "name": {"en": vendor, "zh-CN": vendor}}, "POST") as response:
-                assert response.status == 201
-            with request(f"/admin/api/vendors/{vendor}/apps", {"id": app, "provider": provider, "name": {"en": app, "zh-CN": app}}, "POST") as response:
-                assert response.status == 201
+        assert read("/admin/api/vendors?page=1&limit=12")["total"] == 2
+        for vendor, app in [("openai", "codex"), ("anthropic", "claude-code")]:
+            v = read(f"/admin/api/vendors/{vendor}")["vendor"]
+            a = read(f"/admin/api/apps/{vendor}/{app}")["app"]
+            assert not v["enabled"] and not a["enabled"] and a["builtin_template"]
+            with request(f"/admin/api/vendors/{vendor}", {"enabled": True}, "PATCH", v["revision"]) as response:
+                assert response.status == 200
+            with request(f"/admin/api/apps/{vendor}/{app}", {"enabled": True}, "PATCH", a["revision"]) as response:
+                assert response.status == 200
         for path in ["/", "/openai/codex", "/anthropic/claude-code", "/admin/settings/site",
                      "/admin/vendors/openai/apps/codex/settings"]:
             with request(path) as response:
@@ -150,7 +153,7 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         assert {source["epoch"] for source in sources} == {1, 2}
         assert [source["epoch"] for source in sources if source["current"]] == [2]
         vendor_path = "/admin/api/vendors/cli-example"
-        reject(vendor_path, 409, {}, "DELETE", vendor["revision"])
+        reject(vendor_path, 409, {"confirm_key": "cli-example"}, "DELETE", vendor["revision"])
         with request(vendor_path, {"enabled": False}, "PATCH", vendor["revision"]) as response:
             vendor = json.load(response)["vendor"]
         assert "cli-example/files" not in {app["id"] for app in read("/api/bootstrap")["apps"]}
@@ -159,12 +162,11 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         with request(vendor_path, {"enabled": True}, "PATCH", vendor["revision"]) as response:
             vendor = json.load(response)["vendor"]
         assert "cli-example/files" in {app["id"] for app in read("/api/bootstrap")["apps"]}
-        with request(app_path, {}, "DELETE", dynamic_app["revision"]) as response:
-            assert json.load(response)["app"]["deleted_at"] is not None
-        assert len(read(app_path + "/sources")["sources"]) == 2
-        reject(app_create, 409, app_input, "POST")  # Deletion reserves the old ID.
-        with request(vendor_path, {}, "DELETE", vendor["revision"]) as response:
-            assert json.load(response)["vendor"]["deleted_at"] is not None
+        with request(app_path, {"confirm_key": "cli-example/files"}, "DELETE", dynamic_app["revision"]) as response:
+            assert json.load(response)["deleted"]
+        reject(app_path + "/sources", 404)
+        with request(vendor_path, {"confirm_key": "cli-example"}, "DELETE", vendor["revision"]) as response:
+            assert json.load(response)["deleted"]
         status = read("/admin/api/status")
         assert status["name"] == "RedApp" and status["disk"]["free_bytes"] > 0
         assert len(status["metrics"]) == 41
@@ -209,11 +211,12 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         assert public["source"] == "environment" and public["override_url"] is None
         proxy_path = "/admin/api/settings/proxy"
         proxy = read(proxy_path)
-        proxy = write(proxy_path, {"server": "http://127.0.0.1:3128", "username": "fixture-user",
-                                  "password": "fixture-only-password", "password_action": "replace"}, proxy["revision"])
-        assert proxy["has_credentials"] and "fixture-only-password" not in json.dumps(proxy)
-        proxy = write(proxy_path, {"server": "", "password_action": "clear"}, proxy["revision"])
-        assert not proxy["has_credentials"]
+        proxy_url = "http://fixture-user:fixture-only-password@127.0.0.1:3128"
+        proxy = write(proxy_path, {"server": proxy_url}, proxy["revision"])
+        assert proxy["server"] == proxy_url
+        assert "fixture-only-password" not in json.dumps(read("/api/bootstrap"))
+        proxy = write(proxy_path, {"server": ""}, proxy["revision"])
+        assert proxy["server"] == ""
         with request("/admin/overview") as response:
             assets = re.findall(r'(?:src|href)="(/assets/[^" ]+)"', response.read().decode())
         assert assets
@@ -236,8 +239,8 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         assert {app["id"] for app in bootstrap["apps"]} == {"openai/codex", "anthropic/claude-code"}, "restart reseeded deleted dynamic entries"
         with request("/admin/api/login", {"password": match.group(1)}, "POST") as response:
             csrf = json.load(response)["csrf"]
-        assert read("/admin/api/apps/cli-example/files")["app"]["deleted_at"] is not None
-        assert len(read("/admin/api/apps/cli-example/files/sources")["sources"]) == 2
+        reject("/admin/api/apps/cli-example/files", 404)
+        reject("/admin/api/apps/cli-example/files/sources", 404)
         for app, ttl in [("openai/codex", 120), ("anthropic/claude-code", 180)]:
             assert read("/admin/api/apps/" + app + "/settings")["channel_ttl_seconds"] == ttl
         subprocess.run([binary, "healthcheck"], env=env, check=True)

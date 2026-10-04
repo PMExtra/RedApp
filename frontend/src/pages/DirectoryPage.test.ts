@@ -1,3 +1,4 @@
+import { selectValue } from "../testSupport";
 import { flushPromises } from "@vue/test-utils";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
@@ -175,7 +176,7 @@ it("creates a bilingual vendor and application with explicit provider defaults a
   expect(router.currentRoute.value.path).toBe("/admin/vendors/acme/settings");
   expect(vendors.at(-1)?.name["zh-CN"]).toBe("示例厂商");
   expect(vendors.at(-1)?.icon).toBe("/assets/icons/example.png");
-  expect(wrapper.get('[name="id"]').attributes("readonly")).toBeDefined();
+  expect(wrapper.get('[name="id"]').attributes("disabled")).toBeDefined();
   await router.push("/admin/vendors/acme/apps/new");
   await flushPromises();
   expect(wrapper.find('[name="base_url"]').exists()).toBe(false);
@@ -298,14 +299,20 @@ it("preserves a revision-conflict draft, guards navigation and discards an old a
 
 it("keeps disabled and deleted applications manageable independently of public bootstrap", async () => {
   apps[0]!.enabled = false;
+  apps[0]!.id = "custom";
+  apps[0]!.key = "openai/custom";
   apps[1]!.deleted_at = "2026-10-03T12:00:00Z";
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     if (url === "/api/bootstrap") return response({ ...boot, apps: [] });
     if (init?.method === "DELETE") {
-      expect(JSON.parse(init.body as string)).toEqual({ revision: 1 });
+      expect(JSON.parse(init.body as string)).toEqual({
+        revision: 1,
+        confirm_key: "openai/custom",
+      });
       apps[0]!.deleted_at = "2026-10-03T13:00:00Z";
       apps[0]!.revision++;
-      return response({ app: apps[0] });
+      apps.splice(0, 1);
+      return response({ deleted: true, cleanup_pending: false });
     }
     return read(url);
   });
@@ -321,7 +328,7 @@ it("keeps disabled and deleted applications manageable independently of public b
     .trigger("click");
   await flushPromises();
   expect(wrapper.get(".directory-page").text()).toContain("Claude Code");
-  await router.push("/admin/vendors/openai/apps/codex/settings");
+  await router.push("/admin/vendors/openai/apps/custom/settings");
   await flushPromises();
   expect(wrapper.find('[name="name-en"]').exists()).toBe(true);
   await wrapper
@@ -329,16 +336,11 @@ it("keeps disabled and deleted applications manageable independently of public b
     .findAll("button")
     .find((button) => button.text() === "Delete")!
     .trigger("click");
-  expect(wrapper.get(".delete-review").text()).toContain("keeps stored data");
+  expect(wrapper.get(".delete-review").text()).toContain("cannot be undone");
   await wrapper.get(".delete-review .danger").trigger("click");
   await flushPromises();
-  expect(wrapper.get(".directory-editor").text()).toContain(
-    "this record is read-only",
-  );
-  expect(
-    wrapper.get(".directory-editor fieldset").attributes("disabled"),
-  ).toBeDefined();
-  expect(wrapper.find(".ttl-form").exists()).toBe(false);
+  expect(router.currentRoute.value.path).toBe("/admin/vendors");
+  expect(wrapper.get(".directory-page").text()).not.toContain("Codex CLI");
   wrapper.unmount();
 });
 
@@ -426,7 +428,7 @@ it("reorders GeneralHttp upstreams with buttons and drag controls and saves only
     "https://second.example/releases/",
     "https://first.example/releases/",
   ]);
-  await editor.get('[name="source_strategy"]').setValue("round_robin");
+  await selectValue(editor.get('[name="source_strategy"]'), "round_robin");
   await editor.get("form").trigger("submit");
   await flushPromises();
   const request = fetch.mock.calls.find(

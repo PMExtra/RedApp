@@ -39,8 +39,8 @@ type directoryHarness struct {
 }
 
 // This fixture explicitly installs release examples for route coverage.
-// Production initializes an empty directory; runtime wiring is otherwise shared.
-func newDirectoryHarness(t *testing.T, dir string) *directoryHarness {
+// Production initializes disabled entity templates; this fixture enables them explicitly.
+func newDirectoryHarness(t *testing.T, dir string, configure ...func(*Server)) *directoryHarness {
 	t.Helper()
 	db, err := store.Open(dir)
 	if err != nil {
@@ -111,6 +111,9 @@ func newDirectoryHarness(t *testing.T, dir string) *directoryHarness {
 		t.Fatal(err)
 	}
 	h.server = &Server{Version: "directory-test", DB: db, Registry: registry, Catalog: catalog.New(db, registry), Downloads: manager, HTTPCache: httpCache, Hosted: hostedFiles, Auth: a, Pool: pool, Upstream: pool, Icons: icons, History: metricHistory, PublicConfig: public, Dir: dir, Started: time.Now()}
+	for _, apply := range configure {
+		apply(h.server)
+	}
 	h.http = httptest.NewServer(h.server)
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -369,59 +372,52 @@ func TestDirectoryHTTPDisableDeleteAndEmptyRestart(t *testing.T) {
 	h.request("GET", "/enterprise/codex/install.sh", nil, 404, nil)
 	data, _ = h.request("GET", "/admin/api/vendors/enterprise", nil, 200, nil)
 	currentVendor := directoryDecode[store.Vendor](t, data, "vendor")
-	h.request("DELETE", "/admin/api/vendors/enterprise", map[string]int64{"revision": currentVendor.Revision}, 409, nil)
+	h.request("DELETE", "/admin/api/vendors/enterprise", map[string]any{"revision": currentVendor.Revision, "confirm_key": "enterprise"}, 409, nil)
 
-	// Deleting all apps/vendors reserves their identities and leaves history and
-	// source records available, while an empty active registry still serves admin.
+	// Built-in keys are protected even when disabled; custom deletion is permanent.
 	data, _ = h.request("GET", "/admin/api/apps", nil, 200, nil)
 	apps := directoryDecode[[]store.Application](t, data, "items")
 	for _, row := range apps {
-		h.request("DELETE", "/admin/api/apps/"+row.Key, map[string]int64{"revision": row.Revision}, 200, nil)
+		if row.BuiltinTemplate {
+			h.request("DELETE", "/admin/api/apps/"+row.Key, map[string]any{"revision": row.Revision, "confirm_key": row.Key}, 409, nil)
+			h.request("PATCH", "/admin/api/apps/"+row.Key, map[string]any{"revision": row.Revision, "enabled": false}, 200, nil)
+		} else {
+			h.request("DELETE", "/admin/api/apps/"+row.Key, map[string]any{"revision": row.Revision, "confirm_key": row.Key}, 200, nil)
+		}
 	}
-	data, _ = h.request("GET", "/admin/api/vendors", nil, 200, nil)
-	allVendors := directoryDecode[[]store.Vendor](t, data, "items")
-	for _, row := range allVendors {
-		h.request("DELETE", "/admin/api/vendors/"+row.ID, map[string]int64{"revision": row.Revision}, 200, nil)
-	}
+	h.request("DELETE", "/admin/api/vendors/enterprise", map[string]any{"revision": currentVendor.Revision, "confirm_key": "enterprise"}, 200, nil)
+	h.request("DELETE", "/admin/api/vendors/openai", map[string]any{"revision": 1, "confirm_key": "openai"}, 409, nil)
 	_, public = h.bootstrap()
 	if len(public) != 0 {
-		t.Fatal("deleted applications remain public")
+		t.Fatal("disabled or deleted application remained public")
 	}
-	h.request("GET", "/admin/api/settings/proxy", nil, 200, nil)
-	h.request("GET", "/health/ready", nil, 200, nil)
 	h.close()
 	h = newDirectoryHarness(t, dir)
 	if h.password != "" {
-		t.Fatal("restart unexpectedly reinitialized admin credentials")
+		t.Fatal("admin credentials reset")
 	}
 	h.login(password)
 	_, public = h.bootstrap()
-	if len(public) != 0 || len(h.server.Registry.Entries()) != 0 {
-		t.Fatal("restart resurrected a deleted seed application")
+	if len(public) != 0 {
+		t.Fatal("restart enabled a protected template")
 	}
-	h.request("GET", "/admin/api/providers", nil, 200, nil)
-	h.request("GET", "/admin/api/settings/proxy", nil, 200, nil)
+	h.request("GET", "/admin/api/apps/enterprise/codex", nil, 404, nil)
 	data, _ = h.request("GET", "/admin/api/apps?state=deleted", nil, 200, nil)
-	tombstones := directoryDecode[[]store.Application](t, data, "items")
-	if len(tombstones) != len(apps) {
-		t.Fatal("restart lost management records")
-	}
-	for _, row := range tombstones {
-		if row.DeletedAt == nil || row.Enabled {
-			t.Fatal("deleted state did not survive restart", row)
-		}
+	if rows := directoryDecode[[]store.Application](t, data, "items"); len(rows) != 0 {
+		t.Fatal("permanent removal left tombstones")
 	}
 	counters, err := h.server.DB.CountersFor(app.MetricsID())
-	if err != nil || counters["artifact_requests"] != 7 {
-		t.Fatal("directory removal destroyed application history", counters, err)
+	if err != nil || len(counters) != 0 {
+		t.Fatal("deleted history survived", counters, err)
 	}
-	h.request("POST", "/admin/api/vendors", map[string]any{"id": "enterprise", "name": vendor.Name}, 409, nil)
+	h.createVendor("enterprise")
 	h.createVendor("after-restart")
 	h.createApp("after-restart", "files", application.HttpCache, map[string]any{"base_url": "http://intranet.example/files"})
 	_, public = h.bootstrap()
 	if len(public) != 1 || public["after-restart/files"].ID == "" {
 		t.Fatal("empty runtime could not admit a new application")
 	}
+
 }
 
 func TestDirectoryHTTPIconUploadAndPublicBoundary(t *testing.T) {

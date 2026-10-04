@@ -17,7 +17,12 @@ export function makeRouter(history: RouterHistory = createWebHistory()) {
         path: "/",
         component: () => import("./layouts/PublicLayout.vue"),
         children: [
-          { path: "", component: () => import("./PublicApp.vue") },
+          { path: "", component: () => import("./pages/PublicHome.vue") },
+          { path: "all", component: () => import("./pages/PublicCatalog.vue") },
+          {
+            path: ":vendor",
+            component: () => import("./pages/PublicCatalog.vue"),
+          },
           {
             path: ":vendor/:app",
             component: () => import("./PublicApp.vue"),
@@ -99,12 +104,12 @@ export function makeRouter(history: RouterHistory = createWebHistory()) {
         component: () => import("./pages/NotFoundPage.vue"),
       },
     ],
-    scrollBehavior(_to, _from, saved) {
-      return saved || { top: 0 };
+    scrollBehavior(to, from, saved) {
+      return to.path === from.path ? false : saved || { top: 0 };
     },
   });
-  router.afterEach(async (_to, _from, failure) => {
-    if (!failure) {
+  router.afterEach(async (to, from, failure) => {
+    if (!failure && to.path !== from.path) {
       await nextTick();
       document.getElementById("main-content")?.focus({ preventScroll: true });
     }

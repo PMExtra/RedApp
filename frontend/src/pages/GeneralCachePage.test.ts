@@ -1,3 +1,4 @@
+import { selectValue } from "../testSupport";
 import { flushPromises } from "@vue/test-utils";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
@@ -140,7 +141,7 @@ it("uses the selected time basis and local cutoff, then executes only the frozen
   expect(wrapper.get(".time-cleanup").text()).toContain(
     "still frequently accessed",
   );
-  await wrapper.get('[name="basis"]').setValue("last_access");
+  await selectValue(wrapper.get('[name="basis"]'), "last_access");
   expect(wrapper.get(".time-cleanup").text()).toContain(
     "checked again and skipped",
   );
@@ -273,7 +274,7 @@ it("discards late cache and cleanup responses when changing applications", async
   const { wrapper, router } = await mountPage(
     "/admin/vendors/openai/apps/files/cache",
   );
-  await wrapper.get('[name="basis"]').setValue("last_access");
+  await selectValue(wrapper.get('[name="basis"]'), "last_access");
   await wrapper.get('[name="before"]').setValue("2026-10-03T15:45");
   await wrapper.get(".time-cleanup form").trigger("submit");
   const request = fetch.mock.calls.at(-1)![1]!;
@@ -312,9 +313,9 @@ it("discards late cache and cleanup responses when changing applications", async
   expect(
     (wrapper.get('[name="before"]').element as HTMLInputElement).value,
   ).toBe("");
-  expect(
-    (wrapper.get('[name="basis"]').element as HTMLSelectElement).value,
-  ).toBe("fetched_at");
+  expect(wrapper.get('[name="basis"] [role=combobox]').text()).toBe(
+    "Fetched at",
+  );
   wrapper.unmount();
 });
 
@@ -349,13 +350,14 @@ it("binds historical cache listing, preview and execution to the selected source
   vi.stubGlobal("fetch", fetch);
   const { wrapper } = await mountPage("/admin/vendors/openai/apps/files/cache");
   const selector = wrapper.get('[name="source_epoch"]');
+  await selector.get("[role=combobox]").trigger("click");
   expect(selector.text()).toContain(
     "Source 1 · https://old.example/files/ · Historical source",
   );
   expect(selector.text()).toContain(
     "Source 2 · https://current.example/files/ · Current source",
   );
-  await selector.setValue("1");
+  await selectValue(selector, "1");
   await flushPromises();
   expect(wrapper.find(".cache-refresh-panel").exists()).toBe(false);
   expect(wrapper.get(".refresh-file").attributes("disabled")).toBeDefined();
@@ -387,7 +389,7 @@ it("binds historical cache listing, preview and execution to the selected source
   delayed = true;
   await wrapper.get(".time-cleanup form").trigger("submit");
   const request = fetch.mock.calls.at(-1)![1]!;
-  await selector.setValue("");
+  await selectValue(selector, "");
   await flushPromises();
   expect(request.signal?.aborted).toBe(true);
   resolveOld?.(preview(JSON.parse(request.body as string), "late-source"));

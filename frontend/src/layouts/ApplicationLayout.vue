@@ -3,6 +3,7 @@ import { computed, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { validApplicationID, bootstrap } from "../bootstrap";
 import {
+  directoryIcon,
   applicationRecord as application,
   vendorRecord as vendor,
   directoryLoading,
@@ -86,7 +87,7 @@ async function copyURL() {
       <div class="application-header-identity">
         <img
           v-if="application.icon"
-          :src="application.icon"
+          :src="directoryIcon(application.icon)"
           alt=""
           width="48"
           height="48"

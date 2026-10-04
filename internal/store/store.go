@@ -18,7 +18,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/identity"
 )
 
-const SchemaVersion = 5
+const SchemaVersion = 6
 
 var ErrFreshDirectory = errors.New("This data directory belongs to an old or unknown database; use a new empty data directory. Configuration, cache and history are not migrated. Keep the old directory unchanged")
 var ErrConflict = errors.New("Setting revision changed; reload before saving")
@@ -32,6 +32,9 @@ var schema string
 //
 //go:embed schema_v4.sql
 var schemaV4 string
+
+//go:embed schema_v5.sql
+var schemaV5 string
 
 type Store struct {
 	DB    *sql.DB
@@ -102,7 +105,7 @@ func Open(dir string) (*Store, error) {
 		err = db.Ping()
 	}
 	if err == nil && !fresh {
-		err = upgradeV071(db)
+		err = upgradeV072(db)
 	}
 	if err == nil {
 		// Validate the authoritative WAL view before readiness too. This is a
@@ -147,10 +150,10 @@ func probeExisting(path string) error {
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	if err := checkSchema(db); err == nil {
-		return nil
+	if checkSchema(db) != nil && checkSchemaDefinition(db, schemaV5, 5) != nil && checkSchemaDefinition(db, schemaV4, 4) != nil {
+		return ErrFreshDirectory
 	}
-	return checkSchemaDefinition(db, schemaV4, 4)
+	return checkReservedVendor(db)
 }
 func checkSchema(db *sql.DB) error { return checkSchemaDefinition(db, schema, SchemaVersion) }
 func checkSchemaDefinition(db *sql.DB, definition string, expectedVersion int) error {
@@ -274,7 +277,7 @@ func Preflight(dir string) error {
 // The DDL and version change commit together. A previous committed upgrade may
 // still be in WAL when the read-only main-file preflight observes v4.
 func upgradeV071(db *sql.DB) error {
-	if checkSchema(db) == nil {
+	if checkSchemaDefinition(db, schemaV5, 5) == nil {
 		return nil
 	}
 	if err := checkSchemaDefinition(db, schemaV4, 4); err != nil {
@@ -295,15 +298,15 @@ func upgradeV071(db *sql.DB) error {
 		{"applications", "uid,vendor_uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,provider,base_url,cache_ttl_seconds,base_urls_json,source_strategy,enabled,revision,source_epoch,deleted_at_s"},
 		{"application_sources", "app_uid,epoch,provider,base_url,created_at_s,base_urls_json,source_strategy"},
 	} {
-		start := strings.Index(schema, "CREATE TABLE "+spec.name+"(")
-		end := start + strings.Index(schema[start:], ";") + 1
-		table := strings.Replace(schema[start:end], "CREATE TABLE "+spec.name+"(", "CREATE TABLE "+spec.name+"_next(", 1)
+		start := strings.Index(schemaV5, "CREATE TABLE "+spec.name+"(")
+		end := start + strings.Index(schemaV5[start:], ";") + 1
+		table := strings.Replace(schemaV5[start:end], "CREATE TABLE "+spec.name+"(", "CREATE TABLE "+spec.name+"_next(", 1)
 		selection := strings.Replace(spec.columns, "provider", `CASE provider WHEN 'general-http' THEN 'http-cache' ELSE provider END`, 1)
 		if _, err = tx.Exec(table + ` INSERT INTO ` + spec.name + `_next (` + spec.columns + `) SELECT ` + selection + ` FROM ` + spec.name + `; DROP TABLE ` + spec.name + `; ALTER TABLE ` + spec.name + `_next RENAME TO ` + spec.name + `;`); err != nil {
 			return err
 		}
 	}
-	ddl := schema[strings.Index(schema, "CREATE TABLE application_instructions("):]
+	ddl := schemaV5[strings.Index(schemaV5, "CREATE TABLE application_instructions("):]
 	if _, err = tx.Exec(ddl); err != nil {
 		return err
 	}
@@ -322,6 +325,43 @@ func upgradeV071(db *sql.DB) error {
 	}
 	if broken {
 		return errors.New("Application upgrade violated referential integrity")
+	}
+	return tx.Commit()
+}
+
+var ErrReservedVendor = errors.New("Vendor ID 'all' conflicts with the new public directory route; the existing data was not deleted or renamed. Resolve the collision using the previous version before upgrading")
+
+func checkReservedVendor(db *sql.DB) error {
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM vendors WHERE id='all'`).Scan(&count); err != nil {
+		return err
+	}
+	if count != 0 {
+		return ErrReservedVendor
+	}
+	return nil
+}
+func upgradeV072(db *sql.DB) error {
+	if err := checkReservedVendor(db); err != nil {
+		return err
+	}
+	if checkSchema(db) == nil {
+		return nil
+	}
+	if err := upgradeV071(db); err != nil {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	ddl := schema[strings.Index(schema, "CREATE TABLE download_sketches("):]
+	if _, err = tx.Exec(ddl); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DROP TABLE schema_version; CREATE TABLE schema_version(version INTEGER NOT NULL CHECK(version=6)); INSERT INTO schema_version VALUES(6);`); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

@@ -2,11 +2,13 @@
 import { computed, reactive } from "vue";
 import { useNumberedCollection } from "../composables/useNumberedCollection";
 import {
+  directoryIcon,
   applicationPath,
   type ManagedApplication,
   type Vendor,
 } from "../directory";
 import { errorText, language, t } from "../i18n";
+import Icon from "./Icon.vue";
 import PageNavigation from "./PageNavigation.vue";
 const props = defineProps<{ vendor: Vendor; query: string; state: string }>();
 const list = reactive(
@@ -29,22 +31,37 @@ const list = reactive(
     </p>
     <p v-if="list.loading && !list.loaded" role="status">{{ t("Loading…") }}</p>
     <ul class="directory-apps">
-      <li v-for="app in list.items" :key="app.uid">
+      <li v-if="!vendor.deleted_at" class="add-application">
+        <RouterLink :to="`/admin/vendors/${vendor.id}/apps/new`"
+          ><Icon name="plus" :size="24" />{{ t("Add application") }}</RouterLink
+        >
+      </li>
+      <li
+        v-for="app in list.items"
+        :key="app.uid"
+        :class="{ 'is-disabled': !app.enabled || !vendor.enabled }"
+      >
         <RouterLink
           :to="applicationPath(app, app.deleted_at ? 'settings' : undefined)"
           ><img
             v-if="app.icon"
-            :src="app.icon"
+            :src="directoryIcon(app.icon)"
             alt=""
             width="24"
             height="24"
-          /><span>{{ app.name[language] }}</span></RouterLink
+          /><Icon v-else name="box" :size="32" /><span>{{
+            app.name[language]
+          }}</span></RouterLink
         >
         <span v-if="app.deleted_at" class="state-label">{{ t("Deleted") }}</span
         ><span
           v-else-if="!app.enabled || !vendor.enabled"
           class="state-label"
-          >{{ t("Disabled") }}</span
+          >{{
+            app.enabled && !vendor.enabled
+              ? t("Disabled by vendor")
+              : t("Disabled")
+          }}</span
         >
       </li>
     </ul>

@@ -4,7 +4,7 @@
 
 RedApp 通过同一服务分发 **HTTP 文件、Codex CLI 和 Claude Code**。管理员维护厂商与应用资料、选择 Provider 和 BaseUrl，并管理缓存、流量与站点设置。
 
-RedApp **0.7.1** 的 SQLite schema 为 **5**。精确匹配已发布 v0.7.0 的 schema 4 数据目录可原子升级，保留应用身份、配置、源记录、缓存和历史。更早或未知格式仍须使用全新空目录，启动拒绝时不修改旧内容。升级前停止实例并备份完整数据目录。详见 [0.7.1 运行变更](docs/admin-experience-v0.7.1.md)。
+本地 **0.7.2** 实现使用 SQLite schema **6**。精确匹配已发布 v0.7.1 schema 5 或 v0.7.0 schema 4 的目录可原地升级，保留应用身份、配置、源记录、缓存和历史。更早或未知格式仍在写入前拒绝。升级前停止实例并备份完整目录；已有厂商 ID `all` 会明确报冲突并阻止升级。详见 [0.7.2 运行变更](docs/admin-experience-v0.7.2.md)。本轮本地工作不发布 0.7.2。
 
 ## 快速上手
 
@@ -53,13 +53,15 @@ writer 使用 `REDAPP_MAX_WRITERS`、`download_limits.max_writers`、`--max-writ
 
 | Provider | BaseUrl | 缓存与清理 |
 | --- | --- | --- |
-| 应用介绍 / App Info（`info`） | 无 | 资料和双语纯文本使用说明；无文件路由 |
+| 应用介绍 / App Info（`info`） | 无 | 资料和双语 Markdown/HTML/JavaScript 使用说明；无文件路由 |
 | 文件托管 / Hosted Files（`hosted`） | 无 | 管理员上传或一次性 URL 导入，持久保存直到手动删除 |
 | HTTP Cache（`http-cache`） | 必填；支持 HTTP(S)、端口和企业内网源 | 有序路径 TTL 规则；无匹配规则且无 Cache-Control 时默认 300 秒；按获取或最后访问时间手动或自动清理 |
 | Codex（`codex`） | 默认 `https://releases.openai.com/codex`，可覆盖 | 保留发布元数据和制品校验；渠道 TTL 默认 60 秒；按版本清理 |
 | Claude Code（`claude-code`） | 默认 `https://downloads.claude.ai/claude-code-releases`，可覆盖 | 保留现有签名和摘要校验；渠道 TTL 默认 60 秒；按版本清理 |
 
-新目录不创建任何厂商或应用，只提供编译内置的 Provider 定义。管理员自行创建厂商和应用；升级保留现有条目，重启不会重新创建已删除条目。修改 BaseUrl 会开启独立 source epoch，保留旧缓存供显式管理。禁用或删除停止新的公开请求，保留已有数据；删除后的 ID 仍保留，不等同于清空缓存。
+启动时补齐缺失的内置厂商/应用模板，新增条目默认禁用；已有完整键记录和显式空白说明不覆盖。厂商与应用都启用后才公开。完整身份为 `vendor_id/app_id`，`all` 保留给公共目录。匹配内置模板的应用完整键不可删除，即使 Provider 不同；自定义应用可确认永久删除，包括其文件、缓存和历史，要求共享传输池空闲且不可撤销。全局共享上传图标独立保留。换源仍创建独立 source epoch 并保留旧缓存供管理。模板重置默认不选字段，预览差异后按 revision 保存，不删除文件或历史。
+
+首页展示后台排序的置顶项与近七日下载客户端近似去重排行。`/all` 支持可分享的搜索和分页；`/<vendor>` 展示厂商资料与有效启用应用。导航栏提供有上限的异步厂商/应用建议。使用说明以受信任 HTML 文档运行，支持管理员编写的 JavaScript 和外部资源，使用独立文档策略；信任边界见运行说明。
 
 HTTP Cache 将 `/<vendor>/<app>/<relative-path>` 映射到 BaseUrl 下，支持 GET/HEAD、验证器和单段字节 Range，拒绝查询参数和路径穿越。可缓存的冷请求先完整落盘再开始响应，冷 Range 请求也如此；不能共享的响应走有大小限制的直接传输。文件以下载附件返回，不作为可执行网页托管。
 
@@ -77,7 +79,7 @@ HTTP Cache 设置提供有序缓存规则、默认开启的 `stale_fallback` 开
 
 公共地址只影响生成链接；请求同源校验、Cookie 安全属性和上游授权保持独立。企业访问使用 HTTPS 反向代理，将可信代理 CIDR 写入 `trusted_proxies`，并让代理覆盖转发头、控制允许的域名。RedApp 校验 Host 语法并按可信代理链推导请求 origin；来自不可信 peer 的转发头会被忽略。健康检查使用本地监听地址，不依赖公共地址。
 
-站点文案、回源代理和公共地址属于全局设置；缓存 TTL 和 Provider 配置按应用独立保存。每次保存校验 revision，过期表单不会静默覆盖更新。回源代理凭据不通过读 API 返回。
+站点文案、回源代理和公共地址属于全局设置；缓存 TTL 和 Provider 配置按应用独立保存。每次保存校验 revision，过期表单不会静默覆盖更新。回源代理只有一个完整 URL 字段，可包含百分号编码的 userinfo；受保护的后台 API 原样返回，公共响应、日志和事件不泄漏凭据。旧的独立用户名/密码仅单向迁移一次。
 
 ## 客户端安装
 
@@ -93,7 +95,7 @@ irm 'https://downloads.example.internal/openai/codex/install.ps1' | iex
 irm 'https://downloads.example.internal/anthropic/claude-code/install.ps1' | iex
 ```
 
-命令会下载并执行安装器，请按部署策略先审查脚本。Codex 使用已设置的 `CODEX_RELEASE`，否则选择 `latest`；无人值守 shell 安装时，将 `CODEX_NON_INTERACTIVE=1` 放在管道中 `sh` 前面。指定版本的命令由应用详情页提供。旧公共路径和隐式选择 Codex 的管理 API 不再提供别名。
+命令会下载并执行安装器，请按部署策略先审查脚本。Codex 使用已设置的 `CODEX_RELEASE`，否则选择 `latest`；无人值守 shell 安装时，将 `CODEX_NON_INTERACTIVE=1` 放在管道中 `sh` 前面。说明文档根据公共服务地址生成安装命令。旧公共路径和隐式选择 Codex 的管理 API 不再提供别名。
 
 安装器下载经过本服务，应用运行期/API 流量不改写。生产上游链路与 Windows/macOS 实机安装仍需上线验证；客户端出口策略独立管理。
 
@@ -101,6 +103,6 @@ irm 'https://downloads.example.internal/anthropic/claude-code/install.ps1' | iex
 
 在 `frontend/` 执行 `npm ci && npm run build` 后，Go 构建会嵌入前端产物。构建前运行 Go 测试和前端类型/DOM 检查；`scripts/test-data-cli.py`、`scripts/test-http-cli.py` 使用 `bin/redapp` 和隔离临时目录验证实际 CLI。
 
-当前变更、Provider ID 和 API 边界见 [0.7.1 运行说明](docs/admin-experience-v0.7.1.md)。[v0.7.0 说明](docs/provider-runtime-v0.7.0.md)保留作为缓存规则的历史参考。带旧版本号的文档描述对应历史版本，不是当前开发架构的配置指南。
+当前变更、Provider ID 和 API 边界见 [0.7.2 运行说明](docs/admin-experience-v0.7.2.md)。[v0.7.0 说明](docs/provider-runtime-v0.7.0.md)保留作为缓存规则的历史参考。带旧版本号的文档描述对应历史版本，不是当前开发架构的配置指南。
 
 RedApp 原创代码采用 [MIT 许可](LICENSE)。[第三方许可](third_party/README.md)，包括上游安装器 LICENSE/NOTICE，独立保留。

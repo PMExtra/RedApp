@@ -114,7 +114,7 @@ export function validApplicationID(id: string): boolean {
   const parts = id.split("/");
   return (
     parts.length === 2 &&
-    !["admin", "api", "assets", "health"].includes(parts[0]!) &&
+    !["admin", "api", "assets", "health", "all"].includes(parts[0]!) &&
     parts.every((p) => p.length <= 63 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(p))
   );
 }

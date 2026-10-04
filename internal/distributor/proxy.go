@@ -17,9 +17,7 @@ import (
 )
 
 type proxyConfig struct {
-	Server   string `json:"server"`
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Server string `json:"server"`
 }
 
 var ErrInvalidProxySettings = errors.New("invalid upstream proxy settings")
@@ -28,18 +26,15 @@ func invalidProxy(message string) error {
 	return fmt.Errorf("%w: %s", ErrInvalidProxySettings, message)
 }
 
+// The administrative API returns the exact saved URL, including encoded userinfo.
+// It must never be included in public output, diagnostics, or events.
 type ProxyView struct {
-	Server         string `json:"server"`
-	HasCredentials bool   `json:"has_credentials"`
-	HasPassword    bool   `json:"has_password"`
-	DNS            string `json:"dns"`
-	Revision       int64  `json:"revision"`
+	Server   string `json:"server"`
+	DNS      string `json:"dns"`
+	Revision int64  `json:"revision"`
 }
 type ProxyUpdate struct {
-	Server         string `json:"server"`
-	Username       string `json:"username"`
-	Password       string `json:"password"`
-	PasswordAction string `json:"password_action"`
+	Server string `json:"server"`
 }
 
 // Pool owns proxy state independently of application instances. Strict public
@@ -122,14 +117,44 @@ func (c *Client) SetProxy(update ProxyUpdate, expected int64) error {
 func (c *Pool) LoadProxy(db *store.Store) error {
 	c.proxyMu.Lock()
 	defer c.proxyMu.Unlock()
-	var conf proxyConfig
-	revision, err := db.ReadSetting("global", "", "upstream_proxy", &conf)
+	// Legacy fields exist only during this one-way persisted migration.
+	var legacy struct {
+		Server   string  `json:"server"`
+		Username *string `json:"username"`
+		Password *string `json:"password"`
+	}
+	revision, err := db.ReadSetting("global", "", "upstream_proxy", &legacy)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return errors.New("Failed to read upstream proxy settings")
+	}
+	conf := proxyConfig{Server: legacy.Server}
+	if (legacy.Username != nil || legacy.Password != nil) && conf.Server != "" {
+		u, parseErr := url.Parse(conf.Server)
+		if parseErr != nil || u.User != nil {
+			return invalidProxy("Invalid legacy proxy URL")
+		}
+		username, password := "", ""
+		if legacy.Username != nil {
+			username = *legacy.Username
+		}
+		if legacy.Password != nil {
+			password = *legacy.Password
+		}
+		if username != "" || password != "" {
+			u.User = url.UserPassword(username, password)
+		}
+		conf.Server = u.String()
 	}
 	tr, err := transportsFor(conf)
 	if err != nil {
 		return err
+	}
+	if legacy.Username != nil || legacy.Password != nil {
+		revision, err = db.CompareAndSwapSetting("global", "", "upstream_proxy", revision, conf)
+		if err != nil {
+			tr.closeIdle()
+			return errors.New("Failed to migrate upstream proxy settings")
+		}
 	}
 	if c.transports.Load() == nil {
 		return errors.New("Upstream transport is not configurable")
@@ -149,7 +174,7 @@ func (c *Pool) Proxy() ProxyView {
 	if conf.Server != "" {
 		dns = "proxy"
 	}
-	return ProxyView{Server: conf.Server, HasCredentials: conf.Username != "" || conf.Password != "", HasPassword: conf.Password != "", DNS: dns, Revision: c.proxyRevision}
+	return ProxyView{Server: conf.Server, DNS: dns, Revision: c.proxyRevision}
 }
 func (c *Pool) SetProxy(update ProxyUpdate, expected int64) error {
 	c.proxyMu.Lock()
@@ -157,31 +182,7 @@ func (c *Pool) SetProxy(update ProxyUpdate, expected int64) error {
 	if c.proxyStore == nil || c.transports.Load() == nil {
 		return errors.New("Upstream proxy settings are unavailable")
 	}
-	conf := proxyConfig{Server: update.Server, Username: update.Username}
-	switch update.PasswordAction {
-	case "keep":
-		if update.Password != "" || update.Username != "" {
-			return invalidProxy("Credentials must be empty when keeping saved credentials")
-		}
-		if conf.Server != c.proxyConfig.Server && (c.proxyConfig.Username != "" || c.proxyConfig.Password != "") {
-			return invalidProxy("Clear or replace credentials when changing the proxy server")
-		}
-		conf.Username = c.proxyConfig.Username
-		conf.Password = c.proxyConfig.Password
-	case "replace":
-		conf.Password = update.Password
-	case "clear":
-		conf.Username = ""
-		if update.Password != "" {
-			return invalidProxy("Password must be empty when clearing saved credentials")
-		}
-	default:
-		return invalidProxy("Choose keep, replace, or clear for the proxy password")
-	}
-	if conf.Server == "" {
-		conf.Username = ""
-		conf.Password = ""
-	}
+	conf := proxyConfig{Server: update.Server}
 	tr, err := transportsFor(conf)
 	if err != nil {
 		return invalidProxy(err.Error())
@@ -223,18 +224,18 @@ func transportForMode(conf proxyConfig, configured bool) (*http.Transport, error
 		return tr, nil
 	}
 	u, err := url.Parse(conf.Server)
-	if err != nil || u.User != nil || u.Hostname() == "" || u.Opaque != "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || (u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "socks5") || strings.ContainsAny(conf.Server, "\r\n\t ") {
-		return nil, errors.New("Proxy server must be an HTTP, HTTPS, or SOCKS5 URL without credentials, path, query, or fragment")
+	if err != nil || u.Hostname() == "" || u.Opaque != "" || u.Path != "" || u.RawQuery != "" || u.ForceQuery || strings.Contains(conf.Server, "#") || len(conf.Server) > 4096 || u.Fragment != "" || (u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "socks5") || strings.ContainsAny(conf.Server, "\r\n\t ") {
+		return nil, errors.New("Proxy server must be an HTTP, HTTPS, or SOCKS5 URL without path, query, or fragment")
 	}
 	port, portErr := strconv.Atoi(u.Port())
 	if portErr != nil || port < 1 || port > 65535 {
 		return nil, errors.New("Proxy server requires an explicit port")
 	}
-	if len(conf.Username) > 255 || len(conf.Password) > 255 || strings.ContainsAny(conf.Username+conf.Password, "\r\n\x00") {
-		return nil, errors.New("Invalid proxy credentials")
-	}
-	if conf.Username != "" || conf.Password != "" {
-		u.User = url.UserPassword(conf.Username, conf.Password)
+	if u.User != nil {
+		password, _ := u.User.Password()
+		if len(u.User.Username()) > 255 || len(password) > 255 || strings.ContainsAny(u.User.Username()+password, "\r\n\x00") {
+			return nil, errors.New("Invalid proxy credentials")
+		}
 	}
 	tr.Proxy = http.ProxyURL(u)
 	tr.DialContext = (&net.Dialer{Timeout: 10 * time.Second}).DialContext

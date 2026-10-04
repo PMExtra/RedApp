@@ -1,3 +1,4 @@
+import { selectValue } from "../testSupport";
 import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, expect, it, vi } from "vitest";
 import { defineComponent } from "vue";
@@ -63,7 +64,7 @@ it("scopes release cleanup to a historical source, keeps TTL current and permits
     { props: { application: "openai/codex" } },
   );
   await flushPromises();
-  await wrapper.get('[name="source_epoch"]').setValue("1");
+  await selectValue(wrapper.get('[name="source_epoch"]'), "1");
   await wrapper.get(".ttl-form input").setValue("120");
   await wrapper.get(".ttl-form").trigger("submit");
   await flushPromises();
@@ -83,7 +84,7 @@ it("scopes release cleanup to a historical source, keeps TTL current and permits
   delay = true;
   await wrapper.get(".cleanup").trigger("submit");
   const request = fetch.mock.calls.at(-1)![1]!;
-  await wrapper.get('[name="source_epoch"]').setValue("");
+  await selectValue(wrapper.get('[name="source_epoch"]'), "");
   expect(request.signal?.aborted).toBe(true);
   resolvePreview?.(response(job));
   await flushPromises();

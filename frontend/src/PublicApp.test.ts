@@ -11,7 +11,22 @@ afterEach(() => {
 it("uses canonical RouterLinks, navigates between applications without reload, and preserves commands across locales", async () => {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => response(boot)),
+    vi.fn(async (url: string) =>
+      response(
+        url === "/api/home"
+          ? { pinned: boot.apps, ranking: [] }
+          : {
+              ...boot,
+              apps: boot.apps.map((app) => ({
+                ...app,
+                instructions: {
+                  en: "{{install_commands}}",
+                  "zh-CN": "{{install_commands}}",
+                },
+              })),
+            },
+      ),
+    ),
   );
   const { wrapper, router } = await mountPage("/");
   expect(wrapper.findAll(".application-card")).toHaveLength(2);
@@ -23,24 +38,20 @@ it("uses canonical RouterLinks, navigates between applications without reload, a
   await flushPromises();
   await flushPromises();
   expect(router.currentRoute.value.path).toBe("/openai/codex");
-  const commands = [
-    "curl -fsSL 'https://downloads.example:8443/openai/codex/install.sh' | sh",
-    "irm 'https://downloads.example:8443/openai/codex/install.ps1' | iex",
-  ];
-  expect(wrapper.findAll(".command code").map((x) => x.text())).toEqual(
-    commands,
+  expect(wrapper.get("iframe").attributes("src")).toBe(
+    "/api/apps/openai/codex/instructions/document?lang=en",
   );
+  expect(
+    wrapper.findAll(".breadcrumbs a").map((link) => link.attributes("href")),
+  ).toEqual(["/all", "/openai"]);
   setLanguage("zh-CN");
   await flushPromises();
-  expect(document.documentElement.lang).toBe("zh-CN");
-  expect(wrapper.findAll(".command code").map((x) => x.text())).toEqual(
-    commands,
-  );
+  expect(wrapper.get("iframe").attributes("src")).toContain("lang=zh-CN");
   await router.push("/anthropic/claude-code");
   await flushPromises();
   expect(wrapper.find("h1").text()).toBe("Claude Code");
-  expect(wrapper.find("code").text()).toContain(
-    "/anthropic/claude-code/install.sh' | bash",
+  expect(wrapper.get("iframe").attributes("src")).toContain(
+    "/anthropic/claude-code/instructions/document",
   );
   expect(wrapper.text()).not.toContain("CODEX_RELEASE");
   router.back();

@@ -34,7 +34,7 @@ func ParseKey(id string) (Key, error) {
 		}
 	}
 	switch p[0] {
-	case "admin", "api", "assets", "health":
+	case "admin", "api", "assets", "health", "all":
 		return Key{}, errors.New("Reserved application vendor")
 	}
 	return Key{p[0], p[1]}, nil

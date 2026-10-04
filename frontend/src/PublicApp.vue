@@ -11,7 +11,7 @@ import {
 import { language, t } from "./i18n";
 import { siteTitle } from "./site";
 import HostedDownloads from "./components/HostedDownloads.vue";
-import InstallCommands from "./components/InstallCommands.vue";
+import InstructionsDocument from "./components/InstructionsDocument.vue";
 import Icon from "./components/Icon.vue";
 const route = useRoute();
 const selectedID = computed(() => `${route.params.vendor}/${route.params.app}`);
@@ -40,9 +40,14 @@ watchEffect(() => {
     <button @click="loadBootstrap">{{ t("Retry") }}</button>
   </section>
   <template v-else-if="detail && selected && bootstrap"
-    ><RouterLink to="/" class="back-link"
-      ><Icon name="back" :size="16" />{{ t("All applications") }}</RouterLink
-    >
+    ><nav class="breadcrumbs" :aria-label="t('Breadcrumb')">
+      <RouterLink to="/all">{{ t("All applications") }}</RouterLink
+      ><span>›</span
+      ><RouterLink :to="`/${route.params.vendor}`">{{
+        selected.publisher
+      }}</RouterLink
+      ><span>›</span><span>{{ selected.name[language] }}</span>
+    </nav>
     <div class="application-identity">
       <div class="application-logo">
         <img
@@ -70,44 +75,20 @@ watchEffect(() => {
       class="panel usage-instructions"
     >
       <h2>{{ t("Usage instructions") }}</h2>
-      <div class="plain-text">{{ selected.instructions[language] }}</div>
-    </section>
-    <div
-      v-if="applicationCapabilities(selected).installers"
-      class="installation-layout"
-    >
-      <InstallCommands
-        :origin="bootstrap.public_origin"
-        :application="selected"
+      <InstructionsDocument
+        :application="selected.id"
+        :revision="bootstrap.revision"
       />
-      <aside class="install-guide">
-        <section class="panel">
-          <h2>{{ t("Getting started") }}</h2>
-          <ol class="steps">
-            <li>
-              {{
-                t(
-                  "Open a terminal on Linux or macOS, or PowerShell on Windows.",
-                )
-              }}
-            </li>
-            <li>
-              {{
-                t(
-                  "Copy and run the matching command. Review the prompts before confirming installation.",
-                )
-              }}
-            </li>
-          </ol>
-        </section>
-      </aside>
-    </div>
+    </section>
     <HostedDownloads
-      v-else-if="selected.provider === 'hosted'"
+      v-if="selected.provider === 'hosted'"
       :application="selected.id"
     />
     <section
-      v-else-if="applicationCapabilities(selected).files"
+      v-else-if="
+        applicationCapabilities(selected).files &&
+        !applicationCapabilities(selected).installers
+      "
       class="panel download-prefix"
     >
       <h2>{{ t("Download URL prefix") }}</h2>

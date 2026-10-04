@@ -225,7 +225,9 @@ func (s *Server) hostedFile(w http.ResponseWriter, r *http.Request) bool {
 	w.Header().Set("ETag", `"sha256-`+row.SHA256+`"`)
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
-	http.ServeContent(w, r, path.Base(relative), row.CreatedAt, file)
+	receipt := &downloadReceipt{ResponseWriter: w}
+	http.ServeContent(receipt, r, path.Base(relative), row.CreatedAt, file)
+	s.finishDownload(receipt, r, entry.UID)
 	return true
 }
 
