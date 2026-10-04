@@ -15,6 +15,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/history"
 	"github.com/PMExtra/RedApp/internal/store"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func newTestServer(t *testing.T, upstream *distributor.Client) (*Server, *store.Store, string) {
@@ -47,8 +48,18 @@ func newTestServer(t *testing.T, upstream *distributor.Client) (*Server, *store.
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { manager.Close() })
-	var password string
-	a, err := auth.New(db, false, func(p string) { password = p })
+	// Route/transfer fixtures exercise authentication without repeatedly paying
+	// the production bootstrap work factor. The auth package and CLI tests still
+	// cover fresh bootstrap with production cost 12.
+	const password = "isolated-http-test-password"
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.DB.Exec("INSERT INTO admin VALUES(1,?,1)", hash); err != nil {
+		t.Fatal(err)
+	}
+	a, err := auth.New(db, false, func(string) { t.Fatal("existing test admin was replaced") })
 	if err != nil {
 		t.Fatal(err)
 	}
