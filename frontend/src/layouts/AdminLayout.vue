@@ -5,7 +5,7 @@ import AppShell from "../components/AppShell.vue";
 import AccountMenu from "../components/AccountMenu.vue";
 import PasswordDialog from "../components/PasswordDialog.vue";
 import Icon from "../components/Icon.vue";
-import { bootstrap } from "../bootstrap";
+import { managedApps, loadDirectory, resetDirectory, providerHasVersions, providerHasTimeCleanup } from "../directory";
 import {
   checkSession,
   cancelSessionCheck,
@@ -35,6 +35,10 @@ watch([signedIn, sessionChecked, () => route.path], () => {
   if (!signedIn.value) passwordOpen.value = false;
   redirect();
 });
+watch(signedIn, (active) => {
+  if (active) void loadDirectory();
+  else resetDirectory();
+}, { immediate: true });
 watchEffect(() => {
   document.title = `${t("Administration")} · ${siteTitle.value}`;
 });
@@ -61,6 +65,7 @@ onUnmounted(() => {
   cancelSessionCheck();
   document.removeEventListener("visibilitychange", visible);
   passwordOpen.value = false;
+  resetDirectory();
 });
 </script>
 <template>
@@ -91,11 +96,14 @@ onUnmounted(() => {
           <RouterLink to="/admin/settings/proxy"
             ><Icon name="settings" />{{ t("Upstream proxy") }}</RouterLink
           >
-          <template v-for="app in bootstrap?.apps || []" :key="app.id"
+          <RouterLink to="/admin/vendors"><Icon name="box" />{{ t("Vendors and applications") }}</RouterLink>
+          <template v-for="app in managedApps.filter((item) => !item.deleted_at)" :key="app.uid"
             ><span class="sidebar-app-name">{{ app.name[language] }}</span
-            ><RouterLink :to="`/admin/apps/${app.id}/versions`"
+            ><RouterLink v-if="providerHasVersions(app.provider)" :to="`/admin/apps/${app.key}/versions`"
               ><Icon name="box" />{{ t("Versions") }}</RouterLink
-            ><RouterLink :to="`/admin/apps/${app.id}/settings`"
+            ><RouterLink v-if="providerHasTimeCleanup(app.provider)" :to="`/admin/apps/${app.key}/cache`"
+              ><Icon name="box" />{{ t("Cache") }}</RouterLink
+            ><RouterLink :to="`/admin/apps/${app.key}/settings`"
               ><Icon name="settings" />{{ t("Settings") }}</RouterLink
             ></template
           >

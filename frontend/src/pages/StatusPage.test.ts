@@ -1,7 +1,7 @@
 import { flushPromises } from "@vue/test-utils";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Metric } from "../api";
-import { boot, mountPage, resetStores, response, status } from "../testSupport";
+import { adminApplications, managedVendors, boot, mountPage, resetStores, response, status } from "../testSupport";
 
 beforeEach(resetStores);
 afterEach(() => {
@@ -24,6 +24,8 @@ it("refreshes collapsed diagnostics and routes version history through the activ
   let value = 2;
   const fetch = vi.fn(async (url: string) => {
     if (url === "/api/bootstrap") return response(boot);
+    if (url === "/admin/api/vendors") return response({ vendors: managedVendors });
+    if (url === "/admin/api/apps") return response({ apps: adminApplications });
     if (url.endsWith("/session")) return response({ csrf: "token" });
     if (url.includes("/history?"))
       return response({

@@ -2,22 +2,23 @@
 
 [Chinese](README.zh-CN.md)
 
-RedApp distributes **Codex CLI and Claude Code** through an internal download service. It verifies application metadata, caches downloads on demand, and provides an administrator interface for cache, traffic, and service settings.
+RedApp distributes **HTTP files, Codex CLI and Claude Code** through one service. Administrators manage vendors and applications, choose a provider and upstream base URL, and inspect cache, traffic and service settings.
 
-Version 0.6 uses canonical application identities: `openai/codex` and `anthropic/claude-code`. Upgrading from versions before 0.6 is a **breaking upgrade requiring a new, empty data directory**. Configuration, cache, and history from older releases are not imported; keep the old directory as an archive. Startup rejects an old or unrecognized directory without upgrading or deleting it. Existing 0.6 data directories can be reopened normally. See the [v0.6.0 upgrade notes](docs/multi-application-v0.6.0.md) and [current release notes](docs/releases.md) before upgrading.
+This document covers **v0.7.0**. Its SQLite schema is **4**. Starting from any v0.6 or earlier installation requires a **new, empty data directory**: there are no migration tools, and old database settings, cache and history are not imported. Startup refuses old or unrecognized directories without modifying or deleting them. Preserve the old directory separately; only a matching v0.7 directory can be reopened. See [provider runtime and data boundaries](docs/provider-runtime-v0.7.0.md).
 
 ## Start the service
 
 No configuration file is required. The native executable accepts `redapp` or `redapp serve`; the image starts `serve` and its health check resolves the same configuration.
 
 ```sh
+docker build -t redapp:local .
 docker run -d --name redapp --read-only \
   -p 127.0.0.1:8080:8080 \
-  -v redapp-v06-data:/var/lib/redapp \
-  ghcr.io/pmextra/redapp:0.6.4
+  -v redapp-v07-data:/var/lib/redapp \
+  redapp:local
 ```
 
-Defaults are `:8080`, `/var/lib/redapp`, and no trusted proxies. RedApp accepts any syntactically valid request Host; configure domain and network access policy at the reverse proxy. New deployments need a new empty data directory/volume; existing v0.6 data can be reused. Directory permission failures never fall back elsewhere.
+Defaults are `:8080`, `/var/lib/redapp`, and no trusted proxies. RedApp accepts any syntactically valid request Host; configure domain and network access policy at the reverse proxy. Use a new empty directory/volume for this schema, including when upgrading from v0.6. Directory permission failures never fall back elsewhere.
 
 Deployment environment variables work without a file, for example:
 
@@ -38,13 +39,35 @@ REDAPP_CONFIG=/etc/redapp/config.json redapp serve
 redapp serve --config ./custom.yaml --listen 127.0.0.1:8081
 ```
 
-For an optional container YAML file, add `--mount type=bind,src=/absolute/config.yaml,dst=/etc/redapp/config.yaml,readonly` to `docker run`. For another YAML/JSON path, mount that file and set `REDAPP_CONFIG` to its container path. If instead you override the container command with `--config` or deployment flags, supply equivalent flags in `--health-cmd`; Docker does not forward CMD arguments to HEALTHCHECK. See the [deployment field/env/CLI table](docs/operations.md#启动配置) for all supported options and limits. Upstream origins and trust roots remain compiled, reviewed definitions.
+For an optional container YAML file, add `--mount type=bind,src=/absolute/config.yaml,dst=/etc/redapp/config.yaml,readonly` to `docker run`. For another YAML/JSON path, mount that file and set `REDAPP_CONFIG` to its container path. If instead you override the container command with `--config` or deployment flags, supply equivalent flags in `--health-cmd`; Docker does not forward CMD arguments to HEALTHCHECK. See the [deployment field/env/CLI table](docs/operations.md#启动配置) for all supported options and limits. Providers and release trust policies remain compiled definitions; each application has an administrator-configured BaseUrl.
 
 Open **http://localhost:8080/** for the catalog or **http://localhost:8080/admin/overview** for administration. The first-start logs contain the initial admin password; protect those logs and change the password after signing in. Containers run as UID/GID 65532; ensure bind-mounted data directories are writable by that identity.
 
 Starting with v0.6.3, RedApp accepts capacity strings such as `REDAPP_MAX_ARTIFACT_BYTES=4GiB` through environment, CLI and YAML/JSON configuration, alongside integer byte counts. This is a **per-file** limit, not total cache capacity: `4GB`/`4gb` means 4,000,000,000 bytes, while `4GiB` means 4,294,967,296 bytes. The default remains 4 GiB; the accepted range is 1 byte to 1 TiB. v0.6.2 requires integer bytes; see [release notes](docs/releases.md).
 
-The source examples and deployment table describe v0.6.3: writer limits use `REDAPP_MAX_WRITERS`, `download_limits.max_writers`, or `--max-writers`; reader names remain unchanged. Removed Host and writer options have no aliases. For published v0.6.2, use its [tagged examples](https://github.com/PMExtra/RedApp/tree/v0.6.2/config).
+Writer limits use `REDAPP_MAX_WRITERS`, `download_limits.max_writers`, or `--max-writers`; reader names remain unchanged. All three providers share these limits. Removed Host and writer options have no aliases.
+
+## Providers and application management
+
+Open `/admin/vendors` to add a vendor and its applications. Both have lowercase IDs, English/Simplified Chinese names and descriptions, and optional JPG, PNG or static SVG icons. IDs, parent vendor and provider are fixed after creation. Display fields, BaseUrl, cache TTL and enabled state can be edited with revision checks.
+
+| Provider | BaseUrl | Cache and cleanup |
+| --- | --- | --- |
+| GeneralHttp (`general-http`) | Required; HTTP(S), ports and internal sources supported | Ordered path TTL rules; 300-second default when no rule or Cache-Control applies; manual or optional automatic cleanup by fetched time or last access |
+| Codex (`codex`) | Defaults to `https://releases.openai.com/codex`; overridable | Verified release metadata/artifacts; channel TTL default 60 seconds; version cleanup |
+| ClaudeCode (`claude-code`) | Defaults to `https://downloads.claude.ai/claude-code-releases`; overridable | Existing signed metadata and digest checks; channel TTL default 60 seconds; version cleanup |
+
+A fresh directory seeds `openai/codex` and `anthropic/claude-code` once. Restarting does not recreate deleted entries. A BaseUrl change creates a separate source epoch; old cache remains available for explicit management. Disabling or deleting an entry stops new public requests and retains stored data. Deletion reserves the ID; it is not a cache purge.
+
+GeneralHttp maps `/<vendor>/<app>/<relative-path>` below its configured BaseUrl. It supports GET/HEAD, validators and single byte ranges, and rejects query strings and path traversal. Cacheable cold downloads are fully spooled before the response starts, including cold range requests. Responses that cannot be shared use a bounded direct stream. Downloaded files are attachments rather than executable pages.
+
+GeneralHttp supports 1–16 ordered mirror URLs with ordered fallback, round robin or random selection. Source edits use a new cache epoch; validators stay bound to the actual source and cross-source retries restart the whole file. Admins can refresh one cached resource or a pattern. Refresh and cleanup previews use server-side pagination, while execution processes the full frozen selection.
+
+GeneralHttp settings support ordered cache rules, a `stale_fallback` switch (default `true`), and optional automatic-cleanup rules. Matching uses decoded application-relative paths with a leading `/`: doublestar globs match the file or a directory ancestor, while Go RE2 expressions match the whole path. The first matching rule wins. An explicit rule's TTL overrides source Cache-Control and Age without an application-default cap; otherwise, valid source `s-maxage`/`max-age` determines freshness with Age/Date deducted. The application TTL is only the fallback when Cache-Control is absent; Cache-Control without a valid lifetime means TTL 0. Expires adds no separate priority. TTL 0 always contacts the source first but may retain a complete body for failure fallback; there is no separate bypass mode.
+
+An explicit path rule may intentionally override source `no-store`/`private` and reuse that representation at the public download endpoint. Existing Set-Cookie, unsupported-Vary and authorization representation boundaries still apply. Actual upstream overrides with TTL greater than 0 produce one warning per fetch; TTL 0 suppresses that warning. On network failure, timeout or upstream 5xx, `stale_fallback=true` serves an available complete expired representation from the same app/source epoch, with no maximum stale age. Each actual fallback records one warning per shared upstream fetch, with no deduplication or rate limit; cache hits do not warn. Setting the switch to `false` returns an error instead. Source revalidation directives do not force extra validation or prohibit fallback, while ETag/Last-Modified conditional validation remains supported. Fallback does not advance timestamps; 404/410 do not trigger it. Finer controls, presentation and observability remain [in issue #2](https://github.com/PMExtra/RedApp/issues/2).
+
+Manual cleanup combines a path pattern, time basis and cutoff in a frozen preview. Automatic cleanup is disabled until rules are saved, then runs every 15 minutes without an immediate startup deletion. It only processes active GeneralHttp applications' current source epochs, scanning at most 1,000 files and retiring at most 100 per application per pass; cursors prevent starvation. A cleanup rule's first path match owns the file even when its age threshold is not yet met. See the [runtime guide](docs/provider-runtime-v0.7.0.md) for rule examples, limits and API details. New source authentication, private CA and signing options are outside this version; normal TLS certificate verification and existing administrator/release protections remain in place.
 
 ## Public address and proxy trust
 
@@ -58,7 +81,7 @@ Clearing the administrator override restores the environment default, if present
 
 For enterprise access, use an HTTPS reverse proxy. Configure the proxy's CIDRs in `trusted_proxies` and make the proxy overwrite forwarded headers. Headers from untrusted peers are ignored. RedApp validates Host syntax and derives the request origin from the trusted proxy chain; the proxy controls accepted domains. Health checks connect to the configured local listener, independently of the public address.
 
-Site branding, outbound proxy, and public address are global settings. Channel cache TTL is per application. Every administrator update uses a revision check so stale browser forms cannot silently overwrite another update. Proxy credentials are never returned by read APIs.
+Site branding, outbound proxy, and public address are global settings. Cache TTL and provider configuration are per application. Every administrator update uses a revision check so stale browser forms cannot silently overwrite another update. Proxy credentials are never returned by read APIs.
 
 ## Install applications
 
@@ -82,6 +105,6 @@ Installer downloads stay on the service; application runtime/API traffic is not 
 
 The Go executable embeds the frontend built by `npm ci && npm run build` in `frontend/`. Run Go tests and the frontend's typecheck/DOM tests before building `./cmd/redapp`. CLI smoke checks in `scripts/test-data-cli.py` and `scripts/test-http-cli.py` use `bin/redapp` and isolated temporary data.
 
-The implementation plan is in [the architecture document](docs/multi-application-architecture-next.md). Older versioned operational references describe their respective releases and are not configuration instructions for this development architecture.
+The current data model, API boundaries and limitations are in [the v0.7 provider runtime guide](docs/provider-runtime-v0.7.0.md). Older versioned operational references describe their respective releases and are not configuration instructions for this architecture.
 
 Original RedApp code is [MIT licensed](LICENSE). [Third-party licenses](third_party/README.md), including upstream installer LICENSE/NOTICE, remain separate.

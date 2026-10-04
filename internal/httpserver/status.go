@@ -1,16 +1,73 @@
 package httpserver
 
 import (
+	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/download"
+	"github.com/PMExtra/RedApp/internal/identity"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 )
 
+// resourceViews is the shared status/listing boundary. The GeneralHttp cache can
+// append its owned snapshots here without changing metric ownership or callers.
+func (s *Server) resourceViews() ([]download.View, error) {
+	views := []download.View{}
+	if s.Downloads != nil {
+		views = s.Downloads.Snapshot()
+	}
+	if s.HTTPCache != nil {
+		httpViews, err := s.HTTPCache.Snapshot()
+		if err != nil {
+			return nil, err
+		}
+		views = append(views, httpViews...)
+	}
+	return views, nil
+}
+
+func (s *Server) publicScopes() map[string]string {
+	scopes := map[string]string{}
+	for _, entry := range s.Registry.AllEntries() {
+		scopes[entry.MetricsID()] = entry.Descriptor.ID
+	}
+	return scopes
+}
+
+func publicScope(scope string, scopes map[string]string) string {
+	if uid, _, ok := identity.ParseStorageID(scope); ok {
+		return scopes[identity.MetricsID(uid)]
+	}
+	if public, ok := scopes[scope]; ok {
+		return public
+	}
+	if uid, ok := strings.CutPrefix(scope, "app/"); ok && identity.ValidUID(uid) {
+		return "" // A private identity must never become a public fallback label.
+	}
+	return scope
+}
+
+// publicViews owns its response copies. Internal source namespaces and metric
+// scopes stay intact in the managers, including retained historical epochs.
+func (s *Server) publicViews(views []download.View) []download.View {
+	scopes := s.publicScopes()
+	out := make([]download.View, len(views))
+	for i, view := range views {
+		view.Resource.Application = publicScope(view.Resource.Application, scopes)
+		view.Resource.MetricsID = publicScope(view.Resource.MetricsID, scopes)
+		out[i] = view
+	}
+	return out
+}
+
 func (s *Server) status(public string) (map[string]any, error) {
-	views := s.Downloads.Snapshot()
+	views, err := s.resourceViews()
+	if err != nil {
+		return nil, err
+	}
 	var complete, temp, pending, total, logical, allocatedCache, allocatedTemp, allocatedPending int64
 	classes := map[string]string{}
 	fileBytes := map[string]int64{}
@@ -74,7 +131,10 @@ func (s *Server) status(public string) (map[string]any, error) {
 	}
 	applicationVersionCounts := map[string]int64{}
 	for _, entry := range s.Registry.Entries() {
-		count, err := s.DB.VersionCount(entry.Descriptor.ID)
+		if entry.Protocol == nil {
+			continue
+		}
+		count, err := s.DB.VersionCount(entry.StorageID())
 		if err != nil {
 			return nil, err
 		}
@@ -88,26 +148,39 @@ func (s *Server) status(public string) (map[string]any, error) {
 	runtime.ReadMemStats(&mem)
 	status := map[string]any{"name": "RedApp", "started": s.Started, "os": runtime.GOOS, "arch": runtime.GOARCH, "go": runtime.Version(), "goroutines": runtime.NumGoroutine(), "memory_bytes": mem.Alloc, "sampled_at": time.Now().UTC(), "resources": views, "counters": counters, "disk": map[string]any{"used_bytes": total, "logical_bytes": logical, "allocated_cache_bytes": allocatedCache, "allocated_temporary_bytes": allocatedTemp, "allocated_pending_bytes": allocatedPending, "cache_bytes": complete, "temporary_bytes": temp, "pending_bytes": pending, "other_bytes": total - allocatedCache - allocatedTemp - allocatedPending, "free_bytes": disk.Bavail * uint64(disk.Bsize)}, "public_base_url": public, "rates": s.DB.Rates(), "application_version_counts": applicationVersionCounts}
 	status["metrics"] = globalMetrics(status, s.Started)
+	status["resources"] = s.publicViews(views)
 	return status, nil
 }
 
 func (s *Server) appStatus(app, public string) (map[string]any, error) {
-	all := s.Downloads.Snapshot()
-	views := make([]download.View, 0)
-	for _, v := range all {
-		if v.Resource.Application == app {
-			views = append(views, v)
-		}
+	entry, ok := s.Registry.LookupAny(app)
+	if !ok {
+		return nil, application.ErrNotFound
 	}
-	versionCount, err := s.DB.VersionCount(app)
+	all, err := s.resourceViews()
 	if err != nil {
 		return nil, err
 	}
-	counters, err := s.DB.CountersFor(app)
+	views := make([]download.View, 0)
+	for _, v := range all {
+		if v.Resource.MetricScope() == entry.MetricsID() {
+			views = append(views, v)
+		}
+	}
+	var versionCount any
+	if entry.Protocol != nil {
+		count, err := s.DB.VersionCount(entry.StorageID())
+		if err != nil {
+			return nil, err
+		}
+		versionCount = count
+	}
+	counters, err := s.DB.CountersFor(entry.MetricsID())
 	if err != nil {
 		return nil, err
 	}
 	status := map[string]any{"application": app, "sampled_at": time.Now().UTC(), "resources": views, "version_count": versionCount, "counters": counters, "public_base_url": public + "/" + app}
 	status["metrics"] = applicationMetrics(status)
+	status["resources"] = s.publicViews(views)
 	return status, nil
 }

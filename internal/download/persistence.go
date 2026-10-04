@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -21,7 +21,7 @@ var (
 	ErrArtifactLimit = errors.New("Artifact length exceeds configured limit")
 )
 
-func validApplication(app string) bool { _, e := application.ParseKey(app); return e == nil }
+func validApplication(app string) bool { return store.ValidAppID(app) }
 
 func (m *Manager) ConfigureLimits(writers, readers int, bytes int64) error {
 	m.mu.Lock()
@@ -154,7 +154,7 @@ func (m *Manager) record(g *Generation) store.Generation {
 			duration = 0
 		}
 	}
-	return store.Generation{ID: g.ID, AppID: g.Resource.Application, Version: g.Resource.Version, ResourceKey: g.Resource.Key, ExpectedSHA256: g.Resource.Hash, BlobSHA256: blob, Phase: phase, IsCurrent: !g.Retired, RetiredAt: retired, Bytes: g.Bytes, TotalBytes: total, SourceBytes: g.SourceBytes, ETag: g.ETag, Resumes: g.Resumes, StartedAt: g.Started, FinishedAt: finished, VerificationNS: &verification, LastErrorCode: g.Error, FullRetry: g.FullRetry, DownloadNS: duration}
+	return store.Generation{SourceFence: g.Resource.SourceFence, ID: g.ID, AppID: g.Resource.Application, Version: g.Resource.Version, ResourceKey: g.Resource.Key, ExpectedSHA256: g.Resource.Hash, BlobSHA256: blob, Phase: phase, IsCurrent: !g.Retired, RetiredAt: retired, Bytes: g.Bytes, TotalBytes: total, SourceBytes: g.SourceBytes, ETag: g.ETag, Resumes: g.Resumes, StartedAt: g.Started, FinishedAt: finished, VerificationNS: &verification, LastErrorCode: g.Error, FullRetry: g.FullRetry, DownloadNS: duration}
 }
 func (m *Manager) save(g *Generation) error {
 	if g.Retired {
@@ -191,7 +191,10 @@ func (m *Manager) recover() error {
 		if e != nil {
 			return e
 		}
-		r := Resource{Application: row.AppID, Version: row.Version, Key: row.ResourceKey, Source: bound.SourceURL, Hash: bound.SHA256, Size: bound.ExpectedSize}
+		r := Resource{Application: row.AppID, SourceFence: row.SourceFence, Version: row.Version, Key: row.ResourceKey, Source: bound.SourceURL, Hash: bound.SHA256, Size: bound.ExpectedSize}
+		if uid, _, ok := identity.ParseStorageID(r.Application); ok {
+			r.MetricsID = identity.MetricsID(uid)
+		}
 		r.ID = LogicalIdentity(r.Application, r.Version, r.Key)
 		if e = m.validateResource(r); e != nil {
 			return e
@@ -200,6 +203,16 @@ func (m *Manager) recover() error {
 			return errors.New("Persisted generation digest differs from authorization")
 		}
 		g := &Generation{ID: row.ID, Resource: r, Path: m.partPath(row.ID), State: "interrupted", Bytes: row.Bytes, Total: -1, SourceBytes: row.SourceBytes, ETag: row.ETag, Resumes: row.Resumes, Started: row.StartedAt, Error: row.LastErrorCode, Retired: row.RetiredAt != nil || !row.IsCurrent, FullRetry: row.FullRetry, downloadNS: row.DownloadNS, changed: make(chan struct{})}
+		fences := []store.SourceFence{r.SourceFence}
+		if row.Phase == "complete" {
+			fences = nil
+		} // completed immutable content needs no writer admission
+		if e = m.db.CheckSourceActive(r.Application, fences...); e != nil {
+			if !errors.Is(e, store.ErrSourceInactive) {
+				return e
+			}
+			g.dormant = true
+		}
 		if row.TotalBytes != nil {
 			g.Total = *row.TotalBytes
 		}
@@ -221,7 +234,7 @@ func (m *Manager) recover() error {
 	}
 	// Recover every referenced blob before deleting any orphaned files.
 	for _, g := range m.all {
-		if g.Retired || m.current[g.Resource.ID] != g {
+		if g.Retired || g.dormant || m.current[g.Resource.ID] != g {
 			continue
 		}
 
@@ -232,12 +245,15 @@ func (m *Manager) recover() error {
 			valid := statErr == nil && (g.Resource.Size == nil || *g.Resource.Size == st.Size()) && verified(f, st.Size(), g.Resource.Hash)
 			f.Close()
 			if valid {
+				wasComplete := g.State == "complete"
 				g.Path, g.Bytes, g.Total, g.State, g.done = blobPath, st.Size(), st.Size(), "complete", true
 				if g.Finished.IsZero() {
 					g.Finished = time.Now()
 				}
-				if e = m.db.CompleteGeneration(g.Resource.Application, g.ID, store.Blob{AppID: g.Resource.Application, SHA256: g.Resource.Hash, SizeBytes: g.Bytes, VerifiedAt: time.Now()}, g.Finished, g.VerificationNS); e != nil {
-					return e
+				if !wasComplete {
+					if e = m.db.CompleteGeneration(g.Resource.Application, g.ID, store.Blob{AppID: g.Resource.Application, SHA256: g.Resource.Hash, SizeBytes: g.Bytes, VerifiedAt: time.Now()}, g.Finished, g.VerificationNS, g.Resource.SourceFence); e != nil {
+						return e
+					}
 				}
 				if e = os.Remove(m.partPath(g.ID)); e != nil && !os.IsNotExist(e) {
 					return e
@@ -407,21 +423,29 @@ func (m *Manager) removeOrphans() error {
 	for _, g := range m.all {
 		kept[g.Path] = true
 	}
-	return filepath.WalkDir(filepath.Join(m.dir, "objects"), func(path string, d os.DirEntry, e error) error {
-		if e != nil {
-			return e
+	// Each storage component owns its subtree. Icons and mutable HTTP cache
+	// files must never be collected by immutable release recovery.
+	for _, root := range []string{"parts", "blobs"} {
+		err := filepath.WalkDir(filepath.Join(m.dir, "objects", root), func(path string, d os.DirEntry, e error) error {
+			if e != nil {
+				return e
+			}
+			if d.Type()&os.ModeSymlink != 0 {
+				return errors.New("Symlink in cache directory")
+			}
+			if d.IsDir() {
+				return nil
+			}
+			if kept[path] {
+				return nil
+			}
+			return os.Remove(path)
+		})
+		if err != nil {
+			return err
 		}
-		if d.Type()&os.ModeSymlink != 0 {
-			return errors.New("Symlink in cache directory")
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if kept[path] {
-			return nil
-		}
-		return os.Remove(path)
-	})
+	}
+	return nil
 }
 func (m *Manager) recordFailure(g *Generation) {
 	// The structured method is shared by metadata and download diagnostics.
@@ -430,5 +454,5 @@ func (m *Manager) recordFailure(g *Generation) {
 		v := g.upstreamStatus
 		status = &v
 	}
-	_ = m.db.RecordEvent(store.Event{UpstreamStatus: status, AppID: g.Resource.Application, Version: g.Resource.Version, ResourceKey: g.Resource.Key, GenerationID: g.ID, Category: failureCategory(g.Error), Code: "download_failed", Message: g.Error})
+	_ = m.db.RecordEvent(store.Event{UpstreamStatus: status, AppID: g.Resource.MetricScope(), Version: g.Resource.Version, ResourceKey: g.Resource.Key, GenerationID: g.ID, Category: failureCategory(g.Error), Code: "download_failed", Message: g.Error})
 }

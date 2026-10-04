@@ -31,3 +31,13 @@ func TestRejectUnexpectedOrTransparentDecompression(t *testing.T) {
 		}
 	}
 }
+
+func TestRejectRepeatedContentEncoding(t *testing.T) {
+	c, _ := New("https://upstream.example/artifacts")
+	c.HTTP.Transport = compressionTransport(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Encoding": {"identity", "gzip"}}, Body: io.NopCloser(strings.NewReader("payload"))}, nil
+	})
+	if _, err := c.Get(context.Background(), c.URL("asset"), nil); err == nil {
+		t.Fatal("repeated unsafe encoding accepted")
+	}
+}

@@ -27,6 +27,14 @@ func TestBackendApplicationMessagesUseEnglish(t *testing.T) {
 				return err
 			}
 			ast.Inspect(file, func(node ast.Node) bool {
+				// Explicit locale-map values are UI metadata, not diagnostic messages.
+				if pair, ok := node.(*ast.KeyValueExpr); ok {
+					if key, ok := pair.Key.(*ast.BasicLit); ok && key.Kind == token.STRING {
+						if locale, _ := strconv.Unquote(key.Value); locale == "zh-CN" {
+							return false
+						}
+					}
+				}
 				literal, ok := node.(*ast.BasicLit)
 				if !ok || literal.Kind != token.STRING {
 					return true

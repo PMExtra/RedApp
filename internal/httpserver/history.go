@@ -92,7 +92,7 @@ func (s *Server) SampleHistory(ctx context.Context, onError func(error)) {
 					err = e
 					break
 				}
-				observations = append(observations, history.Observation{Scope: "app", AppID: entry.Descriptor.ID, Metrics: appStatus["metrics"].([]history.Metric)})
+				observations = append(observations, history.Observation{Scope: "app", AppID: entry.MetricsID(), Metrics: appStatus["metrics"].([]history.Metric)})
 			}
 			if err == nil {
 				err = s.History.RecordScoped(at, observations)
@@ -134,11 +134,18 @@ func applicationMetrics(status map[string]any) []history.Metric {
 		}
 		values["resources."+v.State]++
 	}
-	values["versions.total"] = float64(status["version_count"].(int64))
+	versionCount, hasVersions := status["version_count"].(int64)
+	if hasVersions {
+		values["versions.total"] = float64(versionCount)
+	}
 	out := []history.Metric{}
 	for _, d := range history.AppDefinitions() {
 		value := values[d.Key]
-		out = append(out, history.Metric{Definition: d, Value: &value})
+		metric := history.Metric{Definition: d, Value: &value}
+		if d.Key == "versions.total" && !hasVersions {
+			metric.Value = nil
+		}
+		out = append(out, metric)
 	}
 	return out
 }

@@ -14,6 +14,7 @@ import { signedIn } from "../session";
 export function usePagedCollection<T>(
   path: Ref<string>,
   automatic: Ref<boolean>,
+  pageSize = 50,
 ) {
   const items = shallowRef<T[]>([]),
     loaded = ref(false),
@@ -65,7 +66,7 @@ export function usePagedCollection<T>(
       request = new AbortController();
     controller = request;
     loading.value = true;
-    const query = new URLSearchParams({ limit: "50" });
+    const query = new URLSearchParams({ limit: String(pageSize) });
     if (cursor.value !== null) query.set("cursor", cursor.value);
     try {
       const data = await api<Page<T>>(
@@ -75,7 +76,7 @@ export function usePagedCollection<T>(
       );
       if (attempt === ticket) {
         items.value = data.items;
-        nextCursor.value = data.next_cursor;
+        nextCursor.value = data.next_cursor || null;
         loaded.value = true;
         error.value = undefined;
       }
@@ -113,6 +114,10 @@ export function usePagedCollection<T>(
     cursor.value = null;
     back.value = [];
     clearPage();
+  }
+  function reload() {
+    stop();
+    void refresh();
   }
   const visible = () => {
     if (document.visibilityState === "hidden") stop();
@@ -156,6 +161,7 @@ export function usePagedCollection<T>(
     previousAvailable,
     nextAvailable,
     refresh,
+    reload,
     next,
     previous,
   };

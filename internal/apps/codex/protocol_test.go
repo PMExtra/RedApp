@@ -80,3 +80,28 @@ func TestCanonicalDistributionPaths(t *testing.T) {
 		}
 	}
 }
+
+func TestMirrorMetadataCannotSelectTheArtifactDestination(t *testing.T) {
+	client, _ := testutil.Upstream(t, http.NotFoundHandler())
+	protocol := NewProtocol(client)
+	for _, metadataBase := range []string{client.Base.String(), "https://releases.openai.com/codex"} {
+		raw := fixture(metadataBase, "1.2.3")
+		release, err := protocol.VerifyRelease("1.2.3", application.Envelope{Raw: raw})
+		if err != nil {
+			t.Fatal("valid mirror metadata rejected", err)
+		}
+		for _, artifact := range release.Artifacts {
+			if artifact.Source != client.URL("releases/1.2.3/"+artifact.Key) {
+				t.Fatalf("metadata selected a different fetch destination: %s", artifact.Source)
+			}
+		}
+		if string(release.Envelope.Raw) != string(raw) {
+			t.Fatal("persisted metadata bytes were rewritten")
+		}
+	}
+	for _, base := range []string{"https://evil.example/codex", "https://releases.openai.com/codex/elsewhere", "https://releases.openai.com:443/codex", "https://releases.openai.com/codex/../codex"} {
+		if _, err := protocol.VerifyRelease("1.2.3", application.Envelope{Raw: fixture(base, "1.2.3")}); err == nil {
+			t.Fatalf("noncanonical metadata source accepted: %s", base)
+		}
+	}
+}

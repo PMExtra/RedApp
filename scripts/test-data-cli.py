@@ -78,13 +78,13 @@ with tempfile.TemporaryDirectory(prefix="redapp-data-cli-") as temp:
     assert result.returncode == 1 and "Duplicate" in result.stderr and not data.exists()
     # Old and unknown directories must be byte-identical after a refused startup,
     # including absence of a new instance.lock or SQLite sidecar.
-    for kind in ["old-schema", "unknown"]:
+    for kind, old_schema in [("schema-2", 2), ("schema-3", 3), ("unknown", None)]:
         data = directory / kind
         data.mkdir()
-        if kind == "old-schema":
+        if old_schema is not None:
             db = sqlite3.connect(data / "state.sqlite")
             db.executescript("CREATE TABLE schema_version(version INTEGER NOT NULL);"
-                             "INSERT INTO schema_version VALUES(2);")
+                             f"INSERT INTO schema_version VALUES({old_schema});")
             db.close()
         else:
             (data / "keep-me.txt").write_text("unrelated original data")
@@ -99,4 +99,4 @@ with tempfile.TemporaryDirectory(prefix="redapp-data-cli-") as temp:
     result = invoke(["serve", "--config", str(config_path)], directory)
     assert result.returncode == 1 and ("read-only" in result.stderr.lower() or "permission denied" in result.stderr.lower())
     assert not (directory / "new-data").exists()
-print("CLI optional config, explicit JSON/path failures, invalid origin/duplicate keys, unchanged old/unknown directories and permission failure passed.")
+print("CLI optional config, explicit JSON/path failures, invalid origin/duplicate keys, unchanged schema-2/schema-3/unknown directories and permission failure passed.")

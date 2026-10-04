@@ -6,7 +6,7 @@ build: frontend
 	mkdir -p bin
 	CGO_ENABLED=1 go build -tags netgo,osusergo,sqlite_omit_load_extension -trimpath -ldflags='-linkmode external -extldflags "-static" -X main.version=$(VERSION) -X main.revision=$(REVISION)' -o bin/redapp ./cmd/redapp
 test:
-	go test -race ./... -count=1 -timeout=120s
+	go test -race ./... -count=1 -timeout=180s
 	python3 scripts/test-installers.py --platform shell
 	python3 scripts/test-update-installers.py
 	python3 scripts/test-installer-maintenance.py

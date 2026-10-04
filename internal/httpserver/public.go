@@ -20,9 +20,14 @@ func (s *Server) publicApplications(origin string) []map[string]any {
 		root := origin + "/" + d.ID
 		icon := ""
 		if d.Icon != "" {
-			icon = "/" + d.ID + "/" + d.Icon
+			if strings.HasPrefix(d.Icon, "/") {
+				icon = d.Icon
+			} else {
+				icon = "/" + d.ID + "/" + d.Icon
+			}
 		}
-		out = append(out, map[string]any{"id": d.ID, "name": d.Name, "publisher": d.Publisher, "summary": d.Summary, "origin": root, "detail_url": "/" + d.ID, "distribution_url": root, "icon": icon, "channels": d.Channels, "installers": publicInstallers(d.Installers), "update_policy": d.UpdatePolicy})
+		definition, _ := application.ProviderDefinition(e.Provider)
+		out = append(out, map[string]any{"id": d.ID, "name": d.Name, "publisher": d.Publisher, "vendor": map[string]any{"id": e.VendorID, "name": e.VendorName, "description": e.VendorDescription, "icon": e.VendorIcon}, "summary": d.Summary, "origin": root, "detail_url": "/" + d.ID, "distribution_url": root, "icon": icon, "channels": d.Channels, "installers": publicInstallers(d.Installers), "update_policy": d.UpdatePolicy, "provider": e.Provider, "capabilities": definition.Capabilities})
 	}
 	return out
 }

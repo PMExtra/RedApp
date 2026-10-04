@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PMExtra/RedApp/installers"
@@ -24,7 +25,9 @@ import (
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/history"
+	"github.com/PMExtra/RedApp/internal/httpcache"
 	"github.com/PMExtra/RedApp/internal/jsoncheck"
+	"github.com/PMExtra/RedApp/internal/media"
 	"github.com/PMExtra/RedApp/internal/site"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -33,14 +36,21 @@ import (
 var web embed.FS
 
 type Server struct {
-	Version      string
-	DB           *store.Store
-	Registry     *application.Registry
-	Catalog      *catalog.Service
-	Downloads    *download.Manager
-	Auth         *auth.Auth
-	Proxy        Proxy
-	Upstream     *distributor.Client
+	Version   string
+	DB        *store.Store
+	Registry  *application.Registry
+	Catalog   *catalog.Service
+	Downloads *download.Manager
+	HTTPCache *httpcache.Service
+	Auth      *auth.Auth
+	Proxy     Proxy
+	Upstream  interface {
+		Proxy() distributor.ProxyView
+		SetProxy(distributor.ProxyUpdate, int64) error
+	}
+	Pool         *distributor.Pool
+	Icons        *media.Store
+	directoryMu  sync.Mutex
 	History      *history.History
 	PublicConfig *config.PublicSettings
 	Dir          string
@@ -58,14 +68,17 @@ func problem(w http.ResponseWriter, status int, code, message string) {
 	reply(w, status, map[string]any{"error": map[string]any{"code": code, "message": message, "request_id": hex.EncodeToString(id[:]), "retryable": status >= 500}})
 }
 func fail(w http.ResponseWriter, status int, message string) {
-	code := map[int]string{400: "INVALID_REQUEST", 401: "AUTH_REQUIRED", 403: "CSRF_REJECTED", 404: "RESOURCE_NOT_FOUND", 405: "METHOD_NOT_ALLOWED", 409: "SETTINGS_REVISION_CONFLICT", 429: "LOGIN_RATE_LIMITED", 502: "UPSTREAM_UNAVAILABLE", 503: "LOCAL_STORAGE_UNAVAILABLE"}[status]
+	code := map[int]string{400: "INVALID_REQUEST", 401: "AUTH_REQUIRED", 403: "CSRF_REJECTED", 404: "RESOURCE_NOT_FOUND", 405: "METHOD_NOT_ALLOWED", 409: "SETTINGS_REVISION_CONFLICT", 413: "PAYLOAD_TOO_LARGE", 429: "LOGIN_RATE_LIMITED", 502: "UPSTREAM_UNAVAILABLE", 503: "LOCAL_STORAGE_UNAVAILABLE"}[status]
 	problem(w, status, code, message)
 }
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
+	return decodeLimit(w, r, v, 8192)
+}
+func decodeLimit(w http.ResponseWriter, r *http.Request, v any, limit int64) error {
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 		return errors.New("JSON request required")
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 8192)
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	b, err := io.ReadAll(r.Body)
 	if err != nil {
 		return err
@@ -124,6 +137,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "ORIGIN_REJECTED", err.Error())
 		return
 	}
+	if s.generalFile(w, r) {
+		return
+	}
 	if !canonicalPath(r) {
 		problem(w, 400, "INVALID_PATH", "Noncanonical request path")
 		return
@@ -169,7 +185,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasPrefix(path, "/assets/") {
-		if r.Method != "GET" {
+		if r.Method != "GET" && !(r.Method == "HEAD" && strings.HasPrefix(path, "/assets/icons/")) {
 			fail(w, 405, "Method not allowed")
 			return
 		}
@@ -177,7 +193,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			fail(w, 400, "Invalid query")
 			return
 		}
-		s.asset(w, r)
+		if strings.HasPrefix(path, "/assets/icons/") {
+			s.icon(w, r)
+		} else {
+			s.asset(w, r)
+		}
 		return
 	}
 	if path == "/admin" {
@@ -251,7 +271,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	appRoot := public + "/" + id
 	switch op.Kind {
 	case application.InstallerOperation:
-		body, e := installers.Installer(id, op.Name, appRoot)
+		template := entry.TemplateID
+		if template == "" {
+			template = id
+		}
+		body, e := installers.Render(template, id, op.Name, appRoot)
 		if e != nil {
 			fail(w, 503, "Installer verification failed")
 			return
@@ -265,7 +289,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Write(asset.Body)
 			return
 		}
-		body, e := installers.PublicAsset(id, op.Name)
+		template := entry.TemplateID
+		if template == "" {
+			template = id
+		}
+		body, e := installers.PublicAsset(template, op.Name)
 		if e != nil {
 			fail(w, 404, "Public asset not found")
 			return
@@ -302,15 +330,23 @@ func (s *Server) catalogError(w http.ResponseWriter, err error) {
 }
 func (s *Server) validUI(path string) bool {
 	switch path {
-	case "/", "/admin/login", "/admin/overview", "/admin/events", "/admin/settings/site", "/admin/settings/proxy":
+	case "/", "/admin/login", "/admin/overview", "/admin/events", "/admin/settings/site", "/admin/settings/proxy", "/admin/vendors", "/admin/vendors/new":
 		return true
 	}
+	if strings.HasPrefix(path, "/admin/vendors/") {
+		p := strings.Split(strings.TrimPrefix(path, "/admin/vendors/"), "/")
+		if !(len(p) == 2 && p[1] == "settings") && !(len(p) == 3 && p[1] == "apps" && p[2] == "new") {
+			return false
+		}
+		_, err := s.DB.Vendor(p[0])
+		return err == nil
+	}
 	p := strings.Split(strings.TrimPrefix(path, "/admin/apps/"), "/")
-	if !strings.HasPrefix(path, "/admin/apps/") || len(p) != 3 || (p[2] != "versions" && p[2] != "settings") {
+	if !strings.HasPrefix(path, "/admin/apps/") || len(p) != 3 || (p[2] != "versions" && p[2] != "settings" && p[2] != "cache") {
 		return false
 	}
-	_, ok := s.Registry.Lookup(p[0] + "/" + p[1])
-	return ok
+	e, ok := s.Registry.LookupAny(p[0] + "/" + p[1])
+	return ok && (p[2] != "versions" || e.Protocol != nil) && (p[2] != "cache" || e.Provider == "general-http")
 }
 func (s *Server) page(w http.ResponseWriter, status int) {
 	body, err := web.ReadFile("web/index.html")
@@ -346,7 +382,8 @@ func (s *Server) asset(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) serveResource(w http.ResponseWriter, r *http.Request, resource download.Resource) {
 	app := resource.Application
-	if err := s.DB.AddFor(app, "artifact_requests", 1); err != nil {
+	metricApp := resource.MetricScope()
+	if err := s.DB.AddFor(metricApp, "artifact_requests", 1); err != nil {
 		fail(w, 503, "Failed to record request")
 		return
 	}
@@ -364,7 +401,7 @@ func (s *Server) serveResource(w http.ResponseWriter, r *http.Request, resource 
 		return
 	}
 	defer rd.Close()
-	if err = s.DB.AddFor(app, rd.Kind+"_requests", 1); err != nil {
+	if err = s.DB.AddFor(metricApp, rd.Kind+"_requests", 1); err != nil {
 		fail(w, 503, "Failed to record acquisition")
 		return
 	}
@@ -375,14 +412,14 @@ func (s *Server) serveResource(w http.ResponseWriter, r *http.Request, resource 
 		n, re := rd.Read(buf)
 		if n > 0 {
 			written, we := w.Write(buf[:n])
-			if e := s.DB.AddFor(app, "downstream_bytes", int64(written)); e != nil {
+			if e := s.DB.AddFor(metricApp, "downstream_bytes", int64(written)); e != nil {
 				panic(http.ErrAbortHandler)
 			}
 			if e := s.DB.AddVersion(app, resource.Version, 0, int64(written)); e != nil {
 				panic(http.ErrAbortHandler)
 			}
 			if we != nil {
-				s.DB.AddFor(app, "download_errors", 1)
+				s.DB.AddFor(metricApp, "download_errors", 1)
 				return
 			}
 			if f, ok := w.(http.Flusher); ok {
@@ -391,10 +428,10 @@ func (s *Server) serveResource(w http.ResponseWriter, r *http.Request, resource 
 		}
 		if re != nil {
 			if re == io.EOF {
-				s.DB.AddFor(app, "download_success", 1)
+				s.DB.AddFor(metricApp, "download_success", 1)
 				return
 			}
-			s.DB.AddFor(app, "download_errors", 1)
+			s.DB.AddFor(metricApp, "download_errors", 1)
 			panic(http.ErrAbortHandler)
 		}
 	}
@@ -415,7 +452,7 @@ func revisionReply(w http.ResponseWriter, revision int64, value any) {
 	reply(w, 200, value)
 }
 func settingsError(w http.ResponseWriter, err error) {
-	if errors.Is(err, store.ErrRevisionConflict) {
+	if errors.Is(err, store.ErrRevisionConflict) || errors.Is(err, store.ErrConflict) {
 		problem(w, 409, "SETTINGS_REVISION_CONFLICT", "Settings changed; reload before saving")
 	} else {
 		fail(w, 503, "Unable to persist settings")
@@ -461,6 +498,9 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 		fail(w, 403, "CSRF validation failed")
 		return
 	}
+	if s.directoryAPI(w, r) {
+		return
+	}
 	app := ""
 	endpoint := strings.TrimPrefix(path, "/admin/api/")
 	if strings.HasPrefix(endpoint, "apps/") {
@@ -470,7 +510,7 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 			return
 		}
 		app = p[0] + "/" + p[1]
-		if _, exists := s.Registry.Lookup(app); !exists {
+		if _, exists := s.Registry.LookupAny(app); !exists {
 			problem(w, 404, "APPLICATION_NOT_FOUND", "Application not found")
 			return
 		}
@@ -498,8 +538,20 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 			fail(w, 400, "Invalid query")
 			return
 		}
+	} else if app != "" && (endpoint == "cache" || strings.HasPrefix(endpoint, "cache/") || strings.HasPrefix(endpoint, "cleanup/")) {
+		allowed := []string{"source_epoch"}
+		if r.Method == http.MethodGet && strings.HasSuffix(endpoint, "/items") {
+			allowed = append(allowed, "cursor", "limit")
+		}
+		if !queryAllowed(r, allowed...) || r.URL.Query().Has("source_epoch") && r.URL.Query().Get("source_epoch") == "" {
+			fail(w, 400, "Invalid source selection")
+			return
+		}
 	} else if !queryAllowed(r) {
 		fail(w, 400, "Invalid query")
+		return
+	}
+	if s.cacheAPI(w, r, app, endpoint) {
 		return
 	}
 	if r.Method == "GET" {
@@ -563,7 +615,8 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 			if app == "" {
 				series, err = s.History.Query(key, window, time.Now().UTC())
 			} else {
-				series, err = s.History.QueryFor(app, key, window, time.Now().UTC())
+				entry, _ := s.Registry.LookupAny(app)
+				series, err = s.History.QueryFor(entry.MetricsID(), key, window, time.Now().UTC())
 			}
 			if err != nil {
 				fail(w, 503, "Failed to read metric history")
@@ -575,7 +628,14 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 			if app == "" {
 				break
 			}
-			ttl, rev, err := s.Catalog.TTL(app)
+			entry, _ := s.Registry.LookupAny(app)
+			if entry.Protocol == nil {
+				break
+			}
+			ttl, rev, err := entry.Descriptor.DefaultChannelTTLSeconds, entry.Revision, error(nil)
+			if entry.UID == "" {
+				ttl, rev, err = s.Catalog.TTL(app)
+			}
 			if err != nil {
 				fail(w, 503, "Application settings unavailable")
 				return
@@ -622,6 +682,10 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 			if app == "" {
 				break
 			}
+			entry, _ := s.Registry.LookupAny(app)
+			if entry.Protocol == nil {
+				break
+			}
 			var input struct {
 				TTL int `json:"channel_ttl_seconds"`
 			}
@@ -633,7 +697,13 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 				fail(w, 400, "Channel TTL must be between 1 and 86400 seconds")
 				return
 			}
-			next, e := s.Catalog.SetTTL(app, rev, input.TTL)
+			var next int64
+			var e error
+			if entry.UID != "" {
+				next, e = s.setDirectoryTTL(app, rev, input.TTL)
+			} else {
+				next, e = s.Catalog.SetTTL(app, rev, input.TTL)
+			}
 			if e != nil {
 				settingsError(w, e)
 				return
@@ -755,13 +825,18 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 			fail(w, 400, "Invalid request")
 			return
 		}
+		entry, e := s.sourceEntry(app, r)
+		if e != nil {
+			directoryError(w, e)
+			return
+		}
 		views := s.Downloads.Snapshot()
-		ids, unknown, e := s.Catalog.Candidates(app, input.Minimum, views)
+		ids, unknown, e := s.Catalog.CandidatesForSource(app, entry.StorageID(), input.Minimum, views)
 		if e != nil {
 			fail(w, 400, "Invalid minimum version")
 			return
 		}
-		job, e := s.Downloads.Preview(app, ids)
+		job, e := s.Downloads.Preview(entry.StorageID(), ids)
 		if e != nil {
 			fail(w, 503, "Failed to persist cleanup preview")
 			return
@@ -772,7 +847,12 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 	if app != "" && strings.HasPrefix(endpoint, "cleanup/") && strings.HasSuffix(endpoint, "/execute") {
 		p := strings.Split(endpoint, "/")
 		if len(p) == 3 {
-			if e := s.Downloads.Cleanup(app, p[1]); e != nil {
+			entry, e := s.sourceEntry(app, r)
+			if e != nil {
+				directoryError(w, e)
+				return
+			}
+			if e := s.Downloads.Cleanup(entry.StorageID(), p[1]); e != nil {
 				problem(w, 409, "CLEANUP_INVALID", "Cleanup preview is expired, has a different application, or execution failed")
 				return
 			}

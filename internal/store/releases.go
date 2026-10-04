@@ -46,7 +46,7 @@ func equalSize(a, b *int64) bool { return a == nil && b == nil || a != nil && b 
 
 // PutRelease atomically commits trusted bytes, discovery history and an immutable
 // resource set. Trust revalidation may replace envelope bytes but never bindings.
-func (s *Store) PutRelease(m ReleaseMetadata, resources []Resource) error {
+func (s *Store) PutRelease(m ReleaseMetadata, resources []Resource, expected ...SourceFence) error {
 	if requireApp(m.AppID) != nil || m.Version == "" || m.Raw == nil || m.TrustRevision < 1 || m.FetchedAt.IsZero() {
 		return errors.New("Invalid trusted release")
 	}
@@ -65,6 +65,9 @@ func (s *Store) PutRelease(m ReleaseMetadata, resources []Resource) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err = s.RequireSourceActive(tx, m.AppID, expected...); err != nil {
+		return err
+	}
 	var oldRaw, oldSig []byte
 	var oldRevision int64
 	err = tx.QueryRow("SELECT raw,signature,trust_revision FROM release_metadata WHERE app_id=? AND version=?", m.AppID, m.Version).Scan(&oldRaw, &oldSig, &oldRevision)
@@ -159,12 +162,23 @@ func (s *Store) Resources(app, version string) ([]Resource, error) {
 	}
 	return out, rows.Err()
 }
-func (s *Store) PutChannel(c Channel) error {
+func (s *Store) PutChannel(c Channel, expected ...SourceFence) error {
 	if requireApp(c.AppID) != nil || c.Name == "" || c.Version == "" || !c.ExpiresAt.After(c.FetchedAt) {
 		return errors.New("Invalid channel record")
 	}
-	_, err := s.DB.Exec("INSERT INTO channels VALUES(?,?,?,?,?) ON CONFLICT(app_id,channel) DO UPDATE SET version=excluded.version,fetched_at_s=excluded.fetched_at_s,expires_at_s=excluded.expires_at_s", c.AppID, c.Name, c.Version, c.FetchedAt.Unix(), c.ExpiresAt.Unix())
-	return err
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err = s.RequireSourceActive(tx, c.AppID, expected...); err != nil {
+		return err
+	}
+	_, err = tx.Exec("INSERT INTO channels VALUES(?,?,?,?,?) ON CONFLICT(app_id,channel) DO UPDATE SET version=excluded.version,fetched_at_s=excluded.fetched_at_s,expires_at_s=excluded.expires_at_s", c.AppID, c.Name, c.Version, c.FetchedAt.Unix(), c.ExpiresAt.Unix())
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *Store) Channel(app, name string) (Channel, error) {
 	c := Channel{AppID: app, Name: name}

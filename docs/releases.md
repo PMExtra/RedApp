@@ -1,5 +1,15 @@
 # 版本说明
 
+## v0.7.0
+
+**破坏性数据模型升级：包括 v0.6 在内的旧版本均须使用全新空数据目录或卷。** SQLite schema 升为 4；不迁移或导入旧设置、缓存和历史，旧目录在写入前被拒绝且保留。部署 YAML/JSON 仍为 schema_version=1，默认端口 8080、容器目录 `/var/lib/redapp`、UID/GID 65532 和健康检查方式不变。完整升级边界见 [Provider 运行说明](provider-runtime-v0.7.0.md)与[运维说明](operations.md)。
+
+后台支持动态厂商和应用、双语资料、静态图标与启用管理。GeneralHttp、Codex、ClaudeCode 为三个并列 Provider；BaseUrl 可配置，换源使用独立 source epoch，旧缓存保留供显式管理，应用累计指标维持稳定身份。Codex/ClaudeCode 的安装器原文、patch、信任材料及已有发布验证保持不变。
+
+GeneralHttp 提供多源顺序、轮询或随机回源，路径 TTL 规则、故障旧副本回退开关、手动刷新和默认关闭的自动清理。TTL 0 每次回源，仍可保留完整副本供失败回退；实际覆盖与回退按共享回源操作记录警告。跨源重试完整重取，不拼接未经全局摘要证明相同的半截内容。清理和刷新共用服务端分页冻结预览，分批执行整个选中集合，并复查 revision、source epoch、generation 和最近访问。清理后的新请求不会通过旧共享回源任务取得已退役副本，已有读者可正常完成。
+
+回归覆盖千级资源的分页与跨轮推进、执行中配置变更、刷新/回退分类、容量边界、旧目录保护、前端 DOM 与非 UTC 时间，以及安装器治理。发布仍须通过精确 main 提交的原生 Linux amd64/arm64 和 Windows PowerShell 7/5.1 CI，再按不可变 digest 验证双架构镜像。没有 GUI、真实官方 CLI、原生 Windows ARM64 或 macOS 验收；没有 S3 后端、旧数据迁移或用户部署操作。
+
 ## v0.6.4
 
 统一 Codex/Claude 的安装器测试入口、公共 HTTP/制品夹具、候选包校验和维护命令；保留两种下载协议及平台行为差异，移除废弃的 Claude 专用测试/更新命令。官方 upstream、patch、generated、许可证、公钥以及应用配置/数据库格式均不变。

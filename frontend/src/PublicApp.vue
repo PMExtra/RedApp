@@ -6,6 +6,7 @@ import {
   bootstrapError,
   bootstrapLoading,
   loadBootstrap,
+  applicationCapabilities,
 } from "./bootstrap";
 import { language, t } from "./i18n";
 import { siteTitle } from "./site";
@@ -18,7 +19,7 @@ const selected = computed(() =>
   bootstrap.value?.apps.find((app) => app.id === selectedID.value),
 );
 watchEffect(() => {
-  document.title = `${detail.value ? t("Install {name}", { name: selected.value?.name[language.value] || "" }) : t("Applications")} · ${siteTitle.value}`;
+  document.title = `${detail.value ? selected.value?.name[language.value] || t("Applications") : t("Applications")} · ${siteTitle.value}`;
 });
 </script>
 <template>
@@ -52,12 +53,12 @@ watchEffect(() => {
         /><Icon v-else name="box" :size="48" />
       </div>
       <div class="public-heading">
-        <span class="eyebrow">{{ t("Installation instructions") }}</span>
+        <span class="eyebrow">{{ applicationCapabilities(selected).installers ? t("Installation instructions") : t("Download files") }}</span>
         <h1>{{ selected.name[language] }}</h1>
         <p class="public-lead">{{ selected.summary[language] }}</p>
       </div>
     </div>
-    <div class="installation-layout">
+    <div v-if="applicationCapabilities(selected).installers" class="installation-layout">
       <InstallCommands
         :origin="bootstrap.public_origin"
         :application="selected"
@@ -83,7 +84,12 @@ watchEffect(() => {
           </ol>
         </section>
       </aside>
-    </div></template
+    </div>
+    <section v-else class="panel download-prefix">
+      <h2>{{ t("Download URL prefix") }}</h2>
+      <pre tabindex="0">{{ bootstrap.public_origin }}/{{ selected.id }}/</pre>
+      <p class="muted">{{ t("Append the relative file path to this address. Files are fetched and cached when requested.") }}</p>
+    </section></template
   >
   <section v-else-if="detail" class="panel empty-state">
     <h1>{{ t("Page not found") }}</h1>
@@ -114,7 +120,7 @@ watchEffect(() => {
         <h2>{{ app.name[language] }}</h2>
         <p>{{ app.summary[language] }}</p>
         <span class="card-action"
-          >{{ t("Installation instructions") }}<Icon name="arrow" /></span
+          >{{ applicationCapabilities(app).installers ? t("Installation instructions") : t("Download files") }}<Icon name="arrow" /></span
       ></RouterLink>
     </div>
     <p v-if="bootstrap && !bootstrap.apps.length" class="empty">

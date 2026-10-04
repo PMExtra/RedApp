@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -57,6 +58,13 @@ func (m *Manager) Preview(app string, ids map[string]bool) (Cleanup, error) {
 		}
 	}
 	row := store.CleanupPreview{ID: job.ID, AppID: app, CreatedAt: now, ExpiresAt: job.Expires, Selection: []store.CleanupSelection{}}
+	if _, _, dynamic := identity.ParseStorageID(app); dynamic {
+		source, err := m.db.Source(app)
+		if err != nil {
+			return job, err
+		}
+		row.SourceFence = source.Fence()
+	}
 	for _, item := range job.Selected {
 		row.Selection = append(row.Selection, store.CleanupSelection{GenerationID: item.Generation, Version: item.Version, ResourceKey: item.Key, SnapshotBytes: item.Bytes})
 	}

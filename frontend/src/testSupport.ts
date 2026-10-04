@@ -19,6 +19,7 @@ import {
   signedIn,
 } from "./session";
 import { setCSRF } from "./api";
+import { resetDirectory, type ManagedApplication, type Vendor } from "./directory";
 export const applications: Application[] = [
   {
     id: "openai/codex",
@@ -62,6 +63,17 @@ export const boot = {
   public_origin: "https://downloads.example:8443",
   revision: "1",
 };
+export const managedVendors: Vendor[] = applications.map((app) => ({
+  uid: app.id.split("/")[0]!, id: app.id.split("/")[0]!,
+  name: { en: app.publisher, "zh-CN": app.publisher },
+  description: { en: "", "zh-CN": "" }, icon: "", enabled: true, revision: 1,
+}));
+export const adminApplications: ManagedApplication[] = applications.map((app, index) => ({
+  uid: app.id, id: app.id.split("/")[1]!, key: app.id,
+  vendor_id: app.id.split("/")[0]!, vendor_uid: app.id.split("/")[0]!,
+  name: app.name, description: app.summary, icon: app.icon, enabled: true, revision: 1,
+  provider: index === 0 ? "codex" : "claude-code", base_url: "https://upstream.example/releases/", cache_ttl_seconds: 300, source_epoch: 1,
+}));
 export const status = {
   name: "RedApp",
   sampled_at: "2026-10-02T08:01:00Z",
@@ -89,6 +101,7 @@ export const response = (data: unknown, status = 200) => ({
   json: async () => data,
 });
 export function resetStores() {
+  resetDirectory();
   cancelSessionCheck();
   setCSRF("");
   invalidateBootstrap();

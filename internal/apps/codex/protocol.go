@@ -160,7 +160,7 @@ func (p *Protocol) VerifyRelease(version string, envelope application.Envelope) 
 	}
 	out := application.Release{Version: version, Envelope: envelope, Artifacts: make([]application.VerifiedArtifact, 0, len(r.Assets))}
 	for _, a := range r.Assets {
-		out.Artifacts = append(out.Artifacts, application.VerifiedArtifact{Key: a.Name, Source: a.URL, SHA256: strings.ToLower(a.Digest[7:]), Size: a.Size})
+		out.Artifacts = append(out.Artifacts, application.VerifiedArtifact{Key: a.Name, Source: p.upstream.URL("releases/" + version + "/" + a.Name), SHA256: strings.ToLower(a.Digest[7:]), Size: a.Size})
 	}
 	return out, nil
 }
@@ -212,8 +212,14 @@ func (p *Protocol) parse(body []byte, requested string) (Release, error) {
 		if a.Size != nil && (*a.Size < 0 || *a.Size > 4<<30) {
 			return Release{}, errors.New("Invalid asset length")
 		}
+		// A mirror may preserve the official canonical metadata URL. Never use
+		// that field as a fetch destination: the authorized relative path is
+		// always rebound to this instance's configured upstream in VerifyRelease.
+		path := "releases/" + v + "/" + a.Name
 		u, e := url.Parse(a.URL)
-		if e != nil || p.upstream.Validate(u) != nil || a.URL != p.upstream.URL("releases/"+v+"/"+a.Name) {
+		configured := a.URL == p.upstream.URL(path) && e == nil && p.upstream.Validate(u) == nil
+		official := a.URL == "https://releases.openai.com/codex/"+path
+		if !configured && !official {
 			return Release{}, errors.New("Asset URL is not authorized")
 		}
 	}

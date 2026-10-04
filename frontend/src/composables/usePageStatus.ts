@@ -1,8 +1,8 @@
-import { onMounted, onUnmounted, ref, watch, type Ref } from "vue";
+import { onMounted, onUnmounted, ref, shallowRef, watch, type Ref } from "vue";
 import { api, type Status } from "../api";
 import { signedIn } from "../session";
-export function usePageStatus(path: Ref<string>) {
-  const status = ref<Status>(),
+export function usePageStatus<T = Status>(path: Ref<string>, enabled: Ref<boolean> = ref(true)) {
+  const status = shallowRef<T>(),
     error = ref<unknown>(),
     loading = ref(false),
     automatic = ref(true);
@@ -21,6 +21,7 @@ export function usePageStatus(path: Ref<string>) {
     clearTimeout(timer);
     if (
       !disposed &&
+      enabled.value &&
       signedIn.value &&
       automatic.value &&
       document.visibilityState !== "hidden"
@@ -30,6 +31,7 @@ export function usePageStatus(path: Ref<string>) {
   async function refresh() {
     if (
       disposed ||
+      !enabled.value ||
       controller ||
       !signedIn.value ||
       document.visibilityState === "hidden"
@@ -41,7 +43,7 @@ export function usePageStatus(path: Ref<string>) {
     controller = request;
     loading.value = true;
     try {
-      const data = await api<Status>(path.value, undefined, request.signal);
+      const data = await api<T>(path.value, undefined, request.signal);
       if (attempt === ticket) {
         status.value = data;
         error.value = undefined;
@@ -70,6 +72,10 @@ export function usePageStatus(path: Ref<string>) {
     error.value = undefined;
     void refresh();
   });
+  watch(enabled, (value) => {
+    stop();
+    if (value) void refresh();
+  }, { flush: "sync" });
   watch(signedIn, (value) => {
     if (!value) {
       stop();

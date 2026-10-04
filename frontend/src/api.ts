@@ -130,18 +130,18 @@ export async function api<T>(
   body?: unknown,
   signal?: AbortSignal,
   extraHeaders: Record<string, string> = {},
-  method?: "GET" | "POST" | "PUT",
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
 ): Promise<T> {
   const generation = sessionGeneration;
   const response = await fetch("/admin/api/" + path, {
     method: method || (body === undefined ? "GET" : "POST"),
     credentials: "same-origin",
     headers: {
-      "Content-Type": "application/json",
+      ...(body instanceof FormData ? {} : { "Content-Type": "application/json" }),
       "X-CSRF-Token": csrf,
       ...extraHeaders,
     },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body),
     signal,
   });
   const data = await response.json().catch(() => ({}));

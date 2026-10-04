@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/PMExtra/RedApp/internal/identity"
+	"strings"
 	"time"
 )
 
@@ -14,6 +16,7 @@ type CleanupSelection struct {
 	SnapshotBytes int64  `json:"snapshot_bytes"`
 }
 type CleanupPreview struct {
+	SourceFence
 	ID, AppID            string
 	CreatedAt, ExpiresAt time.Time
 	Selection            []CleanupSelection
@@ -30,6 +33,9 @@ func (s *Store) SaveCleanupPreview(p CleanupPreview) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err = checkCleanupFence(tx, p.AppID, p.SourceFence); err != nil {
+		return err
+	}
 	seen := map[string]bool{}
 	for _, item := range p.Selection {
 		if item.GenerationID == "" || seen[item.GenerationID] || item.SnapshotBytes < 0 {
@@ -49,7 +55,7 @@ func (s *Store) SaveCleanupPreview(p CleanupPreview) error {
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec("INSERT INTO cleanup_previews(id,app_id,created_at_s,expires_at_s,selection_json) VALUES(?,?,?,?,?)", p.ID, p.AppID, p.CreatedAt.Unix(), p.ExpiresAt.Unix(), raw)
+	_, err = tx.Exec("INSERT INTO cleanup_previews(id,app_id,created_at_s,expires_at_s,selection_json,app_revision,vendor_revision) VALUES(?,?,?,?,?,?,?)", p.ID, p.AppID, p.CreatedAt.Unix(), p.ExpiresAt.Unix(), raw, p.AppRevision, p.VendorRevision)
 	if err != nil {
 		return err
 	}
@@ -60,7 +66,7 @@ func scanCleanup(row scanner) (CleanupPreview, error) {
 	var created, expires int64
 	var executed sql.NullInt64
 	var raw, result []byte
-	err := row.Scan(&p.ID, &p.AppID, &created, &expires, &raw, &executed, &result)
+	err := row.Scan(&p.ID, &p.AppID, &created, &expires, &raw, &executed, &result, &p.AppRevision, &p.VendorRevision)
 	if err != nil {
 		return p, err
 	}
@@ -75,7 +81,7 @@ func (s *Store) CleanupPreview(app, id string) (CleanupPreview, error) {
 	if err := requireApp(app); err != nil {
 		return CleanupPreview{}, err
 	}
-	return scanCleanup(s.DB.QueryRow("SELECT id,app_id,created_at_s,expires_at_s,selection_json,executed_at_s,result_json FROM cleanup_previews WHERE id=? AND app_id=?", id, app))
+	return scanCleanup(s.DB.QueryRow("SELECT id,app_id,created_at_s,expires_at_s,selection_json,executed_at_s,result_json,app_revision,vendor_revision FROM cleanup_previews WHERE id=? AND app_id=?", id, app))
 }
 func (s *Store) RetireCleanupPreview(app, id string, at time.Time) (CleanupPreview, error) {
 	var zero CleanupPreview
@@ -87,12 +93,17 @@ func (s *Store) RetireCleanupPreview(app, id string, at time.Time) (CleanupPrevi
 		return zero, err
 	}
 	defer tx.Rollback()
-	p, err := scanCleanup(tx.QueryRow("SELECT id,app_id,created_at_s,expires_at_s,selection_json,executed_at_s,result_json FROM cleanup_previews WHERE id=? AND app_id=?", id, app))
+	p, err := scanCleanup(tx.QueryRow("SELECT id,app_id,created_at_s,expires_at_s,selection_json,executed_at_s,result_json,app_revision,vendor_revision FROM cleanup_previews WHERE id=? AND app_id=?", id, app))
 	if err != nil {
 		return p, err
 	}
 	if p.ExecutedAt == nil && !at.Before(p.ExpiresAt) || p.ExecutedAt != nil && !at.Before(p.ExecutedAt.Add(24*time.Hour)) {
 		return p, ErrExpired
+	}
+	if p.ExecutedAt == nil {
+		if err = checkCleanupFence(tx, app, p.SourceFence); err != nil {
+			return p, err
+		}
 	}
 	for _, item := range p.Selection {
 		var a, v, k string
@@ -129,4 +140,33 @@ func (s *Store) CompleteCleanupPreview(app, id string, result json.RawMessage) e
 func (s *Store) DeleteExpiredCleanupPreviews(at time.Time) error {
 	_, err := s.DB.Exec("DELETE FROM cleanup_previews WHERE (executed_at_s IS NULL AND expires_at_s<=?) OR (executed_at_s IS NOT NULL AND executed_at_s<=?)", at.Unix(), at.Add(-24*time.Hour).Unix())
 	return err
+}
+
+// Cleanup is an explicit management action, so disabled, tombstoned and historic
+// sources may be selected. A later revision requires a fresh preview; unlike
+// publication it never requires the source to be enabled.
+func checkCleanupFence(tx *sql.Tx, storageID string, fence SourceFence) error {
+	uid, epoch, dynamic := identity.ParseStorageID(storageID)
+	if !dynamic {
+		if strings.HasPrefix(storageID, "app/") || !identity.ValidKey(storageID) {
+			return ErrInvalidDirectory
+		}
+		return nil
+	}
+	source, err := scanSource(tx.QueryRow(`SELECT `+sourceColumns+sourceJoin+` WHERE src.app_uid=? AND src.epoch=?`, uid, epoch))
+	if err != nil {
+		return err
+	}
+	if source.Fence() != fence {
+		return ErrSourceInactive
+	}
+	return nil
+}
+
+// RequireCleanupFence rejects stale management previews without requiring an active upstream.
+func (s *Store) RequireCleanupFence(tx *sql.Tx, storageID string, fence SourceFence) error {
+	if tx == nil {
+		return ErrInvalidDirectory
+	}
+	return checkCleanupFence(tx, storageID, fence)
 }

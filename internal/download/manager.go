@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/PMExtra/RedApp/internal/distributor"
+	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
 	"io"
 	"net/http"
@@ -24,6 +25,9 @@ import (
 type Resource struct {
 	// Application, Version and Key are the authorized logical identity. Labels are display only.
 	Application string
+	// MetricsID remains stable across source epochs; SourceFence binds admission.
+	MetricsID   string
+	SourceFence store.SourceFence
 	Version     string
 	Key         string
 	ID          string
@@ -31,6 +35,16 @@ type Resource struct {
 	Hash        string
 	Size        *int64
 	Labels      map[string]string
+}
+
+func (r Resource) MetricScope() string {
+	if uid, _, ok := identity.ParseStorageID(r.Application); ok {
+		return identity.MetricsID(uid)
+	}
+	if r.MetricsID != "" {
+		return r.MetricsID
+	}
+	return r.Application
 }
 
 func cloneResource(r Resource) Resource {
@@ -67,6 +81,7 @@ type Generation struct {
 	FullRetry      bool
 	file           *os.File
 	changed        chan struct{}
+	dormant        bool
 	running        bool
 	done           bool
 	readers        int
@@ -107,20 +122,21 @@ type View struct {
 	SampledAt    time.Time
 }
 type Manager struct {
-	mu         sync.Mutex
-	dir        string
-	db         *store.Store
-	upstreams  map[string]*distributor.Client
-	current    map[string]*Generation
-	all        map[string]*Generation
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
-	closed     bool
-	maxBytes   int64
-	maxReaders int
-	maxWriters int
-	jobs       int
+	mu          sync.Mutex
+	dir         string
+	db          *store.Store
+	upstreams   map[string]*distributor.Client
+	current     map[string]*Generation
+	all         map[string]*Generation
+	ctx         context.Context
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
+	closed      bool
+	maxBytes    int64
+	maxReaders  int
+	maxWriters  int
+	jobs        int
+	httpReaders int
 	// Unexported fault barrier used only by package tests; production leaves it nil.
 	testFault func(string, *Generation)
 }
@@ -135,9 +151,6 @@ func NewApplications(dir string, db *store.Store, clients map[string]*distributo
 		}
 		upstreams[app] = client
 	}
-	if len(upstreams) == 0 {
-		return nil, errors.New("No application upstreams registered")
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{dir: dir, db: db, upstreams: upstreams, current: map[string]*Generation{}, all: map[string]*Generation{}, ctx: ctx, cancel: cancel, maxBytes: 4 << 30, maxReaders: 512, maxWriters: 16}
 	if e := m.recover(); e != nil {
@@ -147,6 +160,31 @@ func NewApplications(dir string, db *store.Store, clients map[string]*distributo
 	}
 	return m, nil
 }
+
+// RegisterUpstreams adds immutable source clients before a new runtime registry
+// snapshot becomes visible. Historical clients remain available for recovery.
+func (m *Manager) RegisterUpstreams(clients map[string]*distributor.Client) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return errors.New("Server is shutting down")
+	}
+	for app, client := range clients {
+		if client == nil || !validApplication(app) {
+			return errors.New("Invalid application upstream registration")
+		}
+		if old := m.upstreams[app]; old != nil && old.Base.String() != client.Base.String() {
+			return errors.New("Source namespace cannot change upstream")
+		}
+	}
+	for app, client := range clients {
+		if m.upstreams[app] == nil {
+			m.upstreams[app] = client
+		}
+	}
+	return nil
+}
+
 func validID(s string) bool {
 	if len(s) != 32 && len(s) != 64 {
 		return false
@@ -230,25 +268,35 @@ type Reader struct {
 
 func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error) {
 	r = cloneResource(r)
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if e := m.validateResource(r); e != nil {
 		return nil, false, e
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	if e := m.db.CheckSourceActive(r.Application, r.SourceFence); e != nil {
+		return nil, false, e
+	}
 	if m.closed {
 		return nil, false, errors.New("Server is shutting down")
 	}
 	if r.Size != nil && *r.Size > m.maxBytes {
 		return nil, false, ErrArtifactLimit
 	}
-	readers := 0
-	for _, g := range m.all {
-		readers += g.readers
-	}
-	if readers >= m.maxReaders {
+	if m.readersLocked() >= m.maxReaders {
 		return nil, false, ErrReaderLimit
 	}
 	g := m.current[r.ID]
+	// A previous admission may finish its readers, but cannot recruit new
+	// readers or resume after an app/vendor revision has changed. Complete
+	// immutable content remains reusable under a fresh fenced generation.
+	if g != nil && g.State != "complete" && g.Resource.SourceFence != r.SourceFence {
+		if e := m.db.RetireGeneration(r.Application, g.ID, time.Now()); e != nil {
+			return nil, false, e
+		}
+		g.Retired = true
+		delete(m.current, r.ID)
+		g = nil
+	}
 	if g != nil && g.Bytes > m.maxBytes {
 		return nil, false, ErrArtifactLimit
 	}
@@ -265,9 +313,19 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 	hit := g != nil
 	if g != nil && g.State == "complete" {
 		st, err := os.Stat(g.Path)
-		if err != nil || st.Size() != g.Bytes {
+		valid := err == nil && st.Size() == g.Bytes
+		if valid && g.dormant {
+			// Inactive recovery preserves files without changing their ownership.
+			// Re-admission must verify the bytes before trusting that dormant head.
+			f, err := openRegular(g.Path)
+			valid = err == nil && verified(f, g.Bytes, g.Resource.Hash)
+			if f != nil {
+				f.Close()
+			}
+		}
+		if !valid {
 			g.Retired = true
-			g.Error = "Completed cache file is missing or its length changed"
+			g.Error = "Completed cache file is missing or invalid"
 			m.save(g)
 			if err := m.db.RetireGeneration(r.Application, g.ID, time.Now()); err != nil {
 				return nil, false, err
@@ -276,6 +334,8 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 			m.removeLocked(g)
 			g = nil
 			hit = false
+		} else {
+			g.dormant = false
 		}
 	}
 	if g == nil {
@@ -371,6 +431,17 @@ func (r *Reader) Close() error {
 	})
 	return err
 }
+func (m *Manager) retireLocked(g *Generation) error {
+	if err := m.db.RetireGeneration(g.Resource.Application, g.ID, time.Now()); err != nil {
+		return err
+	}
+	g.Retired = true
+	if m.current[g.Resource.ID] == g {
+		delete(m.current, g.Resource.ID)
+	}
+	return nil
+}
+
 func (m *Manager) removeLocked(g *Generation) error {
 	if g.running || g.readers > 0 {
 		return nil
@@ -403,7 +474,7 @@ func (m *Manager) removeLocked(g *Generation) error {
 	released += freed
 	m.checkpoint("delete.after_files", g)
 	if g.Retired && released > 0 {
-		if e := m.db.AddFor(g.Resource.Application, "cleanup_freed_bytes", released); e != nil {
+		if e := m.db.AddFor(g.Resource.MetricScope(), "cleanup_freed_bytes", released); e != nil {
 			return e
 		}
 	}
@@ -443,7 +514,9 @@ func (m *Manager) attempt(g *Generation) error {
 			headers.Set("If-Range", etag)
 		}
 	}
+	m.mu.Lock()
 	client := m.upstreams[g.Resource.Application]
+	m.mu.Unlock()
 	if client == nil {
 		return errors.New("Unknown persisted resource application")
 	}
@@ -509,7 +582,7 @@ func (m *Manager) attempt(g *Generation) error {
 				g.samples = g.samples[1:]
 			}
 			m.mu.Unlock()
-			if e = m.db.AddFor(g.Resource.Application, "upstream_bytes", int64(n)); e != nil {
+			if e = m.db.AddFor(g.Resource.MetricScope(), "upstream_bytes", int64(n)); e != nil {
 				return e
 			}
 			if offset+int64(n) > m.maxBytes || (total >= 0 && offset+int64(n) > total) {
@@ -618,6 +691,15 @@ func (m *Manager) run(g *Generation) {
 		}
 	}
 	if err == nil {
+		if e := m.db.CheckSourceActive(g.Resource.Application, g.Resource.SourceFence); e != nil {
+			if errors.Is(e, store.ErrSourceInactive) {
+				err = m.retireLocked(g)
+			} else {
+				err = e
+			}
+		}
+	}
+	if err == nil {
 		if e := g.file.Sync(); e != nil {
 			err = errors.New("File fsync failed")
 		}
@@ -629,8 +711,12 @@ func (m *Manager) run(g *Generation) {
 		g.State = "complete"
 		// A retired writer only finishes its existing readers; it never publishes a head.
 		if !g.Retired {
-			if e := m.db.CompleteGeneration(g.Resource.Application, g.ID, store.Blob{AppID: g.Resource.Application, SHA256: g.Resource.Hash, SizeBytes: g.Bytes, VerifiedAt: time.Now()}, g.Finished, g.VerificationNS); e != nil {
-				err = errors.New("Cache state commit failed")
+			if e := m.db.CompleteGeneration(g.Resource.Application, g.ID, store.Blob{AppID: g.Resource.Application, SHA256: g.Resource.Hash, SizeBytes: g.Bytes, VerifiedAt: time.Now()}, g.Finished, g.VerificationNS, g.Resource.SourceFence); e != nil {
+				if errors.Is(e, store.ErrSourceInactive) {
+					err = m.retireLocked(g)
+				} else {
+					err = errors.New("Cache state commit failed")
+				}
 			}
 		}
 		if err == nil && !g.Retired {
@@ -658,7 +744,7 @@ func (m *Manager) run(g *Generation) {
 		}
 		m.save(g)
 		m.recordFailure(g)
-		m.db.AddFor(g.Resource.Application, "upstream_errors", 1)
+		m.db.AddFor(g.Resource.MetricScope(), "upstream_errors", 1)
 		if m.current[g.Resource.ID] == g && g.State != "interrupted" {
 			delete(m.current, g.Resource.ID)
 			m.db.RetireGeneration(g.Resource.Application, g.ID, time.Now())
@@ -690,7 +776,7 @@ func (m *Manager) Snapshot() []View {
 		if g.State == "deleted" {
 			continue
 		}
-		v := View{Generation: *g, ActiveWriter: g.running, Readers: g.readers, Current: m.current[g.Resource.ID] == g, SampledAt: now}
+		v := View{Generation: *g, ActiveWriter: g.running, Readers: g.readers, Current: !g.dormant && m.current[g.Resource.ID] == g, SampledAt: now}
 		v.Resource = cloneResource(g.Resource)
 		v.DownloadNS = g.downloadNS
 		if !g.Received.IsZero() {

@@ -145,7 +145,9 @@ it("clears TTL on failed app switch, rejects late results, and binds cleanup to 
   let delay = false,
     fail = false;
   const fetch = vi.fn((url: string, init?: RequestInit) =>
-    url.endsWith("/settings")
+    url.endsWith("/sources")
+      ? Promise.resolve(response({ sources: [] }))
+      : url.endsWith("/settings")
       ? fail
         ? Promise.resolve(response({}, 503))
         : delay

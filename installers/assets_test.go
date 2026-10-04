@@ -31,3 +31,36 @@ func TestCanonicalInstallerRenderingAndAssetBoundary(t *testing.T) {
 		}
 	}
 }
+
+func TestReviewedTemplatesRenderIndependentApplicationInstances(t *testing.T) {
+	for _, template := range []string{"openai/codex", "anthropic/claude-code"} {
+		for _, name := range []string{"install.sh", "install.ps1"} {
+			original, err := assets.ReadFile(template + "/generated/" + name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, app := range []string{"enterprise/first", "enterprise/second"} {
+				root := "https://downloads.example:8443/" + app
+				rendered, err := Render(template, app, name, root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !bytes.Equal(rendered, bytes.ReplaceAll(original, []byte("@REDAPP_BASE_URL@"), []byte(root))) {
+					t.Fatal("render changed bytes outside the reviewed placeholder")
+				}
+			}
+		}
+	}
+	for _, test := range []struct{ template, app, root string }{
+		{"../openai/codex", "example/app", "https://example/example/app"},
+		{"unknown/app", "example/app", "https://example/example/app"},
+		{"openai/codex", "example/app", "https://example/openai/codex"},
+		{"openai/codex", "example/$(cmd)", "https://example/example/$(cmd)"},
+		{"openai/codex", "example/app", "https://bad$host/example/app"},
+		{"openai/codex", "example/app", "https://example/example/%61pp"},
+	} {
+		if _, err := Render(test.template, test.app, "install.sh", test.root); err == nil {
+			t.Errorf("invalid template/public-root binding accepted: %+v", test)
+		}
+	}
+}

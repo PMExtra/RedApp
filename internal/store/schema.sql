@@ -1,6 +1,42 @@
 PRAGMA foreign_keys=ON;
 
-CREATE TABLE schema_version(version INTEGER NOT NULL CHECK(version=3));
+CREATE TABLE schema_version(version INTEGER NOT NULL CHECK(version=4));
+
+CREATE TABLE directory_state(
+  id INTEGER PRIMARY KEY CHECK(id=1), seeded INTEGER NOT NULL CHECK(seeded IN (0,1))
+);
+CREATE TABLE vendors(
+  uid TEXT PRIMARY KEY CHECK(length(uid)=32 AND uid NOT GLOB '*[^0-9a-f]*'),
+  id TEXT NOT NULL UNIQUE,
+  name_en TEXT NOT NULL, name_zh_cn TEXT NOT NULL,
+  description_en TEXT NOT NULL, description_zh_cn TEXT NOT NULL,
+  icon TEXT NOT NULL,
+  enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+  revision INTEGER NOT NULL CHECK(revision>=1), deleted_at_s INTEGER
+);
+CREATE TABLE applications(
+  uid TEXT PRIMARY KEY CHECK(length(uid)=32 AND uid NOT GLOB '*[^0-9a-f]*'),
+  vendor_uid TEXT NOT NULL, id TEXT NOT NULL,
+  name_en TEXT NOT NULL, name_zh_cn TEXT NOT NULL,
+  description_en TEXT NOT NULL, description_zh_cn TEXT NOT NULL,
+  icon TEXT NOT NULL,
+  provider TEXT NOT NULL CHECK(provider IN ('general-http','codex','claude-code')),
+  base_url TEXT NOT NULL, cache_ttl_seconds INTEGER NOT NULL CHECK(cache_ttl_seconds BETWEEN 0 AND 86400),
+  base_urls_json TEXT NOT NULL,
+  source_strategy TEXT NOT NULL CHECK(source_strategy IN ('','ordered','round_robin','random')),
+  enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+  revision INTEGER NOT NULL CHECK(revision>=1), source_epoch INTEGER NOT NULL CHECK(source_epoch>=1),
+  deleted_at_s INTEGER,
+  UNIQUE(vendor_uid,id), FOREIGN KEY(vendor_uid) REFERENCES vendors(uid)
+);
+CREATE TABLE application_sources(
+  app_uid TEXT NOT NULL, epoch INTEGER NOT NULL CHECK(epoch>=1),
+  provider TEXT NOT NULL CHECK(provider IN ('general-http','codex','claude-code')),
+  base_url TEXT NOT NULL, created_at_s INTEGER NOT NULL,
+  base_urls_json TEXT NOT NULL,
+  source_strategy TEXT NOT NULL CHECK(source_strategy IN ('','ordered','round_robin','random')),
+  PRIMARY KEY(app_uid,epoch), FOREIGN KEY(app_uid) REFERENCES applications(uid)
+);
 
 CREATE TABLE settings(
   scope TEXT NOT NULL, app_id TEXT NOT NULL, key TEXT NOT NULL,
@@ -8,7 +44,7 @@ CREATE TABLE settings(
   payload BLOB NOT NULL,
   PRIMARY KEY(scope,app_id,key),
   CHECK((scope='global' AND app_id='' AND key IN ('site','upstream_proxy','public_url'))
-     OR (scope='app' AND app_id<>'' AND key='channel_ttl'))
+     OR (scope='app' AND app_id<>'' AND key IN ('channel_ttl','http_policy')))
 );
 CREATE TABLE app_versions(
   app_id TEXT NOT NULL, version TEXT NOT NULL, first_seen_s INTEGER NOT NULL,
@@ -49,6 +85,8 @@ CREATE TABLE blobs(
 CREATE TABLE generations(
   id TEXT PRIMARY KEY,
   app_id TEXT NOT NULL, version TEXT NOT NULL, resource_key TEXT NOT NULL,
+  app_revision INTEGER NOT NULL DEFAULT 0 CHECK(app_revision>=0),
+  vendor_revision INTEGER NOT NULL DEFAULT 0 CHECK(vendor_revision>=0),
   expected_sha256 TEXT NOT NULL, blob_sha256 TEXT,
   phase TEXT NOT NULL CHECK(phase IN ('incomplete','complete','failed')),
   is_current INTEGER NOT NULL DEFAULT 1 CHECK(is_current IN (0,1)),
@@ -71,6 +109,8 @@ CREATE UNIQUE INDEX generations_current
   ON generations(app_id,version,resource_key) WHERE is_current=1;
 CREATE TABLE cleanup_previews(
   id TEXT PRIMARY KEY, app_id TEXT NOT NULL,
+  app_revision INTEGER NOT NULL DEFAULT 0 CHECK(app_revision>=0),
+  vendor_revision INTEGER NOT NULL DEFAULT 0 CHECK(vendor_revision>=0),
   created_at_s INTEGER NOT NULL, expires_at_s INTEGER NOT NULL,
   selection_json BLOB NOT NULL,
   executed_at_s INTEGER, result_json BLOB
@@ -108,10 +148,59 @@ CREATE TABLE admin(
   id INTEGER PRIMARY KEY CHECK(id=1), hash BLOB NOT NULL, revision INTEGER NOT NULL
 );
 
-INSERT INTO schema_version VALUES(3);
+INSERT INTO schema_version VALUES(4);
+INSERT INTO directory_state VALUES(1,0);
 INSERT INTO metric_history_state VALUES(1,0);
 CREATE INDEX metric_samples_time ON metric_samples(t_s);
 CREATE INDEX metric_hours_time ON metric_hours(t_s);
 CREATE INDEX events_time ON events(time_s);
 CREATE INDEX events_app ON events(app_id,id);
 CREATE INDEX generations_blob ON generations(app_id,blob_sha256);
+
+-- Mutable HTTP representations have observed hashes, never release authorizations.
+CREATE TABLE http_cache_generations(
+  row_no INTEGER PRIMARY KEY AUTOINCREMENT,
+  id TEXT NOT NULL UNIQUE CHECK(length(id)=32 AND id NOT GLOB '*[^0-9a-f]*'),
+  storage_id TEXT NOT NULL, path TEXT NOT NULL,
+  source_url TEXT NOT NULL DEFAULT '',
+  sha256 TEXT NOT NULL CHECK(length(sha256)=64 AND sha256 NOT GLOB '*[^0-9a-f]*'),
+  size_bytes INTEGER NOT NULL CHECK(size_bytes>=0),
+  fetched_at_s INTEGER NOT NULL, validated_at_s INTEGER NOT NULL,
+  last_access_bucket_s INTEGER NOT NULL DEFAULT 0,
+  fresh_until_s INTEGER NOT NULL, headers_json BLOB NOT NULL,
+  is_current INTEGER NOT NULL CHECK(is_current IN (0,1)), retired_at_s INTEGER
+);
+CREATE UNIQUE INDEX http_cache_current ON http_cache_generations(storage_id,path) WHERE is_current=1;
+CREATE INDEX http_cache_scan ON http_cache_generations(storage_id,row_no) WHERE is_current=1;
+CREATE TABLE http_cleanup_previews(
+  id TEXT PRIMARY KEY, storage_id TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'cleanup' CHECK(kind IN ('cleanup','refresh')),
+  state TEXT NOT NULL DEFAULT 'ready' CHECK(state IN ('building','ready','running','done','failed')),
+  high_water INTEGER NOT NULL DEFAULT 0 CHECK(high_water>=0),
+  scanned_count INTEGER NOT NULL DEFAULT 0 CHECK(scanned_count>=0),
+  selected_count INTEGER NOT NULL DEFAULT 0 CHECK(selected_count>=0),
+  completed_count INTEGER NOT NULL DEFAULT 0 CHECK(completed_count>=0),
+  failed_count INTEGER NOT NULL DEFAULT 0 CHECK(failed_count>=0),
+  selected_bytes INTEGER NOT NULL DEFAULT 0 CHECK(selected_bytes>=0),
+  app_revision INTEGER NOT NULL, vendor_revision INTEGER NOT NULL,
+  created_at_s INTEGER NOT NULL, expires_at_s INTEGER NOT NULL,
+  selection_json BLOB NOT NULL,
+  executed_at_s INTEGER, result_json BLOB
+);
+CREATE TABLE http_cleanup_preview_items(
+  preview_id TEXT NOT NULL,
+  ordinal INTEGER NOT NULL CHECK(ordinal>=0),
+  generation_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL CHECK(size_bytes>=0),
+  access_bucket_s INTEGER NOT NULL,
+  basis TEXT NOT NULL,
+  before_s INTEGER NOT NULL,
+  match_json BLOB NOT NULL,
+  rule_index INTEGER NOT NULL DEFAULT -1 CHECK(rule_index>=-1),
+  result_status TEXT NOT NULL DEFAULT 'pending',
+  error_code TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY(preview_id,ordinal),
+  FOREIGN KEY(preview_id) REFERENCES http_cleanup_previews(id) ON DELETE CASCADE
+);
+CREATE INDEX http_cleanup_preview_pending ON http_cleanup_preview_items(preview_id,result_status,ordinal);

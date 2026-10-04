@@ -44,9 +44,32 @@ export function makeRouter(history: RouterHistory = createWebHistory()) {
             component: () => import("./components/ProxySettings.vue"),
           },
           {
+            path: "vendors",
+            component: () => import("./pages/DirectoryPage.vue"),
+          },
+          {
+            path: "vendors/new",
+            component: () => import("./components/DirectoryEditor.vue"),
+            props: { kind: "vendor" },
+          },
+          {
+            path: "vendors/:vendor/apps/new",
+            component: () => import("./components/DirectoryEditor.vue"),
+            props: { kind: "app" },
+          },
+          {
+            path: "vendors/:vendor/settings",
+            component: () => import("./components/DirectoryEditor.vue"),
+            props: { kind: "vendor" },
+          },
+          {
             path: "apps/:vendor/:app",
             component: () => import("./layouts/ApplicationLayout.vue"),
             children: [
+              {
+                path: "cache",
+                component: () => import("./pages/GeneralCachePage.vue"),
+              },
               {
                 path: "versions",
                 component: () => import("./pages/StatusPage.vue"),

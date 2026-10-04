@@ -25,6 +25,7 @@ type listCursor struct {
 	Endpoint    string `json:"endpoint"`
 	Filter      string `json:"filter"`
 	Last        string `json:"last"`
+	SourceEpoch int64  `json:"source_epoch,omitempty"`
 }
 type listPage[T any] struct {
 	Items      []T     `json:"items"`
@@ -37,7 +38,7 @@ type listedVersion struct {
 	Bytes     int64     `json:"bytes"`
 }
 
-func parseListQuery(r *http.Request, app, endpoint string) (limit int, version, last string, err error) {
+func parseListQuery(r *http.Request, app, endpoint string, sourceEpoch ...int64) (limit int, version, last string, err error) {
 	limit = 50
 	q, e := url.ParseQuery(r.URL.RawQuery)
 	if e != nil {
@@ -79,7 +80,11 @@ func parseListQuery(r *http.Request, app, endpoint string) (limit int, version, 
 		var c listCursor
 		d := json.NewDecoder(bytes.NewReader(raw))
 		d.DisallowUnknownFields()
-		if d.Decode(&c) != nil || d.Decode(new(any)) != io.EOF || c.Version != 1 || c.Application != app || c.Endpoint != endpoint || c.Filter != version || c.Last == "" || len(c.Last) > 128 {
+		epoch := int64(0)
+		if len(sourceEpoch) > 0 {
+			epoch = sourceEpoch[0]
+		}
+		if d.Decode(&c) != nil || d.Decode(new(any)) != io.EOF || c.Version != 1 || c.Application != app || c.Endpoint != endpoint || c.Filter != version || c.Last == "" || len(c.Last) > 128 || c.SourceEpoch != epoch {
 			err = errors.New("List cursor does not match this request")
 			return
 		}
@@ -87,8 +92,12 @@ func parseListQuery(r *http.Request, app, endpoint string) (limit int, version, 
 	}
 	return
 }
-func nextListCursor(app, endpoint, filter, last string) *string {
-	raw, _ := json.Marshal(listCursor{Version: 1, Application: app, Endpoint: endpoint, Filter: filter, Last: last})
+func nextListCursor(app, endpoint, filter, last string, sourceEpoch ...int64) *string {
+	var epoch int64
+	if len(sourceEpoch) > 0 {
+		epoch = sourceEpoch[0]
+	}
+	raw, _ := json.Marshal(listCursor{Version: 1, Application: app, Endpoint: endpoint, Filter: filter, Last: last, SourceEpoch: epoch})
 	encoded := base64.RawURLEncoding.EncodeToString(raw)
 	return &encoded
 }
@@ -99,12 +108,12 @@ func (s *Server) applicationList(w http.ResponseWriter, r *http.Request, app, en
 		fail(w, 405, "List endpoints require GET")
 		return
 	}
-	entry, ok := s.Registry.Lookup(app)
-	if !ok || endpoint != "versions" && endpoint != "resources" {
+	entry, ok := s.Registry.LookupAny(app)
+	if !ok || entry.Protocol == nil || endpoint != "versions" && endpoint != "resources" {
 		fail(w, 404, "Application list not found")
 		return
 	}
-	limit, version, last, err := parseListQuery(r, app, endpoint)
+	limit, version, last, err := parseListQuery(r, app, endpoint, entry.SourceEpoch)
 	if err != nil {
 		fail(w, 400, err.Error())
 		return
@@ -124,7 +133,7 @@ func (s *Server) applicationList(w http.ResponseWriter, r *http.Request, app, en
 				return
 			}
 		}
-		rows, err := s.DB.VersionPage(app, last, limit+1)
+		rows, err := s.DB.VersionPage(entry.StorageID(), last, limit+1)
 		if err != nil {
 			fail(w, 503, "Failed to read application versions")
 			return
@@ -132,7 +141,7 @@ func (s *Server) applicationList(w http.ResponseWriter, r *http.Request, app, en
 		page := listPage[listedVersion]{Items: make([]listedVersion, 0)}
 		if len(rows) > limit {
 			rows = rows[:limit]
-			page.NextCursor = nextListCursor(app, endpoint, "", rows[len(rows)-1].Version)
+			page.NextCursor = nextListCursor(app, endpoint, "", rows[len(rows)-1].Version, entry.SourceEpoch)
 		}
 		for _, row := range rows {
 			page.Items = append(page.Items, listedVersion{Version: row.Version, FirstSeen: row.FirstSeen, Requests: row.ArtifactRequests, Bytes: row.DownstreamBytes})
@@ -152,8 +161,13 @@ func (s *Server) applicationList(w http.ResponseWriter, r *http.Request, app, en
 		return
 	}
 	items := make([]download.View, 0)
-	for _, view := range s.Downloads.Snapshot() {
-		if view.Resource.Application == app && (version == "" || view.Resource.Version == version) && view.ID > last {
+	views, err := s.resourceViews()
+	if err != nil {
+		fail(w, 503, "Resource state is unavailable")
+		return
+	}
+	for _, view := range views {
+		if view.Resource.Application == entry.StorageID() && (version == "" || view.Resource.Version == version) && view.ID > last {
 			items = append(items, view)
 		}
 	}
@@ -161,8 +175,9 @@ func (s *Server) applicationList(w http.ResponseWriter, r *http.Request, app, en
 	page := listPage[download.View]{Items: items}
 	if len(items) > limit {
 		page.Items = items[:limit]
-		page.NextCursor = nextListCursor(app, endpoint, version, page.Items[limit-1].ID)
+		page.NextCursor = nextListCursor(app, endpoint, version, page.Items[limit-1].ID, entry.SourceEpoch)
 	}
+	page.Items = s.publicViews(page.Items)
 	reply(w, 200, page)
 }
 
@@ -172,11 +187,14 @@ func (s *Server) eventList(w http.ResponseWriter, r *http.Request, app string) {
 		fail(w, 405, "List endpoints require GET")
 		return
 	}
+	metricScope := app
 	if app != "" {
-		if _, ok := s.Registry.Lookup(app); !ok {
+		entry, ok := s.Registry.LookupAny(app)
+		if !ok {
 			fail(w, 404, "Application not found")
 			return
 		}
+		metricScope = entry.MetricsID()
 	}
 	limit, _, last, err := parseListQuery(r, app, "events")
 	if err != nil {
@@ -191,7 +209,7 @@ func (s *Server) eventList(w http.ResponseWriter, r *http.Request, app string) {
 			return
 		}
 	}
-	rows, err := s.DB.EventPage(app, before, limit+1)
+	rows, err := s.DB.EventPage(metricScope, before, limit+1)
 	if err != nil {
 		fail(w, 503, "Failed to read events")
 		return
@@ -200,6 +218,10 @@ func (s *Server) eventList(w http.ResponseWriter, r *http.Request, app string) {
 	if len(rows) > limit {
 		rows = rows[:limit]
 		next = nextListCursor(app, "events", "", strconv.FormatInt(rows[limit-1].ID, 10))
+	}
+	scopes := s.publicScopes()
+	for i := range rows {
+		rows[i].AppID = publicScope(rows[i].AppID, scopes)
 	}
 	reply(w, 200, listPage[store.ListedEvent]{Items: rows, NextCursor: next})
 }

@@ -15,6 +15,21 @@ export interface Application {
   installers: { file: string; shell: "sh" | "bash" | "powershell" }[];
   update_policy: LocalizedText;
   command?: string;
+  provider?: string;
+  capabilities?: ProviderCapabilities;
+}
+export interface ProviderCapabilities {
+  versions: boolean;
+  installers: boolean;
+  time_cleanup: boolean;
+}
+export function applicationCapabilities(app: Application): ProviderCapabilities {
+  if (app.capabilities) return app.capabilities;
+  // Compatibility for descriptors produced before capabilities were explicit.
+  // An unknown provider never inherits another provider's behavior.
+  const release = app.provider === "codex" || app.provider === "claude-code" ||
+    (!app.provider && (app.id === "openai/codex" || app.id === "anthropic/claude-code"));
+  return { versions: release, installers: release && !!app.installers?.length, time_cleanup: app.provider === "general-http" };
 }
 export interface Bootstrap {
   version: string;

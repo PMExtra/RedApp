@@ -2,33 +2,20 @@
 import { computed, onUnmounted, ref, watch } from "vue";
 import { api, bytes, type CleanupPreview } from "../api";
 import { appAPI } from "../bootstrap";
-import { useSetting } from "../composables/useSetting";
+import { useSourceEpoch } from "../composables/useSourceEpoch";
+import SourceEpochSelect from "./SourceEpochSelect.vue";
+import ChannelSettings from "./ChannelSettings.vue";
 import { errorText, t, type Message } from "../i18n";
-const props = defineProps<{ application: string }>();
+const props = withDefaults(defineProps<{ application: string; showSettings?: boolean }>(), { showSettings: true });
 const emit = defineEmits<{ error: [unknown]; changed: [] }>();
-const path = computed(() => `${appAPI(props.application)}/settings`);
-const {
-  draft,
-  loading,
-  saving,
-  error,
-  load,
-  save: saveSetting,
-  saved,
-} = useSetting<{ channel_ttl_seconds: number }>(path);
-const ttl = computed({
-  get: () => draft.value?.channel_ttl_seconds,
-  set: (value) => {
-    if (draft.value && value !== undefined)
-      draft.value.channel_ttl_seconds = value;
-  },
-});
+const application = computed(() => props.application);
+const { sources, selected: sourceEpoch, query: sourceQuery, loading: sourcesLoading, error: sourcesError, load: loadSources } = useSourceEpoch(application);
 const minimum = ref(""),
   preview = ref<CleanupPreview>(),
   cleanupBusy = ref(false),
   cleanupError = ref<unknown>(),
   message = ref<Message>();
-const busy = computed(() => saving.value || cleanupBusy.value);
+const busy = cleanupBusy;
 let ticket = 0,
   controller: AbortController | undefined,
   previewVersion = "";
@@ -43,13 +30,10 @@ function reset() {
   cleanupBusy.value = false;
 }
 watch(() => props.application, reset, { flush: "sync" });
+watch(sourceEpoch, reset, { flush: "sync" });
 watch(minimum, () => {
   preview.value = undefined;
 });
-async function save() {
-  message.value = undefined;
-  await saveSetting();
-}
 async function plan() {
   if (cleanupBusy.value || !minimum.value) return;
   const request = new AbortController(),
@@ -62,7 +46,7 @@ async function plan() {
   preview.value = undefined;
   try {
     const result = await api<CleanupPreview>(
-      `${appAPI(app)}/cleanup/preview`,
+      `${appAPI(app)}/cleanup/preview${sourceQuery.value}`,
       { minimum_version: requested },
       request.signal,
     );
@@ -96,7 +80,7 @@ async function clean() {
   cleanupError.value = undefined;
   try {
     await api(
-      `${appAPI(app)}/cleanup/${encodeURIComponent(selected.job.ID)}/execute`,
+      `${appAPI(app)}/cleanup/${encodeURIComponent(selected.job.ID)}/execute${sourceQuery.value}`,
       {},
       request.signal,
     );
@@ -119,40 +103,13 @@ onUnmounted(reset);
 </script>
 <template>
   <div class="maintenance-stack">
-    <p v-if="message || saved" class="notice" role="status">
-      {{ message ? t(message) : t("Channel TTL saved") }}
+    <p v-if="message" class="notice" role="status">
+      {{ t(message) }}
     </p>
-    <section class="panel">
-      <h2>{{ t("Metadata freshness") }}</h2>
-      <p v-if="error" class="error" role="alert">{{ errorText(error) }}</p>
-      <p v-if="loading" role="status">{{ t("Loading…") }}</p>
-      <form class="ttl-form" @submit.prevent="save">
-        <label
-          >{{ t("Channel TTL (seconds)")
-          }}<input
-            v-model.number="ttl"
-            type="number"
-            min="1"
-            max="86400"
-            required
-            :disabled="loading || busy || !draft"
-        /></label>
-        <div class="form-actions">
-          <button :disabled="busy || loading || ttl === undefined">
-            {{ busy ? t("Saving…") : t("Save TTL") }}</button
-          ><button
-            class="secondary"
-            type="button"
-            :disabled="busy || loading"
-            @click="load()"
-          >
-            {{ t("Reload") }}
-          </button>
-        </div>
-      </form>
-    </section>
+    <ChannelSettings v-if="showSettings" :application="application" />
     <section class="panel">
       <h2>{{ t("Version cleanup") }}</h2>
+      <SourceEpochSelect v-model="sourceEpoch" :sources="sources" :loading="sourcesLoading" :error="sourcesError" @reload="loadSources" />
       <p class="muted">
         {{
           t(
@@ -172,7 +129,7 @@ onUnmounted(reset);
             required
             :disabled="busy && !!preview"
             @input="preview = undefined" /></label
-        ><button class="secondary" :disabled="busy || loading">
+        ><button class="secondary" :disabled="busy">
           {{ busy ? t("Loading…") : t("Preview cleanup") }}
         </button>
       </form>

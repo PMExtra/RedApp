@@ -28,11 +28,18 @@ func validAsset(appID, name string) bool {
 // application root, e.g. https://downloads.example/openai/codex. The caller must
 // authorize the filename against its registered application descriptor first.
 func Installer(appID, name, publicAppRoot string) ([]byte, error) {
-	if !validAsset(appID, name) || (name != "install.sh" && name != "install.ps1") {
+	return Render(appID, appID, name, publicAppRoot)
+}
+
+// Render binds a reviewed fixed template to a separately validated public
+// application identity. Adding another instance does not copy or alter template
+// bytes, upstream originals, patches, or embedded trust material.
+func Render(templateID, publicAppID, name, publicAppRoot string) ([]byte, error) {
+	if !validAsset(templateID, name) || !validAsset(publicAppID, name) || (name != "install.sh" && name != "install.ps1") {
 		return nil, fs.ErrNotExist
 	}
 	u, err := url.Parse(publicAppRoot)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" || u.Path != "/"+appID {
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" || u.Path != "/"+publicAppID {
 		return nil, fmt.Errorf("invalid canonical installer application root")
 	}
 	// The placeholder is inside double-quoted strings in both reviewed scripts.
@@ -40,7 +47,7 @@ func Installer(appID, name, publicAppRoot string) ([]byte, error) {
 	if strings.ContainsAny(u.Host, "\\\"'`$ \t\r\n") {
 		return nil, fmt.Errorf("unsafe installer origin")
 	}
-	b, err := assets.ReadFile(appID + "/generated/" + name)
+	b, err := assets.ReadFile(templateID + "/generated/" + name)
 	if err != nil {
 		return nil, err
 	}

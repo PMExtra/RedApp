@@ -13,6 +13,7 @@ import (
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/download"
+	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -38,17 +39,31 @@ func (s *Service) TTL(app string) (int, int64, error) {
 	if !ok {
 		return 0, 0, application.ErrNotFound
 	}
-	seconds, revision, err := s.db.ChannelTTL(app)
+	return s.ttl(e)
+}
+
+func (s *Service) ttl(e application.Entry) (int, int64, error) {
+	if e.UID != "" {
+		return e.Descriptor.DefaultChannelTTLSeconds, e.Revision, nil
+	}
+	seconds, revision, err := s.db.ChannelTTL(e.MetricsID())
 	if errors.Is(err, sql.ErrNoRows) {
 		return e.Descriptor.DefaultChannelTTLSeconds, 0, nil
 	}
 	return seconds, revision, err
 }
 func (s *Service) SetTTL(app string, expected int64, seconds int) (int64, error) {
-	if _, ok := s.registry.Lookup(app); !ok {
+	e, ok := s.registry.Lookup(app)
+	if !ok || e.Protocol == nil {
 		return 0, application.ErrNotFound
 	}
-	return s.db.SetChannelTTL(app, expected, seconds)
+	if err := s.db.CheckSourceActive(e.StorageID(), sourceFence(e)); err != nil {
+		return 0, err
+	}
+	if e.UID != "" {
+		return 0, errors.New("Dynamic application settings require the application revision API")
+	}
+	return s.db.SetChannelTTL(e.MetricsID(), expected, seconds)
 }
 
 // Release returns only freshly verified metadata. Expired channels never fall
@@ -57,6 +72,24 @@ func (s *Service) Release(ctx context.Context, app, target string) (application.
 	e, ok := s.registry.Lookup(app)
 	if !ok {
 		return application.Release{}, application.ErrNotFound
+	}
+	return s.release(ctx, e, target)
+}
+
+func sourceFence(e application.Entry) store.SourceFence {
+	return store.SourceFence{AppRevision: e.Revision, VendorRevision: e.VendorRevision}
+}
+
+// release carries one immutable runtime snapshot through channel resolution,
+// verification and persistence. A concurrent registry replacement cannot mix
+// the previous protocol with the new source namespace.
+func (s *Service) release(ctx context.Context, e application.Entry, target string) (application.Release, error) {
+	if e.Protocol == nil {
+		return application.Release{}, application.ErrNotFound
+	}
+	app := e.StorageID()
+	if err := s.db.CheckSourceActive(app, sourceFence(e)); err != nil {
+		return application.Release{}, err
 	}
 	channel := e.HasChannel(target)
 	if !channel {
@@ -75,7 +108,7 @@ func (s *Service) Release(ctx context.Context, app, target string) (application.
 			return application.Release{}, err
 		}
 		if err == nil {
-			ttl, _, err := s.TTL(app)
+			ttl, _, err := s.ttl(e)
 			if err != nil {
 				s.mu.Unlock()
 				return application.Release{}, err
@@ -87,7 +120,7 @@ func (s *Service) Release(ctx context.Context, app, target string) (application.
 			}
 			if !cached.FetchedAt.After(now) && now.Before(expires) {
 				s.mu.Unlock()
-				return s.Release(ctx, app, cached.Version)
+				return s.release(ctx, e, cached.Version)
 			}
 		}
 	} else {
@@ -117,16 +150,16 @@ func (s *Service) Release(ctx context.Context, app, target string) (application.
 			// re-fetch it without deleting the durable, immutable resource binding.
 		}
 	}
-	key := app + "\x00" + target
+	key := fmt.Sprintf("%s\x00%d/%d\x00%s", app, e.Revision, e.VendorRevision, target)
 	f := s.flights[key]
 	if f == nil {
-		if s.active[app] >= 32 {
+		if s.active[e.MetricsID()] >= 32 {
 			s.mu.Unlock()
 			return application.Release{}, application.ErrBusy
 		}
 		f = &flight{done: make(chan struct{})}
 		s.flights[key] = f
-		s.active[app]++
+		s.active[e.MetricsID()]++
 		go s.fetch(e, target, channel, key, f)
 	}
 	s.mu.Unlock()
@@ -134,6 +167,11 @@ func (s *Service) Release(ctx context.Context, app, target string) (application.
 	case <-ctx.Done():
 		return application.Release{}, ctx.Err()
 	case <-f.done:
+		if f.err == nil {
+			if err := s.db.CheckSourceActive(app, sourceFence(e)); err != nil {
+				return application.Release{}, err
+			}
+		}
 		return f.release, f.err
 	}
 }
@@ -141,7 +179,7 @@ func (s *Service) Release(ctx context.Context, app, target string) (application.
 func (s *Service) fetch(e application.Entry, target string, isChannel bool, key string, f *flight) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	app := e.Descriptor.ID
+	app := e.StorageID()
 	var release application.Release
 	var err error
 	if isChannel {
@@ -162,14 +200,14 @@ func (s *Service) fetch(e application.Entry, target string, isChannel bool, key 
 				err = fmt.Errorf("%w: %w", application.ErrUpstream, err)
 			}
 		} else if err == nil {
-			release, err = s.Release(ctx, app, resolved.Version)
+			release, err = s.release(ctx, e, resolved.Version)
 		}
 		if err == nil {
-			ttl, _, ttlErr := s.TTL(app)
+			ttl, _, ttlErr := s.ttl(e)
 			err = ttlErr
 			if err == nil {
 				now := time.Now().UTC()
-				err = s.db.PutChannel(store.Channel{AppID: app, Name: target, Version: release.Version, FetchedAt: now, ExpiresAt: now.Add(time.Duration(ttl) * time.Second)})
+				err = s.db.PutChannel(store.Channel{AppID: app, Name: target, Version: release.Version, FetchedAt: now, ExpiresAt: now.Add(time.Duration(ttl) * time.Second)}, sourceFence(e))
 			}
 		}
 	} else {
@@ -186,7 +224,7 @@ func (s *Service) fetch(e application.Entry, target string, isChannel bool, key 
 		}
 	}
 	if err != nil {
-		event := store.Event{AppID: app, Category: "metadata", Code: "metadata_fetch_failed", Message: err.Error()}
+		event := store.Event{AppID: e.MetricsID(), Category: "metadata", Code: "metadata_fetch_failed", Message: err.Error()}
 		if !isChannel {
 			event.Version = target
 		}
@@ -204,24 +242,24 @@ func (s *Service) fetch(e application.Entry, target string, isChannel bool, key 
 	f.release = release
 	f.err = err
 	delete(s.flights, key)
-	s.active[app]--
+	s.active[e.MetricsID()]--
 	close(f.done)
 }
 
 func (s *Service) persist(e application.Entry, r application.Release, fetched time.Time) error {
 	resources := make([]store.Resource, 0, len(r.Artifacts))
 	for _, a := range r.Artifacts {
-		resources = append(resources, store.Resource{AppID: e.Descriptor.ID, Version: r.Version, Key: a.Key, SourceURL: a.Source, SHA256: a.SHA256, ExpectedSize: a.Size})
+		resources = append(resources, store.Resource{AppID: e.StorageID(), Version: r.Version, Key: a.Key, SourceURL: a.Source, SHA256: a.SHA256, ExpectedSize: a.Size})
 	}
-	return s.db.PutRelease(store.ReleaseMetadata{AppID: e.Descriptor.ID, Version: r.Version, Raw: r.Envelope.Raw, Signature: r.Envelope.Signature, TrustRevision: e.Descriptor.TrustRevision, FetchedAt: fetched}, resources)
+	return s.db.PutRelease(store.ReleaseMetadata{AppID: e.StorageID(), Version: r.Version, Raw: r.Envelope.Raw, Signature: r.Envelope.Signature, TrustRevision: e.Descriptor.TrustRevision, FetchedAt: fetched}, resources, sourceFence(e))
 }
 
 func (s *Service) Represent(ctx context.Context, app string, op application.Operation, publicBase string) (application.Representation, error) {
 	e, ok := s.registry.Lookup(app)
-	if !ok || (op.Kind != application.ChannelOperation && op.Kind != application.MetadataOperation) {
+	if !ok || e.Protocol == nil || (op.Kind != application.ChannelOperation && op.Kind != application.MetadataOperation) {
 		return application.Representation{}, application.ErrNotFound
 	}
-	r, err := s.Release(ctx, app, op.Target)
+	r, err := s.release(ctx, e, op.Target)
 	if err != nil {
 		return application.Representation{}, err
 	}
@@ -230,7 +268,7 @@ func (s *Service) Represent(ctx context.Context, app string, op application.Oper
 
 func (s *Service) Authorize(ctx context.Context, app, version, key string) (download.Resource, error) {
 	e, ok := s.registry.Lookup(app)
-	if !ok {
+	if !ok || e.Protocol == nil {
 		return download.Resource{}, application.ErrNotFound
 	}
 	// Artifact paths use immutable versions. A channel is not an artifact identity.
@@ -238,7 +276,7 @@ func (s *Service) Authorize(ctx context.Context, app, version, key string) (down
 	if err != nil || v != version {
 		return download.Resource{}, application.ErrNotFound
 	}
-	r, err := s.Release(ctx, app, version)
+	r, err := s.release(ctx, e, version)
 	if err != nil {
 		return download.Resource{}, err
 	}
@@ -246,24 +284,57 @@ func (s *Service) Authorize(ctx context.Context, app, version, key string) (down
 		if a.Key != key {
 			continue
 		}
-		bound, err := s.db.Resource(app, version, key)
+		bound, err := s.db.Resource(e.StorageID(), version, key)
 		if err != nil {
 			return download.Resource{}, err
 		}
 		if bound.SourceURL != a.Source || bound.SHA256 != a.SHA256 || !equalSize(bound.ExpectedSize, a.Size) {
 			return download.Resource{}, fmt.Errorf("%w: persisted resource binding differs from trusted metadata", application.ErrUpstream)
 		}
-		return download.Resource{Application: app, Version: version, Key: key, ID: download.LogicalIdentity(app, version, key), Source: a.Source, Hash: a.SHA256, Size: a.Size, Labels: map[string]string{"app": app, "version": version, "name": key}}, nil
+		return download.Resource{Application: e.StorageID(), MetricsID: e.MetricsID(), SourceFence: sourceFence(e), Version: version, Key: key, ID: download.LogicalIdentity(e.StorageID(), version, key), Source: a.Source, Hash: a.SHA256, Size: a.Size, Labels: map[string]string{"app": app, "version": version, "name": key}}, nil
 	}
 	return download.Resource{}, application.ErrNotFound
 }
 func equalSize(a, b *int64) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
 
 func (s *Service) Candidates(app, minimum string, views []download.View) (map[string]bool, []string, error) {
-	e, ok := s.registry.Lookup(app)
-	if !ok {
+	// Cleanup compares version syntax without accessing an upstream. Management
+	// remains available while a source is disabled or tombstoned.
+	e, ok := s.registry.LookupAny(app)
+	if !ok || e.Protocol == nil {
 		return nil, nil, application.ErrNotFound
 	}
+	return candidates(e, e.StorageID(), minimum, views)
+}
+
+// CandidatesForSource selects one explicitly requested historical source. Its
+// owning UID must match the public application; neither labels nor a caller's
+// view list can expand cleanup to another app. No upstream is contacted.
+func (s *Service) CandidatesForSource(app, storageID, minimum string, views []download.View) (map[string]bool, []string, error) {
+	e, ok := s.registry.LookupAny(app)
+	if !ok || e.Protocol == nil {
+		return nil, nil, application.ErrNotFound
+	}
+	if e.UID == "" {
+		if storageID != e.StorageID() {
+			return nil, nil, application.ErrNotFound
+		}
+	} else {
+		uid, _, ok := identity.ParseStorageID(storageID)
+		if !ok || uid != e.UID {
+			return nil, nil, application.ErrNotFound
+		}
+		if _, err := s.db.Source(storageID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				err = application.ErrNotFound
+			}
+			return nil, nil, err
+		}
+	}
+	return candidates(e, storageID, minimum, views)
+}
+
+func candidates(e application.Entry, storageID, minimum string, views []download.View) (map[string]bool, []string, error) {
 	if v, err := e.Protocol.ValidateVersion(minimum); err != nil || v != minimum {
 		return nil, nil, errors.New("Invalid canonical minimum version")
 	}
@@ -271,7 +342,7 @@ func (s *Service) Candidates(app, minimum string, views []download.View) (map[st
 	unknownSet := map[string]bool{}
 	for _, view := range views {
 		r := view.Resource
-		if r.Application != app {
+		if r.Application != storageID {
 			continue
 		}
 		order, err := e.Protocol.CompareVersions(r.Version, minimum)

@@ -12,10 +12,10 @@ func validSetting(scope, app, key string) bool {
 	if scope == "global" && app == "" {
 		return key == "site" || key == "upstream_proxy" || key == "public_url"
 	}
-	return scope == "app" && ValidAppID(app) && key == "channel_ttl"
+	return scope == "app" && ValidAppID(app) && (key == "channel_ttl" || key == "http_policy")
 }
 
-// ReadSetting is limited to the four schema-owned setting kinds. Callers use
+// ReadSetting is limited to schema-owned setting kinds. Callers use
 // their typed settings structs; missing settings have revision zero.
 func (s *Store) ReadSetting(scope, app, key string, out any) (int64, error) {
 	if !validSetting(scope, app, key) {
@@ -30,6 +30,9 @@ func (s *Store) ReadSetting(scope, app, key string, out any) (int64, error) {
 	return rev, json.Unmarshal(raw, out)
 }
 func (s *Store) CompareAndSwapSetting(scope, app, key string, expected int64, payload any) (int64, error) {
+	if key == "http_policy" {
+		return 0, errors.New("HTTP policy writes require application revision CAS through SaveHTTPPolicy")
+	}
 	if !validSetting(scope, app, key) || expected < 0 {
 		return 0, errors.New("Invalid setting scope, key or revision")
 	}

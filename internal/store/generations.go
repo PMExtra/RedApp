@@ -7,6 +7,7 @@ import (
 )
 
 type Generation struct {
+	SourceFence
 	DownloadNS                                                         int64
 	ID, AppID, Version, ResourceKey, ExpectedSHA256, BlobSHA256, Phase string
 	IsCurrent                                                          bool
@@ -27,14 +28,14 @@ type Blob struct {
 	VerifiedAt    time.Time
 }
 
-const generationColumns = "id,app_id,version,resource_key,expected_sha256,blob_sha256,phase,is_current,retired_at_s,bytes,total_bytes,source_bytes,etag,resumes,started_at_s,finished_at_s,verification_ns,last_error_code,full_retry,download_ns"
+const generationColumns = "id,app_id,version,resource_key,expected_sha256,blob_sha256,phase,is_current,retired_at_s,bytes,total_bytes,source_bytes,etag,resumes,started_at_s,finished_at_s,verification_ns,last_error_code,full_retry,download_ns,app_revision,vendor_revision"
 
 func generationArgs(g Generation) []any {
 	var blob any
 	if g.BlobSHA256 != "" {
 		blob = g.BlobSHA256
 	}
-	return []any{g.ID, g.AppID, g.Version, g.ResourceKey, g.ExpectedSHA256, blob, g.Phase, g.IsCurrent, unixPointer(g.RetiredAt), g.Bytes, g.TotalBytes, g.SourceBytes, g.ETag, g.Resumes, g.StartedAt.Unix(), unixPointer(g.FinishedAt), g.VerificationNS, g.LastErrorCode, g.FullRetry, g.DownloadNS}
+	return []any{g.ID, g.AppID, g.Version, g.ResourceKey, g.ExpectedSHA256, blob, g.Phase, g.IsCurrent, unixPointer(g.RetiredAt), g.Bytes, g.TotalBytes, g.SourceBytes, g.ETag, g.Resumes, g.StartedAt.Unix(), unixPointer(g.FinishedAt), g.VerificationNS, g.LastErrorCode, g.FullRetry, g.DownloadNS, g.AppRevision, g.VendorRevision}
 }
 
 type scanner interface{ Scan(...any) error }
@@ -44,7 +45,7 @@ func scanGeneration(row scanner) (Generation, error) {
 	var blob, etag, last sql.NullString
 	var retired, finished sql.NullInt64
 	var started int64
-	err := row.Scan(&g.ID, &g.AppID, &g.Version, &g.ResourceKey, &g.ExpectedSHA256, &blob, &g.Phase, &g.IsCurrent, &retired, &g.Bytes, &g.TotalBytes, &g.SourceBytes, &etag, &g.Resumes, &started, &finished, &g.VerificationNS, &last, &g.FullRetry, &g.DownloadNS)
+	err := row.Scan(&g.ID, &g.AppID, &g.Version, &g.ResourceKey, &g.ExpectedSHA256, &blob, &g.Phase, &g.IsCurrent, &retired, &g.Bytes, &g.TotalBytes, &g.SourceBytes, &etag, &g.Resumes, &started, &finished, &g.VerificationNS, &last, &g.FullRetry, &g.DownloadNS, &g.AppRevision, &g.VendorRevision)
 	g.BlobSHA256 = blob.String
 	g.ETag = etag.String
 	g.LastErrorCode = last.String
@@ -81,10 +82,13 @@ func (s *Store) CreateGeneration(g Generation) error {
 		return err
 	}
 	defer tx.Rollback()
+	if err = s.RequireSourceActive(tx, g.AppID, g.SourceFence); err != nil {
+		return err
+	}
 	if _, err = tx.Exec("UPDATE generations SET is_current=0,retired_at_s=? WHERE app_id=? AND version=? AND resource_key=? AND is_current=1", time.Now().Unix(), g.AppID, g.Version, g.ResourceKey); err != nil {
 		return err
 	}
-	if _, err = tx.Exec("INSERT INTO generations("+generationColumns+") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", generationArgs(g)...); err != nil {
+	if _, err = tx.Exec("INSERT INTO generations("+generationColumns+") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", generationArgs(g)...); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -203,7 +207,7 @@ func (s *Store) DeleteUnreferencedBlob(app, sha string) (bool, error) {
 
 // CompleteGeneration publishes the database association only after the caller has
 // verified, fsynced and atomically placed the blob. Retired writers cannot publish.
-func (s *Store) CompleteGeneration(app, id string, b Blob, finished time.Time, verificationNS int64) error {
+func (s *Store) CompleteGeneration(app, id string, b Blob, finished time.Time, verificationNS int64, expectedFence ...SourceFence) error {
 	if b.AppID != app || verificationNS < 0 {
 		return errors.New("Blob application mismatch")
 	}
@@ -213,11 +217,20 @@ func (s *Store) CompleteGeneration(app, id string, b Blob, finished time.Time, v
 	}
 	defer tx.Rollback()
 	var hash string
+	var admitted SourceFence
 	var current bool
 	var expected *int64
-	err = tx.QueryRow("SELECT g.expected_sha256,g.is_current,r.expected_size FROM generations g JOIN resources r ON r.app_id=g.app_id AND r.version=g.version AND r.resource_key=g.resource_key WHERE g.app_id=? AND g.id=?", app, id).Scan(&hash, &current, &expected)
+	err = tx.QueryRow("SELECT g.expected_sha256,g.is_current,r.expected_size,g.app_revision,g.vendor_revision FROM generations g JOIN resources r ON r.app_id=g.app_id AND r.version=g.version AND r.resource_key=g.resource_key WHERE g.app_id=? AND g.id=?", app, id).Scan(&hash, &current, &expected, &admitted.AppRevision, &admitted.VendorRevision)
 	if err != nil {
 		return err
+	}
+	if err = s.RequireSourceActive(tx, app, admitted); err != nil {
+		return err
+	}
+	if len(expectedFence) > 0 {
+		if err = s.RequireSourceActive(tx, app, expectedFence...); err != nil {
+			return err
+		}
 	}
 	if !current || hash != b.SHA256 || expected != nil && *expected != b.SizeBytes {
 		return errors.New("Generation retired or verified blob does not match authorization")

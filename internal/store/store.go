@@ -14,9 +14,11 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/PMExtra/RedApp/internal/identity"
 )
 
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 var ErrFreshDirectory = errors.New("This data directory belongs to an old or unknown database; use a new empty data directory. Configuration, cache and history are not migrated. Keep the old directory unchanged")
 var ErrConflict = errors.New("Setting revision changed; reload before saving")
@@ -31,21 +33,8 @@ type Store struct {
 	rates rates
 }
 
-var appPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*/[a-z0-9]+(?:-[a-z0-9]+)*$`)
-
 func ValidAppID(app string) bool {
-	if !appPattern.MatchString(app) {
-		return false
-	}
-	parts := strings.Split(app, "/")
-	if len(parts[0]) > 63 || len(parts[1]) > 63 {
-		return false
-	}
-	switch parts[0] {
-	case "admin", "api", "assets", "health":
-		return false
-	}
-	return true
+	return identity.ValidKey(app)
 }
 func sqliteURL(path string, query string) string {
 	return (&url.URL{Scheme: "file", Path: path}).String() + "?" + query

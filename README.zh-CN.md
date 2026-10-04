@@ -2,22 +2,23 @@
 
 [English](README.md)
 
-RedApp 帮助 IT 管理员通过内网服务分发 **Codex CLI 和 Claude Code**，验证应用元数据、按需缓存制品，并管理缓存、流量与站点设置。
+RedApp 通过同一服务分发 **HTTP 文件、Codex CLI 和 Claude Code**。管理员维护厂商与应用资料、选择 Provider 和 BaseUrl，并管理缓存、流量与站点设置。
 
-v0.6.0 统一使用 `openai/codex`、`anthropic/claude-code` 应用身份，是**必须使用全新空数据目录的破坏性升级**。旧版配置、缓存和历史全部不导入；旧目录保留归档，不自动升级或删除。启动检测到旧版或未知目录会拒绝继续。新架构已创建的目录可以正常重启使用。升级前请阅读 [v0.6.0 发布说明](docs/multi-application-v0.6.0.md)。
+本文描述 **v0.7.0 的运行方式**。SQLite schema 为 **4**，包括 v0.6 在内的旧版本都必须改用**全新空数据目录**。不提供迁移工具，不导入旧数据库设置、缓存或历史；旧目录保留，启动只读检测后拒绝继续，不修改、不删除。匹配当前格式的 v0.7 目录可以正常重启。详见 [Provider 运行说明与数据边界](docs/provider-runtime-v0.7.0.md)。
 
 ## 快速上手
 
 默认无需配置文件。原生程序执行 `redapp` 或 `redapp serve` 即可；镜像默认执行 `serve`，健康检查使用相同的配置解析规则。
 
 ```sh
+docker build -t redapp:local .
 docker run -d --name redapp --read-only \
   -p 127.0.0.1:8080:8080 \
-  -v redapp-v06-data:/var/lib/redapp \
-  ghcr.io/pmextra/redapp:0.6.4
+  -v redapp-v07-data:/var/lib/redapp \
+  redapp:local
 ```
 
-默认监听 `:8080`、数据目录 `/var/lib/redapp`、不信任任何反向代理。RedApp 接受语法合法的请求 Host，域名和网络访问策略由反向代理控制。首次部署使用新的空目录/卷，已有 v0.6 数据可继续使用；权限失败不会寻找备用目录。
+默认监听 `:8080`、数据目录 `/var/lib/redapp`、不信任任何反向代理。RedApp 接受语法合法的请求 Host，域名和网络访问策略由反向代理控制。首次部署以及从 v0.6 升级都必须使用新的空目录/卷；权限失败不会寻找备用目录。
 
 可以只用环境变量启动：
 
@@ -38,13 +39,35 @@ REDAPP_CONFIG=/etc/redapp/config.json redapp serve
 redapp serve --config ./custom.yaml --listen 127.0.0.1:8081
 ```
 
-容器可选挂载 YAML：在上述命令中增加 `--mount type=bind,src=/absolute/config.yaml,dst=/etc/redapp/config.yaml,readonly`。自定义 YAML/JSON 路径使用挂载加 `REDAPP_CONFIG`。若通过覆盖容器命令传入 `--config` 或其他部署参数，应在 `--health-cmd` 中传入等价参数；Docker 不会将 CMD 参数传给 HEALTHCHECK。全部字段、环境变量、CLI 和限额见[运维说明](docs/operations.md#启动配置)。上游地址和信任根继续来自编译期定义。
+容器可选挂载 YAML：在上述命令中增加 `--mount type=bind,src=/absolute/config.yaml,dst=/etc/redapp/config.yaml,readonly`。自定义 YAML/JSON 路径使用挂载加 `REDAPP_CONFIG`。若通过覆盖容器命令传入 `--config` 或其他部署参数，应在 `--health-cmd` 中传入等价参数；Docker 不会将 CMD 参数传给 HEALTHCHECK。全部字段、环境变量、CLI 和限额见[运维说明](docs/operations.md#启动配置)。Provider 与发布信任规则仍是编译期定义；每个应用的 BaseUrl 由后台保存。
 
 打开 **http://localhost:8080/** 浏览应用；管理员入口为 **http://localhost:8080/admin/overview**。初始管理员密码只写入首次启动日志，登录后请修改密码并保护日志。容器以 UID/GID 65532 运行，宿主 bind mount 的权限须提前设置。
 
 自 v0.6.3 起支持在环境变量、CLI 和 YAML/JSON 中使用 `REDAPP_MAX_ARTIFACT_BYTES=4GiB` 等容量简写，兼容原有整数字节值。这是**单个制品文件**的上限，不是缓存总体积：`4GB`/`4gb` 表示 4000000000 字节，`4GiB` 表示 4294967296 字节。默认保持 4 GiB，允许范围为 1 字节至 1 TiB。已发布 v0.6.2 仍需使用整数字节值，见[版本说明](docs/releases.md)。
 
-当前源码样例和配置表描述 v0.6.3 规范：writer 使用 `REDAPP_MAX_WRITERS`、`download_limits.max_writers`、`--max-writers`，reader 名称不变；删除的 Host 与 writer 选项没有兼容别名。已发布 v0.6.2 请使用其[对应版本样例](https://github.com/PMExtra/RedApp/tree/v0.6.2/config)。
+writer 使用 `REDAPP_MAX_WRITERS`、`download_limits.max_writers`、`--max-writers`，reader 名称不变；三个 Provider 共用这些限额。删除的 Host 与 writer 选项没有兼容别名。
+
+## Provider 与应用管理
+
+在 `/admin/vendors` 添加厂商，再在厂商下添加应用。两者都有全小写 ID、中英文名称/描述和可选 JPG、PNG、静态 SVG 图标。创建后暂不修改 ID、隶属厂商或 Provider；资料、BaseUrl、TTL 和启用状态通过 revision 校验更新。
+
+| Provider | BaseUrl | 缓存与清理 |
+| --- | --- | --- |
+| GeneralHttp（`general-http`） | 必填；支持 HTTP(S)、端口和企业内网源 | 有序路径 TTL 规则；无匹配规则且无 Cache-Control 时默认 300 秒；按获取或最后访问时间手动或自动清理 |
+| Codex（`codex`） | 默认 `https://releases.openai.com/codex`，可覆盖 | 保留发布元数据和制品校验；渠道 TTL 默认 60 秒；按版本清理 |
+| ClaudeCode（`claude-code`） | 默认 `https://downloads.claude.ai/claude-code-releases`，可覆盖 | 保留现有签名和摘要校验；渠道 TTL 默认 60 秒；按版本清理 |
+
+新目录只初始化一次 `openai/codex` 和 `anthropic/claude-code`，重启不会重新创建已删除条目。修改 BaseUrl 会开启独立 source epoch，保留旧缓存供显式管理。禁用或删除停止新的公开请求，保留已有数据；删除后的 ID 仍保留，不等同于清空缓存。
+
+GeneralHttp 将 `/<vendor>/<app>/<relative-path>` 映射到 BaseUrl 下，支持 GET/HEAD、验证器和单段字节 Range，拒绝查询参数和路径穿越。可缓存的冷请求先完整落盘再开始响应，冷 Range 请求也如此；不能共享的响应走有大小限制的直接传输。文件以下载附件返回，不作为可执行网页托管。
+
+GeneralHttp 支持 1–16 个有序镜像 URL，可选择逐个回落、轮询或随机。来源内容、顺序和策略变更会创建新缓存代际；验证器绑定实际来源，跨源重试完整获取。后台可刷新单个缓存资源或 pattern；刷新和清理预览采用服务端分页，执行处理完整冻结集合。
+
+GeneralHttp 设置提供有序缓存规则、默认开启的 `stale_fallback` 开关和可选自动清理规则。匹配对象是解码后、以 `/` 开头的应用相对路径：doublestar glob 匹配文件或目录祖先，Go RE2 正则匹配完整路径，均采用第一条命中的规则。显式规则 TTL 优先于源 Cache-Control，不扣源 Age、不受应用默认 TTL 上限限制；未匹配时，有效 `s-maxage/max-age` 决定新鲜期并扣除 Age/Date。仅完全没有 Cache-Control 时使用应用默认 TTL；存在 Cache-Control 却无有效寿命时取 TTL 0，Expires 不增加另一层优先级。TTL 0 每次先回源，仍可保留完整正文用于故障回退，没有独立 bypass 模式。
+
+显式路径规则可以覆盖源 `no-store/private`，这是管理员主动选择在公开下载入口复用该表示；Set-Cookie、不支持的 Vary 和认证表示隔离边界保持不变。TTL 大于 0 且实际回源覆盖源策略时，每次回源记录一次警告；TTL 0 不产生此覆盖警告。网络失败、超时或上游 5xx 时，`stale_fallback=true` 返回同应用、同 source epoch 下已有的有效完整过期缓存，不设置最大过期年龄；每次实际回退按一次共享回源记一条警告，不去重、不限频，缓存命中不警告。关闭开关则报错，不使用过期缓存。源重验证指令不额外强制验证或禁止回退，但保留 ETag/Last-Modified 条件验证；回退不推进时间戳，404/410 不触发回退。更细控制、提示和观测仍见 [issue #2](https://github.com/PMExtra/RedApp/issues/2)。
+
+手动清理将路径模式、时基和截止时间冻结为预览。自动清理默认规则为空，保存规则后每 15 分钟运行，不在启动时立即删除；仅处理活动 GeneralHttp 应用的当前 source epoch，每应用每轮最多扫描 1000 个文件、退出当前缓存 100 个文件，并通过游标避免后面的文件一直未被扫描。清理按第一条路径命中规则判断年龄，未达到年龄也不继续尝试后面的规则。规则示例、限制和 API 见[运行说明](docs/provider-runtime-v0.7.0.md)。本版不增加源认证、私有 CA 或签名配置；保留基本 TLS 验证以及现有后台和发布校验。
 
 ## 公共地址与代理
 
@@ -52,7 +75,7 @@ redapp serve --config ./custom.yaml --listen 127.0.0.1:8081
 
 公共地址只影响生成链接；请求同源校验、Cookie 安全属性和上游授权保持独立。企业访问使用 HTTPS 反向代理，将可信代理 CIDR 写入 `trusted_proxies`，并让代理覆盖转发头、控制允许的域名。RedApp 校验 Host 语法并按可信代理链推导请求 origin；来自不可信 peer 的转发头会被忽略。健康检查使用本地监听地址，不依赖公共地址。
 
-站点文案、回源代理和公共地址属于全局设置；渠道 TTL 按应用独立保存。每次保存校验 revision，过期表单不会静默覆盖更新。回源代理凭据不通过读 API 返回。
+站点文案、回源代理和公共地址属于全局设置；缓存 TTL 和 Provider 配置按应用独立保存。每次保存校验 revision，过期表单不会静默覆盖更新。回源代理凭据不通过读 API 返回。
 
 ## 客户端安装
 
@@ -76,6 +99,6 @@ irm 'https://downloads.example.internal/anthropic/claude-code/install.ps1' | iex
 
 在 `frontend/` 执行 `npm ci && npm run build` 后，Go 构建会嵌入前端产物。构建前运行 Go 测试和前端类型/DOM 检查；`scripts/test-data-cli.py`、`scripts/test-http-cli.py` 使用 `bin/redapp` 和隔离临时目录验证实际 CLI。
 
-实现方案见[架构文档](docs/multi-application-architecture-next.md)。带旧版本号的文档描述对应历史版本，不是当前开发架构的配置指南。
+当前数据模型、API 边界和限制见 [v0.7 Provider 运行说明](docs/provider-runtime-v0.7.0.md)。带旧版本号的文档描述对应历史版本，不是当前开发架构的配置指南。
 
 RedApp 原创代码采用 [MIT 许可](LICENSE)。[第三方许可](third_party/README.md)，包括上游安装器 LICENSE/NOTICE，独立保留。

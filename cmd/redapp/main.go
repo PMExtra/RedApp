@@ -19,10 +19,13 @@ import (
 	"github.com/PMExtra/RedApp/internal/auth"
 	"github.com/PMExtra/RedApp/internal/catalog"
 	"github.com/PMExtra/RedApp/internal/config"
+	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/history"
+	"github.com/PMExtra/RedApp/internal/httpcache"
 	"github.com/PMExtra/RedApp/internal/httpserver"
 	"github.com/PMExtra/RedApp/internal/instance"
+	"github.com/PMExtra/RedApp/internal/media"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -135,10 +138,6 @@ func serve(c config.Deployment) error {
 	if err != nil {
 		return err
 	}
-	registry, err := builtin.New()
-	if err != nil {
-		return err
-	}
 	guard, err := instance.Acquire(c.DataDir)
 	if err != nil {
 		return err
@@ -149,15 +148,46 @@ func serve(c config.Deployment) error {
 		return err
 	}
 	defer db.DB.Close()
-	upstream := registry.Entries()[0].Upstream
+	seedVendors, seedApps, err := builtin.Seeds()
+	if err != nil {
+		return err
+	}
+	if err = db.SeedDirectory(seedVendors, seedApps); err != nil {
+		return err
+	}
+	upstream := distributor.NewPool()
 	if err := upstream.LoadProxy(db); err != nil {
 		return err
+	}
+	vendors, err := db.Vendors(true)
+	if err != nil {
+		return err
+	}
+	apps, err := db.Applications(true)
+	if err != nil {
+		return err
+	}
+	registry, err := builtin.NewDynamic(vendors, apps, upstream)
+	if err != nil {
+		return err
+	}
+	sources, err := db.Sources()
+	if err != nil {
+		return err
+	}
+	clients := make(map[string]*distributor.Client, len(sources))
+	for _, source := range sources {
+		client, e := builtin.NewSourceClient(source.Provider, source.BaseURL, upstream)
+		if e != nil {
+			return e
+		}
+		clients[source.StorageID()] = client
 	}
 	public, err := config.LoadPublicSettings(db, c.EnvironmentPublicURL)
 	if err != nil {
 		return err
 	}
-	manager, err := download.NewApplications(guard.Directory, db, registry.Upstreams())
+	manager, err := download.NewApplications(guard.Directory, db, clients)
 	if err != nil {
 		return err
 	}
@@ -175,7 +205,17 @@ func serve(c config.Deployment) error {
 	if err != nil {
 		return err
 	}
-	handler := &httpserver.Server{Version: version, DB: db, Registry: registry, Catalog: catalog.New(db, registry), Downloads: manager, Auth: a, Proxy: proxy, Upstream: upstream, History: metricHistory, PublicConfig: public, Dir: guard.Directory, Started: time.Now().UTC()}
+	icons, err := media.New(guard.Directory)
+	if err != nil {
+		return err
+	}
+	defer icons.Close()
+	httpCache, err := httpcache.New(guard.Directory, db, manager)
+	if err != nil {
+		return err
+	}
+	defer httpCache.Close()
+	handler := &httpserver.Server{Version: version, DB: db, Registry: registry, Catalog: catalog.New(db, registry), Downloads: manager, HTTPCache: httpCache, Auth: a, Proxy: proxy, Upstream: upstream, Pool: upstream, Icons: icons, History: metricHistory, PublicConfig: public, Dir: guard.Directory, Started: time.Now().UTC()}
 	server := &http.Server{Addr: c.Listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 10 * time.Minute, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -186,6 +226,13 @@ func serve(c config.Deployment) error {
 		handler.SampleHistory(metricCtx, func(err error) { log.Printf("Metric history sampling failed: %v", err) })
 	}()
 	defer func() { cancelMetrics(); <-metricDone }()
+	cleanupCtx, cancelCleanup := context.WithCancel(ctx)
+	cleanupDone := make(chan struct{})
+	go func() {
+		defer close(cleanupDone)
+		httpCache.RunCleanup(cleanupCtx, registry, func(err error) { log.Printf("Automatic HTTP cache cleanup failed: %v", err) })
+	}()
+	defer func() { cancelCleanup(); <-cleanupDone }()
 	result := make(chan error, 1)
 	go func() { result <- server.ListenAndServe() }()
 	log.Printf("RedApp started: listener %s, data directory %s", c.Listen, guard.Directory)
@@ -200,6 +247,7 @@ func serve(c config.Deployment) error {
 		if err := server.Shutdown(shutdown); err != nil {
 			server.Close()
 		}
+		httpCache.Close()
 		manager.Close()
 	}
 	fmt.Println("RedApp stopped")

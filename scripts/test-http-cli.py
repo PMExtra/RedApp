@@ -111,7 +111,7 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         assert bootstrap["version"] == version_output.split()[1]
         assert bootstrap["public_origin"] == env["REDAPP_PUBLIC_URL"]
         apps = bootstrap["apps"]
-        assert [app["id"] for app in apps] == ["openai/codex", "anthropic/claude-code"]
+        assert {app["id"] for app in apps} == {"openai/codex", "anthropic/claude-code"}
         assert all(app["origin"] == env["REDAPP_PUBLIC_URL"] + "/" + app["id"] for app in apps)
         for path in ["/api/info", "/apps/codex", "/install.sh"]:
             reject(path, 404)
@@ -119,6 +119,47 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         with request("/admin/api/login", {"password": match.group(1)}, "POST") as response:
             csrf = json.load(response)["csrf"]
         assert read("/admin/api/session")["csrf"] == csrf
+        # The dynamic directory is independent of public catalog ordering. These
+        # management-only fixtures never contact the configured upstream.
+        assert {provider["key"] for provider in read("/admin/api/providers")["providers"]} == {"general-http", "codex", "claude-code"}
+        with request("/admin/api/vendors", {"id": "cli-example", "name": {"en": "CLI fixture", "zh-CN": "CLI 测试"}}, "POST") as response:
+            vendor = json.load(response)["vendor"]
+        assert vendor["revision"] == 1 and vendor["enabled"]
+        app_create = "/admin/api/vendors/cli-example/apps"
+        app_input = {"id": "files", "name": {"en": "Files", "zh-CN": "文件"}, "provider": "general-http"}
+        reject(app_create, 400, app_input, "POST")  # GeneralHttp has no implicit BaseUrl.
+        app_input["base_url"] = "http://127.0.0.1:9/files"
+        with request(app_create, app_input, "POST") as response:
+            dynamic_app = json.load(response)["app"]
+        app_path = "/admin/api/apps/cli-example/files"
+        assert dynamic_app["source_epoch"] == 1 and dynamic_app["cache_ttl_seconds"] == 300
+        assert "cli-example/files" in {app["id"] for app in read("/api/bootstrap")["apps"]}
+        assert read(app_path + "/cache") == {"items": []}
+        reject(app_path, 400, {"id": "renamed"}, "PATCH", dynamic_app["revision"])
+        reject(app_path, 400, {"provider": "codex"}, "PATCH", dynamic_app["revision"])
+        with request(app_path, {"base_url": "http://127.0.0.1:9/replacement"}, "PATCH", dynamic_app["revision"]) as response:
+            dynamic_app = json.load(response)["app"]
+        assert dynamic_app["source_epoch"] == 2
+        reject(app_path, 409, {"enabled": False}, "PATCH", dynamic_app["revision"] - 1)
+        sources = read(app_path + "/sources")["sources"]
+        assert {source["epoch"] for source in sources} == {1, 2}
+        assert [source["epoch"] for source in sources if source["current"]] == [2]
+        vendor_path = "/admin/api/vendors/cli-example"
+        reject(vendor_path, 409, {}, "DELETE", vendor["revision"])
+        with request(vendor_path, {"enabled": False}, "PATCH", vendor["revision"]) as response:
+            vendor = json.load(response)["vendor"]
+        assert "cli-example/files" not in {app["id"] for app in read("/api/bootstrap")["apps"]}
+        assert read(app_path)["app"]["enabled"], "vendor disable overwrote application state"
+        reject("/cli-example/files", 404)
+        with request(vendor_path, {"enabled": True}, "PATCH", vendor["revision"]) as response:
+            vendor = json.load(response)["vendor"]
+        assert "cli-example/files" in {app["id"] for app in read("/api/bootstrap")["apps"]}
+        with request(app_path, {}, "DELETE", dynamic_app["revision"]) as response:
+            assert json.load(response)["app"]["deleted_at"] is not None
+        assert len(read(app_path + "/sources")["sources"]) == 2
+        reject(app_create, 409, app_input, "POST")  # Deletion reserves the old ID.
+        with request(vendor_path, {}, "DELETE", vendor["revision"]) as response:
+            assert json.load(response)["vendor"]["deleted_at"] is not None
         status = read("/admin/api/status")
         assert status["name"] == "RedApp" and status["disk"]["free_bytes"] > 0
         assert len(status["metrics"]) == 41
@@ -187,6 +228,13 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         ready()
         bootstrap = read("/api/bootstrap")
         assert bootstrap["site"] == site and bootstrap["public_origin"] == base
+        assert {app["id"] for app in bootstrap["apps"]} == {"openai/codex", "anthropic/claude-code"}, "restart reseeded deleted dynamic entries"
+        with request("/admin/api/login", {"password": match.group(1)}, "POST") as response:
+            csrf = json.load(response)["csrf"]
+        assert read("/admin/api/apps/cli-example/files")["app"]["deleted_at"] is not None
+        assert len(read("/admin/api/apps/cli-example/files/sources")["sources"]) == 2
+        for app, ttl in [("openai/codex", 120), ("anthropic/claude-code", 180)]:
+            assert read("/admin/api/apps/" + app + "/settings")["channel_ttl_seconds"] == ttl
         subprocess.run([binary, "healthcheck"], env=env, check=True)
         with opener.open(urllib.request.Request(base + "/api/bootstrap", headers={"Forwarded": "proto=https;host=untrusted.example"}), timeout=5) as response:
             assert json.load(response)["public_origin"] == base, "untrusted proxy header affected origin"
@@ -203,4 +251,4 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
             process.kill()
             process.wait()
         log.close()
-print("CLI file-free environment startup, Host/proxy boundaries, routes/session/CAS, PUBLIC_URL/installer updates, YAML-selected persistent restart and shared healthcheck configuration passed.")
+print("CLI file-free environment startup, Host/proxy boundaries, routes/session/CAS, dynamic provider/vendor/app lifecycle and source epochs, PUBLIC_URL/installer updates, YAML-selected persistent restart and shared healthcheck configuration passed.")
