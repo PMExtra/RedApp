@@ -46,6 +46,12 @@ func newDirectoryHarness(t *testing.T, dir string, configure ...func(*Server)) *
 	if err != nil {
 		t.Fatal(err)
 	}
+	return newDirectoryHarnessWithStore(t, dir, db, configure...)
+}
+
+// A pre-opened store lets upgrade tests serve real schema-5 files before migration.
+func newDirectoryHarnessWithStore(t *testing.T, dir string, db *store.Store, configure ...func(*Server)) *directoryHarness {
+	t.Helper()
 	vendors, apps, err := builtin.Seeds()
 	if err != nil {
 		t.Fatal(err)

@@ -47,6 +47,8 @@ watch(
   { immediate: true, flush: "sync" },
 );
 export const messages = {
+  "Files are still being transferred on this instance. Wait for them to finish, then retry deletion.":
+    "当前实例仍有文件传输，请等待传输完成后重试删除。",
   "Unexpected error. Reload and try again.": "发生意外错误，请重新加载后重试。",
   "Deleted. Some stored files are awaiting cleanup; restart the server to retry cleanup.":
     "已删除。部分存储文件等待清理，请重启服务重试清理。",
@@ -757,6 +759,8 @@ const errorCodes: Record<string, Message> = {
   REFRESH_INVALID:
     "The refresh selection changed or is no longer available. Create a new preview and try again.",
   PAYLOAD_TOO_LARGE: "The uploaded file exceeds the size limit.",
+  DIRECTORY_TRANSFERS_ACTIVE:
+    "Files are still being transferred on this instance. Wait for them to finish, then retry deletion.",
   DIRECTORY_REVISION_CONFLICT:
     "Settings changed elsewhere. Your draft is preserved. Reload before saving again.",
   AUTH_REQUIRED: "Your session expired. Sign in again.",

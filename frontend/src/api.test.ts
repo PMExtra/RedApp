@@ -10,6 +10,7 @@ it("preserves structured problem fields and localizes by stable code before stat
   for (const [code, status, expected] of [
     ["SETTINGS_REVISION_CONFLICT", 409, "Your draft is preserved"],
     ["CLEANUP_INVALID", 409, "Create a new preview"],
+    ["DIRECTORY_TRANSFERS_ACTIVE", 409, "Wait for them to finish"],
     ["METADATA_UNTRUSTED", 502, "could not be verified"],
   ] as const) {
     vi.stubGlobal(
@@ -83,4 +84,16 @@ it("labels transport failures separately from unexpected application errors", as
   expect(error).toMatchObject({ code: "NETWORK_ERROR", status: 0 });
   expect(errorText(error)).toContain("Connection failed");
   expect(errorText(new Error("local bug"))).toContain("Unexpected error");
+});
+
+it("explains deletion waits in both languages without requesting a reload", () => {
+  const error = new ApiError({ code: "DIRECTORY_TRANSFERS_ACTIVE" }, 409);
+  setLanguage("en");
+  expect(errorText(error)).toBe(
+    "Files are still being transferred on this instance. Wait for them to finish, then retry deletion.",
+  );
+  setLanguage("zh-CN");
+  expect(errorText(error)).toBe(
+    "当前实例仍有文件传输，请等待传输完成后重试删除。",
+  );
 });

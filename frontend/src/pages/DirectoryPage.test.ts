@@ -302,6 +302,7 @@ it("keeps disabled and deleted applications manageable independently of public b
   apps[0]!.id = "custom";
   apps[0]!.key = "openai/custom";
   apps[1]!.deleted_at = "2026-10-03T12:00:00Z";
+  let deletionAttempts = 0;
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     if (url === "/api/bootstrap") return response({ ...boot, apps: [] });
     if (init?.method === "DELETE") {
@@ -309,6 +310,11 @@ it("keeps disabled and deleted applications manageable independently of public b
         revision: 1,
         confirm_key: "openai/custom",
       });
+      if (++deletionAttempts === 1)
+        return response(
+          { error: { code: "DIRECTORY_TRANSFERS_ACTIVE", retryable: true } },
+          409,
+        );
       apps[0]!.deleted_at = "2026-10-03T13:00:00Z";
       apps[0]!.revision++;
       apps.splice(0, 1);
@@ -339,6 +345,23 @@ it("keeps disabled and deleted applications manageable independently of public b
   expect(wrapper.get(".delete-review").text()).toContain("cannot be undone");
   await wrapper.get(".delete-review .danger").trigger("click");
   await flushPromises();
+  expect(wrapper.get(".directory-editor [role=alert]").text()).toContain(
+    "Wait for them to finish, then retry deletion.",
+  );
+  expect(wrapper.get(".directory-editor [role=alert]").text()).not.toMatch(
+    /reload/i,
+  );
+  expect(router.currentRoute.value.path).toBe(
+    "/admin/vendors/openai/apps/custom/settings",
+  );
+  expect(
+    wrapper.get(".delete-review .danger").attributes("disabled"),
+  ).toBeUndefined();
+  expect(deletionAttempts).toBe(1);
+  // The explicit retry succeeds without reloading or discarding the confirmation.
+  await wrapper.get(".delete-review .danger").trigger("click");
+  await flushPromises();
+  expect(deletionAttempts).toBe(2);
   expect(router.currentRoute.value.path).toBe("/admin/vendors");
   expect(wrapper.get(".directory-page").text()).not.toContain("Codex CLI");
   wrapper.unmount();

@@ -159,7 +159,9 @@ func directoryError(w http.ResponseWriter, err error) {
 		problem(w, 409, "DIRECTORY_REVISION_CONFLICT", "Configuration changed; reload before saving")
 	case errors.Is(err, sql.ErrNoRows):
 		problem(w, 404, "DIRECTORY_NOT_FOUND", "Vendor or application not found")
-	case errors.Is(err, download.ErrTransfersActive), errors.Is(err, store.ErrBuiltinTemplate), errors.Is(err, store.ErrDirectoryExists), errors.Is(err, store.ErrDirectoryDeleted), errors.Is(err, store.ErrVendorHasApplications):
+	case errors.Is(err, download.ErrTransfersActive):
+		problem(w, 409, "DIRECTORY_TRANSFERS_ACTIVE", "Files are still being transferred on this instance. Wait for them to finish, then retry deletion.")
+	case errors.Is(err, store.ErrBuiltinTemplate), errors.Is(err, store.ErrDirectoryExists), errors.Is(err, store.ErrDirectoryDeleted), errors.Is(err, store.ErrVendorHasApplications):
 		problem(w, 409, "DIRECTORY_CONFLICT", err.Error())
 	case errors.Is(err, store.ErrInvalidDirectory):
 		problem(w, 400, "INVALID_DIRECTORY", err.Error())

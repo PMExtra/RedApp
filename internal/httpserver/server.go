@@ -67,7 +67,7 @@ func reply(w http.ResponseWriter, status int, value any) {
 func problem(w http.ResponseWriter, status int, code, message string) {
 	var id [8]byte
 	_, _ = rand.Read(id[:])
-	reply(w, status, map[string]any{"error": map[string]any{"code": code, "message": message, "request_id": hex.EncodeToString(id[:]), "retryable": status >= 500}})
+	reply(w, status, map[string]any{"error": map[string]any{"code": code, "message": message, "request_id": hex.EncodeToString(id[:]), "retryable": status >= 500 || code == "DIRECTORY_TRANSFERS_ACTIVE"}})
 }
 func fail(w http.ResponseWriter, status int, message string) {
 	code := map[int]string{400: "INVALID_REQUEST", 401: "AUTH_REQUIRED", 403: "CSRF_REJECTED", 404: "RESOURCE_NOT_FOUND", 405: "METHOD_NOT_ALLOWED", 409: "SETTINGS_REVISION_CONFLICT", 413: "PAYLOAD_TOO_LARGE", 429: "LOGIN_RATE_LIMITED", 502: "UPSTREAM_UNAVAILABLE", 503: "LOCAL_STORAGE_UNAVAILABLE"}[status]

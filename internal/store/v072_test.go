@@ -1,8 +1,6 @@
 package store
 
 import (
-	"bytes"
-	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -78,64 +76,6 @@ func TestV072TemplateInsertionProtectionAndSelectiveCAS(t *testing.T) {
 	again, _ := s.Application(a.Key)
 	if !reflect.DeepEqual(again, after) {
 		t.Fatal("restart rewrote existing template")
-	}
-}
-func TestV072UpgradePreservesV5AndReservedAllIsReadOnly(t *testing.T) {
-	for _, collision := range []bool{false, true} {
-		t.Run(fmt.Sprint(collision), func(t *testing.T) {
-			dir := t.TempDir()
-			path := filepath.Join(dir, "state.sqlite")
-			db, err := sql.Open("sqlite3", path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err = db.Exec(schemaV5); err != nil {
-				t.Fatal(err)
-			}
-			id := "acme"
-			if collision {
-				id = "all"
-			}
-			if _, err = db.Exec(`INSERT INTO vendors VALUES('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',?,'Keep','保留','','','',1,9,NULL)`, id); err != nil {
-				t.Fatal(err)
-			}
-			if _, err = db.Exec(`INSERT INTO settings VALUES('global','','upstream_proxy',7,'{"server":"http://proxy.example:8080","username":"legacy","password":"p@ss"}')`); err != nil {
-				t.Fatal(err)
-			}
-			db.Close()
-			before, _ := os.ReadFile(path)
-			upgraded, err := Open(dir)
-			if collision {
-				if !errors.Is(err, ErrReservedVendor) {
-					t.Fatal(err)
-				}
-				after, _ := os.ReadFile(path)
-				if sha256.Sum256(before) != sha256.Sum256(after) {
-					t.Fatal("collision mutated database")
-				}
-				entries, _ := os.ReadDir(dir)
-				if len(entries) != 1 {
-					t.Fatal("collision created sidecars")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer upgraded.DB.Close()
-			v, _ := upgraded.Vendor(id)
-			if v.Revision != 9 || v.Name.En != "Keep" {
-				t.Fatal(v)
-			}
-			var raw []byte
-			var revision int
-			if err = upgraded.DB.QueryRow(`SELECT payload,revision FROM settings WHERE key='upstream_proxy'`).Scan(&raw, &revision); err != nil || revision != 7 || !bytes.Contains(raw, []byte(`"password":"p@ss"`)) {
-				t.Fatal("schema upgrade touched proxy payload", err)
-			}
-			if err = checkSchema(upgraded.DB); err != nil {
-				t.Fatal(err)
-			}
-		})
 	}
 }
 func TestV072RankingMergesClientsAndExpiresBuckets(t *testing.T) {
