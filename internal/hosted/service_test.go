@@ -207,3 +207,47 @@ func TestHostedRejectsChangedAppAndUnsafePaths(t *testing.T) {
 		t.Fatal("failed publication orphan", files)
 	}
 }
+
+func TestHostedDeleteFencesInflightReplacementAndPreservesOpenedReader(t *testing.T) {
+	s, entry, _ := setup(t)
+	first, err := s.Put(context.Background(), entry, "file.bin", "", transferID(t), body("original"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, _, release, err := s.Open(entry.UID, first.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer release()
+	pipe, writer := io.Pipe()
+	defer writer.Close()
+	opened := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		_, e := s.Put(context.Background(), entry, first.Path, first.ID, transferID(t), func(context.Context) (io.ReadCloser, int64, error) { close(opened); return pipe, -1, nil })
+		done <- e
+	}()
+	<-opened
+	if _, err = writer.Write([]byte("replacement")); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Delete(entry.UID, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.db.HostedFile(entry.UID, first.Path); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal("delete left public row", err)
+	}
+	writer.Close()
+	if err = <-done; !errors.Is(err, store.ErrConflict) {
+		t.Fatal("replacement resurrected deleted file", err)
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil || string(data) != "original" {
+		t.Fatal("delete interrupted an existing reader", string(data), err)
+	}
+	files, err := os.ReadDir(s.dir)
+	if err != nil || len(files) != 0 {
+		t.Fatal("replacement left unreferenced files", files, err)
+	}
+}

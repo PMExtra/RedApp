@@ -37,7 +37,7 @@ API：
 - `GET .../files?page=1&limit=25`：文件分页，最大 100。
 - `POST .../files?transfer_id=<32位hex>`：multipart 中先提供 `path`、可选 `expected_id`，再提供 `file`；不缓存整份上传。
 - `POST .../files/import?transfer_id=<32位hex>`：JSON `{path,url,expected_id?}`。
-- `GET/DELETE .../files/transfers/<id>`：当前传输进度/取消，按应用隔离。完成记录不无限保留；取消已完成请求不会撤销完成的文件。
+- `GET/DELETE .../files/transfers/<id>`：当前传输进度/取消，按应用隔离。完成记录不无限保留；取消与发布在同一锁下决定先后，已完成提交不会被取消接口回报为成功取消，也不会撤销完成的文件。取消先阻断提交并关闭上游连接，当前系统调用可能短暂收尾，随后临时对象回收；不存在脱离请求继续导入的后台任务。
 - `DELETE .../files/<resource-id>`：仅删除该应用当前资源标识匹配的文件；删除应用后仍可查看/显式清除留存文件，但不能上传/导入。
 - `GET /api/apps/<vendor>/<app>/files`：活动 Hosted 应用的公共分页列表。
 - `GET/HEAD /<vendor>/<app>/<relative-path>`：只读取本地完整文件，支持 Range/ETag，以附件下载并设置 nosniff/CSP。禁止 query。

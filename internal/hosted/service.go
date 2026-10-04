@@ -125,7 +125,7 @@ func (s *Service) Cancel(uid, id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.transfers[id]
-	if !ok || p.uid != uid {
+	if !ok || p.uid != uid || p.State == "complete" {
 		return false
 	}
 	p.cancel()
@@ -195,6 +195,9 @@ func (s *Service) Put(ctx context.Context, entry application.Entry, path, expect
 			return store.HostedFile{}, err
 		}
 		n, readErr := reader.Read(buffer)
+		if err = ctx.Err(); err != nil {
+			return store.HostedFile{}, err
+		}
 		if n > 0 {
 			copied += int64(n)
 			if copied > limit {
@@ -258,6 +261,9 @@ func (s *Service) Put(ctx context.Context, entry application.Entry, path, expect
 		return store.HostedFile{}, err
 	}
 	committed = true
+	// Publication and cancellation share this lock: a cancellation arriving
+	// after commit cannot claim that it stopped the completed publication.
+	p.State = "complete"
 	if old.ID != "" {
 		os.Remove(filepath.Join(s.dir, old.ID))
 	}

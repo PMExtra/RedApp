@@ -8,6 +8,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -247,4 +249,87 @@ func TestHostedStreamingUploadExtendsOnlyAuthenticatedBodyDeadline(t *testing.T)
 		t.Fatal(code, string(data))
 	}
 	other.request("GET", "/stream/files/slow.bin", nil, 200, nil)
+}
+
+func TestHostedCancelImportClosesUpstreamAndCannotBeReachedThroughInfo(t *testing.T) {
+	h := newDirectoryHarness(t, t.TempDir())
+	h.login(h.password)
+	h.createVendor("cancel")
+	app := h.createApp("cancel", "files", "hosted", nil)
+	h.createApp("cancel", "info", "info", nil)
+	started, closed := make(chan struct{}), make(chan struct{})
+	var count atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count.Add(1)
+		w.WriteHeader(200)
+		w.Write([]byte("temporary"))
+		w.(http.Flusher).Flush()
+		close(started)
+		<-r.Context().Done()
+		close(closed)
+	}))
+	defer upstream.Close()
+	input := map[string]any{"path": "cancel.bin", "url": upstream.URL}
+	h.request("POST", "/admin/api/apps/cancel/info/files/import?transfer_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", input, 404, nil)
+	h.request("POST", "/admin/api/apps/cancel/info/cache/refresh", input, 404, nil)
+	h.request("POST", "/admin/api/apps/cancel/files/cache/refresh", input, 404, nil)
+	h.request("GET", "/cancel/info/file?url="+upstream.URL, nil, 400, nil)
+	h.request("GET", "/cancel/files/missing?url="+upstream.URL, nil, 400, nil)
+	if count.Load() != 0 {
+		t.Fatal("capability bypass contacted an upstream")
+	}
+	bodyBytes, _ := json.Marshal(input)
+	request, err := http.NewRequest("POST", h.http.URL+"/admin/api/apps/cancel/files/files/import?transfer_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", bytes.NewReader(bodyBytes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-CSRF-Token", h.csrf)
+	type result struct {
+		status int
+		err    error
+	}
+	finished := make(chan result, 1)
+	go func() {
+		r, e := h.client.Do(request)
+		if e != nil {
+			finished <- result{err: e}
+			return
+		}
+		defer r.Body.Close()
+		_, e = io.Copy(io.Discard, r.Body)
+		finished <- result{r.StatusCode, e}
+	}()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("import did not start")
+	}
+	h.request("DELETE", "/admin/api/apps/cancel/files/files/transfers/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", nil, 200, nil)
+	select {
+	case <-closed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("cancel left upstream alive")
+	}
+	select {
+	case result := <-finished:
+		if result.err != nil || result.status != 409 {
+			t.Fatal(result)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("cancel left import running")
+	}
+	h.request("GET", "/admin/api/apps/cancel/files/files/transfers/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", nil, 404, nil)
+	h.request("GET", "/cancel/files/cancel.bin", nil, 404, nil)
+	files, e := h.server.DB.HostedPage(app.UID, 1, 25)
+	if e != nil || files.Total != 0 {
+		t.Fatal("cancel published a resource", files, e)
+	}
+	objects, e := os.ReadDir(filepath.Join(h.server.Dir, "objects", "hosted"))
+	if e != nil || len(objects) != 0 {
+		t.Fatal("cancel left temporary objects", objects, e)
+	}
+	if count.Load() != 1 {
+		t.Fatal("cancel retried import", count.Load())
+	}
 }
