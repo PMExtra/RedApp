@@ -150,6 +150,9 @@ func serve(c config.Deployment) error {
 	}
 	defer db.DB.Close()
 	// Add missing entity templates disabled, preserving every existing configuration.
+	if err = db.RecoverApplicationDeletions(); err != nil {
+		return err
+	}
 	if err = db.ProcessPendingDeletes(guard.Directory); err != nil {
 		return err
 	}

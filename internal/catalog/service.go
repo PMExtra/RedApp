@@ -160,7 +160,14 @@ func (s *Service) release(ctx context.Context, e application.Entry, target strin
 		f = &flight{done: make(chan struct{})}
 		s.flights[key] = f
 		s.active[e.MetricsID()]++
-		go s.fetch(e, target, channel, key, f)
+		workCtx, finish, err := s.db.ApplicationWork(context.Background(), e.StorageID())
+		if err != nil {
+			delete(s.flights, key)
+			s.active[e.MetricsID()]--
+			s.mu.Unlock()
+			return application.Release{}, err
+		}
+		go func() { defer finish(); s.fetch(workCtx, e, target, channel, key, f) }()
 	}
 	s.mu.Unlock()
 	select {
@@ -176,8 +183,8 @@ func (s *Service) release(ctx context.Context, e application.Entry, target strin
 	}
 }
 
-func (s *Service) fetch(e application.Entry, target string, isChannel bool, key string, f *flight) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+func (s *Service) fetch(parent context.Context, e application.Entry, target string, isChannel bool, key string, f *flight) {
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 	app := e.StorageID()
 	var release application.Release

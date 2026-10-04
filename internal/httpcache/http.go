@@ -18,6 +18,12 @@ import (
 // Serve returns errors only before writing response headers. It reserves shared
 // reader capacity for the entire downstream response, including HEAD and 304.
 func (s *Service) Serve(w http.ResponseWriter, r *http.Request, entry application.Entry, relativePath string) (resultErr error) {
+	workCtx, finish, err := s.db.ApplicationWork(r.Context(), entry.StorageID())
+	if err != nil {
+		return err
+	}
+	defer finish()
+	r = r.WithContext(workCtx)
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		return errors.New("HTTP cache supports GET and HEAD only")
 	}

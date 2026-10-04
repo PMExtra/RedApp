@@ -238,6 +238,7 @@ async function save(remove = false) {
   const body = remove
     ? {
         revision: record.value?.revision,
+        ...(kind === "app" ? { confirm_uid: record.value?.uid } : {}),
         confirm_key:
           kind === "vendor"
             ? record.value?.id
@@ -649,7 +650,9 @@ onUnmounted(() => {
       <p>
         {{
           t(
-            "Permanently delete this record and its files, settings and history? This cannot be undone.",
+            kind === "app"
+              ? "Permanently delete this record and its files, settings and history? Active downloads, uploads and background tasks of this application will be interrupted. This cannot be undone."
+              : "Permanently delete this record and its files, settings and history? This cannot be undone.",
           )
         }}
       </p>

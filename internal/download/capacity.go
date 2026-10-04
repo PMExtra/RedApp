@@ -53,21 +53,21 @@ func (m *Manager) MaxArtifactBytes() int64 {
 	return m.maxBytes
 }
 
-// Permanent removal is rare and requires an idle shared transfer pool. Holding
-// admission prevents new uploads/readers while the relational deletion commits.
-// Existing transfers are never cancelled to make deletion succeed.
-var ErrTransfersActive = errors.New("Transfers are active; retry permanent deletion when they finish")
+// The store's UID admission gate must be closed and drained before this cleanup.
+var ErrTransfersActive = errors.New("Application work has not exited")
 
 func (m *Manager) PurgeApplication(uid string, remove func() error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.jobs != 0 || m.readersLocked() != 0 {
-		return ErrTransfersActive
+	prefix := "app/" + uid + "-e"
+	for _, g := range m.all {
+		if strings.HasPrefix(g.Resource.Application, prefix) && (g.running || g.readers != 0) {
+			return ErrTransfersActive
+		}
 	}
 	if err := remove(); err != nil {
 		return err
 	}
-	prefix := "app/" + uid + "-e"
 	for id, g := range m.all {
 		if strings.HasPrefix(g.Resource.Application, prefix) {
 			if g.file != nil {

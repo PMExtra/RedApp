@@ -35,6 +35,11 @@ type RefreshSummary struct {
 }
 
 func (s *Service) PreviewRefresh(ctx context.Context, entry application.Entry, match pathmatch.Spec) (MaintenancePreview, error) {
+	ctx, finish, err := s.db.ApplicationWork(ctx, entry.StorageID())
+	if err != nil {
+		return MaintenancePreview{}, err
+	}
+	defer finish()
 	if err := s.begin(entry); err != nil {
 		return MaintenancePreview{}, err
 	}
@@ -50,6 +55,11 @@ func (s *Service) PreviewRefresh(ctx context.Context, entry application.Entry, m
 // consumed in small pages; disconnecting the initiating HTTP request does not
 // cancel it. An active worker excludes additional batch workers, without a queue.
 func (s *Service) ExecuteRefresh(ctx context.Context, entry application.Entry, id string) (MaintenancePreview, error) {
+	ctx, finished, err := s.db.ApplicationWork(ctx, entry.StorageID())
+	if err != nil {
+		return MaintenancePreview{}, err
+	}
+	defer finished()
 	if err := s.begin(entry); err != nil {
 		return MaintenancePreview{}, err
 	}
@@ -84,7 +94,12 @@ func (s *Service) ExecuteRefresh(ctx context.Context, entry application.Entry, i
 		}
 		return preview, err
 	}
-	go s.runRefresh(entry, preview)
+	workCtx, finish, err := s.db.ApplicationWork(s.ctx, entry.StorageID())
+	if err != nil {
+		s.releaseRefreshWorker()
+		return preview, err
+	}
+	go func() { defer finish(); s.runRefresh(workCtx, entry, preview) }()
 	return preview, nil
 }
 
@@ -95,7 +110,7 @@ func (s *Service) releaseRefreshWorker() {
 	s.wg.Done()
 }
 
-func (s *Service) runRefresh(entry application.Entry, preview MaintenancePreview) {
+func (s *Service) runRefresh(ctx context.Context, entry application.Entry, preview MaintenancePreview) {
 	defer s.releaseRefreshWorker()
 	summary := RefreshSummary{SelectedFiles: preview.SelectedFiles}
 	failed := false
@@ -108,7 +123,7 @@ func (s *Service) runRefresh(entry application.Entry, preview MaintenancePreview
 	}()
 	var after int64
 	for {
-		if err := s.ctx.Err(); err != nil {
+		if err := ctx.Err(); err != nil {
 			failed = true
 			return
 		}
@@ -116,7 +131,7 @@ func (s *Service) runRefresh(entry application.Entry, preview MaintenancePreview
 			failed = true
 			return
 		}
-		items, err := s.pendingPreviewItems(s.ctx, entry.StorageID(), "refresh", preview.ID, after, 25)
+		items, err := s.pendingPreviewItems(ctx, entry.StorageID(), "refresh", preview.ID, after, 25)
 		if err != nil {
 			failed = true
 			return
@@ -125,7 +140,7 @@ func (s *Service) runRefresh(entry application.Entry, preview MaintenancePreview
 			return
 		}
 		for _, selected := range items {
-			item, err := s.refreshExisting(s.ctx, entry, "/"+strings.TrimPrefix(selected.Path, "/"), selected.GenerationID)
+			item, err := s.refreshExisting(ctx, entry, "/"+strings.TrimPrefix(selected.Path, "/"), selected.GenerationID)
 			if errors.Is(err, context.Canceled) || errors.Is(err, ErrClosed) || errors.Is(err, store.ErrSourceInactive) {
 				failed = true
 				return
@@ -133,7 +148,7 @@ func (s *Service) runRefresh(entry application.Entry, preview MaintenancePreview
 			if err != nil && !errors.Is(err, ErrRefreshMissing) {
 				item.Status, item.Reason = "failed", "refresh_failed"
 			}
-			if err := s.recordPreviewItem(s.ctx, entry, "refresh", preview.ID, selected.Ordinal, item.Status, item.Reason); err != nil {
+			if err := s.recordPreviewItem(ctx, entry, "refresh", preview.ID, selected.Ordinal, item.Status, item.Reason); err != nil {
 				failed = true
 				return
 			}
@@ -164,6 +179,11 @@ func (s *Service) Refresh(ctx context.Context, entry application.Entry, path str
 
 func (s *Service) refreshExisting(ctx context.Context, entry application.Entry, path, expectedGeneration string) (RefreshItem, error) {
 	item := RefreshItem{Path: path, Status: "failed"}
+	ctx, finish, err := s.db.ApplicationWork(ctx, entry.StorageID())
+	if err != nil {
+		return item, err
+	}
+	defer finish()
 	if len(path) > 4096 || path == "/" || pathmatch.ValidatePath(path) != nil || entry.Upstream == nil {
 		return item, ErrInvalidRefresh
 	}

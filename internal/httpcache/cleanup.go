@@ -40,6 +40,11 @@ func (s *Service) execute(ctx context.Context, entry application.Entry, id strin
 // ExecuteContext processes the whole frozen set using transactions of at most
 // 100 items. New generations can never enter an already-built preview.
 func (s *Service) ExecuteContext(ctx context.Context, entry application.Entry, id string) (out CleanupResult, resultErr error) {
+	ctx, finish, err := s.db.ApplicationWork(ctx, entry.StorageID())
+	if err != nil {
+		return out, err
+	}
+	defer finish()
 	ctx, release, err := s.beginMaintenance(ctx, false)
 	if err != nil {
 		return out, err

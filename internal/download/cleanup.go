@@ -1,6 +1,7 @@
 package download
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"sort"
@@ -13,6 +14,11 @@ import (
 // Preview freezes exact generations owned by one registered application. The
 // client never submits a generation list at execution time.
 func (m *Manager) Preview(app string, ids map[string]bool) (Cleanup, error) {
+	ctx, finish, err := m.db.ApplicationWork(context.Background(), app)
+	if err != nil {
+		return Cleanup{}, err
+	}
+	defer finish()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.upstreams[app] == nil {
@@ -25,6 +31,9 @@ func (m *Manager) Preview(app string, ids map[string]bool) (Cleanup, error) {
 	job := Cleanup{ID: id(), Application: app, Created: now, Expires: now.Add(10 * time.Minute), Selected: []Selection{}}
 	selected := map[string]bool{}
 	for rid, g := range m.current {
+		if err := ctx.Err(); err != nil {
+			return Cleanup{}, err
+		}
 		if !ids[rid] {
 			continue
 		}
@@ -76,6 +85,11 @@ func (m *Manager) Preview(app string, ids map[string]bool) (Cleanup, error) {
 }
 
 func (m *Manager) Cleanup(app, jobID string) error {
+	ctx, finish, err := m.db.ApplicationWork(context.Background(), app)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.upstreams[app] == nil {
@@ -91,6 +105,9 @@ func (m *Manager) Cleanup(app, jobID string) error {
 	// The store validates the entire frozen selection and retires it in one
 	// transaction. Memory changes only follow successful durable detachment.
 	for _, s := range job.Selection {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		g := m.all[s.GenerationID]
 		if g == nil {
 			continue

@@ -50,6 +50,12 @@ func (s *Server) generalFile(w http.ResponseWriter, r *http.Request) bool {
 		fail(w, 503, "Failed to record request")
 		return true
 	}
+	r, finish, err := s.applicationResponse(w, r, entry.StorageID())
+	if err != nil {
+		fail(w, 404, "Application unavailable")
+		return true
+	}
+	defer finish()
 	receipt := &downloadReceipt{ResponseWriter: w}
 	if err = s.HTTPCache.Serve(receipt, r, entry, path); err != nil {
 		switch {

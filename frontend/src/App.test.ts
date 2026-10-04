@@ -56,7 +56,9 @@ describe("SPA page ownership", () => {
     expect(wrapper.find(".account-trigger").exists()).toBe(false);
     await expect(api("after-expiry")).rejects.toMatchObject({ status: 401 });
     expect(
-      (fetch.mock.calls.at(-1)![1]!.headers as Record<string, string>)["X-CSRF-Token"],
+      (fetch.mock.calls.at(-1)![1]!.headers as Record<string, string>)[
+        "X-CSRF-Token"
+      ],
     ).toBe("");
     const ended = fetch.mock.calls.length;
     await vi.advanceTimersByTimeAsync(10000);
@@ -158,4 +160,57 @@ describe("SPA page ownership", () => {
     ).toBe("login-token");
     wrapper.unmount();
   });
+});
+
+it("redirects every signed-out admin entry after abandoning login, including history and deep links", async () => {
+  let authenticated = false;
+  const fetch = vi.fn(async (url: string) => {
+    if (url === "/api/bootstrap") return response(boot);
+    if (url.endsWith("/session"))
+      return authenticated ? response({ csrf: "token" }) : response({}, 401);
+    if (url.endsWith("/login")) {
+      authenticated = true;
+      return response({ csrf: "token" });
+    }
+    if (url.endsWith("/status")) return response(status);
+    return response({ items: [], total: 0 });
+  });
+  vi.stubGlobal("fetch", fetch);
+  const { wrapper, router } = await mountPage("/");
+  const assertLogin = async (target: string) => {
+    await vi.waitFor(() =>
+      expect(router.currentRoute.value.path).toBe("/admin/login"),
+    );
+    await vi.waitFor(() =>
+      expect(wrapper.find(".login input[type=password]").exists()).toBe(true),
+    );
+    expect(router.currentRoute.value.query.returnTo).toBe(target);
+    expect(wrapper.text()).not.toContain("Distribution overview");
+  };
+  for (let visit = 0; visit < 2; visit++) {
+    await wrapper.get('a[href="/admin/overview"]').trigger("click");
+    await assertLogin("/admin/overview");
+    await wrapper.get('.topbar a[href="/"]').trigger("click");
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe("/"));
+  }
+  router.back();
+  await assertLogin("/admin/overview");
+  router.forward();
+  await vi.waitFor(() => expect(router.currentRoute.value.path).toBe("/"));
+  await router.push("/admin/events?severity=error");
+  await assertLogin("/admin/events?severity=error");
+  await wrapper.get("input[type=password]").setValue("fixture");
+  await wrapper.get(".login form").trigger("submit");
+  await vi.waitFor(() =>
+    expect(router.currentRoute.value.fullPath).toBe(
+      "/admin/events?severity=error",
+    ),
+  );
+  expect(wrapper.find(".login").exists()).toBe(false);
+  await router.push("/");
+  await router.push("/admin/overview");
+  await vi.waitFor(() =>
+    expect(wrapper.text()).toContain("Distribution overview"),
+  );
+  wrapper.unmount();
 });

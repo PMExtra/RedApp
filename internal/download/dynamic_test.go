@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/store"
@@ -304,5 +305,86 @@ func TestDormantCacheIsReverifiedWhenApplicationIsReenabled(t *testing.T) {
 	views := m.Snapshot()
 	if requests.Load() != 2 || len(views) != 1 || !views[0].Current {
 		t.Fatalf("dormant cache repair did not establish a valid head: requests=%d views=%v", requests.Load(), views)
+	}
+}
+
+func TestPermanentDeletionCancelsReleaseAcrossOldEpochAndVerification(t *testing.T) {
+	for _, stage := range []string{"transfer", "verify"} {
+		t.Run(stage, func(t *testing.T) {
+			payload := []byte("immutable verified bytes")
+			started := make(chan struct{})
+			client, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if stage == "transfer" {
+					w.Write(payload[:1])
+					w.(http.Flusher).Flush()
+					close(started)
+					<-r.Context().Done()
+					return
+				}
+				w.Write(payload)
+			}))
+			dir := t.TempDir()
+			db, err := store.Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.DB.Close()
+			app := dynamicApplication(t, db, client)
+			m, err := NewApplications(dir, db, map[string]*distributor.Client{app.StorageID(): client})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer m.Close()
+			if stage == "verify" {
+				m.testFault = func(point string, g *Generation) {
+					if point == "download.before_verify" {
+						close(started)
+						<-g.ctx.Done()
+					}
+				}
+			}
+			r := dynamicResource(t, db, app, client, payload)
+			authorize(t, m, r)
+			reader, _, err := m.Acquire(context.Background(), r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { _, err := io.Copy(io.Discard, reader); reader.Close(); done <- err }()
+			<-started
+			changes := appChanges(app)
+			changes.BaseURL += "/new-source"
+			app, err = db.UpdateApplication(app.Key, app.Revision, changes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if app.StorageID() == r.Application {
+				t.Fatal("fixture did not change epoch")
+			}
+			uid, drained, err := db.PrepareApplicationDeletion(app.Key, app.Revision)
+			if err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-drained:
+			case <-time.After(2 * time.Second):
+				t.Fatal("release did not drain")
+			}
+			if err = <-done; err == nil {
+				t.Fatal("canceled release succeeded")
+			}
+			if err = m.PurgeApplication(uid, func() error { return db.FinishApplicationDeletion(uid) }); err != nil {
+				t.Fatal(err)
+			}
+			if err = db.ProcessPendingDeletes(dir); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err = m.Acquire(context.Background(), r); err == nil {
+				t.Fatal("old epoch restarted")
+			}
+			if len(m.Snapshot()) != 0 {
+				t.Fatal("generation survived purge")
+			}
+		})
 	}
 }

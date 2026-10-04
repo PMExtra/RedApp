@@ -128,6 +128,11 @@ func (s *Service) BuildPreview(ctx context.Context, entry application.Entry, kin
 	return s.buildPreview(ctx, entry, kind, criteria, buildOptions{})
 }
 func (s *Service) buildPreview(ctx context.Context, entry application.Entry, kind string, criteria PreviewCriteria, options buildOptions) (out MaintenancePreview, buildErr error) {
+	ctx, finish, err := s.db.ApplicationWork(ctx, entry.StorageID())
+	if err != nil {
+		return out, err
+	}
+	defer finish()
 	ctx, release, err := s.beginMaintenance(ctx, true)
 	if err != nil {
 		return out, err

@@ -385,10 +385,10 @@ func TestDirectoryHTTPDisableDeleteAndEmptyRestart(t *testing.T) {
 	apps := directoryDecode[[]store.Application](t, data, "items")
 	for _, row := range apps {
 		if row.BuiltinTemplate {
-			h.request("DELETE", "/admin/api/apps/"+row.Key, map[string]any{"revision": row.Revision, "confirm_key": row.Key}, 409, nil)
+			h.request("DELETE", "/admin/api/apps/"+row.Key, map[string]any{"revision": row.Revision, "confirm_key": row.Key, "confirm_uid": row.UID}, 409, nil)
 			h.request("PATCH", "/admin/api/apps/"+row.Key, map[string]any{"revision": row.Revision, "enabled": false}, 200, nil)
 		} else {
-			h.request("DELETE", "/admin/api/apps/"+row.Key, map[string]any{"revision": row.Revision, "confirm_key": row.Key}, 200, nil)
+			h.request("DELETE", "/admin/api/apps/"+row.Key, map[string]any{"revision": row.Revision, "confirm_key": row.Key, "confirm_uid": row.UID}, 200, nil)
 		}
 	}
 	h.request("DELETE", "/admin/api/vendors/enterprise", map[string]any{"revision": currentVendor.Revision, "confirm_key": "enterprise"}, 200, nil)

@@ -53,6 +53,7 @@ type Server struct {
 	Pool         *distributor.Pool
 	Icons        *media.Store
 	directoryMu  sync.Mutex
+	deleteWait   time.Duration
 	History      *history.History
 	PublicConfig *config.PublicSettings
 	Dir          string
@@ -67,7 +68,7 @@ func reply(w http.ResponseWriter, status int, value any) {
 func problem(w http.ResponseWriter, status int, code, message string) {
 	var id [8]byte
 	_, _ = rand.Read(id[:])
-	reply(w, status, map[string]any{"error": map[string]any{"code": code, "message": message, "request_id": hex.EncodeToString(id[:]), "retryable": status >= 500 || code == "DIRECTORY_TRANSFERS_ACTIVE"}})
+	reply(w, status, map[string]any{"error": map[string]any{"code": code, "message": message, "request_id": hex.EncodeToString(id[:]), "retryable": status >= 500 || code == "DIRECTORY_DELETE_PENDING"}})
 }
 func fail(w http.ResponseWriter, status int, message string) {
 	code := map[int]string{400: "INVALID_REQUEST", 401: "AUTH_REQUIRED", 403: "CSRF_REJECTED", 404: "RESOURCE_NOT_FOUND", 405: "METHOD_NOT_ALLOWED", 409: "SETTINGS_REVISION_CONFLICT", 413: "PAYLOAD_TOO_LARGE", 429: "LOGIN_RATE_LIMITED", 502: "UPSTREAM_UNAVAILABLE", 503: "LOCAL_STORAGE_UNAVAILABLE"}[status]
@@ -397,6 +398,12 @@ func (s *Server) asset(w http.ResponseWriter, r *http.Request) {
 	w.Write(b)
 }
 func (s *Server) serveResource(w http.ResponseWriter, r *http.Request, resource download.Resource) {
+	r, finish, err := s.applicationResponse(w, r, resource.Application)
+	if err != nil {
+		fail(w, 404, "Application unavailable")
+		return
+	}
+	defer finish()
 	app := resource.Application
 	metricApp := resource.MetricScope()
 	if err := s.DB.AddFor(metricApp, "artifact_requests", 1); err != nil {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/apps/codex"
@@ -118,5 +119,39 @@ func TestHistoricalCleanupCandidatesRequireSourceOwnership(t *testing.T) {
 	}
 	if upstreamCalls.Load() != 0 {
 		t.Fatal("management of inactive history made an upstream request")
+	}
+}
+
+func TestPermanentDeletionCancelsMetadataFlightAndRejectsStaleEntry(t *testing.T) {
+	started, stopped := make(chan struct{}), make(chan struct{})
+	client, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { close(started); <-r.Context().Done(); close(stopped) }))
+	db := openStore(t)
+	entry, app := dynamicEntry(t, db, client)
+	service := catalog.New(db, registry(t, entry))
+	done := make(chan error, 1)
+	go func() { _, err := service.Release(context.Background(), app.Key, "latest"); done <- err }()
+	<-started
+	uid, drained, err := db.PrepareApplicationDeletion(app.Key, app.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-drained:
+	case <-time.After(time.Second):
+		t.Fatal("metadata flight did not drain")
+	}
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("metadata origin was not canceled")
+	}
+	if err = <-done; err == nil {
+		t.Fatal("canceled flight succeeded")
+	}
+	if err = db.FinishApplicationDeletion(uid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.Release(context.Background(), app.Key, "latest"); !errors.Is(err, store.ErrSourceInactive) {
+		t.Fatal("stale registry admitted metadata", err)
 	}
 }

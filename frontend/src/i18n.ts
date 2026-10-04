@@ -47,8 +47,8 @@ watch(
   { immediate: true, flush: "sync" },
 );
 export const messages = {
-  "Files are still being transferred on this instance. Wait for them to finish, then retry deletion.":
-    "当前实例仍有文件传输，请等待传输完成后重试删除。",
+  "Deletion is not complete. This application is blocked while its tasks stop. Retry deletion; restarting also resumes it.":
+    "删除尚未完成。此应用已阻止新任务，正在等待现有任务退出。可重试删除；重启服务也会继续处理。",
   "Unexpected error. Reload and try again.": "发生意外错误，请重新加载后重试。",
   "Deleted. Some stored files are awaiting cleanup; restart the server to retry cleanup.":
     "已删除。部分存储文件等待清理，请重启服务重试清理。",
@@ -466,6 +466,8 @@ export const messages = {
   "Save selected fields": "保存所选字段",
   "Permanently delete this record and its files, settings and history? This cannot be undone.":
     "永久删除此记录及其文件、设置和历史？此操作无法撤销。",
+  "Permanently delete this record and its files, settings and history? Active downloads, uploads and background tasks of this application will be interrupted. This cannot be undone.":
+    "永久删除此记录及其文件、设置和历史？此应用正在进行的下载、上传和后台任务将被中断。此操作无法撤销。",
   "Markdown, HTML, JavaScript and external resources are supported. Only administrators can edit these instructions.":
     "支持 Markdown、HTML、JavaScript 和外部资源，仅管理员可编辑说明。",
   "Disabled by vendor": "厂商已禁用",
@@ -759,8 +761,8 @@ const errorCodes: Record<string, Message> = {
   REFRESH_INVALID:
     "The refresh selection changed or is no longer available. Create a new preview and try again.",
   PAYLOAD_TOO_LARGE: "The uploaded file exceeds the size limit.",
-  DIRECTORY_TRANSFERS_ACTIVE:
-    "Files are still being transferred on this instance. Wait for them to finish, then retry deletion.",
+  DIRECTORY_DELETE_PENDING:
+    "Deletion is not complete. This application is blocked while its tasks stop. Retry deletion; restarting also resumes it.",
   DIRECTORY_REVISION_CONFLICT:
     "Settings changed elsewhere. Your draft is preserved. Reload before saving again.",
   AUTH_REQUIRED: "Your session expired. Sign in again.",

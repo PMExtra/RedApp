@@ -335,3 +335,69 @@ func TestManualRefreshCannotRepublishAfterCleanup(t *testing.T) {
 		t.Fatal("cleanup was undone by explicit refresh")
 	}
 }
+
+func TestPermanentDeletionCancelsWholeRefreshAndSharedFollowers(t *testing.T) {
+	started := make(chan struct{})
+	var refresh atomic.Bool
+	var calls atomic.Int64
+	f := newFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if refresh.Load() {
+			if calls.Add(1) == 1 {
+				close(started)
+			}
+			<-r.Context().Done()
+			return
+		}
+		w.Header().Set("Cache-Control", "max-age=3600")
+		io.WriteString(w, "cached")
+	}), 300)
+	for _, path := range []string{"file", "second"} {
+		if err := f.s.Serve(httptest.NewRecorder(), httptest.NewRequest("GET", "http://local/"+path, nil), f.entry, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	preview, err := f.s.PreviewRefresh(context.Background(), f.entry, pathmatch.Spec{Type: "glob", Pattern: "/**"})
+	if err != nil || preview.SelectedFiles != 2 {
+		t.Fatal(preview, err)
+	}
+	refresh.Store(true)
+	if _, err = f.s.ExecuteRefresh(context.Background(), f.entry, preview.ID); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	// Join the same refresh flight as a public no-cache reader.
+	follower := make(chan error, 1)
+	go func() {
+		r := httptest.NewRequest("GET", "http://local/file", nil)
+		r.Header.Set("Cache-Control", "no-cache")
+		follower <- f.s.Serve(httptest.NewRecorder(), r, f.entry, "file")
+	}()
+	deadline := time.Now().Add(time.Second)
+	for f.budget.readers.Load() < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if f.budget.readers.Load() != 2 {
+		t.Fatal("follower did not enter")
+	}
+	uid, drained, err := f.db.PrepareApplicationDeletion(f.app.Key, f.app.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-drained:
+	case <-time.After(time.Second):
+		t.Fatal("batch or follower did not exit")
+	}
+	if err = <-follower; err == nil {
+		t.Fatal("follower survived cancellation")
+	}
+	if calls.Load() != 1 || f.budget.readers.Load() != 0 || f.budget.writers.Load() != 0 {
+		t.Fatal("next batch restarted or leases leaked", calls.Load())
+	}
+	if err = f.db.FinishApplicationDeletion(uid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.s.ExecuteRefresh(context.Background(), f.entry, preview.ID); err == nil {
+		t.Fatal("stale batch restarted")
+	}
+}

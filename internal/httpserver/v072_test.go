@@ -66,7 +66,7 @@ func TestV072PublicDirectoryPinsTemplatesAndInstructionDocuments(t *testing.T) {
 	}
 	h.request("GET", "/acme/tool-6", nil, 404, nil)
 	template, _ := h.server.DB.Application("openai/codex")
-	h.request("DELETE", "/admin/api/apps/openai/codex", map[string]any{"revision": template.Revision, "confirm_key": template.Key}, 409, nil)
+	h.request("DELETE", "/admin/api/apps/openai/codex", map[string]any{"revision": template.Revision, "confirm_key": template.Key, "confirm_uid": template.UID}, 409, nil)
 	h.request("POST", "/admin/api/apps/openai/codex/template", map[string]any{"revision": template.Revision, "groups": []string{}}, 400, nil)
 	data, _ = h.request("GET", "/admin/api/apps/openai/codex/template", nil, 200, nil)
 	if !bytes.Contains(data, []byte("instructions_en")) {
@@ -170,15 +170,10 @@ func TestV072DownloadRankingCountsOnlySuccessfulPublicTransfers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	busy, _ := h.request("DELETE", "/admin/api/apps/"+a.Key, map[string]any{"revision": a.Revision, "confirm_key": a.Key}, 409, nil)
-	if !bytes.Contains(busy, []byte(`"code":"DIRECTORY_TRANSFERS_ACTIVE"`)) || !bytes.Contains(busy, []byte(`"retryable":true`)) || !bytes.Contains(busy, []byte("Wait for them to finish")) || bytes.Contains(bytes.ToLower(busy), []byte("reload")) {
-		t.Fatal("ambiguous deletion wait", string(busy))
-	}
-	// Busy rejection preserves the application and does not interrupt its downloads.
-	h.request("GET", "/content/files/file.bin", nil, 200, nil)
-	lease()
-	h.request("GET", "/content/files/file.bin", nil, 200, nil)
-	h.request("DELETE", "/admin/api/apps/"+a.Key, map[string]any{"revision": a.Revision, "confirm_key": a.Key}, 200, nil)
+	defer lease()
+	// Unrelated global capacity no longer blocks deleting this application.
+	h.request("DELETE", "/admin/api/apps/"+a.Key, map[string]any{"revision": a.Revision, "confirm_key": a.Key, "confirm_uid": a.UID}, 200, nil)
+
 	ranking(0)
 }
 func TestV072CacheHitsRankAndReceiptRejectsFailedWrites(t *testing.T) {
@@ -372,7 +367,7 @@ func TestV072UpgradePreservesV5AndReservedAllIsReadOnly(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = upgraded.DB.QueryRow(`SELECT version FROM schema_version`).Scan(&schemaVersion); err != nil || schemaVersion != 6 {
+			if err = upgraded.DB.QueryRow(`SELECT version FROM schema_version`).Scan(&schemaVersion); err != nil || schemaVersion != store.SchemaVersion {
 				t.Fatal(schemaVersion, err)
 			}
 			if after := snapshot(upgraded.DB); !reflect.DeepEqual(before, after) {

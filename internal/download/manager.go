@@ -83,6 +83,8 @@ type Generation struct {
 	changed        chan struct{}
 	dormant        bool
 	running        bool
+	ctx            context.Context
+	finishWork     func()
 	done           bool
 	readers        int
 	samples        []sample
@@ -204,16 +206,38 @@ func LogicalIdentity(application, version, key string) string {
 	sum := sha256.Sum256([]byte(application + "\x00" + version + "\x00" + key))
 	return hex.EncodeToString(sum[:])
 }
+
+type verificationReader struct {
+	context.Context
+	io.Reader
+}
+
+func (r verificationReader) Read(p []byte) (int, error) {
+	if err := r.Err(); err != nil {
+		return 0, err
+	}
+	return r.Reader.Read(p)
+}
 func verified(f *os.File, n int64, expected string) bool {
+	return verifiedContext(context.Background(), f, n, expected)
+}
+func verifiedContext(ctx context.Context, f *os.File, n int64, expected string) bool {
 	h := sha256.New()
-	copied, e := io.Copy(h, io.NewSectionReader(f, 0, n))
+	copied, e := io.Copy(h, verificationReader{ctx, io.NewSectionReader(f, 0, n)})
 	return e == nil && copied == n && hex.EncodeToString(h.Sum(nil)) == expected
 }
-func (m *Manager) createLocked(r Resource, fullRetry bool) (*Generation, error) {
+func (m *Manager) createLocked(r Resource, fullRetry bool, contexts ...context.Context) (*Generation, error) {
+	ctx := m.ctx
+	if len(contexts) > 0 {
+		ctx = contexts[0]
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if e := m.validateResource(r); e != nil {
 		return nil, e
 	}
-	g := &Generation{ID: id(), Resource: r, State: "queued", Total: -1, Started: time.Now(), changed: make(chan struct{}), FullRetry: fullRetry}
+	g := &Generation{ctx: ctx, ID: id(), Resource: r, State: "queued", Total: -1, Started: time.Now(), changed: make(chan struct{}), FullRetry: fullRetry}
 	// Only complete, revalidated content may be reused across logical resources.
 	// In-flight writers are never coalesced by content digest.
 	if blob, e := m.db.Blob(r.Application, r.Hash); e == nil {
@@ -224,7 +248,7 @@ func (m *Manager) createLocked(r Resource, fullRetry bool) (*Generation, error) 
 		f, err := openRegular(path)
 		if err == nil {
 			st, statErr := f.Stat()
-			valid := statErr == nil && st.Size() == blob.SizeBytes && (r.Size == nil || *r.Size == st.Size()) && verified(f, st.Size(), r.Hash)
+			valid := statErr == nil && st.Size() == blob.SizeBytes && (r.Size == nil || *r.Size == st.Size()) && verifiedContext(ctx, f, st.Size(), r.Hash)
 			f.Close()
 			if valid {
 				g.Path, g.Bytes, g.Total, g.State, g.done = path, blob.SizeBytes, blob.SizeBytes, "complete", true
@@ -238,6 +262,9 @@ func (m *Manager) createLocked(r Resource, fullRetry bool) (*Generation, error) 
 		}
 	} else if !errors.Is(e, sql.ErrNoRows) {
 		return nil, e
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	if m.jobs >= m.maxWriters {
 		return nil, ErrWriterLimit
@@ -258,16 +285,27 @@ func (m *Manager) createLocked(r Resource, fullRetry bool) (*Generation, error) 
 }
 
 type Reader struct {
-	m      *Manager
-	g      *Generation
-	offset int64
-	ctx    context.Context
-	once   sync.Once
-	Kind   string
+	m          *Manager
+	g          *Generation
+	offset     int64
+	ctx        context.Context
+	once       sync.Once
+	Kind       string
+	finishWork func()
 }
 
 func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error) {
 	r = cloneResource(r)
+	ctx, finish, err := m.db.ApplicationWork(ctx, r.Application)
+	if err != nil {
+		return nil, false, err
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			finish()
+		}
+	}()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if e := m.validateResource(r); e != nil {
@@ -318,7 +356,7 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 			// Inactive recovery preserves files without changing their ownership.
 			// Re-admission must verify the bytes before trusting that dormant head.
 			f, err := openRegular(g.Path)
-			valid = err == nil && verified(f, g.Bytes, g.Resource.Hash)
+			valid = err == nil && verifiedContext(ctx, f, g.Bytes, g.Resource.Hash)
 			if f != nil {
 				f.Close()
 			}
@@ -340,7 +378,7 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 	}
 	if g == nil {
 		var e error
-		g, e = m.createLocked(r, false)
+		g, e = m.createLocked(r, false, ctx)
 		if e != nil {
 			return nil, false, e
 		}
@@ -364,13 +402,13 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 		if m.jobs >= m.maxWriters {
 			return nil, false, ErrWriterLimit
 		}
-		g.running = true
-		m.jobs++
-		m.wg.Add(1)
-		go m.run(g)
+		if err := m.startLocked(g); err != nil {
+			return nil, false, err
+		}
 	}
 	g.readers++
-	return &Reader{m: m, g: g, ctx: ctx, Kind: kind}, hit, nil
+	keep = true
+	return &Reader{m: m, g: g, ctx: ctx, Kind: kind, finishWork: finish}, hit, nil
 }
 func (r *Reader) Read(p []byte) (int, error) {
 	if len(p) == 0 {
@@ -419,6 +457,9 @@ func (r *Reader) Read(p []byte) (int, error) {
 func (r *Reader) Close() error {
 	var err error
 	r.once.Do(func() {
+		if r.finishWork != nil {
+			defer r.finishWork()
+		}
 		r.m.mu.Lock()
 		defer r.m.mu.Unlock()
 		r.g.readers--
@@ -520,7 +561,7 @@ func (m *Manager) attempt(g *Generation) error {
 	if client == nil {
 		return errors.New("Unknown persisted resource application")
 	}
-	resp, e := client.Get(m.ctx, g.Resource.Source, headers)
+	resp, e := client.Get(g.ctx, g.Resource.Source, headers)
 	if e != nil {
 		return e
 	}
@@ -528,7 +569,7 @@ func (m *Manager) attempt(g *Generation) error {
 	if offset > 0 {
 		if resp.StatusCode == 416 {
 			var n int64
-			if _, e = fmt.Sscanf(resp.Header.Get("Content-Range"), "bytes */%d", &n); e == nil && n == offset && resp.Header.Get("Content-Range") == "bytes */"+strconv.FormatInt(n, 10) && (total < 0 || total == n) && verified(g.file, offset, g.Resource.Hash) {
+			if _, e = fmt.Sscanf(resp.Header.Get("Content-Range"), "bytes */%d", &n); e == nil && n == offset && resp.Header.Get("Content-Range") == "bytes */"+strconv.FormatInt(n, 10) && (total < 0 || total == n) && verifiedContext(g.ctx, g.file, offset, g.Resource.Hash) {
 				return nil
 			}
 			return unsafeResume
@@ -645,12 +686,26 @@ func parseRange(s string) (int64, int64, int64, error) {
 	}
 	return a, b, n, nil
 }
+func (m *Manager) startLocked(g *Generation) error {
+	ctx, finish, err := m.db.ApplicationWork(m.ctx, g.Resource.Application)
+	if err != nil {
+		return err
+	}
+	g.ctx = ctx
+	g.finishWork = finish
+	g.running = true
+	m.jobs++
+	m.wg.Add(1)
+	go m.run(g)
+	return nil
+}
 func (m *Manager) run(g *Generation) {
+	defer g.finishWork()
 	defer m.wg.Done()
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
 		err = m.attempt(g)
-		if err == nil || errors.Is(err, unsafeResume) || m.ctx.Err() != nil {
+		if err == nil || errors.Is(err, unsafeResume) || g.ctx.Err() != nil {
 			break
 		}
 		m.mu.Lock()
@@ -660,7 +715,7 @@ func (m *Manager) run(g *Generation) {
 		signal(g)
 		m.mu.Unlock()
 		select {
-		case <-m.ctx.Done():
+		case <-g.ctx.Done():
 		case <-time.After(time.Duration(attempt+1) * 50 * time.Millisecond):
 		}
 	}
@@ -670,8 +725,9 @@ func (m *Manager) run(g *Generation) {
 		g.State = "verifying"
 		signal(g)
 		m.mu.Unlock()
+		m.checkpoint("download.before_verify", g)
 		start := time.Now()
-		if !verified(g.file, g.Bytes, g.Resource.Hash) {
+		if !verifiedContext(g.ctx, g.file, g.Bytes, g.Resource.Hash) {
 			err = errors.New("Complete file SHA256 does not match")
 		}
 		m.mu.Lock()
@@ -739,7 +795,7 @@ func (m *Manager) run(g *Generation) {
 		if strings.Contains(g.Error, "SHA256") {
 			g.State = "invalid"
 		}
-		if m.ctx.Err() != nil {
+		if g.ctx.Err() != nil {
 			g.State = "interrupted"
 		}
 		m.save(g)
@@ -758,12 +814,9 @@ func (m *Manager) run(g *Generation) {
 	if g.readers == 0 && (g.Retired || (g.State != "complete" && g.State != "interrupted")) {
 		m.removeLocked(g)
 	}
-	if errors.Is(err, unsafeResume) && !g.Retired && !g.FullRetry && !m.closed {
-		if next, e := m.createLocked(g.Resource, true); e == nil && !next.done {
-			next.running = true
-			m.jobs++
-			m.wg.Add(1)
-			go m.run(next)
+	if errors.Is(err, unsafeResume) && !g.Retired && !g.FullRetry && !m.closed && g.ctx.Err() == nil {
+		if next, e := m.createLocked(g.Resource, true, g.ctx); e == nil && !next.done {
+			_ = m.startLocked(next)
 		}
 	}
 }

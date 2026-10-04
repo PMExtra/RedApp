@@ -50,6 +50,12 @@ func (s *Server) hostedAPI(w http.ResponseWriter, r *http.Request, app, endpoint
 		fail(w, 503, "File storage unavailable")
 		return true
 	}
+	r, finish, err := s.applicationResponse(w, r, entry.StorageID())
+	if err != nil {
+		s.hostedError(w, err)
+		return true
+	}
+	defer finish()
 	parts := strings.Split(endpoint, "/")
 	if r.Method == http.MethodGet && endpoint == "files" {
 		if !queryAllowed(r, "page", "limit") {
@@ -213,6 +219,12 @@ func (s *Server) hostedFile(w http.ResponseWriter, r *http.Request) bool {
 		fail(w, 503, "File storage unavailable")
 		return true
 	}
+	r, finish, err := s.applicationResponse(w, r, entry.StorageID())
+	if err != nil {
+		s.hostedError(w, err)
+		return true
+	}
+	defer finish()
 	file, row, release, err := s.Hosted.Open(entry.UID, relative)
 	if err != nil {
 		s.hostedError(w, err)

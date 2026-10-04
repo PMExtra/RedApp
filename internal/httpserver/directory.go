@@ -73,6 +73,7 @@ func (s *Server) setDirectoryTTL(key string, expected int64, seconds int) (int64
 }
 
 type directoryInput struct {
+	ConfirmUID      string               `json:"confirm_uid"`
 	ConfirmKey      string               `json:"confirm_key"`
 	Revision        int64                `json:"revision"`
 	ID              string               `json:"id"`
@@ -155,12 +156,12 @@ func (s *Server) validateDirectoryIcon(path string) error {
 
 func directoryError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, errDeletePending), errors.Is(err, download.ErrTransfersActive):
+		problem(w, 409, "DIRECTORY_DELETE_PENDING", "Deletion is not complete. This application is blocked while its tasks stop. Retry deletion; restarting also resumes it.")
 	case errors.Is(err, store.ErrConflict), errors.Is(err, store.ErrRevisionConflict):
 		problem(w, 409, "DIRECTORY_REVISION_CONFLICT", "Configuration changed; reload before saving")
 	case errors.Is(err, sql.ErrNoRows):
 		problem(w, 404, "DIRECTORY_NOT_FOUND", "Vendor or application not found")
-	case errors.Is(err, download.ErrTransfersActive):
-		problem(w, 409, "DIRECTORY_TRANSFERS_ACTIVE", "Files are still being transferred on this instance. Wait for them to finish, then retry deletion.")
 	case errors.Is(err, store.ErrBuiltinTemplate), errors.Is(err, store.ErrDirectoryExists), errors.Is(err, store.ErrDirectoryDeleted), errors.Is(err, store.ErrVendorHasApplications):
 		problem(w, 409, "DIRECTORY_CONFLICT", err.Error())
 	case errors.Is(err, store.ErrInvalidDirectory):
@@ -354,6 +355,10 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 		key := parts[1] + "/" + parts[2]
 		var row store.Application
 		row, err = s.DB.Application(key)
+		if errors.Is(err, sql.ErrNoRows) && r.Method == http.MethodDelete && in.ConfirmKey == key && in.ConfirmUID != "" {
+			reply(w, 200, map[string]any{"deleted": true})
+			return true
+		}
 		if err != nil {
 			break
 		}
@@ -362,12 +367,11 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 				fail(w, 400, "Confirm the exact application key for permanent deletion")
 				return true
 			}
-			remove := func() error { return s.DB.PermanentlyDeleteApplication(key, in.Revision) }
-			if s.Downloads != nil {
-				err = s.Downloads.PurgeApplication(row.UID, remove)
-			} else {
-				err = remove()
+			if in.ConfirmUID != row.UID {
+				err = store.ErrConflict
+				break
 			}
+			err = s.deleteApplication(r.Context(), key, in.Revision)
 		} else if r.Method == http.MethodPatch {
 			input := store.ApplicationInput{ID: row.ID, Name: row.Name, Description: row.Description, Icon: row.Icon, Provider: row.Provider, BaseURL: row.BaseURL, BaseURLs: row.BaseURLs, SourceStrategy: row.SourceStrategy, CacheTTLSeconds: row.CacheTTLSeconds, Enabled: row.Enabled}
 			if in.Name != nil {

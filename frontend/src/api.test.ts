@@ -10,7 +10,7 @@ it("preserves structured problem fields and localizes by stable code before stat
   for (const [code, status, expected] of [
     ["SETTINGS_REVISION_CONFLICT", 409, "Your draft is preserved"],
     ["CLEANUP_INVALID", 409, "Create a new preview"],
-    ["DIRECTORY_TRANSFERS_ACTIVE", 409, "Wait for them to finish"],
+    ["DIRECTORY_DELETE_PENDING", 409, "Retry deletion"],
     ["METADATA_UNTRUSTED", 502, "could not be verified"],
   ] as const) {
     vi.stubGlobal(
@@ -87,13 +87,13 @@ it("labels transport failures separately from unexpected application errors", as
 });
 
 it("explains deletion waits in both languages without requesting a reload", () => {
-  const error = new ApiError({ code: "DIRECTORY_TRANSFERS_ACTIVE" }, 409);
+  const error = new ApiError({ code: "DIRECTORY_DELETE_PENDING" }, 409);
   setLanguage("en");
   expect(errorText(error)).toBe(
-    "Files are still being transferred on this instance. Wait for them to finish, then retry deletion.",
+    "Deletion is not complete. This application is blocked while its tasks stop. Retry deletion; restarting also resumes it.",
   );
   setLanguage("zh-CN");
   expect(errorText(error)).toBe(
-    "当前实例仍有文件传输，请等待传输完成后重试删除。",
+    "删除尚未完成。此应用已阻止新任务，正在等待现有任务退出。可重试删除；重启服务也会继续处理。",
   );
 });

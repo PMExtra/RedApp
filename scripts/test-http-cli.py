@@ -162,7 +162,7 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         with request(vendor_path, {"enabled": True}, "PATCH", vendor["revision"]) as response:
             vendor = json.load(response)["vendor"]
         assert "cli-example/files" in {app["id"] for app in read("/api/bootstrap")["apps"]}
-        with request(app_path, {"confirm_key": "cli-example/files"}, "DELETE", dynamic_app["revision"]) as response:
+        with request(app_path, {"confirm_key": "cli-example/files", "confirm_uid": dynamic_app["uid"]}, "DELETE", dynamic_app["revision"]) as response:
             assert json.load(response)["deleted"]
         reject(app_path + "/sources", 404)
         with request(vendor_path, {"confirm_key": "cli-example"}, "DELETE", vendor["revision"]) as response:

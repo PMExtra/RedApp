@@ -132,6 +132,11 @@ func (s *Service) Cancel(uid, id string) bool {
 	return true
 }
 func (s *Service) Put(ctx context.Context, entry application.Entry, path, expected, id string, open func(context.Context) (io.ReadCloser, int64, error)) (store.HostedFile, error) {
+	ctx, finish, err := s.db.ApplicationWork(ctx, entry.UID)
+	if err != nil {
+		return store.HostedFile{}, err
+	}
+	defer finish()
 	if entry.Provider != application.Hosted || entry.DeletedAt != nil || !store.ValidHostedPath(path) || !identity.ValidUID(id) || expected != "" && !identity.ValidUID(expected) {
 		return store.HostedFile{}, store.ErrInvalidDirectory
 	}
@@ -166,8 +171,13 @@ func (s *Service) Put(ctx context.Context, entry application.Entry, path, expect
 		return store.HostedFile{}, err
 	}
 	defer reader.Close()
-	stopReader := context.AfterFunc(ctx, func() { reader.Close() })
-	defer stopReader()
+	readerClosed := make(chan struct{})
+	stopReader := context.AfterFunc(ctx, func() { defer close(readerClosed); reader.Close() })
+	defer func() {
+		if !stopReader() {
+			<-readerClosed
+		}
+	}()
 	limit := s.budget.MaxArtifactBytes()
 	if size > limit {
 		return store.HostedFile{}, download.ErrArtifactLimit
@@ -270,6 +280,16 @@ func (s *Service) Put(ctx context.Context, entry application.Entry, path, expect
 	return value, nil
 }
 func (s *Service) Open(uid, path string) (*os.File, store.HostedFile, func(), error) {
+	ctx, finish, err := s.db.ApplicationWork(context.Background(), uid)
+	if err != nil {
+		return nil, store.HostedFile{}, nil, err
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			finish()
+		}
+	}()
 	release, err := s.budget.AcquireHTTPReader()
 	if err != nil {
 		return nil, store.HostedFile{}, nil, err
@@ -302,7 +322,20 @@ func (s *Service) Open(uid, path string) (*os.File, store.HostedFile, func(), er
 		release()
 		return nil, row, nil, errors.New("Persistent resource changed")
 	}
-	return file, row, release, nil
+	closed := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() { defer close(closed); file.Close() })
+	keep = true
+	var once sync.Once
+	return file, row, func() {
+		once.Do(func() {
+			if !stop() {
+				<-closed
+			}
+			file.Close()
+			release()
+			finish()
+		})
+	}, nil
 }
 func (s *Service) Delete(uid, id string) error {
 	s.mu.Lock()

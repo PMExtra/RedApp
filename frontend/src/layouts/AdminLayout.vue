@@ -35,10 +35,14 @@ function redirect() {
   if (signedIn.value && route.path === "/admin/login")
     void router.replace(adminReturnPath(route.query.returnTo));
 }
-watch([signedIn, sessionChecked, () => route.path], () => {
-  if (!signedIn.value) passwordOpen.value = false;
-  redirect();
-});
+watch(
+  [signedIn, sessionChecked, () => route.path],
+  () => {
+    if (!signedIn.value) passwordOpen.value = false;
+    redirect();
+  },
+  { immediate: true },
+);
 watch(
   signedIn,
   (active) => {

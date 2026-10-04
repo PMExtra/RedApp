@@ -175,7 +175,7 @@ func TestHostedHTTPUploadImportLocalRangeAndRestart(t *testing.T) {
 	if string(data) != "replacement" {
 		t.Fatal("restart lost file", string(data))
 	}
-	h.request("DELETE", "/admin/api/apps/content/files", map[string]any{"revision": a.Revision, "confirm_key": a.Key}, 200, nil)
+	h.request("DELETE", "/admin/api/apps/content/files", map[string]any{"revision": a.Revision, "confirm_key": a.Key, "confirm_uid": a.UID}, 200, nil)
 	h.request("GET", "/content/files/remote.zip", nil, 404, nil)
 	h.request("GET", "/admin/api/apps/content/files/files", nil, 404, nil)
 	h.request("GET", "/content/files/nested/tool.bin", nil, 404, nil)

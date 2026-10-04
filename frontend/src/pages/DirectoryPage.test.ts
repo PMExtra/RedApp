@@ -309,10 +309,11 @@ it("keeps disabled and deleted applications manageable independently of public b
       expect(JSON.parse(init.body as string)).toEqual({
         revision: 1,
         confirm_key: "openai/custom",
+        confirm_uid: apps[0]!.uid,
       });
       if (++deletionAttempts === 1)
         return response(
-          { error: { code: "DIRECTORY_TRANSFERS_ACTIVE", retryable: true } },
+          { error: { code: "DIRECTORY_DELETE_PENDING", retryable: true } },
           409,
         );
       apps[0]!.deleted_at = "2026-10-03T13:00:00Z";
@@ -343,10 +344,11 @@ it("keeps disabled and deleted applications manageable independently of public b
     .find((button) => button.text() === "Delete")!
     .trigger("click");
   expect(wrapper.get(".delete-review").text()).toContain("cannot be undone");
+  expect(wrapper.get(".delete-review").text()).toContain("will be interrupted");
   await wrapper.get(".delete-review .danger").trigger("click");
   await flushPromises();
   expect(wrapper.get(".directory-editor [role=alert]").text()).toContain(
-    "Wait for them to finish, then retry deletion.",
+    "Retry deletion; restarting also resumes it.",
   );
   expect(wrapper.get(".directory-editor [role=alert]").text()).not.toMatch(
     /reload/i,
