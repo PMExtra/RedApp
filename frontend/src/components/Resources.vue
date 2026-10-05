@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import IconButton from "./IconButton.vue";
+import DisclosureIcon from "./DisclosureIcon.vue";
 import { computed, reactive, ref, watch } from "vue";
 import { bytes, type Resource, type VersionSummary } from "../api";
 import { appAPI } from "../bootstrap";
@@ -54,13 +56,13 @@ const resources = reactive(
         }}<small v-if="versions.loaded">{{
           t("Showing the last successful snapshot.")
         }}</small
-        ><button
+        ><IconButton
           class="secondary"
           :disabled="versions.loading"
           @click="versions.refresh"
-        >
-          {{ t("Retry") }}
-        </button>
+          icon="refresh"
+          :label="t('Retry')"
+        />
       </div>
       <p v-if="!versions.loaded && versions.loading" role="status">
         {{ t("Loading…") }}
@@ -113,13 +115,13 @@ const resources = reactive(
         }}<small v-if="resources.loaded">{{
           t("Showing the last successful snapshot.")
         }}</small
-        ><button
+        ><IconButton
           class="secondary"
           :disabled="resources.loading"
           @click="resources.refresh"
-        >
-          {{ t("Retry") }}
-        </button>
+          icon="refresh"
+          :label="t('Retry')"
+        />
       </div>
       <p v-if="!resources.loaded && resources.loading" role="status">
         {{ t("Loading…") }}
@@ -161,7 +163,9 @@ const resources = reactive(
                     'state-badge',
                     {
                       'state-success': item.State === 'complete',
-                      'state-error': ['failed', 'invalid'].includes(item.State),
+                      'state-error': ['failed', 'invalid'].includes(
+                        item.State,
+                      ),
                     },
                   ]"
                   >{{ stateLabel(item.State) }}</span
@@ -184,7 +188,7 @@ const resources = reactive(
                 <time>{{ localDate(item.Started) }}</time
                 ><small>{{ localDate(item.Finished) }}</small>
                 <details v-if="item.Error">
-                  <summary>{{ t("Last error") }}</summary>
+                  <summary><DisclosureIcon />{{ t("Last error") }}</summary>
                   <p class="diagnostic">{{ item.Error }}</p>
                 </details>
               </td>

@@ -71,16 +71,15 @@ it("preserves rule IDs and order, converts cleanup days to seconds, and saves th
     "disabled until rules are added and saved",
   );
   expect(wrapper.find(".auto-cleanup-status").exists()).toBe(false);
-  expect(fetch.mock.calls.some(([url]) => url.endsWith("/status"))).toBe(false);
+  expect(fetch.mock.calls.some(([url]) => url.endsWith("/status"))).toBe(
+    false,
+  );
   expect(
     wrapper.get('[name="stale_fallback"]').attributes("aria-checked") ===
       "true",
   ).toBe(true);
   const first = wrapper.get(".ttl-rules").findAll(".policy-rule")[0]!;
-  await first
-    .findAll("button")
-    .find((button) => button.text() === "Move down")!
-    .trigger("click");
+  await first.get(".sort-handle").trigger("keydown", { key: "ArrowDown" });
   expect(
     (
       wrapper.get(".ttl-rules").findAll('[name="match_pattern"]')[0]!
@@ -91,17 +90,38 @@ it("preserves rule IDs and order, converts cleanup days to seconds, and saves th
   await wrapper
     .get(".auto-cleanup-rules")
     .findAll("button")
-    .find((button) => button.text() === "Add automatic cleanup rule")!
+    .find(
+      (button) =>
+        button.attributes("aria-label") === "Add automatic cleanup rule",
+    )!
     .trigger("click");
   const rule = wrapper.get(".auto-cleanup-rules .policy-rule");
   await selectValue(rule.get('[name="match_type"]'), "re2");
   await rule.get('[name="match_pattern"]').setValue("/releases/.*");
   await selectValue(rule.get('[name="rule_basis"]'), "fetched_at");
-  expect(rule.get('[name="cleanup_unit"] [role=combobox]').text()).toBe("Days");
+  expect(rule.get('[name="cleanup_unit"] [role=combobox]').text()).toBe(
+    "Days",
+  );
   await rule.get('[name="cleanup_age"]').setValue("7");
+  await wrapper
+    .get('[aria-label="Add automatic cleanup rule"]')
+    .trigger("click");
+  const second = wrapper.findAll(".auto-cleanup-rules .policy-rule")[1]!;
+  await second.get('[name="match_pattern"]').setValue("/old/");
+  await selectValue(second.get('[name="cleanup_unit"]'), "3600");
+  await second.get('[name="cleanup_age"]').setValue("2");
+  await second.get(".sort-handle").trigger("keydown", { key: "ArrowUp" });
+  expect(
+    wrapper
+      .findAll('.auto-cleanup-rules [name="cleanup_unit"] [role="combobox"]')
+      .map((b) => b.text()),
+  ).toEqual(["Hours", "Days"]);
+
   await wrapper.get(".cache-policy form").trigger("submit");
   await flushPromises();
-  const request = fetch.mock.calls.find(([, init]) => init?.method === "PUT")!;
+  const request = fetch.mock.calls.find(
+    ([, init]) => init?.method === "PUT",
+  )!;
   expect(request[0]).toBe("/admin/api/apps/acme/files/cache/policy");
   expect(request[1]!.headers).toMatchObject({ "If-Match": '"7"' });
   const sent = JSON.parse(request[1]!.body as string);
@@ -113,6 +133,11 @@ it("preserves rule IDs and order, converts cleanup days to seconds, and saves th
   expect(sent.rules[0].ttl_seconds).toBe(0);
   expect(sent.rules[0]).not.toHaveProperty("mode");
   expect(sent.auto_cleanup).toEqual([
+    {
+      match: { type: "glob", pattern: "/old/" },
+      basis: "last_access",
+      age_seconds: 7200,
+    },
     {
       match: { type: "re2", pattern: "/releases/.*" },
       basis: "fetched_at",
@@ -140,7 +165,12 @@ it("preserves a CAS conflict draft during status polling and cancels policy load
     return Promise.resolve(
       response(
         url.includes("/acme/other/")
-          ? { revision: 2, stale_fallback: false, rules: [], auto_cleanup: [] }
+          ? {
+              revision: 2,
+              stale_fallback: false,
+              rules: [],
+              auto_cleanup: [],
+            }
           : structuredClone(policy),
       ),
     );
@@ -174,7 +204,7 @@ it("preserves a CAS conflict draft during status polling and cancels policy load
   await wrapper
     .get(".cache-policy")
     .findAll("button")
-    .find((button) => button.text() === "Reload")!
+    .find((button) => button.attributes("aria-label") === "Reload")!
     .trigger("click");
   const oldRequest = fetch.mock.calls.at(-1)![1]!;
   await wrapper.setProps({ application: "acme/other" });

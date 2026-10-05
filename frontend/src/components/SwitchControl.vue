@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { t } from "../i18n";
 defineProps<{
   modelValue: boolean;
   label: string;
@@ -20,9 +19,6 @@ const emit = defineEmits<{ "update:modelValue": [boolean] }>();
     @click="emit('update:modelValue', !modelValue)"
   >
     <span class="switch-track" aria-hidden="true"><span /></span
-    ><span>{{ label }}</span
-    ><span class="switch-state" aria-hidden="true">{{
-      modelValue ? t("On") : t("Off")
-    }}</span>
+    ><span>{{ label }}</span>
   </button>
 </template>

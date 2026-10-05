@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconButton from "./components/IconButton.vue";
 import { computed, watchEffect } from "vue";
 import { useRoute } from "vue-router";
 import {
@@ -14,7 +15,9 @@ import HostedDownloads from "./components/HostedDownloads.vue";
 import InstructionsDocument from "./components/InstructionsDocument.vue";
 import Icon from "./components/Icon.vue";
 const route = useRoute();
-const selectedID = computed(() => `${route.params.vendor}/${route.params.app}`);
+const selectedID = computed(
+  () => `${route.params.vendor}/${route.params.app}`,
+);
 const detail = computed(() => !!route.params.vendor);
 const selected = computed(() =>
   bootstrap.value?.apps.find((app) => app.id === selectedID.value),
@@ -37,7 +40,7 @@ watchEffect(() => {
     <p class="muted">
       {{ t("Connection failed. Check your connection and retry.") }}
     </p>
-    <button @click="loadBootstrap">{{ t("Retry") }}</button>
+    <IconButton @click="loadBootstrap" icon="refresh" :label="t('Retry')" />
   </section>
   <template v-else-if="detail && selected && bootstrap"
     ><nav class="breadcrumbs" :aria-label="t('Breadcrumb')">

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconButton from "../components/IconButton.vue";
 import { computed, ref, watch, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import type { Application } from "../bootstrap";
@@ -106,7 +107,7 @@ function go(next: number) {
     role="alert"
   >
     {{ errorText(error || vendorData.error.value) }}
-    <button @click="refresh">{{ t("Retry") }}</button>
+    <IconButton @click="refresh" icon="refresh" :label="t('Retry')" />
   </p>
   <p v-if="loading" role="status">{{ t("Loading…") }}</p>
   <template v-if="data"

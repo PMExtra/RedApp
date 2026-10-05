@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EntityIcon from "./EntityIcon.vue";
 import { ref, watch, onUnmounted, useId } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { publicFetch } from "../public";
@@ -161,10 +162,13 @@ onUnmounted(stop);
           @mousedown.prevent
           @click="navigate(item)"
         >
-          <span>{{ item.name[language] }}</span
-          ><small
-            >{{ item.kind === "vendor" ? t("Vendor") : t("Application") }} ·
-            {{ item.id }}</small
+          <EntityIcon :src="item.icon" />
+          <span class="search-suggestion-text"
+            ><span>{{ item.name[language] }}</span
+            ><small
+              >{{ item.kind === "vendor" ? t("Vendor") : t("Application") }} ·
+              {{ item.id }}</small
+            ></span
           >
         </li>
       </ul>

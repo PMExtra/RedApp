@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconButton from "./IconButton.vue";
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { api, putSetting } from "../api";
 import { applyPublicOrigin } from "../bootstrap";
@@ -111,14 +112,14 @@ onUnmounted(() => {
           @click="draft = ''"
         >
           {{ t("Clear override") }}</button
-        ><button
+        ><IconButton
           type="button"
           class="secondary"
           :disabled="busy"
           @click="request()"
-        >
-          {{ t("Reload") }}
-        </button>
+          icon="refresh"
+          :label="t('Reload')"
+        />
       </div>
     </form>
   </section>

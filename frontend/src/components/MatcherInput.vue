@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DisclosureIcon from "./DisclosureIcon.vue";
 import SelectMenu from "./SelectMenu.vue";
 import { computed, onUnmounted, ref, watch, watchEffect } from "vue";
 import { api } from "../api";
@@ -143,7 +144,7 @@ onUnmounted(invalidate);
       }}
     </p>
     <details class="matcher-test">
-      <summary>{{ t("Test a sample path") }}</summary>
+      <summary><DisclosureIcon />{{ t("Test a sample path") }}</summary>
       <label
         >{{ t("Sample path")
         }}<input v-model="sample" name="sample_path" spellcheck="false"

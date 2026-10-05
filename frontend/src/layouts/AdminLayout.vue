@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconButton from "../components/IconButton.vue";
 import { onMounted, onUnmounted, ref, watch, watchEffect } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import AppShell from "../components/AppShell.vue";
@@ -127,14 +128,14 @@ onUnmounted(() => {
         </p>
         <div v-if="sessionError || actionError" class="error" role="alert">
           {{ errorText(sessionError || actionError)
-          }}<button
+          }}<IconButton
             v-if="sessionError"
             class="secondary"
             :disabled="sessionBusy"
             @click="checkSession"
-          >
-            {{ t("Retry") }}
-          </button>
+            icon="refresh"
+            :label="t('Retry')"
+          />
         </div>
         <p v-if="!sessionChecked" role="status">{{ t("Loading…") }}</p>
         <RouterView v-else-if="signedIn || route.path === '/admin/login'" />

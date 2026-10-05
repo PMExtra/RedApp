@@ -96,7 +96,7 @@ it("paginates scoped resources, retries errors, resets server filtering, and dis
   const nav = () => wrapper.find('[aria-label="Resource pages"]');
   await nav()
     .findAll("button")
-    .find((b) => b.text() === "Next page")!
+    .find((b) => b.attributes("aria-label") === "Next page")!
     .trigger("click");
   await flushPromises();
   expect(wrapper.text()).toContain("second-resource");
@@ -108,7 +108,7 @@ it("paginates scoped resources, retries errors, resets server filtering, and dis
   ).toBe("2");
   await nav()
     .findAll("button")
-    .find((b) => b.text() === "Previous page")!
+    .find((b) => b.attributes("aria-label") === "Previous page")!
     .trigger("click");
   await flushPromises();
   expect(wrapper.text()).toContain("anthropic/claude-code-file");
@@ -121,7 +121,7 @@ it("paginates scoped resources, retries errors, resets server filtering, and dis
   pending = true;
   await nav()
     .findAll("button")
-    .find((b) => b.text() === "Refresh")!
+    .find((b) => b.attributes("aria-label") === "Refresh")!
     .trigger("click");
   await wrapper.setProps({ application: "openai/codex" });
   await flushPromises();

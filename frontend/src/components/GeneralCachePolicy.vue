@@ -1,12 +1,13 @@
 <script setup lang="ts">
+import IconButton from "./IconButton.vue";
+import SortableList from "./SortableList.vue";
 import SelectMenu from "./SelectMenu.vue";
 import SwitchControl from "./SwitchControl.vue";
 import { computed } from "vue";
 import { appAPI } from "../bootstrap";
-import { bytes } from "../api";
 import type { CachePolicy } from "../cachePolicy";
 import { useSetting } from "../composables/useSetting";
-import { errorText, localDate, t } from "../i18n";
+import { errorText, t } from "../i18n";
 import MatcherInput from "./MatcherInput.vue";
 import DurationInput from "./DurationInput.vue";
 const props = defineProps<{ application: string }>();
@@ -16,11 +17,6 @@ const { draft, loading, saving, error, saved, load, save } =
   );
 const busy = computed(() => loading.value || saving.value);
 type RuleList = "rules" | "auto_cleanup";
-function move(kind: RuleList, index: number, delta: number) {
-  const rules = draft.value?.[kind];
-  if (!rules || index + delta < 0 || index + delta >= rules.length) return;
-  [rules[index], rules[index + delta]] = [rules[index + delta]!, rules[index]!];
-}
 function add(kind: RuleList) {
   if (!draft.value || draft.value[kind].length >= 32) return;
   const match = { type: "glob" as const, pattern: "/" };
@@ -74,54 +70,45 @@ function add(kind: RuleList) {
               )
             }}
           </p>
-          <div
-            v-for="(rule, index) in draft.rules"
-            :key="rule.id || index"
-            class="policy-rule"
+          <SortableList
+            v-model="draft.rules"
+            :label="t('Path TTL rules')"
+            :item-label="
+              (_rule, index) => t('Rule {number}', { number: index + 1 })
+            "
+            :disabled="busy"
+            row-class="policy-rule"
           >
-            <div class="rule-heading">
-              <strong>{{ t("Rule {number}", { number: index + 1 }) }}</strong>
-              <div class="form-actions">
-                <button
-                  type="button"
+            <template #default="{ item: rule, index }">
+              <div class="rule-heading">
+                <strong>{{
+                  t("Rule {number}", { number: index + 1 })
+                }}</strong>
+                <IconButton
+                  icon="close"
                   class="secondary"
-                  :disabled="index === 0"
-                  @click="move('rules', index, -1)"
-                >
-                  {{ t("Move up") }}</button
-                ><button
-                  type="button"
-                  class="secondary"
-                  :disabled="index === draft.rules.length - 1"
-                  @click="move('rules', index, 1)"
-                >
-                  {{ t("Move down") }}</button
-                ><button
-                  type="button"
-                  class="secondary"
+                  :label="`${t('Remove rule')}: ${index + 1}`"
                   @click="draft.rules.splice(index, 1)"
-                >
-                  {{ t("Remove rule") }}
-                </button>
+                />
               </div>
-            </div>
-            <MatcherInput
-              v-model="rule.match"
-              :application="application"
-              :disabled="busy"
-            />
-            <label
-              >{{ t("TTL (seconds)")
-              }}<input
-                v-model.number="rule.ttl_seconds"
-                name="rule_ttl"
-                type="number"
-                min="0"
-                max="86400"
-                step="1"
-                required
-            /></label>
-          </div>
+              <MatcherInput
+                v-model="rule.match"
+                :application="application"
+                :disabled="busy"
+              />
+              <label
+                >{{ t("TTL (seconds)")
+                }}<input
+                  v-model.number="rule.ttl_seconds"
+                  name="rule_ttl"
+                  type="number"
+                  min="0"
+                  max="86400"
+                  step="1"
+                  required
+              /></label>
+            </template>
+          </SortableList>
           <p v-if="!draft.rules.length" class="muted">
             {{
               t(
@@ -129,14 +116,14 @@ function add(kind: RuleList) {
               )
             }}
           </p>
-          <button
+          <IconButton
             type="button"
             class="secondary"
             :disabled="draft.rules.length >= 32"
             @click="add('rules')"
-          >
-            {{ t("Add TTL rule") }}
-          </button>
+            icon="plus"
+            :label="t('Add TTL rule')"
+          />
         </section>
         <section class="auto-cleanup-rules">
           <h3>{{ t("Automatic cleanup rules") }}</h3>
@@ -154,66 +141,57 @@ function add(kind: RuleList) {
               )
             }}
           </p>
-          <div
-            v-for="(rule, index) in draft.auto_cleanup"
-            :key="index"
-            class="policy-rule"
+          <SortableList
+            v-model="draft.auto_cleanup"
+            :label="t('Automatic cleanup rules')"
+            :item-label="
+              (_rule, index) => t('Rule {number}', { number: index + 1 })
+            "
+            :disabled="busy"
+            row-class="policy-rule"
           >
-            <div class="rule-heading">
-              <strong>{{ t("Rule {number}", { number: index + 1 }) }}</strong>
-              <div class="form-actions">
-                <button
-                  type="button"
+            <template #default="{ item: rule, index }">
+              <div class="rule-heading">
+                <strong>{{
+                  t("Rule {number}", { number: index + 1 })
+                }}</strong>
+                <IconButton
+                  icon="close"
                   class="secondary"
-                  :disabled="index === 0"
-                  @click="move('auto_cleanup', index, -1)"
-                >
-                  {{ t("Move up") }}</button
-                ><button
-                  type="button"
-                  class="secondary"
-                  :disabled="index === draft.auto_cleanup.length - 1"
-                  @click="move('auto_cleanup', index, 1)"
-                >
-                  {{ t("Move down") }}</button
-                ><button
-                  type="button"
-                  class="secondary"
+                  :label="`${t('Remove rule')}: ${index + 1}`"
                   @click="draft.auto_cleanup.splice(index, 1)"
-                >
-                  {{ t("Remove rule") }}
-                </button>
+                />
               </div>
-            </div>
-            <MatcherInput
-              v-model="rule.match"
-              :application="application"
-              :disabled="busy"
-            />
-            <label
-              >{{ t("Select files by")
-              }}<SelectMenu
-                v-model="rule.basis"
-                name="rule_basis"
-                :label="t('Select files by')"
-                :options="[
-                  { value: 'fetched_at', label: t('Fetched at') },
-                  { value: 'last_access', label: t('Last accessed') },
-                ]"
-            /></label>
-            <p class="muted small-text">
-              {{
-                rule.basis === "fetched_at"
-                  ? t(
-                      "Fetched-time cleanup can retire files that are still frequently accessed.",
-                    )
-                  : t(
-                      "Files accessed during cleanup are checked again and retained.",
-                    )
-              }}
-            </p>
-            <DurationInput v-model="rule.age_seconds" />
-          </div>
+              <MatcherInput
+                v-model="rule.match"
+                :application="application"
+                :disabled="busy"
+              />
+              <label
+                >{{ t("Select files by")
+                }}<SelectMenu
+                  v-model="rule.basis"
+                  name="rule_basis"
+                  :label="t('Select files by')"
+                  :options="[
+                    { value: 'fetched_at', label: t('Fetched at') },
+                    { value: 'last_access', label: t('Last accessed') },
+                  ]"
+              /></label>
+              <p class="muted small-text">
+                {{
+                  rule.basis === "fetched_at"
+                    ? t(
+                        "Fetched-time cleanup can retire files that are still frequently accessed.",
+                      )
+                    : t(
+                        "Files accessed during cleanup are checked again and retained.",
+                      )
+                }}
+              </p>
+              <DurationInput v-model="rule.age_seconds" />
+            </template>
+          </SortableList>
           <p v-if="!draft.auto_cleanup.length" class="notice">
             {{
               t(
@@ -221,32 +199,34 @@ function add(kind: RuleList) {
               )
             }}
           </p>
-          <button
+          <IconButton
             type="button"
             class="secondary"
             :disabled="draft.auto_cleanup.length >= 32"
             @click="add('auto_cleanup')"
-          >
-            {{ t("Add automatic cleanup rule") }}
-          </button>
+            icon="plus"
+            :label="t('Add automatic cleanup rule')"
+          />
         </section>
         <p class="muted small-text">
           {{
-            t("Up to 32 rules per list. Save explicitly to apply these rules.")
+            t(
+              "Up to 32 rules per list. Save explicitly to apply these rules.",
+            )
           }}
         </p>
       </fieldset>
       <div class="form-actions">
         <button :disabled="busy || !draft">
           {{ saving ? t("Saving…") : t("Save cache rules") }}</button
-        ><button
+        ><IconButton
           type="button"
           class="secondary"
           :disabled="busy"
           @click="load()"
-        >
-          {{ t("Reload") }}
-        </button>
+          icon="refresh"
+          :label="t('Reload')"
+        />
       </div>
     </form>
   </section>

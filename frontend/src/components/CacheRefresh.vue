@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconButton from "./IconButton.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
 import { api, bytes } from "../api";
 import { appAPI } from "../bootstrap";
@@ -87,7 +88,7 @@ onUnmounted(invalidate);
       <p>{{ t('Preview expires') }}: {{ localDate(job.expires_at) }}</p>
       <p class="refresh-job-state" role="status">{{ maintenanceStatus(job.state) }} · {{ t('{completed} completed · {failed} failed', { completed: job.completed_files, failed: job.failed_files }) }}</p>
       <p v-if="summary" class="notice refresh-summary" role="status">{{ t('{refreshed} refreshed · {unchanged} not modified · {stale} stale fallbacks · {failed} failed · {skipped} skipped', { refreshed: summary.refreshed, unchanged: summary.not_modified, stale: summary.stale_fallback, failed: summary.failed, skipped: summary.skipped }) }}</p>
-      <div v-if="pollError" class="error" role="alert">{{ errorText(pollError) }}<button type="button" class="secondary" :disabled="polling" @click="poll">{{ t('Retry') }}</button></div>
+      <div v-if="pollError" class="error" role="alert">{{ errorText(pollError) }}<IconButton type="button" class="secondary" :disabled="polling" @click="poll" icon="refresh" :label="t('Retry')" /></div>
       <p v-if="running" class="muted">{{ t('Refresh runs in the background. Leaving this page does not cancel the job.') }}</p>
       <PreviewFiles :application="application" kind="refresh" :job-id="job.id" :refresh-token="`${job.state}:${job.completed_files}:${job.failed_files}`" />
       <div v-if="job.state === 'ready'" class="form-actions"><button class="danger" :disabled="busy" @click="execute">{{ t('Confirm refresh for all selected files') }}</button><button type="button" class="secondary" :disabled="busy" @click="job = undefined">{{ t('Cancel') }}</button></div>

@@ -1,19 +1,18 @@
 <script setup lang="ts">
+import Icon from "../components/Icon.vue";
+import IconButton from "../components/IconButton.vue";
 import { computed, onUnmounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useNumberedCollection } from "../composables/useNumberedCollection";
 import VendorCard, { type Card } from "../components/VendorCard.vue";
 import PageNavigation from "../components/PageNavigation.vue";
-import SelectMenu from "../components/SelectMenu.vue";
 import { errorText, t } from "../i18n";
 const route = useRoute(),
   router = useRouter();
 const query = ref(typeof route.query.q === "string" ? route.query.q : ""),
   search = ref(query.value),
   state = ref(
-    ["current", "enabled", "disabled", "deleted"].includes(
-      String(route.query.state),
-    )
+    ["current", "enabled", "disabled"].includes(String(route.query.state))
       ? String(route.query.state)
       : "current",
   );
@@ -46,12 +45,18 @@ watch(
       query.value = next;
       search.value = next;
     }
-    state.value = ["current", "enabled", "disabled", "deleted"].includes(
+    state.value = ["current", "enabled", "disabled"].includes(
       String(value.state),
     )
       ? String(value.state)
       : "current";
+    if (
+      value.state &&
+      !["current", "enabled", "disabled"].includes(String(value.state))
+    )
+      void router.replace({ query: { ...value, state: undefined } });
   },
+  { immediate: true },
 );
 onUnmounted(() => clearTimeout(debounce));
 </script>
@@ -71,9 +76,13 @@ onUnmounted(() => clearTimeout(debounce));
           {{ t("Manage application details, providers and availability.") }}
         </p>
       </div>
-      <RouterLink to="/admin/vendors/new" class="button-link">{{
-        t("Add vendor")
-      }}</RouterLink>
+      <RouterLink
+        to="/admin/vendors/new"
+        class="button-link icon-button"
+        :aria-label="t('Add vendor')"
+        :title="t('Add vendor')"
+        ><Icon name="plus"
+      /></RouterLink>
     </div>
     <div class="directory-toolbar">
       <label class="directory-search"
@@ -84,25 +93,35 @@ onUnmounted(() => clearTimeout(debounce));
           maxlength="128"
           :placeholder="t('Search by ID or name')"
       /></label>
-      <div class="field-label">
-        <span>{{ t("Show") }}</span
-        ><SelectMenu
-          v-model="state"
-          :label="t('Show')"
-          :options="[
+      <div
+        class="status-filter button-group"
+        role="group"
+        :aria-label="t('Availability')"
+      >
+        <button
+          v-for="option in [
             { value: 'current', label: t('All') },
             { value: 'enabled', label: t('Enabled') },
             { value: 'disabled', label: t('Disabled') },
-            { value: 'deleted', label: t('Deleted') },
           ]"
-        />
+          :key="option.value"
+          type="button"
+          class="secondary"
+          :aria-pressed="state === option.value"
+          @click="state = option.value"
+        >
+          {{ option.label }}
+        </button>
       </div>
     </div>
     <p v-if="list.error" class="error" role="alert">
       {{ errorText(list.error)
-      }}<button class="secondary" @click="list.refresh">
-        {{ t("Retry") }}
-      </button>
+      }}<IconButton
+        class="secondary"
+        @click="list.refresh"
+        icon="refresh"
+        :label="t('Retry')"
+      />
     </p>
     <p v-if="list.loading && !list.loaded" role="status">{{ t("Loading…") }}</p>
     <div class="vendor-grid">
@@ -134,9 +153,11 @@ onUnmounted(() => clearTimeout(debounce));
       <RouterLink
         v-if="!query && state === 'current'"
         to="/admin/vendors/new"
-        class="button-link"
-        >{{ t("Add vendor") }}</RouterLink
-      >
+        class="button-link icon-button"
+        :aria-label="t('Add vendor')"
+        :title="t('Add vendor')"
+        ><Icon name="plus"
+      /></RouterLink>
     </section>
     <PageNavigation
       :label="t('Vendor pages')"

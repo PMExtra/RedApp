@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import IconButton from "./IconButton.vue";
+import SortableList from "./SortableList.vue";
 import { ref, computed } from "vue";
 import { useSetting } from "../composables/useSetting";
 import { t, errorText } from "../i18n";
@@ -19,13 +21,6 @@ function add() {
     input.value = "";
   }
 }
-function move(index: number, delta: number) {
-  if (!draft.value) return;
-  const next = index + delta;
-  if (next < 0 || next >= draft.value.keys.length) return;
-  const [item] = draft.value.keys.splice(index, 1);
-  draft.value.keys.splice(next, 0, item!);
-}
 </script>
 <template>
   <section class="panel">
@@ -41,37 +36,25 @@ function move(index: number, delta: number) {
     <p v-if="saved" class="notice" role="status">{{ t("Changes saved.") }}</p>
     <form v-if="draft" @submit.prevent="save">
       <fieldset :disabled="busy">
-        <ol class="pinned-order">
-          <li v-for="(key, index) in draft.keys" :key="key">
-            <code>{{ key }}</code>
-            <div class="form-actions">
-              <button
-                type="button"
+        <SortableList
+          v-model="draft.keys"
+          class="pinned-order"
+          :label="t('Pinned applications')"
+          :item-label="(key) => key"
+          :disabled="busy"
+        >
+          <template #default="{ item: key, index }">
+            <div class="ordered-inline-row">
+              <code>{{ key }}</code
+              ><IconButton
+                icon="close"
                 class="secondary"
-                :disabled="index === 0"
-                :aria-label="`${t('Move up')}: ${key}`"
-                @click="move(index, -1)"
-              >
-                {{ t("Move up") }}</button
-              ><button
-                type="button"
-                class="secondary"
-                :disabled="index === draft.keys.length - 1"
-                :aria-label="`${t('Move down')}: ${key}`"
-                @click="move(index, 1)"
-              >
-                {{ t("Move down") }}</button
-              ><button
-                type="button"
-                class="secondary"
-                :aria-label="`${t('Remove')}: ${key}`"
+                :label="`${t('Remove')}: ${key}`"
                 @click="draft.keys.splice(index, 1)"
-              >
-                {{ t("Remove") }}
-              </button>
+              />
             </div>
-          </li>
-        </ol>
+          </template>
+        </SortableList>
         <div class="form-actions">
           <input
             v-model="input"
@@ -79,27 +62,27 @@ function move(index: number, delta: number) {
             placeholder="vendor/application"
             spellcheck="false"
             @keydown.enter.prevent="add"
-          /><button
+          /><IconButton
             type="button"
             class="secondary"
             :disabled="!input.trim() || draft.keys.length >= 100"
             @click="add"
-          >
-            {{ t("Add application") }}
-          </button>
+            icon="plus"
+            :label="t('Add application')"
+          />
         </div>
       </fieldset>
       <div class="form-actions">
         <button :disabled="busy">
           {{ saving ? t("Saving…") : t("Save changes") }}</button
-        ><button
+        ><IconButton
           type="button"
           class="secondary"
           :disabled="busy"
           @click="load()"
-        >
-          {{ t("Reload") }}
-        </button>
+          icon="refresh"
+          :label="t('Reload')"
+        />
       </div>
     </form>
     <p v-else-if="loading" role="status">{{ t("Loading…") }}</p>

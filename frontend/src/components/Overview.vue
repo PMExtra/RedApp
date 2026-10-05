@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DisclosureIcon from "./DisclosureIcon.vue";
 import { computed } from "vue";
 import { formatMetric, type Metric, type Status } from "../api";
 import { label, t } from "../i18n";
@@ -70,6 +71,7 @@ const sections = computed(() =>
           :is="section.diagnostic ? 'summary' : 'div'"
           class="section-heading"
         >
+          <DisclosureIcon v-if="section.diagnostic" />
           <h2>{{ section.title }}</h2>
           <span class="count-badge">{{
             t("{count} metrics", { count: section.items.length })

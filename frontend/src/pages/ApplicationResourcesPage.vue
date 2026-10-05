@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconButton from "../components/IconButton.vue";
 import AutoRefresh from "../components/AutoRefresh.vue";
 import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
@@ -29,13 +30,13 @@ watch(path, () => (activeMetric.value = undefined));
         }}</time></span
       >
       <div class="refresh-actions">
-        <AutoRefresh v-model="automatic" /><button
+        <AutoRefresh v-model="automatic" /><IconButton
           class="secondary"
           :disabled="loading"
           @click="refresh"
-        >
-          {{ t("Refresh") }}
-        </button>
+          icon="refresh"
+          :label="t('Refresh')"
+        />
       </div>
     </div>
     <p v-if="error" class="error" role="alert">
@@ -43,7 +44,12 @@ watch(path, () => (activeMetric.value = undefined));
       }}<small v-if="status">{{
         t("Showing the last successful snapshot.")
       }}</small
-      ><button class="secondary" @click="refresh">{{ t("Retry") }}</button>
+      ><IconButton
+        class="secondary"
+        @click="refresh"
+        icon="refresh"
+        :label="t('Retry')"
+      />
     </p>
     <Overview
       :status="status || emptyStatus"

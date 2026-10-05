@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconButton from "./IconButton.vue";
 import { computed } from "vue";
 import { t, errorText } from "../i18n";
 import { applySite, type SiteSettings } from "../site";
@@ -69,14 +70,14 @@ function request(saving = false) {
       <div class="form-actions">
         <button :disabled="busy || !loaded">
           {{ busy ? t("Saving…") : t("Save site settings") }}</button
-        ><button
+        ><IconButton
           type="button"
           class="secondary"
           :disabled="busy"
           @click="request()"
-        >
-          {{ t("Reload") }}
-        </button>
+          icon="refresh"
+          :label="t('Reload')"
+        />
       </div>
     </form>
   </section>

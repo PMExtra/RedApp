@@ -55,29 +55,44 @@ const inventory = {
   versions: ["total"],
   events: ["recent_total"],
 };
-const metrics: Metric[] = Object.entries(inventory).flatMap(([group, names]) =>
-  names.map((name) => ({
-    key: `${group}.${name}`,
-    label: `${group}.${name}`,
-    group,
-    kind:
-      group === "counters" ? "counter" : group === "rates" ? "rate" : "gauge",
-    unit: "count",
-    value: 7,
-    observed_seconds: 0,
-  })),
+const metrics: Metric[] = Object.entries(inventory).flatMap(
+  ([group, names]) =>
+    names.map((name) => ({
+      key: `${group}.${name}`,
+      label: `${group}.${name}`,
+      group,
+      kind:
+        group === "counters"
+          ? "counter"
+          : group === "rates"
+            ? "rate"
+            : "gauge",
+      unit: name === "uptime_seconds" ? "seconds" : "count",
+      value: name === "uptime_seconds" ? 90000 : 7,
+      observed_seconds: 0,
+    })),
 );
 afterEach(() => setLanguage("en"));
 
 it("keeps 16 common and 25 collapsed diagnostics, opens their history and preserves failure details", async () => {
-  const wrapper = mount(Overview, { props: { status: { metrics } as Status } });
+  const wrapper = mount(Overview, {
+    props: { status: { metrics } as Status },
+  });
   expect(wrapper.findAll(".common-metrics .metric-card")).toHaveLength(16);
-  expect(wrapper.findAll(".diagnostic-metrics .metric-card")).toHaveLength(25);
+  expect(wrapper.findAll(".diagnostic-metrics .metric-card")).toHaveLength(
+    25,
+  );
   const diagnostics = wrapper.get("details.diagnostic-metrics");
   expect((diagnostics.element as HTMLDetailsElement).open).toBe(false);
-  expect(wrapper.find('[data-metric="counters.reuse_requests"]').exists()).toBe(
-    false,
-  );
+  expect(
+    diagnostics.get("summary .disclosure-icon svg").attributes("viewBox"),
+  ).toBe("0 0 24 24");
+  expect(
+    wrapper.get('[data-metric="runtime.uptime_seconds"] strong').text(),
+  ).toBe("1.04 d");
+  expect(
+    wrapper.find('[data-metric="counters.reuse_requests"]').exists(),
+  ).toBe(false);
   expect(wrapper.find('[data-metric="events.recent_total"]').exists()).toBe(
     false,
   );
@@ -86,10 +101,9 @@ it("keeps 16 common and 25 collapsed diagnostics, opens their history and preser
   // diagnostic history buttons usable, including integrity failures.
   (diagnostics.element as HTMLDetailsElement).open = true;
   await wrapper.get('[data-metric="resources.invalid"]').trigger("click");
-  expect(wrapper.emitted("history")?.map(([m]) => (m as Metric).key)).toEqual([
-    "disk.free_bytes",
-    "resources.invalid",
-  ]);
+  expect(wrapper.emitted("history")?.map(([m]) => (m as Metric).key)).toEqual(
+    ["disk.free_bytes", "resources.invalid"],
+  );
   expect(wrapper.get('[data-metric="versions.total"]').text()).toContain(
     "Includes all applications",
   );

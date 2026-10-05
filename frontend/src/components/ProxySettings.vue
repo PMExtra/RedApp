@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconButton from "./IconButton.vue";
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { api, isCancellation, putSetting, type ProxySettings } from "../api";
 import { errorText, t } from "../i18n";
@@ -123,9 +124,14 @@ onUnmounted(() => {
       <div class="form-actions">
         <button :disabled="busy || !saved">
           {{ busy && !loading ? t("Saving…") : t("Save proxy") }}</button
-        ><button class="secondary" type="button" :disabled="busy" @click="load">
-          {{ t("Reload") }}
-        </button>
+        ><IconButton
+          class="secondary"
+          type="button"
+          :disabled="busy"
+          @click="load"
+          icon="refresh"
+          :label="t('Reload')"
+        />
       </div>
     </form>
   </section>

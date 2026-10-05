@@ -279,13 +279,16 @@ it("preserves a revision-conflict draft, guards navigation and discards an old a
   await wrapper
     .get(".directory-editor")
     .findAll("button")
-    .find((button) => button.text() === "Reload")!
+    .find((button) => button.attributes("aria-label") === "Reload")!
     .trigger("click");
   await router.push("/admin/vendors/anthropic/apps/claude-code/settings");
   await flushPromises();
   resolveOld?.(
     response({
-      app: { ...apps[0], name: { en: "Late wrong app", "zh-CN": "错误应用" } },
+      app: {
+        ...apps[0],
+        name: { en: "Late wrong app", "zh-CN": "错误应用" },
+      },
     }),
   );
   await flushPromises();
@@ -297,7 +300,7 @@ it("preserves a revision-conflict draft, guards navigation and discards an old a
   wrapper.unmount();
 });
 
-it("keeps disabled and deleted applications manageable independently of public bootstrap", async () => {
+it("keeps disabled applications manageable and protects deletion while hiding deleted filters", async () => {
   apps[0]!.enabled = false;
   apps[0]!.id = "custom";
   apps[0]!.key = "openai/custom";
@@ -328,23 +331,24 @@ it("keeps disabled and deleted applications manageable independently of public b
   expect(wrapper.get(".directory-page").text()).toContain("Codex CLI");
   expect(wrapper.get(".directory-page").text()).toContain("Disabled");
   expect(wrapper.get(".directory-page").text()).not.toContain("Claude Code");
-  await wrapper.get(".directory-toolbar [role=combobox]").trigger("click");
-  await wrapper
-    .findAll("[role=option]")
-    .find((option) => option.text() === "Deleted")!
-    .trigger("click");
-  await flushPromises();
-  expect(wrapper.get(".directory-page").text()).toContain("Claude Code");
+  expect(wrapper.find(".directory-toolbar [role=combobox]").exists()).toBe(
+    false,
+  );
+  expect(
+    wrapper.findAll(".status-filter button").map((b) => b.text()),
+  ).toEqual(["All", "Enabled", "Disabled"]);
   await router.push("/admin/vendors/openai/apps/custom/settings");
   await flushPromises();
   expect(wrapper.find('[name="name-en"]').exists()).toBe(true);
   await wrapper
     .get(".directory-editor")
     .findAll("button")
-    .find((button) => button.text() === "Delete")!
+    .find((button) => button.attributes("aria-label") === "Delete")!
     .trigger("click");
   expect(wrapper.get(".delete-review").text()).toContain("cannot be undone");
-  expect(wrapper.get(".delete-review").text()).toContain("will be interrupted");
+  expect(wrapper.get(".delete-review").text()).toContain(
+    "will be interrupted",
+  );
   await wrapper.get(".delete-review .danger").trigger("click");
   await flushPromises();
   expect(wrapper.get(".directory-editor [role=alert]").text()).toContain(
@@ -393,7 +397,7 @@ it("presents GeneralHttp as a download prefix without installer commands or vend
   wrapper.unmount();
 });
 
-it("reorders GeneralHttp upstreams with buttons and drag controls and saves only the canonical list and strategy", async () => {
+it("reorders HTTP-cache upstreams with the handle keyboard and pointer controls and saves only the canonical list and strategy", async () => {
   apps[0] = {
     ...apps[0]!,
     provider: "http-cache",
@@ -427,25 +431,32 @@ it("reorders GeneralHttp upstreams with buttons and drag controls and saves only
   expect(editor.text()).toContain("1 to 16");
   await editor
     .findAll("button")
-    .find((button) => button.text() === "Add source")!
+    .find((button) => button.attributes("aria-label") === "Add source")!
     .trigger("click");
   await editor
     .get('[name="base_url_3"]')
     .setValue("https://third.example/releases/");
-  const rows = () => editor.findAll("[data-source-row]");
+  const rows = () => editor.findAll(".source-url-list [data-sortable-row]");
   await rows()[0]!
-    .findAll("button")
-    .find((button) => button.text() === "Move down")!
-    .trigger("click");
+    .get(".sort-handle")
+    .trigger("keydown", { key: "ArrowDown" });
   expect((rows()[0]!.get("input").element as HTMLInputElement).value).toBe(
     "https://second.example/releases/",
   );
-  const transfer = { setData: vi.fn(), effectAllowed: "" };
+  vi.spyOn(document, "elementFromPoint").mockReturnValue(rows()[0]!.element);
   await rows()[2]!
-    .get(".source-drag")
-    .trigger("dragstart", { dataTransfer: transfer });
-  await rows()[0]!.trigger("drop", { dataTransfer: transfer });
-  expect(transfer.setData).toHaveBeenCalledWith("text/plain", "2");
+    .get(".sort-handle")
+    .trigger("pointerdown", {
+      pointerId: 1,
+      button: 0,
+      isPrimary: true,
+      clientX: 10,
+      clientY: 100,
+    });
+  await editor
+    .get(".sortable-list")
+    .trigger("pointermove", { pointerId: 1, clientX: 10, clientY: 60 });
+  await editor.get(".sortable-list").trigger("pointerup", { pointerId: 1 });
   expect(
     rows().map((row) => (row.get("input").element as HTMLInputElement).value),
   ).toEqual([

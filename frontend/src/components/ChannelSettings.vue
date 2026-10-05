@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconButton from "./IconButton.vue";
 import { computed } from "vue";
 import { appAPI } from "../bootstrap";
 import { useSetting } from "../composables/useSetting";
@@ -16,7 +17,7 @@ const { draft, loading, saving, error, load, save, saved } = useSetting<{ channe
     <p v-if="loading" role="status">{{ t("Loading…") }}</p>
     <form class="ttl-form" @submit.prevent="save">
       <label>{{ t("Channel TTL (seconds)") }}<input :value="draft?.channel_ttl_seconds" type="number" min="1" max="86400" required :disabled="loading || saving || !draft" @input="draft && (draft.channel_ttl_seconds = Number(($event.target as HTMLInputElement).value))" /></label>
-      <div class="form-actions"><button :disabled="saving || loading || !draft">{{ saving ? t("Saving…") : t("Save TTL") }}</button><button class="secondary" type="button" :disabled="saving || loading" @click="load()">{{ t("Reload") }}</button></div>
+      <div class="form-actions"><button :disabled="saving || loading || !draft">{{ saving ? t("Saving…") : t("Save TTL") }}</button><IconButton class="secondary" type="button" :disabled="saving || loading" @click="load()" icon="refresh" :label="t('Reload')" /></div>
     </form>
   </section>
 </template>

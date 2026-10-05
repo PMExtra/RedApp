@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconButton from "./IconButton.vue";
 import { ref, watch, onUnmounted, computed } from "vue";
 import { confirmDirtyDrafts } from "../composables/useDirtyDraft";
 import { api, isCancellation } from "../api";
@@ -185,9 +186,13 @@ onUnmounted(() => {
         {{ t("Review differences") }}</button
       ><button v-else :disabled="loading || !selected.length" @click="save">
         {{ t("Save selected fields") }}</button
-      ><button class="secondary" :disabled="loading" @click="load">
-        {{ t("Reload") }}
-      </button>
+      ><IconButton
+        class="secondary"
+        :disabled="loading"
+        @click="load"
+        icon="refresh"
+        :label="t('Reload')"
+      />
     </div>
   </section>
 </template>

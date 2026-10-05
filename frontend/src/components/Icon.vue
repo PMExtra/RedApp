@@ -4,6 +4,8 @@ const props = withDefaults(defineProps<{ name: string; size?: number }>(), {
 });
 const paths: Record<string, string> = {
   plus: "M12 5v14 M5 12h14",
+  sort: "M8 20V4 M4 8l4-4 4 4 M16 4v16 M12 16l4 4 4-4",
+  trash: "M3 6h18 M9 6V3h6v3 M5 6l1 15h12l1-15 M10 10v7 M14 10v7",
   grid: "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
   box: "M3 7l9-4 9 4v10l-9 4-9-4z M3 7l9 4 9-4 M12 11v10",
   activity: "M3 12h4l3-8 4 16 3-8h4",

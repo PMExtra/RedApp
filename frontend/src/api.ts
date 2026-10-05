@@ -1,4 +1,4 @@
-import { language } from "./i18n";
+import { language, t } from "./i18n";
 import { appAPI } from "./bootstrap";
 export interface Resource {
   ID: string;
@@ -257,6 +257,25 @@ export interface HistorySeries
   points: HistoryPoint[];
   retired?: boolean;
 }
+export function formatDuration(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value) || value < 0) return "—";
+  const units = [
+    { seconds: 1, label: "s" },
+    { seconds: 60, label: "min" },
+    { seconds: 3600, label: "h" },
+    { seconds: 86400, label: "d" },
+  ] as const;
+  let index = 0;
+  while (
+    index < units.length - 1 &&
+    Number((value / units[index]!.seconds).toFixed(2)) *
+      units[index]!.seconds >=
+      units[index + 1]!.seconds
+  )
+    index++;
+  const unit = units[index]!;
+  return `${(value / unit.seconds).toLocaleString(language.value, { maximumFractionDigits: 2 })} ${t(unit.label)}`;
+}
 export function formatMetric(
   value: number | null | undefined,
   unit: Metric["unit"],
@@ -270,10 +289,7 @@ export function formatMetric(
     return "—";
   if (unit === "bytes") return bytes(value);
   if (unit === "bytes_per_second") return bytes(value) + "/s";
-  if (unit === "seconds")
-    return (
-      value.toLocaleString(language.value, { maximumFractionDigits: 2 }) + " s"
-    );
+  if (unit === "seconds") return formatDuration(value);
   return value.toLocaleString(language.value, { maximumFractionDigits: 2 });
 }
 export function getHistory(

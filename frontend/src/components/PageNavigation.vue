@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconButton from "./IconButton.vue";
 import { ref, watch } from "vue";
 import { t } from "../i18n";
 const props = defineProps<{
@@ -48,14 +49,14 @@ function jump() {
       }}</span
     >
     <div class="pagination-actions">
-      <button
+      <IconButton
         type="button"
         class="secondary"
         :disabled="loading || !previous"
         @click="emit('previous')"
-      >
-        {{ t("Previous page") }}
-      </button>
+        icon="back"
+        :label="t('Previous page')"
+      />
       <form
         v-if="totalPages !== undefined"
         class="page-jump"
@@ -71,26 +72,30 @@ function jump() {
             :disabled="loading || total === 0"
             @input="invalid = false"
         /></label>
-        <button class="secondary" :disabled="loading || total === 0">
-          {{ t("Go") }}
-        </button>
+        <IconButton
+          class="secondary"
+          :disabled="loading || total === 0"
+          type="submit"
+          icon="arrow"
+          :label="t('Go')"
+        />
       </form>
-      <button
+      <IconButton
         type="button"
         class="secondary"
         :disabled="loading || !next"
         @click="emit('next')"
-      >
-        {{ t("Next page") }}
-      </button>
-      <button
+        icon="arrow"
+        :label="t('Next page')"
+      />
+      <IconButton
         type="button"
         class="secondary"
         :disabled="loading"
         @click="emit('refresh')"
-      >
-        {{ t("Refresh") }}
-      </button>
+        icon="refresh"
+        :label="t('Refresh')"
+      />
     </div>
     <p v-if="invalid" class="error" role="alert">
       {{ t("Enter a page from 1 to {pages}.", { pages: totalPages || 1 }) }}

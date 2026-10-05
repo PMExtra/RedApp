@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import IconButton from "../components/IconButton.vue";
+import DisclosureIcon from "../components/DisclosureIcon.vue";
 import SelectMenu from "../components/SelectMenu.vue";
 import AutoRefresh from "../components/AutoRefresh.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
@@ -235,13 +237,13 @@ onUnmounted(invalidate);
         </p>
       </div>
       <div class="form-actions">
-        <AutoRefresh v-model="automatic" /><button
+        <AutoRefresh v-model="automatic" /><IconButton
           class="secondary cache-refresh"
           :disabled="loading"
           @click="refresh"
-        >
-          {{ t("Refresh") }}
-        </button>
+          icon="refresh"
+          :label="t('Refresh')"
+        />
       </div>
     </div>
     <SourceEpochSelect
@@ -281,7 +283,9 @@ onUnmounted(invalidate);
               <td>
                 <code>{{ file.path }}</code>
                 <details>
-                  <summary>{{ t("Technical details") }}</summary>
+                  <summary>
+                    <DisclosureIcon />{{ t("Technical details") }}
+                  </summary>
                   <dl>
                     <dt>{{ t("Generation") }}</dt>
                     <dd>
@@ -313,14 +317,14 @@ onUnmounted(invalidate);
                 }}
               </td>
               <td>
-                <button
+                <IconButton
                   type="button"
                   class="secondary refresh-file"
                   :disabled="!canRefresh || refreshPanel?.busy"
                   @click="refreshPanel?.refreshFile(file.path)"
-                >
-                  {{ t("Refresh file") }}
-                </button>
+                  icon="refresh"
+                  :label="t('Refresh file')"
+                />
               </td>
             </tr>
           </tbody>

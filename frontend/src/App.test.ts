@@ -72,6 +72,8 @@ describe("SPA page ownership", () => {
         ? response(boot)
         : url.endsWith("/session")
           ? response({ csrf: "token" })
+          : url.endsWith("homepage")
+            ? response({ keys: [], revision: 0 })
           : url.endsWith("public-url")
             ? response({
                 override_url: null,

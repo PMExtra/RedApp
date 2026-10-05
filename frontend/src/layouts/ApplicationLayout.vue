@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconButton from "../components/IconButton.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { validApplicationID, bootstrap } from "../bootstrap";
@@ -61,16 +62,22 @@ async function copyURL() {
   </p>
   <div v-else-if="directoryError && !application" class="error" role="alert">
     {{ errorText(directoryError)
-    }}<button class="secondary" @click="loadApplication(key)">
-      {{ t("Retry") }}
-    </button>
+    }}<IconButton
+      class="secondary"
+      @click="loadApplication(key)"
+      icon="refresh"
+      :label="t('Retry')"
+    />
   </div>
   <template v-else-if="application && vendor">
     <div v-if="directoryError" class="error" role="alert">
       {{ errorText(directoryError)
-      }}<button class="secondary" @click="loadApplication(key, true)">
-        {{ t("Retry") }}
-      </button>
+      }}<IconButton
+        class="secondary"
+        @click="loadApplication(key, true)"
+        icon="refresh"
+        :label="t('Retry')"
+      />
     </div>
     <nav class="breadcrumbs" :aria-label="t('Application location')">
       <RouterLink to="/admin/vendors">{{
@@ -117,18 +124,21 @@ async function copyURL() {
         </div>
       </div>
       <div v-if="applicationEnabled(application)" class="form-actions">
-        <RouterLink :to="`/${application.key}`" class="button-link secondary">{{
-          providerHasVersions(application.provider)
-            ? t("Installation instructions")
-            : t("Public application page")
-        }}</RouterLink
-        ><button
+        <RouterLink
+          :to="`/${application.key}`"
+          class="button-link secondary"
+          >{{
+            providerHasVersions(application.provider)
+              ? t("Installation instructions")
+              : t("Public application page")
+          }}</RouterLink
+        ><IconButton
           v-if="application.provider !== 'info'"
           class="secondary"
           @click="copyURL"
-        >
-          {{ copied ? t("Copied") : t("Copy download URL") }}
-        </button>
+          icon="copy"
+          :label="copied ? t('Copied') : t('Copy download URL')"
+        />
       </div>
     </header>
     <p v-if="copyError" class="error" role="alert">

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconButton from "./IconButton.vue";
 import { computed, reactive } from "vue";
 import { useNumberedCollection } from "../composables/useNumberedCollection";
 import {
@@ -25,16 +26,22 @@ const list = reactive(
   <div class="expanded-apps">
     <p v-if="list.error" class="error" role="alert">
       {{ errorText(list.error)
-      }}<button class="secondary" @click="list.refresh">
-        {{ t("Retry") }}
-      </button>
+      }}<IconButton
+        class="secondary"
+        @click="list.refresh"
+        icon="refresh"
+        :label="t('Retry')"
+      />
     </p>
     <p v-if="list.loading && !list.loaded" role="status">{{ t("Loading…") }}</p>
     <ul class="directory-apps">
       <li v-if="!vendor.deleted_at" class="add-application">
-        <RouterLink :to="`/admin/vendors/${vendor.id}/apps/new`"
-          ><Icon name="plus" :size="24" />{{ t("Add application") }}</RouterLink
-        >
+        <RouterLink
+          :to="`/admin/vendors/${vendor.id}/apps/new`"
+          :aria-label="t('Add application')"
+          :title="t('Add application')"
+          ><Icon name="plus" :size="24"
+        /></RouterLink>
       </li>
       <li
         v-for="app in list.items"

@@ -25,10 +25,10 @@ it('pages through the server preview, refreshes the entire frozen selection and 
   expect(wrapper.get('.refresh-review').text()).toContain('30 files');
   expect(wrapper.get('.preview-files').text()).toContain('/first-page.zip');
   const navigation = wrapper.get('[aria-label="Preview file pages"]');
-  await navigation.findAll('button').find((button) => button.text() === 'Next page')!.trigger('click'); await flushPromises();
+  await navigation.findAll('button').find((button) => button.attributes("aria-label") === 'Next page')!.trigger('click'); await flushPromises();
   expect(wrapper.get('.preview-files').text()).toContain('/last-page.zip');
   expect(wrapper.get('.preview-files').text()).not.toContain('/first-page.zip');
-  expect(navigation.findAll('button').find((button) => button.text() === 'Next page')!.attributes('disabled')).toBeDefined();
+  expect(navigation.findAll('button').find((button) => button.attributes("aria-label") === 'Next page')!.attributes('disabled')).toBeDefined();
   const pageCalls = fetch.mock.calls.filter(([url]) => new URL(url, 'https://admin.example').pathname.endsWith('/items'));
   expect(pageCalls).toHaveLength(2);
   expect(new URL(pageCalls[1]![0], 'https://admin.example').searchParams.get('limit')).toBe('25');

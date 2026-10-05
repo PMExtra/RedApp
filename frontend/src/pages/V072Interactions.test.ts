@@ -3,6 +3,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createMemoryHistory, createRouter } from "vue-router";
 import PublicSearch from "../components/PublicSearch.vue";
 import TemplateReset from "../components/TemplateReset.vue";
+import HomepageSettings from "../components/HomepageSettings.vue";
 import {
   boot,
   mountPage,
@@ -113,7 +114,9 @@ it("keeps a pending successful list response during a real visibility session re
 it("cancels stale suggestions, supports IME and keyboard selection, and keeps Enter/back URLs shareable", async () => {
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [{ path: "/:pathMatch(.*)*", component: { template: "<main />" } }],
+    routes: [
+      { path: "/:pathMatch(.*)*", component: { template: "<main />" } },
+    ],
   });
   await router.push("/");
   await router.isReady();
@@ -131,6 +134,20 @@ it("cancels stale suggestions, supports IME and keyboard selection, and keeps En
                 id: "acme",
                 name: { en: "Acme", "zh-CN": "示例" },
                 url: "/acme",
+                icon: "/assets/icons/vendor.png",
+              },
+              {
+                kind: "app",
+                id: "acme/tool",
+                name: { en: "Tool", "zh-CN": "工具" },
+                url: "/acme/tool",
+                icon: "/assets/icons/tool.png",
+              },
+              {
+                kind: "app",
+                id: "acme/plain",
+                name: { en: "Plain", "zh-CN": "默认" },
+                url: "/acme/plain",
                 icon: "",
               },
             ],
@@ -165,8 +182,27 @@ it("cancels stale suggestions, supports IME and keyboard selection, and keeps En
   );
   await flushPromises();
   expect(wrapper.text()).not.toContain("Wrong");
+  const options = wrapper.findAll('[role="option"]');
+  expect(options[0]!.get("img").attributes("src")).toBe(
+    "/assets/icons/vendor.png",
+  );
+  expect(options[1]!.get("img").attributes("src")).toBe(
+    "/assets/icons/tool.png",
+  );
+  expect(options[1]!.text()).toContain("Application");
+  expect(options[2]!.get(".entity-icon svg").attributes("aria-hidden")).toBe(
+    "true",
+  );
+  await options[1]!.get("img").trigger("error");
+  expect(options[1]!.find("img").exists()).toBe(false);
+  expect(options[1]!.get(".entity-icon svg").html()).toBe(
+    options[2]!.get(".entity-icon svg").html(),
+  );
+
   await input.trigger("keydown", { key: "ArrowDown" });
-  expect(wrapper.get("[role=option]").attributes("aria-selected")).toBe("true");
+  expect(wrapper.get("[role=option]").attributes("aria-selected")).toBe(
+    "true",
+  );
   await input.trigger("keydown", { key: "Enter" });
   await flushPromises();
   expect(router.currentRoute.value.path).toBe("/acme");
@@ -215,7 +251,9 @@ it("starts template reset unselected, reviews selected differences and preserves
       : response(preview),
   );
   vi.stubGlobal("fetch", fetch);
-  const wrapper = mount(TemplateReset, { props: { application: current.key } });
+  const wrapper = mount(TemplateReset, {
+    props: { application: current.key },
+  });
   await flushPromises();
   expect(wrapper.findAll("[role=switch][aria-checked=true]")).toHaveLength(0);
   expect(
@@ -246,5 +284,112 @@ it("starts template reset unselected, reviews selected differences and preserves
       .get('[aria-label="Name and description"]')
       .attributes("aria-checked"),
   ).toBe("true");
+  wrapper.unmount();
+});
+
+it("saves pinned applications in the handle-selected order only after explicit save", async () => {
+  const fetch = vi.fn(async (_url: string, init?: RequestInit) =>
+    response(
+      init?.method === "PUT"
+        ? { ...JSON.parse(init.body as string), revision: 5 }
+        : { keys: ["a/one", "b/two", "c/three"], revision: 4 },
+    ),
+  );
+  vi.stubGlobal("fetch", fetch);
+  const wrapper = mount(HomepageSettings, { attachTo: document.body });
+  await flushPromises();
+  await wrapper
+    .findAll(".sort-handle")[0]!
+    .trigger("keydown", { key: "End" });
+  expect(wrapper.findAll(".pinned-order code").map((n) => n.text())).toEqual([
+    "b/two",
+    "c/three",
+    "a/one",
+  ]);
+  expect(document.activeElement).toBe(
+    wrapper.findAll(".sort-handle")[2]!.element,
+  );
+  expect(
+    fetch.mock.calls.filter(([, init]) => init?.method === "PUT"),
+  ).toHaveLength(0);
+  await wrapper.get('[aria-label="Remove: b/two"]').trigger("click");
+  await wrapper.get('[aria-label="Application key"]').setValue("d/four");
+  await wrapper.get('[aria-label="Add application"]').trigger("click");
+  await wrapper.get("form").trigger("submit");
+  await flushPromises();
+  const write = fetch.mock.calls.find(([, init]) => init?.method === "PUT")!;
+  expect(write[1]!.headers).toMatchObject({ "If-Match": '\"4\"' });
+  expect(JSON.parse(write[1]!.body as string)).toEqual({
+    keys: ["c/three", "a/one", "d/four"],
+  });
+  wrapper.unmount();
+});
+
+it("filters vendors with three buttons, resets pages, preserves search and normalizes a removed deleted view", async () => {
+  const fetch = vi.fn(async (url: string) => {
+    if (url === "/api/bootstrap") return response(boot);
+    if (url.endsWith("/session")) return response({ csrf: "token" });
+    const params = new URL(url, "https://test").searchParams;
+    const disabled = params.get("state") === "disabled";
+    return response({
+      ...list,
+      page: Number(params.get("page") || 1),
+      total: 25,
+      total_pages: 3,
+      items: [
+        {
+          ...managedVendors[0]!,
+          enabled: !disabled,
+          apps: [adminApplications[0]!],
+          app_total: 1,
+        },
+      ],
+    });
+  });
+  vi.stubGlobal("fetch", fetch);
+  const { wrapper, router } = await mountPage(
+    "/admin/vendors?q=Tool&state=deleted",
+  );
+  await flushPromises();
+  const buttons = () => wrapper.findAll(".status-filter button");
+  expect(buttons().map((b) => b.text())).toEqual([
+    "All",
+    "Enabled",
+    "Disabled",
+  ]);
+  expect(wrapper.find(".directory-toolbar .field-label").exists()).toBe(
+    false,
+  );
+  expect(router.currentRoute.value.query.state).toBeUndefined();
+  expect(buttons()[0]!.attributes("aria-pressed")).toBe("true");
+  await wrapper.get('[aria-label="Next page"]').trigger("click");
+  await flushPromises();
+  expect(
+    new URL(fetch.mock.calls.at(-1)![0], "https://test").searchParams.get(
+      "page",
+    ),
+  ).toBe("2");
+  await buttons()[2]!.trigger("click");
+  await flushPromises();
+  const params = new URL(fetch.mock.calls.at(-1)![0], "https://test")
+    .searchParams;
+  expect([params.get("q"), params.get("state"), params.get("page")]).toEqual([
+    "Tool",
+    "disabled",
+    "1",
+  ]);
+  expect(wrapper.get(".vendor-card").text()).toContain("Disabled by vendor");
+  expect(buttons()[2]!.attributes("aria-pressed")).toBe("true");
+  await router.push("/admin/vendors?q=Next&state=enabled");
+  await flushPromises();
+  expect(buttons()[1]!.attributes("aria-pressed")).toBe("true");
+  router.back();
+  await vi.advanceTimersByTimeAsync(1);
+  await flushPromises();
+  expect(buttons()[2]!.attributes("aria-pressed")).toBe("true");
+  expect(
+    (wrapper.get(".directory-search input").element as HTMLInputElement)
+      .value,
+  ).toBe("Tool");
   wrapper.unmount();
 });

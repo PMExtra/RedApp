@@ -185,8 +185,18 @@ export const messages = {
   "Enabled by default for all paths, including TTL 0. Disabling fallback returns an error on origin failure and keeps stored files.":
     "默认开启，适用于所有路径，包括 TTL 为 0 的路径；关闭后回源失败会返回错误，但保留已存储文件。",
   "Rule {number}": "规则 {number}",
-  "Move up": "上移",
-  "Move down": "下移",
+  Availability: "启停状态",
+  s: "秒",
+  min: "分钟",
+  h: "小时",
+  d: "天",
+  "Reorder {name}, position {position} of {count}":
+    "调整{name}顺序，第 {position} 项，共 {count} 项",
+  "Moved {name} to position {position} of {count}.":
+    "已将{name}移至第 {position} 项，共 {count} 项。",
+  "Reordering cancelled.": "已取消排序。",
+  "Drag the handle to reorder. With the handle focused, use Up/Down or Home/End. Escape cancels a drag.":
+    "拖拽左侧手柄排序。聚焦手柄后可用上下方向键或 Home/End，按 Escape 取消拖拽。",
   "Remove rule": "移除规则",
   "TTL (seconds)": "TTL（秒）",
   "Cache-Control determines freshness; the application default TTL applies only when that header is absent.":
@@ -196,8 +206,8 @@ export const messages = {
   "Default TTL without Cache-Control (seconds)":
     "无 Cache-Control 时的默认 TTL（秒）",
   "Upstream sources": "回源地址列表",
-  "Add 1 to 16 HTTP or HTTPS directory URLs. Drag to reorder, or use Move up and Move down. Duplicate URLs are rejected.":
-    "添加 1 至 16 个 HTTP 或 HTTPS 目录地址，可拖拽排序或使用上移、下移按钮；不允许重复地址。",
+  "Add 1 to 16 HTTP or HTTPS directory URLs. Drag the left handle to reorder. Duplicate URLs are rejected.":
+    "添加 1 至 16 个 HTTP 或 HTTPS 目录地址，拖拽左侧手柄排序；不允许重复地址。",
   "Source URL {number}": "回源地址 {number}",
   "Drag to reorder": "拖拽排序",
   "Remove source": "移除地址",

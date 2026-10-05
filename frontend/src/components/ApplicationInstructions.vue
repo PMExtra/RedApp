@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconButton from "./IconButton.vue";
 import { computed } from "vue";
 import { useSetting } from "../composables/useSetting";
 import { invalidateBootstrap, loadBootstrap } from "../bootstrap";
@@ -53,9 +54,13 @@ const { draft, loading, saving, error, saved, load, save } =
         <div class="form-actions">
           <button :disabled="!draft">
             {{ saving ? t("Saving…") : t("Save instructions") }}</button
-          ><button type="button" class="secondary" @click="load()">
-            {{ t("Reload") }}
-          </button>
+          ><IconButton
+            type="button"
+            class="secondary"
+            @click="load()"
+            icon="refresh"
+            :label="t('Reload')"
+          />
         </div>
       </fieldset>
     </form>

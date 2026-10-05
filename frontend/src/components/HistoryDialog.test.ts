@@ -519,7 +519,7 @@ describe("History dialog", () => {
     fail = false;
     await wrapper
       .findAll("button")
-      .find((button) => button.text() === "Retry history")!
+      .find((button) => button.attributes("aria-label") === "Retry history")!
       .trigger("click");
     await flushPromises();
     expect(wrapper.text()).toContain("No observations available");

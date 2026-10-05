@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconButton from "../components/IconButton.vue";
 import { ref } from "vue";
 import type { Application } from "../bootstrap";
 import { usePublicResource } from "../public";
@@ -20,7 +21,8 @@ const { data, error, loading, refresh } = usePublicResource<{
     }}</RouterLink>
   </div>
   <p v-if="error" role="alert" class="error">
-    {{ errorText(error) }} <button @click="refresh">{{ t("Retry") }}</button>
+    {{ errorText(error) }}
+    <IconButton @click="refresh" icon="refresh" :label="t('Retry')" />
   </p>
   <p v-if="loading" role="status">{{ t("Loading…") }}</p>
   <template v-if="data"

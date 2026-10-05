@@ -18,7 +18,7 @@ it('keeps cleanup item pages scoped to their source and cancels a late previous 
   const wrapper = mount(PreviewFiles, { props: { application: 'acme/files', kind: 'cleanup', jobId: 'old-job', sourceQuery: '?source_epoch=1' } });
   await flushPromises();
   expect(fetch.mock.calls[0]![0]).toBe('/admin/api/apps/acme/files/cache/cleanup/old-job/items?source_epoch=1&limit=25');
-  await wrapper.get('[aria-label="Preview file pages"]').findAll('button').find((button) => button.text() === 'Next page')!.trigger('click');
+  await wrapper.get('[aria-label="Preview file pages"]').findAll('button').find((button) => button.attributes("aria-label") === 'Next page')!.trigger('click');
   const oldRequest = fetch.mock.calls.at(-1)![1]!;
   expect(new URL(fetch.mock.calls.at(-1)![0], 'https://admin.example').searchParams.get('cursor')).toBe('cursor/+=');
   await wrapper.setProps({ jobId: 'new-job', sourceQuery: '?source_epoch=2' }); await flushPromises();

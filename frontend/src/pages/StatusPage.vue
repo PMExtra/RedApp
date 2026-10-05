@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconButton from "../components/IconButton.vue";
 import AutoRefresh from "../components/AutoRefresh.vue";
 import { ref } from "vue";
 import { type Metric } from "../api";
@@ -29,13 +30,13 @@ const activeMetric = ref<Metric>();
       ><span v-else>—</span></span
     >
     <div class="refresh-actions">
-      <AutoRefresh v-model="automatic" /><button
+      <AutoRefresh v-model="automatic" /><IconButton
         class="secondary"
         :disabled="loading"
         @click="refresh"
-      >
-        {{ loading ? t("Refreshing…") : t("Refresh") }}
-      </button>
+        icon="refresh"
+        :label="loading ? t('Refreshing…') : t('Refresh')"
+      />
     </div>
   </div>
   <div v-if="error" class="error" role="alert">
@@ -45,9 +46,13 @@ const activeMetric = ref<Metric>();
         t("Showing the last successful snapshot.")
       }}</small>
     </div>
-    <button class="secondary" :disabled="loading" @click="refresh">
-      {{ t("Retry") }}
-    </button>
+    <IconButton
+      class="secondary"
+      :disabled="loading"
+      @click="refresh"
+      icon="refresh"
+      :label="t('Retry')"
+    />
   </div>
   <div v-if="!status" class="empty panel" role="status">
     {{

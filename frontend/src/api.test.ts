@@ -1,10 +1,32 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { api, ApiError } from "./api";
+import { api, ApiError, formatDuration, formatMetric } from "./api";
 import { errorText, setLanguage } from "./i18n";
 import { response } from "./testSupport";
 afterEach(() => {
   vi.unstubAllGlobals();
   setLanguage("en");
+});
+it("formats elapsed durations across zero, unit boundaries and languages without timestamp conversion", () => {
+  const cases = [
+    [0, "0 s", "0 秒"],
+    [59, "59 s", "59 秒"],
+    [60, "1 min", "1 分钟"],
+    [90, "1.5 min", "1.5 分钟"],
+    [3599, "59.98 min", "59.98 分钟"],
+    [3600, "1 h", "1 小时"],
+    [86399, "1 d", "1 天"],
+    [86400, "1 d", "1 天"],
+    [129600, "1.5 d", "1.5 天"],
+  ] as const;
+  for (const [value, en, zh] of cases) {
+    setLanguage("en");
+    expect(formatDuration(value)).toBe(en);
+    expect(formatMetric(value, "seconds")).toBe(en);
+    setLanguage("zh-CN");
+    expect(formatDuration(value)).toBe(zh);
+  }
+  for (const value of [null, undefined, -1, NaN, Infinity])
+    expect(formatDuration(value)).toBe("—");
 });
 it("preserves structured problem fields and localizes by stable code before status", async () => {
   for (const [code, status, expected] of [

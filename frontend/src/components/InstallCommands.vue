@@ -1,7 +1,7 @@
 <script setup lang="ts">
+import IconButton from "./IconButton.vue";
 import { computed, ref } from "vue";
 import { language, t } from "../i18n";
-import Icon from "./Icon.vue";
 import type { Application } from "../bootstrap";
 const props = defineProps<{ origin: string; application: Application }>();
 const commands = computed(() =>
@@ -50,16 +50,15 @@ async function copy(command: string) {
       <article v-for="item in commands" :key="item.name" class="command">
         <div class="section-heading">
           <h3>{{ item.name }}</h3>
-          <button
+          <IconButton
             v-if="canCopy"
             class="secondary copy-button"
             type="button"
             :disabled="copying"
             @click="copy(item.command)"
-            :aria-label="t('Copy {name} command', { name: item.name })"
-          >
-            <Icon name="copy" :size="16" />{{ t("Copy") }}
-          </button>
+            icon="copy"
+            :label="t('Copy {name} command', { name: item.name })"
+          />
         </div>
         <pre
           tabindex="0"

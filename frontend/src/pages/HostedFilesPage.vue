@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconButton from "../components/IconButton.vue";
 import { computed, onUnmounted, reactive, ref, watch } from "vue";
 import { applicationRecord } from "../directory";
 import { api, bytes } from "../api";
@@ -132,7 +133,9 @@ async function save() {
 async function cancel() {
   const target = `${endpoint.value}/transfers/${transferID}`;
   stop();
-  message.value = t("Transfer cancellation requested. Refreshing saved files.");
+  message.value = t(
+    "Transfer cancellation requested. Refreshing saved files.",
+  );
   try {
     await api(target, {}, undefined, {}, "DELETE");
   } catch {
@@ -306,13 +309,13 @@ onUnmounted(stop);
                     @click="replace(file)"
                   >
                     {{ t("Replace file") }}</button
-                  ><button
+                  ><IconButton
                     class="secondary"
                     :disabled="busy || deleting"
                     @click="deleteID = file.id"
-                  >
-                    {{ t("Delete") }}
-                  </button>
+                    icon="trash"
+                    :label="t('Delete')"
+                  />
                 </div>
                 <div v-if="deleteID === file.id" class="delete-review">
                   <p>

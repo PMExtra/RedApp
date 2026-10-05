@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DisclosureIcon from "./DisclosureIcon.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
 import { api, bytes, type CleanupPreview } from "../api";
 import { appAPI } from "../bootstrap";
@@ -148,11 +149,14 @@ onUnmounted(reset);
         <h3>{{ t("Confirm this preview") }}</h3>
         <p>
           {{
-            t("{count} generations · {size} logical bytes · {active} active", {
-              count: preview.job.Selected?.length || 0,
-              size: bytes(preview.logical_bytes),
-              active: preview.active,
-            })
+            t(
+              "{count} generations · {size} logical bytes · {active} active",
+              {
+                count: preview.job.Selected?.length || 0,
+                size: bytes(preview.logical_bytes),
+                active: preview.active,
+              },
+            )
           }}
         </p>
         <p class="cleanup-reclaimable">
@@ -167,7 +171,7 @@ onUnmounted(reset);
           {{ preview.unknown_versions.join(", ") }}
         </p>
         <details>
-          <summary>{{ t("Selected generations") }}</summary>
+          <summary><DisclosureIcon />{{ t("Selected generations") }}</summary>
           <pre>{{ JSON.stringify(preview.job.Selected, null, 2) }}</pre>
         </details>
         <div class="form-actions">

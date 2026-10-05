@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconButton from "../components/IconButton.vue";
 import AutoRefresh from "../components/AutoRefresh.vue";
 import { computed, reactive, ref } from "vue";
 import { appAPI } from "../bootstrap";
@@ -28,9 +29,13 @@ const page = reactive(
     }}<small v-if="page.loaded">{{
       t("Showing the last successful snapshot.")
     }}</small
-    ><button class="secondary" :disabled="page.loading" @click="page.refresh">
-      {{ t("Retry") }}
-    </button>
+    ><IconButton
+      class="secondary"
+      :disabled="page.loading"
+      @click="page.refresh"
+      icon="refresh"
+      :label="t('Retry')"
+    />
   </div>
   <p v-if="!page.loaded && page.loading" role="status">{{ t("Loading…") }}</p>
   <Events v-if="page.loaded" :events="page.items" />

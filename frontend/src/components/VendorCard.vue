@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconButton from "./IconButton.vue";
 import { ref, watch } from "vue";
 import {
   directoryIcon,
@@ -59,9 +60,12 @@ watch(
     />
     <ul v-else class="directory-apps">
       <li v-if="!vendor.deleted_at" class="add-application">
-        <RouterLink :to="`/admin/vendors/${vendor.id}/apps/new`"
-          ><Icon name="plus" :size="24" />{{ t("Add application") }}</RouterLink
-        >
+        <RouterLink
+          :to="`/admin/vendors/${vendor.id}/apps/new`"
+          :aria-label="t('Add application')"
+          :title="t('Add application')"
+          ><Icon name="plus" :size="24"
+        /></RouterLink>
       </li>
       <li
         v-for="app in vendor.apps"
@@ -93,14 +97,14 @@ watch(
       </li>
     </ul>
     <div class="vendor-actions">
-      <button
+      <IconButton
         v-if="vendor.app_total > 5"
         class="secondary"
         :aria-expanded="expanded"
         @click="expanded = !expanded"
-      >
-        {{ expanded ? t("Collapse") : t("Show all applications") }}
-      </button>
+        icon="chevron"
+        :label="expanded ? t('Collapse') : t('Show all applications')"
+      />
     </div>
   </article>
 </template>

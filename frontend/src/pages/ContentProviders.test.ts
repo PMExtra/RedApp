@@ -287,7 +287,7 @@ it("supports page jumps, invalid input, server clamping and bounded snapshots", 
   shrink = true;
   await wrapper
     .findAll("button")
-    .find((b) => b.text() === "Refresh")!
+    .find((b) => b.attributes("aria-label") === "Refresh")!
     .trigger("click");
   await flushPromises();
   expect(wrapper.text()).toContain("Page 1 of 1");

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import IconButton from "./IconButton.vue";
+import DisclosureIcon from "./DisclosureIcon.vue";
 import SelectMenu from "./SelectMenu.vue";
 import { computed } from "vue";
 import type { SourceEpoch } from "../composables/useSourceEpoch";
@@ -11,10 +13,14 @@ const props = defineProps<{
   disabled?: boolean;
 }>();
 defineEmits<{ "update:modelValue": [string]; reload: [] }>();
-const current = computed(() => props.sources.find((source) => source.current));
+const current = computed(() =>
+  props.sources.find((source) => source.current),
+);
 const selected = computed(() =>
   props.modelValue
-    ? props.sources.find((source) => String(source.epoch) === props.modelValue)
+    ? props.sources.find(
+        (source) => String(source.epoch) === props.modelValue,
+      )
     : current.value,
 );
 function title(source: SourceEpoch) {
@@ -37,7 +43,10 @@ function title(source: SourceEpoch) {
         :disabled="disabled"
         :label="t('Cache source')"
         :options="[
-          { value: '', label: current ? title(current) : t('Current source') },
+          {
+            value: '',
+            label: current ? title(current) : t('Current source'),
+          },
           ...sources
             .filter((item) => !item.current)
             .map((source) => ({
@@ -48,21 +57,21 @@ function title(source: SourceEpoch) {
         @update:model-value="$emit('update:modelValue', $event)"
     /></label>
     <details v-if="selected?.base_urls?.length">
-      <summary>{{ t("Upstream sources") }}</summary>
+      <summary><DisclosureIcon />{{ t("Upstream sources") }}</summary>
       <ol>
         <li v-for="url in selected.base_urls" :key="url">
           <code>{{ url }}</code>
         </li>
       </ol>
     </details>
-    <button
+    <IconButton
       type="button"
       class="secondary"
       :disabled="loading || disabled"
       @click="$emit('reload')"
-    >
-      {{ t("Refresh sources") }}
-    </button>
+      icon="refresh"
+      :label="t('Refresh sources')"
+    />
     <p v-if="loading" role="status">{{ t("Loading…") }}</p>
     <p v-if="error" class="error source-error" role="alert">
       {{ errorText(error) }}

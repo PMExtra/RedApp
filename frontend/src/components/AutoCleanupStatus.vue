@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import IconButton from "./IconButton.vue";
+import DisclosureIcon from "./DisclosureIcon.vue";
 import { computed } from "vue";
 import { bytes } from "../api";
 import { appAPI } from "../bootstrap";
@@ -19,14 +21,14 @@ const {
   <section class="panel auto-cleanup-status">
     <div class="rule-heading">
       <h2>{{ t("Automatic cleanup service") }}</h2>
-      <button
+      <IconButton
         type="button"
         class="secondary"
         :disabled="statusLoading"
         @click="refreshStatus"
-      >
-        {{ t("Refresh") }}
-      </button>
+        icon="refresh"
+        :label="t('Refresh')"
+      />
     </div>
     <p class="muted">
       {{ t("Service-wide last pass; includes all configured applications.") }}
@@ -78,7 +80,7 @@ const {
         }}
       </p>
       <details v-if="status.last_error">
-        <summary>{{ t("Technical details") }}</summary>
+        <summary><DisclosureIcon />{{ t("Technical details") }}</summary>
         <pre>{{ status.last_error }}</pre>
       </details>
     </template>

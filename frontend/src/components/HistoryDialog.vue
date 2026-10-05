@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import IconButton from "./IconButton.vue";
+import DisclosureIcon from "./DisclosureIcon.vue";
 import {
   computed,
   nextTick,
@@ -48,7 +50,9 @@ const hasValues = computed(() =>
     (point) => (mode.value === "delta" ? point.delta : point.value) !== null,
   ),
 );
-const filled = computed(() => points.value.filter((point) => point.count > 0));
+const filled = computed(() =>
+  points.value.filter((point) => point.count > 0),
+);
 const current = computed(() => points.value.at(-1));
 const lines = computed(() =>
   series.value ? historyLines(series.value, mode.value) : [],
@@ -308,9 +312,12 @@ onUnmounted(() => {
     </p>
     <div v-else-if="error" class="error" role="alert">
       {{ errorText(error)
-      }}<button class="secondary" @click="load">
-        {{ t("Retry history") }}
-      </button>
+      }}<IconButton
+        class="secondary"
+        @click="load"
+        icon="refresh"
+        :label="t('Retry history')"
+      />
     </div>
     <template v-else-if="series"
       ><p
@@ -425,7 +432,9 @@ onUnmounted(() => {
             </p>
             <p v-if="selectedPoint.count === 0" class="muted small-text">
               {{
-                t("No observation in this bucket. Missing values are not zero.")
+                t(
+                  "No observation in this bucket. Missing values are not zero.",
+                )
               }}
             </p>
             <p
@@ -433,7 +442,9 @@ onUnmounted(() => {
               class="muted small-text"
             >
               {{
-                t("Increment unknown: no valid adjacent observation interval.")
+                t(
+                  "Increment unknown: no valid adjacent observation interval.",
+                )
               }}
             </p>
           </template>
@@ -474,6 +485,7 @@ onUnmounted(() => {
       </p>
       <details class="history-table">
         <summary>
+          <DisclosureIcon />
           {{
             t("Observation values and coverage ({count} buckets)", {
               count: filled.length,

@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import IconButton from "./IconButton.vue";
+import SortableList from "./SortableList.vue";
 import TemplateReset from "./TemplateReset.vue";
 import SwitchControl from "./SwitchControl.vue";
-import { computed, nextTick, onUnmounted, ref, watch } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import SelectMenu from "./SelectMenu.vue";
 import { api, isCancellation } from "../api";
@@ -71,8 +73,6 @@ const confirmDiscard = useDirtyDraft(dirty);
 const busy = computed(() => loading.value || saving.value || uploading.value);
 const readOnly = computed(() => !!record.value?.deleted_at);
 const languages = ["en", "zh-CN"] as const;
-const sourceList = ref<HTMLElement>();
-let draggedSource: number | undefined;
 let ticket = 0,
   controller: AbortController | undefined;
 function accept(value?: Vendor | ManagedApplication) {
@@ -115,7 +115,6 @@ async function load(confirm = true) {
   uploading.value = false;
   saved.value = false;
   deleteReview.value = false;
-  draggedSource = undefined;
   try {
     const [definitions, response] = await Promise.all([
       props.kind === "app"
@@ -158,7 +157,9 @@ async function load(confirm = true) {
 function changeProvider(value: string) {
   if (!draft.value || !creating.value) return;
   draft.value.provider = value as ProviderKey;
-  const definition = providers.value.find((provider) => provider.key === value);
+  const definition = providers.value.find(
+    (provider) => provider.key === value,
+  );
   draft.value.base_url = definition?.default_base_url || "";
   draft.value.base_urls = [definition?.default_base_url || ""];
   draft.value.source_strategy = value === "http-cache" ? "ordered" : "";
@@ -169,39 +170,6 @@ function changeProvider(value: string) {
       : value === "info" || value === "hosted"
         ? 0
         : 60);
-}
-function moveSource(from: number, to: number, focus = true) {
-  const urls = draft.value?.base_urls;
-  if (
-    !urls ||
-    busy.value ||
-    readOnly.value ||
-    from < 0 ||
-    to < 0 ||
-    from >= urls.length ||
-    to >= urls.length ||
-    from === to
-  )
-    return;
-  const [url] = urls.splice(from, 1);
-  urls.splice(to, 0, url!);
-  if (focus)
-    void nextTick(() =>
-      sourceList.value
-        ?.querySelectorAll<HTMLElement>("[data-source-row]")
-        [to]?.querySelector<HTMLInputElement>("input")
-        ?.focus(),
-    );
-}
-function beginDrag(index: number, event: DragEvent) {
-  if (busy.value || readOnly.value) return;
-  draggedSource = index;
-  event.dataTransfer?.setData("text/plain", String(index));
-  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-}
-function dropSource(index: number) {
-  if (draggedSource !== undefined) moveSource(draggedSource, index);
-  draggedSource = undefined;
 }
 async function synchronize() {
   await refreshApplication();
@@ -437,14 +405,14 @@ onUnmounted(() => {
               name="icon"
               accept="image/jpeg,image/png,image/svg+xml,.jpg,.jpeg,.png,.svg"
               @change="upload" /></label
-          ><button
+          ><IconButton
             v-if="draft.icon"
             type="button"
             class="secondary"
             @click="draft.icon = ''"
-          >
-            {{ t("Remove icon") }}
-          </button>
+            icon="close"
+            :label="t('Remove icon')"
+          />
         </div>
         <p v-if="uploading" role="status">{{ t("Uploading…") }}</p>
         <template v-if="kind === 'app'">
@@ -483,70 +451,54 @@ onUnmounted(() => {
               <p class="muted small-text">
                 {{
                   t(
-                    "Add 1 to 16 HTTP or HTTPS directory URLs. Drag to reorder, or use Move up and Move down. Duplicate URLs are rejected.",
+                    "Add 1 to 16 HTTP or HTTPS directory URLs. Drag the left handle to reorder. Duplicate URLs are rejected.",
                   )
                 }}
               </p>
-              <ol ref="sourceList" class="source-url-list">
-                <li
-                  v-for="(_url, index) in draft.base_urls"
-                  :key="index"
-                  data-source-row
-                  @dragover.prevent
-                  @drop.prevent="dropSource(index)"
-                >
-                  <label
-                    >{{ t("Source URL {number}", { number: index + 1 })
-                    }}<input
-                      v-model="draft.base_urls[index]"
-                      :name="index === 0 ? 'base_url' : `base_url_${index + 1}`"
-                      type="url"
-                      required
-                      maxlength="4096"
-                      spellcheck="false"
-                  /></label>
-                  <div class="form-actions">
-                    <button
-                      type="button"
-                      class="secondary source-drag"
-                      :draggable="!busy && !readOnly"
-                      @dragstart="beginDrag(index, $event)"
-                      @dragend="draggedSource = undefined"
-                    >
-                      {{ t("Drag to reorder") }}</button
-                    ><button
-                      type="button"
+              <SortableList
+                v-model="draft.base_urls"
+                class="source-url-list"
+                :label="t('Upstream sources')"
+                :item-label="
+                  (_url, index) =>
+                    t('Source URL {number}', { number: index + 1 })
+                "
+                :disabled="busy || readOnly"
+              >
+                <template #default="{ index }">
+                  <div class="ordered-inline-row">
+                    <label
+                      >{{ t("Source URL {number}", { number: index + 1 })
+                      }}<input
+                        v-model="draft.base_urls[index]"
+                        :name="
+                          index === 0 ? 'base_url' : `base_url_${index + 1}`
+                        "
+                        type="url"
+                        required
+                        maxlength="4096"
+                        spellcheck="false"
+                    /></label>
+                    <IconButton
+                      icon="close"
                       class="secondary"
-                      :disabled="index === 0"
-                      @click="moveSource(index, index - 1)"
-                    >
-                      {{ t("Move up") }}</button
-                    ><button
-                      type="button"
-                      class="secondary"
-                      :disabled="index === draft.base_urls.length - 1"
-                      @click="moveSource(index, index + 1)"
-                    >
-                      {{ t("Move down") }}</button
-                    ><button
-                      type="button"
-                      class="secondary"
+                      :label="`${t('Remove source')}: ${index + 1}`"
                       :disabled="draft.base_urls.length === 1"
                       @click="draft.base_urls.splice(index, 1)"
-                    >
-                      {{ t("Remove source") }}
-                    </button>
+                    />
                   </div>
-                </li>
-              </ol>
-              <button
+                </template>
+              </SortableList>
+              <IconButton
                 type="button"
                 class="secondary"
                 :disabled="draft.base_urls.length >= 16"
-                @click="draft.base_urls.length < 16 && draft.base_urls.push('')"
-              >
-                {{ t("Add source") }}
-              </button>
+                @click="
+                  draft.base_urls.length < 16 && draft.base_urls.push('')
+                "
+                icon="plus"
+                :label="t('Add source')"
+              />
             </div>
             <label
               >{{ t("Source selection")
@@ -620,15 +572,15 @@ onUnmounted(() => {
         <button v-if="!readOnly" :disabled="busy || !draft">
           {{ saving ? t("Saving…") : t("Save changes") }}
         </button>
-        <button
+        <IconButton
           type="button"
           class="secondary"
           :disabled="busy"
           @click="load()"
-        >
-          {{ t("Reload") }}
-        </button>
-        <button
+          icon="refresh"
+          :label="t('Reload')"
+        />
+        <IconButton
           v-if="
             record && !('builtin_template' in record && record.builtin_template)
           "
@@ -636,9 +588,9 @@ onUnmounted(() => {
           class="secondary"
           :disabled="busy"
           @click="deleteReview = !deleteReview"
-        >
-          {{ t("Delete") }}
-        </button>
+          icon="trash"
+          :label="t('Delete')"
+        />
       </div>
     </form>
     <div

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import IconButton from "./IconButton.vue";
 import { inject } from "vue";
 import { routerKey } from "vue-router";
 const router = inject(routerKey, undefined);
@@ -49,13 +50,13 @@ const failed = bootstrapError;
     <div class="shell-content">
       <p v-if="failed" class="bootstrap-warning" role="status">
         {{ t("Site information unavailable.") }}
-        <button
+        <IconButton
           class="secondary"
           :disabled="bootstrapLoading"
           @click="loadBootstrap"
-        >
-          {{ t("Retry") }}
-        </button>
+          icon="refresh"
+          :label="t('Retry')"
+        />
       </p>
       <slot />
     </div>
