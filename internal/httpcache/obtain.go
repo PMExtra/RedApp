@@ -30,6 +30,20 @@ func (s *Service) sharedFetch(ctx context.Context, entry application.Entry, path
 	s.mu.Lock()
 	current := s.flights[key]
 	if current == nil {
+		// A cold lookup may predate a flight that has already published and
+		// exited. Check while holding the flight lock so that caller retries
+		// freshness/policy against current storage instead of fetching twice.
+		if old == nil {
+			var exists bool
+			err := s.db.DB.QueryRow(`SELECT EXISTS(SELECT 1 FROM http_cache_generations WHERE storage_id=? AND path=? AND is_current=1)`, entry.StorageID(), path).Scan(&exists)
+			if err != nil || exists {
+				s.mu.Unlock()
+				if err != nil {
+					return fetchResult{}, err
+				}
+				return fetchResult{}, ErrFetchAgain
+			}
+		}
 		current = &flight{done: make(chan struct{})}
 		s.flights[key] = current
 		s.mu.Unlock()

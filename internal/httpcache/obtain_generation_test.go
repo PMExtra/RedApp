@@ -292,3 +292,31 @@ func TestRefreshSharesOrdinaryGenerationValidationResult(t *testing.T) {
 		})
 	}
 }
+
+func TestColdLookupRetriesAfterAnotherFlightPublishes(t *testing.T) {
+	var calls atomic.Int64
+	f := newFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		io.WriteString(w, "body")
+	}), 300)
+	// A caller observes a miss, then pauses before joining the shared fetch.
+	old, err := f.s.lookup(f.entry.StorageID(), "file")
+	if err != nil || old != nil {
+		t.Fatal(old, err)
+	}
+	// Another caller completes and removes its flight before the first resumes.
+	if _, err = f.serve(t, "GET", http.Header{}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := f.s.sharedFetch(context.Background(), f.entry, "file", old)
+	if result.row != nil {
+		f.s.unpin(result.row.GenerationID)
+	}
+	if !errors.Is(err, ErrFetchAgain) || calls.Load() != 1 {
+		t.Fatal("late cold caller repeated an already published fetch", calls.Load(), err)
+	}
+	response, err := f.serve(t, "GET", http.Header{})
+	if err != nil || response.Body.String() != "body" || calls.Load() != 1 {
+		t.Fatal("retry did not reuse the current cache", calls.Load(), err)
+	}
+}
