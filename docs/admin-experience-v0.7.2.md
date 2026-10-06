@@ -94,3 +94,5 @@ Markdown 代码复制成功后，按钮显示 check 图标与“已复制 / Copi
 Codex 与 Claude 的中英文默认说明分别在命令前提示 Linux/macOS 使用 Shell、Windows 使用 PowerShell。仅精确匹配历史默认内容的语言字段迁移，自定义内容与显式空值保留。详情页移除安装器应用的系统“Installation instructions / 安装说明”眉题，不删除说明正文中的自定义标题。
 
 应用卡片统一为左侧图标、右侧应用标题及其下方厂商；首页、目录和备用列表复用相同组件。排序柄统一使用上下双向箭头、中间横杠的专用图标，无点击排序动作，保留拖拽及现有键盘无障碍操作。CLI/DOM 回归不构成 GUI 视觉验收；HTTP Range、gzip/br 与 0.8.0 不属于本次修改。
+
+0.7.6 的指标名称统一为“回源流量 / Upstream traffic”“回源速率 / Upstream rate”“分发流量 / Downstream traffic”“分发速率 / Downstream rate”，界面不附加压缩或载荷说明；指标键、计数计算与历史数据不变。HTTP gzip/br 支持已在[项目规划](roadmap.md#backlog--not-planned)记录为 Not planned，保留 identity 回源。

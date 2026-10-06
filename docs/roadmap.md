@@ -11,3 +11,10 @@
 ## v0.5.0 — Claude Code CLI
 
 已实现本地双应用模块、Claude 签名清单与原生制品授权、共享下载引擎的应用隔离、SQLite 兼容迁移、中英文安装页和管理筛选。安装器保留官方原文及最小 patch，跳过二阶段 `claude install`，通过受管入口设置 `DISABLE_UPDATES=1`，不修改官方二进制。每日官方脚本检测已启用，首次真实检测四份脚本均未变化，未创建 PR；有变化时的容器与真实 PR 写权限仍待验证。真实制品运行、原生平台、许可与发布门禁仍独立保留，见 [v0.5.0 说明](claude-code-v0.5.0.md)及[验收记录](acceptance.md#v050-claude-code-与每日安装器维护)。
+
+
+## Backlog — Not planned
+
+### HTTP gzip/br 压缩支持
+
+状态：**Not planned**。项目传输的大多是已压缩的安装包，再增加 HTTP 压缩的收益有限，却会增加缓存表示、验证器、Range 续传与流量计数的复杂性。保留现有 identity 回源行为，不实现 gzip/br 支持。界面采用简洁的回源流量、回源速率、分发流量、分发速率名称；技术统计定义继续见[指标口径](metrics-history.md#制品流量与压缩口径)。
