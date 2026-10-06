@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"bytes"
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/PMExtra/RedApp/installers"
 	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/internal/apps/builtin"
 	"github.com/PMExtra/RedApp/internal/auth"
 	"github.com/PMExtra/RedApp/internal/catalog"
 	"github.com/PMExtra/RedApp/internal/config"
@@ -191,7 +193,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasPrefix(path, "/assets/") {
-		if r.Method != "GET" && !(r.Method == "HEAD" && strings.HasPrefix(path, "/assets/icons/")) {
+		if r.Method != "GET" && !(r.Method == "HEAD" && (strings.HasPrefix(path, "/assets/icons/") || strings.HasPrefix(path, "/assets/builtin/"))) {
 			fail(w, 405, "Method not allowed")
 			return
 		}
@@ -383,6 +385,12 @@ func (s *Server) page(w http.ResponseWriter, status int) {
 	w.Write(body)
 }
 func (s *Server) asset(w http.ResponseWriter, r *http.Request) {
+	if asset, ok := builtin.BrandAsset(r.URL.Path); ok {
+		w.Header().Set("Content-Type", asset.ContentType)
+		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
+		http.ServeContent(w, r, "icon.svg", time.Time{}, bytes.NewReader(asset.Body))
+		return
+	}
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	name := strings.TrimPrefix(path, "assets/")
 	if strings.Contains(name, "/") || (filepath.Ext(name) != ".js" && filepath.Ext(name) != ".css") {

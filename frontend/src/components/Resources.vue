@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import RelativeTime from "./RelativeTime.vue";
+import Icon from "./Icon.vue";
 import IconButton from "./IconButton.vue";
 import DisclosureIcon from "./DisclosureIcon.vue";
 import { computed, reactive, ref, watch } from "vue";
@@ -44,7 +46,7 @@ const resources = reactive(
       <div class="section-heading">
         <h2>{{ t("Versions") }}</h2>
         <button
-          class="secondary"
+          class="secondary all-versions"
           :aria-pressed="!version"
           @click="version = ''"
         >
@@ -68,23 +70,19 @@ const resources = reactive(
         {{ t("Loading…") }}
       </p>
       <div class="version-list">
-        <article v-for="item in versions.items" :key="item.version">
-          <button
-            class="version-button secondary"
-            :aria-pressed="version === item.version"
-            @click="version = version === item.version ? '' : item.version"
-          >
-            {{ item.version }}
-          </button>
-          <div>
-            <span>{{ t("First seen") }} {{ localDate(item.first_seen) }}</span
-            ><small class="muted">{{
-              t("{count} artifact requests", {
-                count: item.requests,
-              })
-            }}</small>
-          </div>
-        </article>
+        <button
+          v-for="item in versions.items" :key="item.version"
+          type="button" class="version-button"
+          :aria-pressed="version === item.version"
+          :title="localDate(item.first_seen)"
+          @click="version = version === item.version ? '' : item.version"
+        >
+          <span class="version-row-heading"><strong>{{ item.version }}</strong><Icon v-if="version === item.version" name="check" :size="18" /></span>
+          <span class="version-row-meta">
+            <RelativeTime :value="item.first_seen" :focusable="false" />
+            <span>{{ t("{count} artifact requests", { count: item.requests }) }}</span>
+          </span>
+        </button>
         <p v-if="versions.loaded && !versions.items.length" class="empty">
           {{
             t("No versions discovered yet. Downloads are fetched on demand.")
@@ -92,6 +90,7 @@ const resources = reactive(
         </p>
       </div>
       <PageNavigation
+        compact
         :label="t('Version pages')"
         :page="versions.page"
         :total="versions.total"

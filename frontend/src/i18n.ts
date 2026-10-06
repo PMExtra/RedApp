@@ -47,6 +47,12 @@ watch(
   { immediate: true, flush: "sync" },
 );
 export const messages = {
+  "Just now": "刚刚",
+  "Discovered {time}": "发现于{time}",
+  "Discovery time unknown": "发现时间未知",
+  "Latest known version": "已知最新版本",
+  "Discovered": "发现于",
+  "Version not known yet": "暂无已知版本",
   "Deletion is not complete. This application is blocked while its tasks stop. Retry deletion; restarting also resumes it.":
     "删除尚未完成。此应用已阻止新任务，正在等待现有任务退出。可重试删除；重启服务也会继续处理。",
   "Unexpected error. Reload and try again.": "发生意外错误，请重新加载后重试。",

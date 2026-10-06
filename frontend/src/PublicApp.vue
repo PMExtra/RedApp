@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ApplicationVersion from "./components/ApplicationVersion.vue";
 import { applicationVendorName } from "./vendorName";
 import PublicCards from "./components/PublicCards.vue";
 import IconButton from "./components/IconButton.vue";
@@ -74,6 +75,7 @@ watchEffect(() => {
         }}</span>
         <h1>{{ selected.name[language] }}</h1>
         <p class="public-lead">{{ selected.summary[language] }}</p>
+        <ApplicationVersion :app="selected" />
       </div>
     </div>
     <section

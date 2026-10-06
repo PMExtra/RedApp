@@ -148,7 +148,7 @@ func validatePresentation(name, description LocalizedText, icon string) error {
 			return fmt.Errorf("%w: description is too long or contains NUL", ErrInvalidDirectory)
 		}
 	}
-	if icon != "" && icon != "/openai/codex/icon.svg" && !iconPath.MatchString(icon) {
+	if icon != "" && !builtinTemplateIcon(icon) && !iconPath.MatchString(icon) {
 		return fmt.Errorf("%w: icon must reference a stored image or reviewed seed asset", ErrInvalidDirectory)
 	}
 	return nil
@@ -686,4 +686,14 @@ func (s *Store) SourceActive(storageID string) (bool, error) {
 		return false, nil
 	}
 	return err == nil, err
+}
+
+// Only icons declared by the compiled templates may bypass uploaded-image paths.
+func builtinTemplateIcon(path string) bool {
+	for _, template := range EntityTemplates() {
+		if path != "" && (path == template.Vendor.Icon || path == template.Application.Icon) {
+			return true
+		}
+	}
+	return false
 }

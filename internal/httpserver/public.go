@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/config"
@@ -41,6 +42,33 @@ func (s *Server) publicApplication(e application.Entry, origin string) (map[stri
 	}
 	definition, _ := application.ProviderDefinition(e.Provider)
 	item := map[string]any{"id": d.ID, "name": d.Name, "publisher": d.Publisher, "vendor": map[string]any{"id": e.VendorID, "name": e.VendorName, "description": e.VendorDescription, "icon": e.VendorIcon}, "summary": d.Summary, "origin": root, "detail_url": "/" + d.ID, "distribution_url": root, "icon": icon, "channels": d.Channels, "installers": publicInstallers(d.Installers), "update_policy": d.UpdatePolicy, "provider": e.Provider, "capabilities": definition.Capabilities, "instructions": usage.LocalizedText}
+	if definition.Capabilities.Versions && e.Protocol != nil {
+		versions, err := s.DB.VersionsFor(e.StorageID())
+		if err != nil {
+			return nil, err
+		}
+		var latest string
+		for version := range versions {
+			if _, err := e.Protocol.ValidateVersion(version); err != nil {
+				continue
+			}
+			if latest == "" {
+				latest = version
+				continue
+			}
+			if order, err := e.Protocol.CompareVersions(version, latest); err == nil && (order > 0 || order == 0 && version < latest) {
+				latest = version
+			}
+		}
+		item["latest_known_version"] = nil
+		if latest != "" {
+			var discovered *time.Time
+			if at, err := time.Parse(time.RFC3339, versions[latest]); err == nil && at.Unix() > 0 {
+				discovered = &at
+			}
+			item["latest_known_version"] = map[string]any{"version": latest, "first_seen": discovered}
+		}
+	}
 	if !definition.Capabilities.Files {
 		delete(item, "distribution_url")
 	}

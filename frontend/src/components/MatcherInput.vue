@@ -144,7 +144,7 @@ onUnmounted(invalidate);
       }}
     </p>
     <details class="matcher-test">
-      <summary><DisclosureIcon />{{ t("Test a sample path") }}</summary>
+      <summary class="section-heading"><DisclosureIcon />{{ t("Test a sample path") }}</summary>
       <label
         >{{ t("Sample path")
         }}<input v-model="sample" name="sample_path" spellcheck="false"

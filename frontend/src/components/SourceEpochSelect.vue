@@ -57,7 +57,7 @@ function title(source: SourceEpoch) {
         @update:model-value="$emit('update:modelValue', $event)"
     /></label>
     <details v-if="selected?.base_urls?.length">
-      <summary><DisclosureIcon />{{ t("Upstream sources") }}</summary>
+      <summary class="section-heading"><DisclosureIcon />{{ t("Upstream sources") }}</summary>
       <ol>
         <li v-for="url in selected.base_urls" :key="url">
           <code>{{ url }}</code>

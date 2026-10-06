@@ -19,6 +19,12 @@ import (
 //go:embed manifest.json
 var manifest []byte
 
+//go:embed assets/anthropic.svg
+var claudeIcon []byte
+
+//go:embed assets/anthropic-light.svg
+var anthropicIcon []byte
+
 func New() (*application.Registry, error) {
 	descriptors, err := reviewedDescriptors()
 	if err != nil {
@@ -105,6 +111,12 @@ func releaseEntry(descriptor application.Descriptor, client *distributor.Client)
 func BrandAsset(path string) (application.Representation, bool) {
 	if path == "/openai/codex/icon.svg" {
 		return application.Representation{ContentType: "image/svg+xml", Body: []byte(codex.OpenAISymbol())}, true
+	}
+	switch path {
+	case "/anthropic/claude-code/icon.svg":
+		return application.Representation{ContentType: "image/svg+xml", Body: claudeIcon}, true
+	case "/assets/builtin/anthropic.svg":
+		return application.Representation{ContentType: "image/svg+xml", Body: anthropicIcon}, true
 	}
 	return application.Representation{}, false
 }

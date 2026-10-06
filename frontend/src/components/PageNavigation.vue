@@ -4,6 +4,7 @@ import { ref, watch } from "vue";
 import { t } from "../i18n";
 const props = defineProps<{
   label: string;
+  compact?: boolean;
   page: number;
   previous: boolean;
   next: boolean;
@@ -36,7 +37,7 @@ function jump() {
 }
 </script>
 <template>
-  <nav class="page-navigation" :aria-label="label">
+  <nav class="page-navigation" :class="{ 'page-navigation-compact': compact }" :aria-label="label">
     <span class="pagination-summary"
       >{{
         total !== undefined ? t("{count} items", { count: total }) : label

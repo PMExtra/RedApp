@@ -18,3 +18,5 @@ Codex 固定安装器的 LICENSE/NOTICE 在 `installers/openai/codex/upstream/`�
 OpenAI 品牌标志由用户提供，来源指向 Wikimedia Commons；原文、摘要和来源页许可/商标标签见 [模块素材说明](../internal/apps/codex/assets/README.md)。该标志不是 Codex 专属图标，也不属于 RedApp 原创代码的 MIT 授权范围。
 
 Claude Code 官方安装器、公钥与官方仓库许可说明独立保存在 `installers/anthropic/claude-code/upstream/`，来源与摘要见该模块 `provenance.json`。其 [LICENSE.md](../installers/anthropic/claude-code/upstream/LICENSE.md) 声明 Anthropic 保留权利并适用商业条款，不属于 RedApp 原创代码的 MIT 授权。服务提供 `/anthropic/claude-code/LICENSE.md`。尚未取得/验证真实二进制；技术分发能力不等于公开再分发授权，额外再分发授权尚未核实，使用或继续分发第三方材料时须自行核对适用条款。
+
+用户指定的 Anthropic 厂商与 Claude Code 应用 SVG 来自 Dashboard Icons，来源、摘要及使用边界见[素材说明](../internal/apps/builtin/assets/README.md)，上游仓库许可原文见 [dashboard-icons.LICENSE](dashboard-icons.LICENSE)。通过编译内置固定资源提供，不依赖运行时 CDN。

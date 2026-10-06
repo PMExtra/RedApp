@@ -318,17 +318,38 @@ onUnmounted(() => {
 </script>
 <template>
   <section class="panel directory-editor" :data-kind="kind">
-    <h2>
+    <div class="section-heading entity-editor-heading">
+      <h2>
+        {{
+          creating
+            ? kind === "vendor"
+              ? t("Add vendor")
+              : t("Add application")
+            : kind === "vendor"
+              ? t("Vendor details")
+              : t("Application details")
+        }}
+      </h2>
+      <SwitchControl
+        v-if="draft"
+        v-model="draft.enabled"
+        name="enabled"
+        :label="t('Enabled')"
+        :disabled="busy || readOnly || loading"
+      />
+    </div>
+    <p class="muted small-text">
       {{
-        creating
-          ? kind === "vendor"
-            ? t("Add vendor")
-            : t("Add application")
-          : kind === "vendor"
-            ? t("Vendor details")
-            : t("Application details")
+        kind === "vendor"
+          ? t(
+              "Disabling a vendor hides all its applications. Stored data is retained.",
+            )
+          : t(
+              "Disabled applications remain manageable here. Stored data is retained.",
+            )
       }}
-    </h2>
+    </p>
+
     <p v-if="!creating" class="muted">
       {{ t("IDs, vendor and provider are fixed after creation.") }}
     </p>
@@ -550,23 +571,6 @@ onUnmounted(() => {
             </p></template
           >
         </template>
-        <SwitchControl
-          v-model="draft.enabled"
-          name="enabled"
-          :label="t('Enabled')"
-          :disabled="busy"
-        />
-        <p class="muted small-text">
-          {{
-            kind === "vendor"
-              ? t(
-                  "Disabling a vendor hides all its applications. Stored data is retained.",
-                )
-              : t(
-                  "Disabled applications remain manageable here. Stored data is retained.",
-                )
-          }}
-        </p>
       </fieldset>
       <div class="form-actions">
         <button v-if="!readOnly" :disabled="busy || !draft">

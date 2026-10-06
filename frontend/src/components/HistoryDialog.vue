@@ -484,7 +484,7 @@ onUnmounted(() => {
         >
       </p>
       <details class="history-table">
-        <summary>
+        <summary class="section-heading">
           <DisclosureIcon />
           {{
             t("Observation values and coverage ({count} buckets)", {

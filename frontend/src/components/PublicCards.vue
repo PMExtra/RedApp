@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ApplicationVersion from "./ApplicationVersion.vue";
 import { applicationVendorName } from "../vendorName";
 import { applicationCapabilities, type Application } from "../bootstrap";
 import { language, t } from "../i18n";
@@ -16,19 +17,21 @@ defineProps<{
       :to="`/${app.id}`"
       class="application-card"
       ><div class="application-card-brand">
-        <img
+        <span class="application-card-icon"><img
           v-if="app.icon"
           :src="app.icon"
           alt=""
           width="40"
           height="40"
-        /><Icon v-else name="box" :size="40" />
+        /><Icon v-else name="box" :size="36" /></span>
         <div class="application-card-heading">
           <h2>{{ app.name[language] }}</h2>
           <span class="app-publisher">{{ applicationVendorName(app) }}</span>
         </div>
       </div>
       <p>{{ app.summary[language] }}</p>
+      <div v-if="applicationCapabilities(app).versions || app.download_clients !== undefined || showAction" class="application-card-footer">
+      <ApplicationVersion :app="app" />
       <span v-if="app.download_clients !== undefined" class="ranking-count">{{
         t("About {count} download clients", { count: app.download_clients })
       }}</span>
@@ -38,7 +41,7 @@ defineProps<{
           : app.provider === "info"
             ? t("Usage instructions")
             : t("Download files")
-      }}<Icon name="arrow" /></span></RouterLink
+      }}<Icon name="arrow" /></span></div></RouterLink
     >
   </div>
 </template>

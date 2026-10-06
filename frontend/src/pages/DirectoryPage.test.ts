@@ -152,6 +152,19 @@ it("creates a bilingual vendor and application with explicit provider defaults a
   });
   vi.stubGlobal("fetch", fetch);
   const { wrapper, router } = await mountPage("/admin/vendors/new");
+  async function checkHeaderSwitch() {
+    const editor = wrapper.get(".directory-editor");
+    expect(editor.findAll('[name="enabled"]')).toHaveLength(1);
+    const toggle = editor.get('.entity-editor-heading [role="switch"]');
+    const initial = toggle.attributes("aria-checked");
+    const calls = fetch.mock.calls.length;
+    await toggle.trigger("click");
+    expect(toggle.attributes("aria-checked")).not.toBe(initial);
+    expect(fetch.mock.calls.length).toBe(calls);
+    await toggle.trigger("click");
+    expect(toggle.attributes("aria-checked")).toBe(initial);
+  }
+  await checkHeaderSwitch();
   await wrapper.get('[name="id"]').setValue("acme");
   await wrapper.get('[name="name-en"]').setValue("Acme");
   await wrapper.get('[name="name-zh-CN"]').setValue("示例厂商");
@@ -179,6 +192,7 @@ it("creates a bilingual vendor and application with explicit provider defaults a
   expect(wrapper.get('[name="id"]').attributes("disabled")).toBeDefined();
   await router.push("/admin/vendors/acme/apps/new");
   await flushPromises();
+  await checkHeaderSwitch();
   expect(wrapper.find('[name="base_url"]').exists()).toBe(false);
   async function selectProvider(name: string) {
     await wrapper.get('[aria-label="Provider"]').trigger("click");

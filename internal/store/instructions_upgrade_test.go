@@ -6,9 +6,14 @@ import (
 	"testing"
 )
 
-func TestV075InstructionHintsPreserveCustomAndEmptyLocales(t *testing.T) {
+func TestInstructionHintsPreserveCustomAndEmptyLocales(t *testing.T) {
+	for _, snapshot := range [][]byte{instructionsV075, instructionsV076} {
+		testInstructionHintsMigration(t, snapshot)
+	}
+}
+func testInstructionHintsMigration(t *testing.T, snapshot []byte) {
 	var previous []EntityTemplate
-	if err := json.Unmarshal(instructionsV075, &previous); err != nil {
+	if err := json.Unmarshal(snapshot, &previous); err != nil {
 		t.Fatal(err)
 	}
 	for _, template := range previous {

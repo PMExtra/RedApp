@@ -141,7 +141,8 @@ func normalizedApplication(in store.ApplicationInput) (store.ApplicationInput, e
 }
 
 func (s *Server) validateDirectoryIcon(path string) error {
-	if path == "" || path == "/openai/codex/icon.svg" {
+	_, builtinIcon := builtin.BrandAsset(path)
+	if path == "" || builtinIcon {
 		return nil
 	}
 	if s.Icons == nil {

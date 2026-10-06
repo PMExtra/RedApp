@@ -9,6 +9,7 @@ export interface Application {
   id: string;
   name: LocalizedText;
   publisher: string;
+  latest_known_version?: { version: string; first_seen: string | null } | null;
   vendor?: { id: string; name: LocalizedText; description?: LocalizedText; icon?: string };
   summary: LocalizedText;
   instructions?: LocalizedText;
