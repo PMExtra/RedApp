@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EntityIcon from "./EntityIcon.vue";
 import IconButton from "./IconButton.vue";
 import { computed, reactive } from "vue";
 import { useNumberedCollection } from "../composables/useNumberedCollection";
@@ -50,13 +51,7 @@ const list = reactive(
       >
         <RouterLink
           :to="applicationPath(app, app.deleted_at ? 'settings' : undefined)"
-          ><img
-            v-if="app.icon"
-            :src="directoryIcon(app.icon)"
-            alt=""
-            width="24"
-            height="24"
-          /><Icon v-else name="box" :size="32" /><span>{{
+          ><EntityIcon :src="directoryIcon(app.icon)" size="tile" /><span>{{
             app.name[language]
           }}</span></RouterLink
         >

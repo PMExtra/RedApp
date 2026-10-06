@@ -10,7 +10,7 @@
         "en": "",
         "zh-CN": ""
       },
-      "icon": "",
+      "icon": "/assets/builtin/openai.svg",
       "enabled": false
     },
     "application": {

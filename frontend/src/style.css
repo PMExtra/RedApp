@@ -51,10 +51,7 @@
 .directory-heading h2 {
   margin-bottom: 0.1rem;
 }
-.directory-heading img,
-.icon-field img {
-  object-fit: contain;
-}
+
 .directory-apps {
   padding: 0;
   list-style: none;
@@ -1403,10 +1400,7 @@ dialog::backdrop {
   background: #fff;
   flex-shrink: 0;
 }
-.application-logo img {
-  display: block;
-  object-fit: contain;
-}
+
 .application-card-brand {
   display: flex;
   align-items: center;
@@ -1424,7 +1418,7 @@ dialog::backdrop {
   border-radius: 12px;
   background: #f8faf9;
 }
-.application-card-icon img { width: 36px; height: 36px; object-fit: contain; }
+
 .application-card .app-publisher { font-size: 14px; }
 .application-card-footer { display: grid; gap: .65rem; padding-top: .85rem; border-top: 1px solid var(--line); }
 .application-card-footer .card-action { font-size: .8rem; }
@@ -1447,10 +1441,7 @@ dialog::backdrop {
     align-items: flex-start;
     gap: 0.8rem;
   }
-  .application-identity .application-logo img {
-    width: 36px;
-    height: 36px;
-  }
+
   .application-identity .application-logo {
     padding: 8px;
   }
@@ -1712,10 +1703,7 @@ textarea {
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.directory-apps img {
-  object-fit: contain;
-  flex: none;
-}
+
 .vendor-actions {
   display: flex;
   gap: 1rem;
@@ -1743,9 +1731,7 @@ textarea {
   gap: 1rem;
   min-width: 0;
 }
-.application-header-identity img {
-  object-fit: contain;
-}
+
 .application-header h1 {
   margin: 0;
   overflow-wrap: anywhere;
@@ -2024,11 +2010,7 @@ button.switch-control {
   width: 100%;
   overflow-wrap: anywhere;
 }
-.directory-apps li img {
-  width: 32px;
-  height: 32px;
-  object-fit: contain;
-}
+
 .directory-apps .add-application {
   border-style: dashed;
   justify-content: center;
@@ -2041,8 +2023,8 @@ button.switch-control {
 .directory-apps .is-disabled a {
   color: inherit;
 }
-.vendor-card.is-disabled > .directory-heading img,
-.directory-apps .is-disabled img {
+.vendor-card.is-disabled > .directory-heading .entity-icon,
+.directory-apps .is-disabled .entity-icon {
   filter: grayscale(1) brightness(0.7);
   opacity: 0.7;
 }
@@ -2242,11 +2224,13 @@ details[open] > summary > .disclosure-icon svg {
   justify-content: center;
   flex-shrink: 0;
 }
-.entity-icon img {
+.entity-icon img,
+.entity-icon svg {
   display: block;
   width: 100%;
   height: 100%;
   object-fit: contain;
+  object-position: center;
 }
 .search-suggestion-text {
   display: grid;
@@ -2322,3 +2306,21 @@ details[open] > summary > .disclosure-icon svg {
   .public-app-identity { grid-template-columns: auto minmax(0, 1fr); gap: .6rem 1rem; }
   .public-app-identity .application-version { grid-column: 2; margin: 0; }
 }
+
+.entity-basics { display:flex; flex-wrap:wrap; align-items:start; gap:1rem 1.5rem; }
+.entity-id, .entity-provider { flex:0 1 18rem; min-width:0; max-width:100%; }
+.entity-basics .icon-field { align-self:center; gap:.6rem; }
+.entity-basics .small-text { margin:.45rem 0 0; max-width:28rem; }
+.entity-basics .provider-description { flex-basis:100%; }
+.directory-editor .site-locale { gap:.75rem; }
+.directory-editor .site-locale legend { margin-bottom:.6rem; }
+.entity-save-actions { margin-top:1.25rem; padding-top:1rem; border-top:1px solid var(--line); align-items:center; }
+.entity-save-actions .delete-action { margin-inline-start:auto; }
+.directory-editor > .template-reset, .vendor-application-actions { margin-top:1.5rem; }
+.vendor-application-actions { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:.75rem; padding-top:1rem; border-top:1px solid var(--line); }
+.vendor-application-actions h3 { margin:0; }
+.file-picker { display:flex; align-items:center; flex-wrap:wrap; gap:.6rem; min-width:0; }
+.file-picker-name { overflow-wrap:anywhere; }
+form > .form-actions { margin-top:1rem; }
+
+.entity-enabled-control { display: flex; flex-direction: column; align-items: flex-end; gap: .25rem; }

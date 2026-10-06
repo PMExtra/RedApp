@@ -302,6 +302,11 @@ func TestV072UpgradePreservesV5AndReservedAllIsReadOnly(t *testing.T) {
 				t.Fatal(err)
 			}
 			h := newDirectoryHarnessWithStore(t, dir, old)
+			// Keep this full-snapshot fixture customized; the separate icon migration
+			// regression covers the sole allowed change to legacy empty OpenAI icons.
+			if _, err = db.Exec(`UPDATE vendors SET icon='/openai/codex/icon.svg' WHERE id='openai'`); err != nil {
+				t.Fatal(err)
+			}
 			var schemaVersion int
 			if err = db.QueryRow(`SELECT version FROM schema_version`).Scan(&schemaVersion); err != nil || schemaVersion != 5 {
 				t.Fatal("fixture upgraded before the operation under test", schemaVersion, err)

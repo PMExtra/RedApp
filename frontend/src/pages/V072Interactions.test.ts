@@ -255,6 +255,13 @@ it("starts template reset unselected, reviews selected differences and preserves
     props: { application: current.key },
   });
   await flushPromises();
+  expect(wrapper.element.tagName).toBe("DETAILS");
+  expect(wrapper.attributes("open")).toBeUndefined();
+  await wrapper.get("summary").trigger("click");
+  const callsBeforeSelection = fetch.mock.calls.length;
+  await wrapper.get('[aria-label="Enabled"]').trigger("click");
+  expect(fetch.mock.calls.length).toBe(callsBeforeSelection);
+  await wrapper.get('[aria-label="Enabled"]').trigger("click");
   expect(wrapper.findAll("[role=switch][aria-checked=true]")).toHaveLength(0);
   expect(
     wrapper.find("button:not([role=switch])").attributes("disabled"),

@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import Icon from "./Icon.vue";
-const props = withDefaults(defineProps<{ src?: string; size?: number }>(), {
-  size: 28,
-});
+import { entityIconSizes } from "../entityIconSizes";
+const props = withDefaults(defineProps<{ src?: string; size?: keyof typeof entityIconSizes }>(), { size: "search" });
+const pixels = computed(() => entityIconSizes[props.size]);
 const failed = ref(false);
 watch(
   () => props.src,
@@ -19,18 +19,18 @@ function failedImage(event: Event) {
 <template>
   <span
     class="entity-icon"
-    :style="{ width: `${size}px`, height: `${size}px` }"
+    :style="{ width: `${pixels}px`, height: `${pixels}px` }"
     aria-hidden="true"
   >
     <img
       v-if="src && !failed"
       :key="src"
       :src="src"
-      :width="size"
-      :height="size"
+      :width="pixels"
+      :height="pixels"
       alt=""
       @error="failedImage"
     />
-    <Icon v-else name="box" :size="size" />
+    <Icon v-else name="box" :size="pixels" />
   </span>
 </template>

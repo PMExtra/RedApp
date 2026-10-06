@@ -38,7 +38,7 @@ it("uses canonical RouterLinks, navigates between applications without reload, a
   const card = wrapper.get(".application-card-brand");
   expect(card.get(".application-card-heading h2").text()).toBe("Codex CLI");
   expect(card.get(".application-card-heading .app-publisher").text()).toBe("English vendor");
-  expect(card.get(".application-card-icon").element.firstElementChild?.tagName.toLowerCase()).toMatch(/^(img|svg)$/);
+  expect(card.get(".application-card-icon .entity-icon").element.firstElementChild?.tagName.toLowerCase()).toMatch(/^(img|svg)$/);
   setLanguage("zh-CN");
   await flushPromises();
   expect(wrapper.get(".app-publisher").text()).toBe("中文厂商");

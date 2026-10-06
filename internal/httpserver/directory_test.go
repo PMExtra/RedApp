@@ -496,3 +496,32 @@ func TestDirectoryHTTPIconUploadAndPublicBoundary(t *testing.T) {
 	h.request("GET", media.PublicPrefix+"untrusted-name.svg", nil, 404, nil)
 	h.request("GET", path+"/extra", nil, 404, nil)
 }
+
+func TestDirectoryOpenAISharedIconAndEnabledOnlyPATCH(t *testing.T) {
+	h := newDirectoryHarness(t, t.TempDir())
+	h.login(h.password)
+	icon, _ := h.request("GET", "/assets/builtin/openai.svg", nil, 200, nil)
+	codex, _ := h.request("GET", "/openai/codex/icon.svg", nil, 200, nil)
+	if !bytes.Equal(icon, codex) {
+		t.Fatal("vendor and application icon bytes differ")
+	}
+	v, _ := h.server.DB.Vendor("openai")
+	a, _ := h.server.DB.Application("openai/codex")
+	data, _ := h.request("PATCH", "/admin/api/vendors/openai", map[string]any{"revision": v.Revision, "enabled": false}, 200, nil)
+	changedVendor := directoryDecode[store.Vendor](t, data, "vendor")
+	if changedVendor.Enabled || changedVendor.Revision != v.Revision+1 || changedVendor.Name != v.Name || changedVendor.Description != v.Description || changedVendor.Icon != v.Icon {
+		t.Fatal("enabled patch changed vendor fields", changedVendor)
+	}
+	h.request("PATCH", "/admin/api/vendors/openai", map[string]any{"revision": v.Revision, "enabled": true}, 409, nil)
+	data, _ = h.request("PATCH", "/admin/api/apps/openai/codex", map[string]any{"revision": a.Revision, "enabled": false}, 200, nil)
+	changedApp := directoryDecode[store.Application](t, data, "app")
+	if changedApp.Enabled || changedApp.Revision != a.Revision+1 || changedApp.Name != a.Name || changedApp.Description != a.Description || changedApp.Icon != a.Icon || changedApp.BaseURL != a.BaseURL || changedApp.SourceEpoch != a.SourceEpoch {
+		t.Fatal("enabled patch changed app fields", changedApp)
+	}
+	h.request("PATCH", "/admin/api/apps/openai/codex", map[string]any{"revision": a.Revision, "enabled": true}, 409, nil)
+	h.request("GET", "/openai/codex/icon.svg", nil, 404, nil)
+	independent, _ := h.request("GET", "/assets/builtin/openai.svg", nil, 200, nil)
+	if !bytes.Equal(icon, independent) {
+		t.Fatal("vendor icon depends on application state")
+	}
+}

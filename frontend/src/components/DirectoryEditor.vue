@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import FilePicker from "./FilePicker.vue";
+import EntityIcon from "./EntityIcon.vue";
 import IconButton from "./IconButton.vue";
 import SortableList from "./SortableList.vue";
 import TemplateReset from "./TemplateReset.vue";
@@ -62,6 +64,7 @@ const draft = ref<Draft>(),
 const baseline = ref(""),
   loading = ref(false),
   saving = ref(false),
+  toggling = ref(false),
   uploading = ref(false),
   saved = ref(false),
   error = ref<unknown>(),
@@ -70,7 +73,7 @@ const dirty = computed(
   () => !!draft.value && JSON.stringify(draft.value) !== baseline.value,
 );
 const confirmDiscard = useDirtyDraft(dirty);
-const busy = computed(() => loading.value || saving.value || uploading.value);
+const busy = computed(() => loading.value || saving.value || uploading.value || toggling.value);
 const readOnly = computed(() => !!record.value?.deleted_at);
 const languages = ["en", "zh-CN"] as const;
 let ticket = 0,
@@ -112,6 +115,7 @@ async function load(confirm = true) {
   error.value = undefined;
   loading.value = true;
   saving.value = false;
+  toggling.value = false;
   uploading.value = false;
   saved.value = false;
   deleteReview.value = false;
@@ -176,6 +180,45 @@ async function synchronize() {
   invalidateBootstrap();
   void loadBootstrap();
 }
+async function changeEnabled(enabled: boolean) {
+  if (!draft.value || busy.value || readOnly.value) return;
+  if (creating.value) {
+    draft.value.enabled = enabled;
+    return;
+  }
+  if (!record.value || enabled === draft.value.enabled) return;
+  const previous = draft.value.enabled,
+    request = new AbortController(),
+    attempt = ++ticket,
+    kind = props.kind;
+  controller = request;
+  toggling.value = true;
+  saved.value = false;
+  error.value = undefined;
+  draft.value.enabled = enabled;
+  try {
+    const response = await api<{ vendor?: Vendor; app?: ManagedApplication }>(
+      path.value, { revision: record.value.revision, enabled }, request.signal, {}, "PATCH",
+    );
+    if (attempt !== ticket) return;
+    const value = response[kind];
+    if (!value) throw Error("Saved record unavailable");
+    record.value = value;
+    draft.value.enabled = value.enabled;
+    baseline.value = JSON.stringify({ ...JSON.parse(baseline.value), enabled: value.enabled });
+    void synchronize();
+  } catch (reason) {
+    if (attempt === ticket) {
+      draft.value!.enabled = previous;
+      if (!isCancellation(reason)) error.value = reason;
+    }
+  } finally {
+    if (attempt === ticket) {
+      toggling.value = false;
+      controller = undefined;
+    }
+  }
+}
 async function save(remove = false) {
   if (!draft.value || busy.value || (!remove && readOnly.value)) return;
   const request = new AbortController(),
@@ -216,8 +259,7 @@ async function save(remove = false) {
         name,
         description,
         icon,
-        enabled,
-        ...(wasCreating ? { id } : { revision: record.value?.revision }),
+        ...(wasCreating ? { id, enabled } : { revision: record.value?.revision }),
         ...(kind === "app"
           ? {
               ...(provider === "http-cache"
@@ -330,29 +372,19 @@ onUnmounted(() => {
               : t("Application details")
         }}
       </h2>
+      <div v-if="draft" class="entity-enabled-control">
       <SwitchControl
-        v-if="draft"
-        v-model="draft.enabled"
+        :model-value="draft.enabled"
+        @update:model-value="changeEnabled"
         name="enabled"
         :label="t('Enabled')"
         :disabled="busy || readOnly || loading"
+        :title="kind === 'vendor' ? t('Disabling a vendor hides all its applications. Stored data is retained.') : t('Disabled applications remain manageable here. Stored data is retained.')"
+        :aria-description="kind === 'vendor' ? t('Disabling a vendor hides all its applications. Stored data is retained.') : t('Disabled applications remain manageable here. Stored data is retained.')"
       />
+      <small class="muted" role="status">{{ toggling ? t("Saving…") : creating ? t("Saved on creation") : t("Saves immediately") }}</small>
+      </div>
     </div>
-    <p class="muted small-text">
-      {{
-        kind === "vendor"
-          ? t(
-              "Disabling a vendor hides all its applications. Stored data is retained.",
-            )
-          : t(
-              "Disabled applications remain manageable here. Stored data is retained.",
-            )
-      }}
-    </p>
-
-    <p v-if="!creating" class="muted">
-      {{ t("IDs, vendor and provider are fixed after creation.") }}
-    </p>
     <p v-if="readOnly" class="notice" role="status">
       {{ t("Deleted. Stored data is retained; this record is read-only.") }}
     </p>
@@ -361,33 +393,61 @@ onUnmounted(() => {
     </p>
     <p v-if="error" class="error" role="alert">{{ errorText(error) }}</p>
     <p v-if="loading" role="status">{{ t("Loading…") }}</p>
-    <RouterLink
-      v-if="kind === 'vendor' && record && !record.deleted_at"
-      class="button-link"
-      :to="`/admin/vendors/${record.id}/apps/new`"
-      >{{ t("Add application") }}</RouterLink
-    >
     <form @submit.prevent="save()">
       <fieldset v-if="draft" :disabled="busy || readOnly">
-        <label
-          >{{ t("ID")
-          }}<input
-            v-model="draft.id"
-            name="id"
-            required
-            pattern="[a-z0-9]+(-[a-z0-9]+)*"
-            maxlength="63"
-            :disabled="!creating"
-            autocapitalize="none"
-            spellcheck="false"
-        /></label>
-        <p v-if="creating" class="muted small-text">
-          {{
-            t(
-              "Use lowercase letters, numbers and single hyphens. This ID cannot be changed later.",
-            )
-          }}
-        </p>
+        <div class="entity-basics">
+          <div class="entity-id">
+            <label
+              >{{ t("ID")
+              }}<input
+                v-model="draft.id"
+                name="id"
+                required
+                pattern="[a-z0-9]+(-[a-z0-9]+)*"
+                maxlength="63"
+                :disabled="!creating"
+                autocapitalize="none"
+                spellcheck="false"
+            /></label>
+            <p v-if="creating" class="muted small-text">
+              {{
+                t(
+                  "Use lowercase letters, numbers and single hyphens. This ID cannot be changed later.",
+                )
+              }}
+            </p>
+            <p v-if="!creating" class="muted small-text">{{ kind === 'vendor' ? t('The vendor ID cannot be changed.') : t('IDs, vendor and provider are fixed after creation.') }}</p>
+          </div>
+          <div v-if="kind === 'app'" class="field-label entity-provider">
+            <span>{{ t("Provider") }}</span
+            ><SelectMenu
+              :model-value="draft.provider"
+              :label="t('Provider')"
+              :disabled="!creating"
+              :options="
+                providers.map((p) => ({
+                  value: p.key,
+                  label: p.name[language],
+                  description: p.description?.[language],
+                }))
+              "
+              @update:model-value="changeProvider"
+            />
+          </div>
+          <p v-if="creating && kind === 'app'" class="muted small-text provider-description">
+            {{
+              providers.find((p) => p.key === draft?.provider)?.description?.[
+                language
+              ]
+            }}
+          </p>
+          <div class="icon-field" role="group" :aria-label="t('Icon')">
+            <EntityIcon :src="directoryIcon(draft.icon)" size="detail" />
+            <FilePicker name="icon" :label="draft.icon ? t('Replace icon') : t('Choose icon')" accept="image/jpeg,image/png,image/svg+xml,.jpg,.jpeg,.png,.svg" :disabled="busy || readOnly" @change="upload" />
+            <IconButton v-if="draft.icon" type="button" class="secondary" :disabled="busy || readOnly" @click="draft.icon = ''" icon="close" :label="t('Remove icon')" />
+            <p v-if="uploading" role="status">{{ t('Uploading…') }}</p>
+          </div>
+        </div>
         <div class="two-columns">
           <fieldset v-for="lang in languages" :key="lang" class="site-locale">
             <legend>{{ lang === "en" ? "English" : "简体中文" }}</legend>
@@ -407,35 +467,11 @@ onUnmounted(() => {
                 :name="`description-${lang}`"
                 :lang="lang"
                 maxlength="2000"
-                rows="3"
+                rows="2"
               />
             </label>
           </fieldset>
         </div>
-        <div class="icon-field">
-          <img
-            v-if="draft.icon"
-            :src="directoryIcon(draft.icon)"
-            alt=""
-            width="48"
-            height="48"
-          /><label
-            >{{ t("Icon")
-            }}<input
-              type="file"
-              name="icon"
-              accept="image/jpeg,image/png,image/svg+xml,.jpg,.jpeg,.png,.svg"
-              @change="upload" /></label
-          ><IconButton
-            v-if="draft.icon"
-            type="button"
-            class="secondary"
-            @click="draft.icon = ''"
-            icon="close"
-            :label="t('Remove icon')"
-          />
-        </div>
-        <p v-if="uploading" role="status">{{ t("Uploading…") }}</p>
         <template v-if="kind === 'app'">
           <h3
             v-if="!['info', 'hosted'].includes(draft.provider)"
@@ -443,29 +479,6 @@ onUnmounted(() => {
           >
             {{ t("Sources and delivery") }}
           </h3>
-          <div class="field-label">
-            <span>{{ t("Provider") }}</span
-            ><SelectMenu
-              :model-value="draft.provider"
-              :label="t('Provider')"
-              :disabled="!creating"
-              :options="
-                providers.map((p) => ({
-                  value: p.key,
-                  label: p.name[language],
-                  description: p.description?.[language],
-                }))
-              "
-              @update:model-value="changeProvider"
-            />
-          </div>
-          <p class="muted provider-description">
-            {{
-              providers.find((p) => p.key === draft?.provider)?.description?.[
-                language
-              ]
-            }}
-          </p>
           <template v-if="draft.provider === 'http-cache'">
             <div class="upstream-sources">
               <h3>{{ t("Upstream sources") }}</h3>
@@ -572,7 +585,7 @@ onUnmounted(() => {
           >
         </template>
       </fieldset>
-      <div class="form-actions">
+      <div class="form-actions entity-save-actions">
         <button v-if="!readOnly" :disabled="busy || !draft">
           {{ saving ? t("Saving…") : t("Save changes") }}
         </button>
@@ -589,7 +602,7 @@ onUnmounted(() => {
             record && !('builtin_template' in record && record.builtin_template)
           "
           type="button"
-          class="secondary"
+          class="secondary delete-action"
           :disabled="busy"
           @click="deleteReview = !deleteReview"
           icon="trash"
@@ -622,6 +635,15 @@ onUnmounted(() => {
         {{ t("Cancel") }}
       </button>
     </div>
+    <section v-if="kind === 'vendor' && record && !record.deleted_at" class="vendor-application-actions" :aria-label="t('Applications')">
+      <h3>{{ t('Applications') }}</h3>
+    <RouterLink
+      v-if="kind === 'vendor' && record && !record.deleted_at"
+      class="button-link"
+      :to="`/admin/vendors/${record.id}/apps/new`"
+      >{{ t("Add application") }}</RouterLink
+    >
+    </section>
     <TemplateReset
       v-if="kind === 'vendor' && record?.has_template && !readOnly"
       kind="vendor"

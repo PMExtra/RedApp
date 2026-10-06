@@ -256,3 +256,127 @@ func TestV072CompatibleResetPreservesOtherLanguageAndOwnedData(t *testing.T) {
 		t.Fatal("reset removed history", counts)
 	}
 }
+
+func TestOpenAIVendorDefaultIconBackfill(t *testing.T) {
+	for _, icon := range []string{"", "/assets/icons/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.svg"} {
+		t.Run(icon, func(t *testing.T) {
+			dir := t.TempDir()
+			db, err := sql.Open("sqlite3", filepath.Join(dir, "state.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = db.Exec(schemaV7); err != nil {
+				t.Fatal(err)
+			}
+			s := &Store{DB: db}
+			v, err := s.CreateVendor(VendorInput{ID: "openai", Name: LocalizedText{En: "Custom", ZhCN: "Custom"}, Icon: icon, Enabled: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = s.DB.Close(); err != nil {
+				t.Fatal(err)
+			}
+			s, err = Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { s.DB.Close() })
+			if err = s.EnsureEntityTemplates(); err != nil {
+				t.Fatal(err)
+			}
+			got, err := s.Vendor(v.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, revision := icon, v.Revision
+			if icon == "" {
+				want = "/assets/builtin/openai.svg"
+				revision++
+			}
+			if got.Icon != want || got.Revision != revision || got.Name != v.Name || got.Enabled != v.Enabled || got.UID != v.UID {
+				t.Fatalf("unexpected backfill: %+v", got)
+			}
+			if err = s.EnsureEntityTemplates(); err != nil {
+				t.Fatal(err)
+			}
+			again, _ := s.Vendor(v.ID)
+			if !reflect.DeepEqual(got, again) {
+				t.Fatal("repeated backfill changed vendor")
+			}
+			// After migration a deliberate clear must survive a real close/reopen.
+			if icon == "" {
+				changes := vendorChanges(got)
+				changes.Icon = ""
+				got, err = s.UpdateVendor(v.ID, got.Revision, changes)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err = s.DB.Close(); err != nil {
+				t.Fatal(err)
+			}
+			s, err = Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = s.EnsureEntityTemplates(); err != nil {
+				t.Fatal(err)
+			}
+			again, _ = s.Vendor(v.ID)
+			if !reflect.DeepEqual(got, again) {
+				t.Fatal("restart replaced cleared or custom icon", again)
+			}
+			reset, err := s.ResetVendorTemplate(v.ID, TemplateReset{Revision: got.Revision, Groups: []string{"icon"}})
+			if err != nil || reset.Icon != "/assets/builtin/openai.svg" || reset.Name != v.Name || reset.Enabled != v.Enabled {
+				t.Fatal("icon reset", reset, err)
+			}
+		})
+	}
+}
+
+func TestOpenAIIconMigrationFailureCanRetry(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite3", filepath.Join(dir, "state.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.Exec(schemaV7); err != nil {
+		t.Fatal(err)
+	}
+	legacy := &Store{DB: db}
+	v, err := legacy.CreateVendor(VendorInput{ID: "openai", Name: LocalizedText{En: "Custom", ZhCN: "Custom"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`CREATE TRIGGER reject_icon AFTER UPDATE OF icon ON vendors BEGIN SELECT RAISE(ABORT, 'test migration failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if opened, err := Open(dir); err == nil {
+		opened.DB.Close()
+		t.Fatal("migration failure was ignored")
+	}
+	var version int
+	if err = db.QueryRow(`SELECT version FROM schema_version`).Scan(&version); err != nil || version != 7 {
+		t.Fatal("failed migration advanced version", version, err)
+	}
+	unchanged, err := legacy.Vendor(v.ID)
+	if err != nil || !reflect.DeepEqual(v, unchanged) {
+		t.Fatal("failed migration changed vendor", unchanged, err)
+	}
+	if _, err = db.Exec(`DROP TRIGGER reject_icon`); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.DB.Close()
+	got, err := s.Vendor(v.ID)
+	if err != nil || got.Icon != "/assets/builtin/openai.svg" || got.Revision != v.Revision+1 {
+		t.Fatal("retry did not migrate", got, err)
+	}
+}

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EntityIcon from "./EntityIcon.vue";
 import IconButton from "./IconButton.vue";
 import { ref, watch } from "vue";
 import {
@@ -27,13 +28,7 @@ watch(
     :class="{ 'is-disabled': !vendor.enabled }"
   >
     <div class="directory-heading">
-      <img
-        v-if="vendor.icon"
-        :src="directoryIcon(vendor.icon)"
-        alt=""
-        width="40"
-        height="40"
-      /><Icon v-else name="box" :size="30" />
+      <EntityIcon :src="directoryIcon(vendor.icon)" size="vendor" />
       <h2>
         <RouterLink :to="`/admin/vendors/${vendor.id}/settings`">{{
           vendor.name[language]
@@ -74,13 +69,7 @@ watch(
       >
         <RouterLink
           :to="applicationPath(app, app.deleted_at ? 'settings' : undefined)"
-          ><img
-            v-if="app.icon"
-            :src="directoryIcon(app.icon)"
-            alt=""
-            width="24"
-            height="24"
-          /><Icon v-else name="box" :size="32" /><span>{{
+          ><EntityIcon :src="directoryIcon(app.icon)" size="tile" /><span>{{
             app.name[language]
           }}</span></RouterLink
         >

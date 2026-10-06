@@ -497,3 +497,76 @@ it("reorders HTTP-cache upstreams with the handle keyboard and pointer controls 
   expect(apps[0].source_epoch).toBe(2);
   wrapper.unmount();
 });
+
+it.each(["vendor", "app"] as const)("immediately saves existing %s enabled state without submitting or clearing other drafts", async (kind) => {
+  const item = kind === "vendor" ? vendors[0]! : apps[0]!;
+  const target = kind === "vendor" ? `/admin/api/vendors/${item.id}` : `/admin/api/apps/${(item as ManagedApplication).key}`;
+  let complete: ((value: ReturnType<typeof response>) => void) | undefined;
+  const writes: Record<string, unknown>[] = [];
+  const fetch = vi.fn((url: string, init?: RequestInit) => {
+    if (url === target && init?.method === "PATCH") {
+      const body = JSON.parse(init.body as string);
+      writes.push(body);
+      if (writes.length === 1) return new Promise<ReturnType<typeof response>>((resolve) => { complete = resolve; });
+      Object.assign(item, body, { revision: item.revision + 1 });
+      return Promise.resolve(response({ [kind]: structuredClone(item) }));
+    }
+    return Promise.resolve(read(url));
+  });
+  vi.stubGlobal("fetch", fetch);
+  const { wrapper } = await mountPage(kind === "vendor" ? `/admin/vendors/${item.id}/settings` : `/admin/vendors/${(item as ManagedApplication).vendor_id}/apps/${item.id}/settings`);
+  const name = wrapper.get('[name="name-en"]');
+  await name.setValue("Keep this draft");
+  const toggle = wrapper.get('.directory-editor [name="enabled"]');
+  const previous = item.enabled, revision = item.revision;
+  await toggle.trigger("click");
+  await flushPromises();
+  expect(writes).toEqual([{ revision, enabled: !previous }]);
+  expect(toggle.attributes("disabled")).toBeDefined();
+  await toggle.trigger("click");
+  await wrapper.get(".directory-editor form").trigger("submit");
+  expect(writes).toHaveLength(1);
+  Object.assign(item, { enabled: !previous, revision: revision + 1 });
+  complete!(response({ [kind]: structuredClone(item) }));
+  await flushPromises();
+  expect((name.element as HTMLInputElement).value).toBe("Keep this draft");
+  expect(toggle.attributes("aria-checked")).toBe(String(!previous));
+  await wrapper.get(".directory-editor form").trigger("submit");
+  await flushPromises();
+  expect(writes[1]).toMatchObject({ revision: revision + 1, name: { en: "Keep this draft" } });
+  expect(writes[1]).not.toHaveProperty("enabled");
+  expect(item.enabled).toBe(!previous);
+  wrapper.unmount();
+});
+
+it.each([409, 500])("rolls back a failed immediate toggle (%s) while preserving dirty fields", async (status) => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => init?.method === "PATCH" ? response({ error: { code: status === 409 ? "DIRECTORY_REVISION_CONFLICT" : "INTERNAL_ERROR" } }, status) : read(url)));
+  const { wrapper } = await mountPage("/admin/vendors/openai/apps/codex/settings");
+  await wrapper.get('[name="name-en"]').setValue("Keep me");
+  const toggle = wrapper.get('.directory-editor [name="enabled"]');
+  const previous = toggle.attributes("aria-checked");
+  await toggle.trigger("click");
+  await flushPromises();
+  expect(toggle.attributes("aria-checked")).toBe(previous);
+  expect(toggle.attributes("disabled")).toBeUndefined();
+  expect(wrapper.get(".directory-editor [role=alert]").text()).not.toBe("");
+  expect((wrapper.get('[name="name-en"]').element as HTMLInputElement).value).toBe("Keep me");
+  wrapper.unmount();
+});
+
+it("ignores an immediate-toggle response after switching applications", async () => {
+  let complete: ((value: ReturnType<typeof response>) => void) | undefined;
+  vi.stubGlobal("confirm", () => true);
+  vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => init?.method === "PATCH" ? new Promise<ReturnType<typeof response>>((resolve) => { complete = resolve; }) : Promise.resolve(read(url))));
+  const { wrapper, router } = await mountPage("/admin/vendors/openai/apps/codex/settings");
+  await wrapper.get('.directory-editor [name="enabled"]').trigger("click");
+  await flushPromises();
+  await router.push("/admin/vendors/anthropic/apps/claude-code/settings");
+  await flushPromises();
+  const name = (wrapper.get('[name="name-en"]').element as HTMLInputElement).value;
+  complete!(response({ app: { ...apps[0], enabled: false, revision: 20 } }));
+  await flushPromises();
+  expect((wrapper.get('[name="name-en"]').element as HTMLInputElement).value).toBe(name);
+  expect(wrapper.get('[name="id"]').element).toHaveProperty("value", "claude-code");
+  wrapper.unmount();
+});

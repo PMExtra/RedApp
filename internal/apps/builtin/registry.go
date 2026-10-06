@@ -109,7 +109,7 @@ func releaseEntry(descriptor application.Descriptor, client *distributor.Client)
 // BrandAsset serves only reviewed, compiled image bytes, independently of a
 // persisted application's availability. It never fetches the supplied path.
 func BrandAsset(path string) (application.Representation, bool) {
-	if path == "/openai/codex/icon.svg" {
+	if path == "/openai/codex/icon.svg" || path == "/assets/builtin/openai.svg" {
 		return application.Representation{ContentType: "image/svg+xml", Body: []byte(codex.OpenAISymbol())}, true
 	}
 	switch path {

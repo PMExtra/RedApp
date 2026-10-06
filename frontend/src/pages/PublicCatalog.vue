@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EntityIcon from "../components/EntityIcon.vue";
 import { vendorName } from "../vendorName";
 import IconButton from "../components/IconButton.vue";
 import { computed, ref, watch, onUnmounted } from "vue";
@@ -86,13 +87,7 @@ function go(next: number) {
         {{ vendorData.data.value?.description[language] }}
       </p>
     </div>
-    <img
-      v-if="vendor && vendorData.data.value?.icon"
-      :src="vendorData.data.value.icon"
-      alt=""
-      width="48"
-      height="48"
-    />
+    <EntityIcon v-if="vendor" :src="vendorData.data.value?.icon" size="detail" />
   </div>
   <label class="catalog-search"
     ><span class="sr-only">{{ t("Search by ID or name") }}</span

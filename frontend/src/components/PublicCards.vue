@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EntityIcon from "./EntityIcon.vue";
 import ApplicationVersion from "./ApplicationVersion.vue";
 import { applicationVendorName } from "../vendorName";
 import { applicationCapabilities, type Application } from "../bootstrap";
@@ -20,13 +21,7 @@ defineProps<{
       class="application-card"
       :aria-describedby="app.latest_known_version?.first_seen ? `${versionTooltipID}-${app.id}` : undefined"
       ><div class="application-card-brand">
-        <span class="application-card-icon"><img
-          v-if="app.icon"
-          :src="app.icon"
-          alt=""
-          width="40"
-          height="40"
-        /><Icon v-else name="box" :size="36" /></span>
+        <span class="application-card-icon"><EntityIcon :src="app.icon" size="card" /></span>
         <div class="application-card-heading">
           <h2>{{ app.name[language] }}</h2>
           <div class="application-card-meta"><span class="app-publisher">{{ applicationVendorName(app) }}</span><ApplicationVersion :app="app" card :tooltip-id="`${versionTooltipID}-${app.id}`" /></div>

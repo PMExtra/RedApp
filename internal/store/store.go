@@ -18,7 +18,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/identity"
 )
 
-const SchemaVersion = 7
+const SchemaVersion = 8
 
 var ErrFreshDirectory = errors.New("This data directory belongs to an old or unknown database; use a new empty data directory. Configuration, cache and history are not migrated. Keep the old directory unchanged")
 var ErrConflict = errors.New("Setting revision changed; reload before saving")
@@ -39,6 +39,9 @@ var schemaV5 string
 //go:embed schema_v6.sql
 var schemaV6 string
 
+//go:embed schema_v7.sql
+var schemaV7 string
+
 type Store struct {
 	DB    *sql.DB
 	rates rates
@@ -53,7 +56,7 @@ func sqliteURL(path string, query string) string {
 }
 
 // Open checks the immutable main-file schema before any writable connection.
-// Exact reviewed schemas 4, 5 and 6 upgrade under the instance lock.
+// Exact reviewed schemas 4, 5, 6 and 7 upgrade under the instance lock.
 // Older or externally altered schemas are refused without modification.
 func Open(dir string) (*Store, error) {
 	path, err := filepath.Abs(filepath.Join(dir, "state.sqlite"))
@@ -109,7 +112,7 @@ func Open(dir string) (*Store, error) {
 		err = db.Ping()
 	}
 	if err == nil && !fresh {
-		err = upgradeV072(db)
+		err = upgradeOpenAIVendorIcon(db)
 	}
 	if err == nil {
 		// Validate the authoritative WAL view before readiness too. This is a
@@ -162,7 +165,7 @@ func probeExisting(path string) error {
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	if checkSchema(db) != nil && checkSchemaDefinition(db, schemaV6, 6) != nil && checkSchemaDefinition(db, schemaV5, 5) != nil && checkSchemaDefinition(db, schemaV4, 4) != nil {
+	if checkSchema(db) != nil && checkSchemaDefinition(db, schemaV7, 7) != nil && checkSchemaDefinition(db, schemaV6, 6) != nil && checkSchemaDefinition(db, schemaV5, 5) != nil && checkSchemaDefinition(db, schemaV4, 4) != nil {
 		return ErrFreshDirectory
 	}
 	return checkReservedVendor(db)
@@ -357,7 +360,7 @@ func upgradeV072(db *sql.DB) error {
 	if err := checkReservedVendor(db); err != nil {
 		return err
 	}
-	if checkSchema(db) == nil {
+	if checkSchemaDefinition(db, schemaV7, 7) == nil {
 		return nil
 	}
 	if checkSchemaDefinition(db, schemaV6, 6) == nil {
@@ -366,7 +369,7 @@ func upgradeV072(db *sql.DB) error {
 			return err
 		}
 		defer tx.Rollback()
-		if _, err = tx.Exec(schema[strings.Index(schema, "CREATE TABLE pending_application_deletes("):]); err != nil {
+		if _, err = tx.Exec(schemaV7[strings.Index(schemaV7, "CREATE TABLE pending_application_deletes("):]); err != nil {
 			return err
 		}
 		if _, err = tx.Exec(`DROP TABLE schema_version; CREATE TABLE schema_version(version INTEGER NOT NULL CHECK(version=7)); INSERT INTO schema_version VALUES(7);`); err != nil {
@@ -382,11 +385,34 @@ func upgradeV072(db *sql.DB) error {
 		return err
 	}
 	defer tx.Rollback()
-	ddl := schema[strings.Index(schema, "CREATE TABLE download_sketches("):]
+	ddl := schemaV7[strings.Index(schemaV7, "CREATE TABLE download_sketches("):]
 	if _, err = tx.Exec(ddl); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(`DROP TABLE schema_version; CREATE TABLE schema_version(version INTEGER NOT NULL CHECK(version=7)); INSERT INTO schema_version VALUES(7);`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// The schema version is the durable one-time marker. Fill legacy empty icons
+// atomically with that marker; subsequent user clears remain authoritative.
+func upgradeOpenAIVendorIcon(db *sql.DB) error {
+	if checkSchema(db) == nil {
+		return checkReservedVendor(db)
+	}
+	if err := upgradeV072(db); err != nil {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(`UPDATE vendors SET icon='/assets/builtin/openai.svg',revision=revision+1 WHERE id='openai' AND icon='' AND deleted_at_s IS NULL`); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DROP TABLE schema_version; CREATE TABLE schema_version(version INTEGER NOT NULL CHECK(version=8)); INSERT INTO schema_version VALUES(8);`); err != nil {
 		return err
 	}
 	return tx.Commit()

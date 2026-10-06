@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EntityIcon from "./components/EntityIcon.vue";
 import ApplicationVersion from "./components/ApplicationVersion.vue";
 import { applicationVendorName } from "./vendorName";
 import PublicCards from "./components/PublicCards.vue";
@@ -56,13 +57,7 @@ watchEffect(() => {
     </nav>
     <div class="application-identity public-app-identity">
       <div class="application-logo">
-        <img
-          v-if="selected.icon"
-          :src="selected.icon"
-          :alt="applicationVendorName(selected)"
-          width="48"
-          height="48"
-        /><Icon v-else name="box" :size="48" />
+        <EntityIcon :src="selected.icon" size="detail" />
       </div>
       <div class="public-heading">
         <h1>{{ selected.name[language] }}</h1>

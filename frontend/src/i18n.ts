@@ -288,6 +288,13 @@ export const messages = {
   "Add application": "添加应用",
   "Vendor details": "厂商资料",
   "Application details": "应用资料",
+  "Saved on creation": "创建时保存",
+  "Saves immediately": "立即保存",
+  "Choose icon": "选择图标",
+  "Replace icon": "替换图标",
+  "Choose file": "选择文件",
+  "The vendor ID cannot be changed.": "厂商 ID 不可修改。",
+  "Select fields, review the differences, then save. Vendor ID stays fixed; applications and stored data are retained.": "选择字段，检查差异后再保存。厂商 ID 不变，应用和已有数据保留。",
   "IDs, vendor and provider are fixed after creation.":
     "创建后不能更改 ID、所属厂商与 Provider。",
   "Deleted. Stored data is retained; this record is read-only.":

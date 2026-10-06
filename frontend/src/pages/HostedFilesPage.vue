@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import FilePicker from "../components/FilePicker.vue";
 import IconButton from "../components/IconButton.vue";
 import { computed, onUnmounted, reactive, ref, watch } from "vue";
 import { applicationRecord } from "../directory";
@@ -226,14 +227,8 @@ onUnmounted(stop);
               {{ t("Cancel replacement") }}
             </button>
           </p>
-          <label v-if="mode === 'upload'"
-            >{{ t("Upload file")
-            }}<input
-              type="file"
-              name="hosted_file"
-              :key="selected?.name || 'empty'"
-              @change="chooseFile" /></label
-          ><label v-else
+          <FilePicker v-if="mode === 'upload'" name="hosted_file" :key="selected?.name || 'empty'" :label="t('Choose file')" :file-name="selected?.name" :disabled="busy" @change="chooseFile" />
+          <label v-else
             >{{ t("HTTP(S) URL")
             }}<input
               v-model="source"

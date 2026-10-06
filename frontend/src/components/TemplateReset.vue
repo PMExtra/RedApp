@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import DisclosureIcon from "./DisclosureIcon.vue";
+import EntityIcon from "./EntityIcon.vue";
+import { directoryIcon } from "../directory";
 import IconButton from "./IconButton.vue";
 import { ref, watch, onUnmounted, computed } from "vue";
 import { confirmDirtyDrafts } from "../composables/useDirtyDraft";
@@ -141,12 +144,14 @@ onUnmounted(() => {
 });
 </script>
 <template>
-  <section class="panel template-reset">
-    <h2>{{ t("Reset selected fields to template") }}</h2>
+  <details :key="`${kind}:${application}`" class="panel template-reset">
+    <summary class="section-heading"><DisclosureIcon /><h2>{{ t("Reset selected fields to template") }}</h2></summary>
     <p class="muted">
       {{
         t(
-          "Select fields, review the differences, then save. Identity and provider stay fixed; stored files and history are retained.",
+          kind === 'vendor'
+            ? "Select fields, review the differences, then save. Vendor ID stays fixed; applications and stored data are retained."
+            : "Select fields, review the differences, then save. Identity and provider stay fixed; stored files and history are retained.",
         )
       }}
     </p>
@@ -168,11 +173,11 @@ onUnmounted(() => {
         <div class="two-columns">
           <div>
             <h4>{{ t("Current value") }}</h4>
-            <pre>{{ text(group, false) }}</pre>
+            <EntityIcon v-if="group === 'icon'" :src="directoryIcon(preview?.current.icon || '')" size="detail" /><pre>{{ text(group, false) }}</pre>
           </div>
           <div>
             <h4>{{ t("Template value") }}</h4>
-            <pre>{{ text(group, true) }}</pre>
+            <EntityIcon v-if="group === 'icon'" :src="directoryIcon(preview?.template.application.icon || '')" size="detail" /><pre>{{ text(group, true) }}</pre>
           </div>
         </div>
       </section>
@@ -194,5 +199,5 @@ onUnmounted(() => {
         :label="t('Reload')"
       />
     </div>
-  </section>
+  </details>
 </template>

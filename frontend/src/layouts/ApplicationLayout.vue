@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import EntityIcon from "../components/EntityIcon.vue";
 import IconButton from "../components/IconButton.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
@@ -92,13 +93,7 @@ async function copyURL() {
     </nav>
     <header class="application-header">
       <div class="application-header-identity">
-        <img
-          v-if="application.icon"
-          :src="directoryIcon(application.icon)"
-          alt=""
-          width="48"
-          height="48"
-        /><Icon v-else name="box" :size="40" />
+        <EntityIcon :src="directoryIcon(application.icon)" size="detail" />
         <div>
           <h1>{{ application.name[language] }}</h1>
           <p class="application-meta">
