@@ -79,12 +79,14 @@ export function makeRouter(history: RouterHistory = createWebHistory()) {
               { path: "", redirect: (to) => `/admin/vendors/${to.params.vendor}/settings` },
               { path: "settings", component: () => import("./pages/VendorSettingsPage.vue") },
               { path: "apps", component: () => import("./pages/VendorApplicationsPage.vue") },
+              { path: "admin-notes", component: () => import("./pages/VendorAdminNotesPage.vue") },
             ],
           },
           {
             path: "vendors/:vendor/apps/:app",
             component: () => import("./layouts/ApplicationLayout.vue"),
             children: [
+              { path: "admin-notes", component: () => import("./pages/ApplicationAdminNotesPage.vue") },
               {
                 path: "files",
                 component: () => import("./pages/HostedFilesPage.vue"),

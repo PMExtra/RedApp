@@ -1,6 +1,6 @@
 # RedApp 运维说明
 
-本文对应 0.7.9，包含 0.7.2 以来的运行调整。SQLite schema=8，精确 v0.7.0 schema 4 / v0.7.1 schema 5 / 已审阅本地 schema 6 / 已发布 schema 7 在独占锁下按版本事务升级，保留已有数据；更早或未知目录在写入前拒绝。升级前停止实例并备份完整目录；已有厂商 ID `all` 会明确报冲突，不自动改名或删除。部署配置 schema_version 仍为 1。详见 [0.7.2 运行变更](admin-experience-v0.7.2.md)，缓存规则历史参考见 [v0.7.0 运行说明](provider-runtime-v0.7.0.md)。
+本文对应 0.7.11，包含 0.7.2 以来的运行调整。SQLite schema=9，精确 v0.7.0 schema 4 / v0.7.1 schema 5 / 已审阅本地 schema 6 / 已发布 schema 7/8 在独占锁下按版本事务升级，保留已有数据；更早或未知目录在写入前拒绝。升级前停止实例并备份完整目录；已有厂商 ID `all` 会明确报冲突，不自动改名或删除。部署配置 schema_version 仍为 1。详见 [0.7.2 运行变更](admin-experience-v0.7.2.md)，缓存规则历史参考见 [v0.7.0 运行说明](provider-runtime-v0.7.0.md)。
 
 ## 启动配置
 
@@ -96,13 +96,13 @@ GET 支持完整响应、条件请求和单段 Range，多段 Range 忽略后返
 ## 数据目录、清理与恢复
 
 - `instance.lock` 是保留的内核锁文件；进程退出或崩溃后内核释放锁，禁止人为删除锁 inode。获取写锁前先以只读方式检查已有目录，拒绝旧 schema 或未知内容，不创建锁来污染被拒绝的旧目录。
-- SQLite schema=8，包含应用说明、Hosted 持久文件、小时去重 sketch、首页置顶和待清理回执，包含 Vendor/App、历史 source snapshots、全局设置、发布 metadata/渠道/资源/generation/blob、HTTP 缓存、指标、事件、清理快照和管理员记录。没有迁移命令；schema=2、schema=3 和未知目录均在写入前被拒绝。
+- SQLite schema=9，包含应用说明、Hosted 持久文件、小时去重 sketch、首页置顶和待清理回执，包含 Vendor/App、历史 source snapshots、全局设置、发布 metadata/渠道/资源/generation/blob、HTTP 缓存、指标、事件、清理快照和管理员记录。没有迁移命令；schema=2、schema=3 和未知目录均在写入前被拒绝。
 - 应用有稳定内部 UID；BaseUrl 变更创建新的 source epoch。发布逻辑资源身份为 `(app_uid,source_epoch,version,resource_key)`，完整 blob 仅在同一 source namespace 内按摘要复用，不跨应用/epoch 复用。每次下载拥有独立随机 generation。未完成文件位于 `objects/parts/<generation>.part`，完整文件位于 `objects/blobs/<app摘要>/<内容摘要>.blob`，URL 不直接映射磁盘路径。
 - 活动下载仅按精确逻辑资源合流。完整校验、fsync 和文件发布后才能标记 complete；重启核对磁盘和数据库，损坏/缺失文件不能作为已验证缓存返回。续传使用强 ETag/If-Range 并验证范围、编码、长度和最终摘要。
 - 清理预览冻结指定应用/source epoch 的精确 generation 集合及 App/Vendor revision，有效 10 分钟；执行不能跨应用、不能扩大到新 epoch，配置改变需要重新预览。成功回执支持重试。旧代退出当前状态后等待已有读写租约排空；应用内共享 blob 只在最后引用结束后回收。版本发现、可信 metadata 和累计指标不随缓存清理删除。
 - 一个本地目录只由一个实例使用，不支持 NFS/SMB。Docker 可采用只读根文件系统加可写持久卷；镜像内 `/var/lib/redapp` 为 UID/GID 65532、模式 0700。已有宿主 bind mount 的权限需管理员预先设置，不递归自动 chown。
 
-备份先正常停止服务，再复制整个新格式数据目录，包括可能存在的 WAL/SHM。恢复到同格式目录前确认没有服务持锁，不在线单独复制 state.sqlite。只有精确匹配的 schema 4/5/6/7 原地升级；更早或未知格式不导入配置、缓存或历史。升级后不能用旧二进制打开 schema 8；回退须使用完整升级前备份。
+备份先正常停止服务，再复制整个新格式数据目录，包括可能存在的 WAL/SHM。恢复到同格式目录前确认没有服务持锁，不在线单独复制 state.sqlite。只有精确匹配的 schema 4/5/6/7/8 原地升级；更早或未知格式不导入配置、缓存或历史。升级后不能用旧二进制打开 schema 9；回退须使用完整升级前备份。
 
 ## 路由、管理 API 与指标
 
@@ -154,3 +154,5 @@ Codex/ClaudeCode 适配器继续校验版本、渠道、metadata、原有签名�
 安装器下载经本服务，不改写应用运行期/API 流量。抑制安装器更新标记不等于禁用全部 CLI 更新检查；Windows/PowerShell、macOS、官方真实制品和生产下载链仍需独立上线验证。
 
 本次 schema 7→8 数据迁移只为已有空 OpenAI 厂商图标补齐默认 SVG，和版本更新原子提交。非空自定义图标不变；迁移完成后的显式清空在重启后保留。回退旧版本须恢复升级前完整备份。
+
+0.7.11 的 schema 8→9 为厂商增加默认空的英文/中文 Logo 列，并为厂商/应用各增加私有管理备注表，以稳定 UID 隔离并随实体永久删除级联清理；不擦除既有数据或重做图标补齐，建表与版本标记同事务。读取旧目录前仍进行精确 schema 校验，升级前备份与回退要求同上。

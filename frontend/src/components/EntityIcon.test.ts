@@ -23,3 +23,21 @@ it("keeps image, empty and failed icons in the same square at every scene size",
     wrapper.unmount();
   }
 });
+
+it("uses bounded proportional vendor marks and hides absent or failed logos without a visible frame", async () => {
+  const wrapper = mount(EntityIcon, { props: { vendor: true } });
+  expect(wrapper.find(".entity-icon").exists()).toBe(false);
+  for (const src of ["/wide.svg", "/tall.svg"]) {
+    await wrapper.setProps({ src });
+    expect(wrapper.classes()).toContain("entity-icon--vendor");
+    expect(wrapper.attributes("style")).toContain("height: 32px");
+    expect(wrapper.attributes("style")).not.toContain("width:");
+    expect(wrapper.get("img").attributes("width")).toBeUndefined();
+    await wrapper.get("img").trigger("error");
+    expect(wrapper.find(".entity-icon").exists()).toBe(false);
+    expect(wrapper.find("svg").exists()).toBe(false);
+  }
+  await wrapper.setProps({ src: "" });
+  expect(wrapper.find(".entity-icon").exists()).toBe(false);
+  wrapper.unmount();
+});

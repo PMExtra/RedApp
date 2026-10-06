@@ -272,7 +272,10 @@ func TestV072UpgradePreservesV5AndReservedAllIsReadOnly(t *testing.T) {
 			}
 			// No Store.Open here: that is the operation under test and would migrate now.
 			old := &store.Store{DB: db}
-			app, err := old.CreateApplication(id, store.ApplicationInput{ID: "files", Name: store.LocalizedText{En: "My files", ZhCN: "我的文件"}, Description: store.LocalizedText{En: "Keep these", ZhCN: "保留这些"}, Provider: "hosted", Enabled: true})
+			if _, err = db.Exec(`INSERT INTO applications(uid,vendor_uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,provider,base_url,cache_ttl_seconds,base_urls_json,source_strategy,enabled,revision,source_epoch) VALUES('cccccccccccccccccccccccccccccccc','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','files','My files','我的文件','Keep these','保留这些','','hosted','',0,'[]','',1,1,1)`); err != nil {
+				t.Fatal(err)
+			}
+			app, err := old.Application(id + "/files")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -301,24 +304,11 @@ func TestV072UpgradePreservesV5AndReservedAllIsReadOnly(t *testing.T) {
 			if _, err = db.Exec(`INSERT INTO hosted_files VALUES(?,'nested/keep.bin',?,?,?,123)`, app.UID, fileID, digest, len(body)); err != nil {
 				t.Fatal(err)
 			}
-			h := newDirectoryHarnessWithStore(t, dir, old)
-			// Keep this full-snapshot fixture customized; the separate icon migration
-			// regression covers the sole allowed change to legacy empty OpenAI icons.
-			if _, err = db.Exec(`UPDATE vendors SET icon='/openai/codex/icon.svg' WHERE id='openai'`); err != nil {
-				t.Fatal(err)
-			}
+			// The current server requires current DDL; verify the exact legacy fixture on disk,
+			// then exercise its preserved Hosted resource through HTTP after upgrade/restart.
 			var schemaVersion int
 			if err = db.QueryRow(`SELECT version FROM schema_version`).Scan(&schemaVersion); err != nil || schemaVersion != 5 {
-				t.Fatal("fixture upgraded before the operation under test", schemaVersion, err)
-			}
-			beforeBody, beforeHeaders := h.request("GET", "/acme/files/nested/keep.bin", nil, 200, nil)
-			if !bytes.Equal(beforeBody, body) {
-				t.Fatal("schema-5 file was not downloadable")
-			}
-			h.close() // Wait for handlers before taking the database snapshot.
-			db, err = sql.Open("sqlite3", path)
-			if err != nil {
-				t.Fatal(err)
+				t.Fatal(schemaVersion, err)
 			}
 			var tables []string
 			rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name<>'schema_version' ORDER BY name`)
@@ -356,6 +346,9 @@ func TestV072UpgradePreservesV5AndReservedAllIsReadOnly(t *testing.T) {
 						if e = rows.Scan(pointers...); e != nil {
 							t.Fatal(e)
 						}
+						if table == "vendors" {
+							values = values[:10]
+						} // Compare every pre-existing vendor field.
 						result[table] = append(result[table], fmt.Sprint(values))
 					}
 					if e = rows.Err(); e != nil {
@@ -382,9 +375,9 @@ func TestV072UpgradePreservesV5AndReservedAllIsReadOnly(t *testing.T) {
 				t.Fatal("migration changed Hosted body", err)
 			}
 			upgraded.DB.Close()
-			h = newDirectoryHarness(t, dir)
+			h := newDirectoryHarness(t, dir)
 			afterBody, afterHeaders := h.request("GET", "/acme/files/nested/keep.bin", nil, 200, nil)
-			if !bytes.Equal(afterBody, body) || afterHeaders.Get("ETag") != beforeHeaders.Get("ETag") || afterHeaders.Get("Content-Length") != beforeHeaders.Get("Content-Length") {
+			if !bytes.Equal(afterBody, body) || afterHeaders.Get("ETag") != `"sha256-`+digest+`"` || afterHeaders.Get("Content-Length") != fmt.Sprint(len(body)) {
 				t.Fatal("upgrade/restart changed Hosted download")
 			}
 			saved, err := h.server.DB.HostedFile(app.UID, "nested/keep.bin")

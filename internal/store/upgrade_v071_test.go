@@ -53,6 +53,9 @@ func TestPublishedV070UpgradePreservesAllRowsAndRestarts(t *testing.T) {
 				if e = rows.Scan(ptr...); e != nil {
 					t.Fatal(e)
 				}
+				if table == "vendors" {
+					values = values[:10]
+				} // Existing fields must remain byte-for-byte equivalent.
 				out[table] = append(out[table], fmt.Sprint(values))
 			}
 			if e = rows.Err(); e != nil {

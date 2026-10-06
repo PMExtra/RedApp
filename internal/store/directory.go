@@ -32,30 +32,33 @@ type LocalizedText struct {
 }
 
 type VendorInput struct {
-	ID          string        `json:"id"`
-	Name        LocalizedText `json:"name"`
-	Description LocalizedText `json:"description"`
-	Icon        string        `json:"icon"`
-	Enabled     bool          `json:"enabled"`
+	ID             string        `json:"id"`
+	Name           LocalizedText `json:"name"`
+	Description    LocalizedText `json:"description"`
+	Icon           string        `json:"icon"`
+	LocalizedIcons LocalizedText `json:"localized_icons"`
+	Enabled        bool          `json:"enabled"`
 }
 
 type VendorChanges struct {
-	Name        LocalizedText `json:"name"`
-	Description LocalizedText `json:"description"`
-	Icon        string        `json:"icon"`
-	Enabled     bool          `json:"enabled"`
+	Name           LocalizedText `json:"name"`
+	Description    LocalizedText `json:"description"`
+	Icon           string        `json:"icon"`
+	LocalizedIcons LocalizedText `json:"localized_icons"`
+	Enabled        bool          `json:"enabled"`
 }
 
 type Vendor struct {
-	HasTemplate bool          `json:"has_template"`
-	UID         string        `json:"uid"`
-	ID          string        `json:"id"`
-	Name        LocalizedText `json:"name"`
-	Description LocalizedText `json:"description"`
-	Icon        string        `json:"icon"`
-	Enabled     bool          `json:"enabled"`
-	Revision    int64         `json:"revision"`
-	DeletedAt   *time.Time    `json:"deleted_at"`
+	HasTemplate    bool          `json:"has_template"`
+	UID            string        `json:"uid"`
+	ID             string        `json:"id"`
+	Name           LocalizedText `json:"name"`
+	Description    LocalizedText `json:"description"`
+	Icon           string        `json:"icon"`
+	LocalizedIcons LocalizedText `json:"localized_icons"`
+	Enabled        bool          `json:"enabled"`
+	Revision       int64         `json:"revision"`
+	DeletedAt      *time.Time    `json:"deleted_at"`
 }
 
 type ApplicationInput struct {
@@ -158,7 +161,7 @@ func validateVendor(v VendorInput) error {
 	if !identity.ValidVendor(v.ID) {
 		return fmt.Errorf("%w: invalid or reserved vendor ID", ErrInvalidDirectory)
 	}
-	return validatePresentation(v.Name, v.Description, v.Icon)
+	return validateVendorPresentation(v.Name, v.Description, v.Icon, v.LocalizedIcons)
 }
 
 func validateApplication(a *ApplicationInput) error {
@@ -266,13 +269,13 @@ func directoryError(err error) error {
 type directoryQuerier interface{ QueryRow(string, ...any) *sql.Row }
 type directoryScanner interface{ Scan(...any) error }
 
-const vendorColumns = `uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,enabled,revision,deleted_at_s`
+const vendorColumns = `uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,enabled,revision,deleted_at_s,icon_en,icon_zh_cn`
 const applicationColumns = `a.uid,a.id,v.id||'/'||a.id,a.vendor_uid,v.id,a.name_en,a.name_zh_cn,a.description_en,a.description_zh_cn,a.icon,a.provider,a.base_url,a.base_urls_json,a.source_strategy,a.cache_ttl_seconds,a.enabled,a.revision,a.source_epoch,a.deleted_at_s`
 
 func scanVendor(row directoryScanner) (Vendor, error) {
 	var v Vendor
 	var deleted sql.NullInt64
-	err := row.Scan(&v.UID, &v.ID, &v.Name.En, &v.Name.ZhCN, &v.Description.En, &v.Description.ZhCN, &v.Icon, &v.Enabled, &v.Revision, &deleted)
+	err := row.Scan(&v.UID, &v.ID, &v.Name.En, &v.Name.ZhCN, &v.Description.En, &v.Description.ZhCN, &v.Icon, &v.Enabled, &v.Revision, &deleted, &v.LocalizedIcons.En, &v.LocalizedIcons.ZhCN)
 	_, v.HasTemplate = BuiltinVendorTemplate(v.ID)
 	v.DeletedAt = timePointer(deleted)
 	return v, err
@@ -351,7 +354,7 @@ func createVendor(tx *sql.Tx, in VendorInput) (Vendor, error) {
 	if err != nil {
 		return Vendor{}, err
 	}
-	_, err = tx.Exec(`INSERT INTO vendors(`+vendorColumns+`) VALUES(?,?,?,?,?,?,?,?,1,NULL)`, uid, in.ID, in.Name.En, in.Name.ZhCN, in.Description.En, in.Description.ZhCN, in.Icon, in.Enabled)
+	_, err = tx.Exec(`INSERT INTO vendors(`+vendorColumns+`) VALUES(?,?,?,?,?,?,?,?,1,NULL,?,?)`, uid, in.ID, in.Name.En, in.Name.ZhCN, in.Description.En, in.Description.ZhCN, in.Icon, in.Enabled, in.LocalizedIcons.En, in.LocalizedIcons.ZhCN)
 	if err != nil {
 		return Vendor{}, directoryError(err)
 	}
@@ -385,7 +388,7 @@ func (s *Store) UpdateVendor(id string, expectedRevision int64, in VendorChanges
 	return v, tx.Commit()
 }
 func updateVendor(tx *sql.Tx, id string, expectedRevision int64, in VendorChanges) (Vendor, error) {
-	if err := validatePresentation(in.Name, in.Description, in.Icon); err != nil {
+	if err := validateVendorPresentation(in.Name, in.Description, in.Icon, in.LocalizedIcons); err != nil {
 		return Vendor{}, err
 	}
 	v, err := readVendor(tx, id)
@@ -398,7 +401,7 @@ func updateVendor(tx *sql.Tx, id string, expectedRevision int64, in VendorChange
 	if expectedRevision != v.Revision {
 		return Vendor{}, ErrConflict
 	}
-	_, err = tx.Exec(`UPDATE vendors SET name_en=?,name_zh_cn=?,description_en=?,description_zh_cn=?,icon=?,enabled=?,revision=revision+1 WHERE uid=? AND revision=?`, in.Name.En, in.Name.ZhCN, in.Description.En, in.Description.ZhCN, in.Icon, in.Enabled, v.UID, expectedRevision)
+	_, err = tx.Exec(`UPDATE vendors SET name_en=?,name_zh_cn=?,description_en=?,description_zh_cn=?,icon=?,enabled=?,icon_en=?,icon_zh_cn=?,revision=revision+1 WHERE uid=? AND revision=?`, in.Name.En, in.Name.ZhCN, in.Description.En, in.Description.ZhCN, in.Icon, in.Enabled, in.LocalizedIcons.En, in.LocalizedIcons.ZhCN, v.UID, expectedRevision)
 	if err != nil {
 		return Vendor{}, err
 	}
@@ -696,4 +699,13 @@ func builtinTemplateIcon(path string) bool {
 		}
 	}
 	return false
+}
+
+func validateVendorPresentation(name, description LocalizedText, icon string, localized LocalizedText) error {
+	for _, value := range []string{icon, localized.En, localized.ZhCN} {
+		if err := validatePresentation(name, description, value); err != nil {
+			return err
+		}
+	}
+	return nil
 }

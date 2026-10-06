@@ -36,7 +36,7 @@ onUnmounted(resetDirectory);
 const available = computed(() => {
   const app = application.value;
   if (!app) return false;
-  if (route.path.endsWith("/settings")) return true;
+  if (route.path.endsWith("/settings") || route.path.endsWith("/admin-notes")) return true;
   if (route.path.endsWith("/files")) return app.provider === "hosted";
   if (route.path.endsWith("/cache"))
     return !["info", "hosted"].includes(app.provider);
@@ -96,26 +96,7 @@ async function copyURL() {
         <EntityIcon :src="directoryIcon(application.icon)" size="detail" />
         <div>
           <h1>{{ application.name[language] }}</h1>
-          <p class="application-meta">
-            <span>{{
-              application.provider === "info"
-                ? t("App Info")
-                : application.provider === "hosted"
-                  ? t("Hosted Files")
-                  : application.provider === "http-cache"
-                    ? t("HTTP Cache")
-                    : application.provider === "codex"
-                      ? "Codex"
-                      : "Claude Code"
-            }}</span
-            ><span class="state-label">{{
-              application.deleted_at
-                ? t("Deleted")
-                : applicationEnabled(application)
-                  ? t("Enabled")
-                  : t("Disabled")
-            }}</span>
-          </p>
+
         </div>
       </div>
       <div v-if="applicationEnabled(application)" class="form-actions">
@@ -160,6 +141,7 @@ async function copyURL() {
       <RouterLink :to="applicationPath(application, 'settings')">{{
         t("Application settings")
       }}</RouterLink>
+      <RouterLink :to="applicationPath(application, 'admin-notes')">{{ t('Admin Notes') }}</RouterLink>
     </nav>
     <RouterView v-if="available" :key="application.uid" />
     <p v-else>{{ t("Page not found") }}</p>

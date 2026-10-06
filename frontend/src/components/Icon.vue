@@ -12,6 +12,8 @@ const paths: Record<string, string> = {
   settings: "M4 7h16 M4 17h16 M8 4v6 M16 14v6",
   refresh: "M20 7v5h-5 M4 17v-5h5 M6 6a8 8 0 0 1 14 6 M18 18a8 8 0 0 1-14-6",
   user: "M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0 M4 21v-2a8 8 0 0 1 16 0v2",
+  left: "M15 5l-7 7 7 7",
+  right: "M9 5l7 7-7 7",
   chevron: "M7 10l5 5 5-5",
   arrow: "M5 12h14 M14 7l5 5-5 5",
   back: "M19 12H5 M10 7l-5 5 5 5",

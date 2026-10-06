@@ -362,13 +362,13 @@ func (s *Server) validUI(path string) bool {
 	}
 	if strings.HasPrefix(path, "/admin/vendors/") {
 		p := strings.Split(strings.TrimPrefix(path, "/admin/vendors/"), "/")
-		if len(p) == 1 || len(p) == 2 && (p[1] == "settings" || p[1] == "apps") || len(p) == 3 && p[1] == "apps" && p[2] == "new" {
+		if len(p) == 1 || len(p) == 2 && (p[1] == "settings" || p[1] == "apps" || p[1] == "admin-notes") || len(p) == 3 && p[1] == "apps" && p[2] == "new" {
 			_, err := s.DB.Vendor(p[0])
 			return err == nil
 		}
 		if len(p) == 4 && p[1] == "apps" {
 			e, ok := s.Registry.LookupAny(p[0] + "/" + p[2])
-			return ok && (p[3] == "settings" || p[3] == "files" && e.Provider == application.Hosted || p[3] == "cache" && e.Provider != application.Info && e.Provider != application.Hosted || p[3] == "versions" && e.Protocol != nil)
+			return ok && (p[3] == "settings" || p[3] == "admin-notes" || p[3] == "files" && e.Provider == application.Hosted || p[3] == "cache" && e.Provider != application.Info && e.Provider != application.Hosted || p[3] == "versions" && e.Protocol != nil)
 		}
 	}
 	return false

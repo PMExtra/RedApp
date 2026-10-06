@@ -629,3 +629,200 @@ it("lists every vendor application across pages including disabled records, with
   expect(list().get('[aria-label="Add application"]').attributes("href")).toBe("/admin/vendors/anthropic/apps/new");
   wrapper.unmount();
 });
+
+it("loads all vendor apps into a single strip and links filtered counts to the vendor tab", async () => {
+  const original = apps[0]!;
+  apps = Array.from({ length: 8 }, (_, i) => ({ ...structuredClone(original), uid: `preview-${i}`, id: `preview-${i}`, key: `openai/preview-${i}`, provider: "info" as const, enabled: false, name: { en: i === 0 ? "A very long application title that must remain accessible after two visible lines" : `Preview ${i}`, "zh-CN": `应用预览 ${i}` } }));
+  let previewTotal = 8;
+  const fetch = vi.fn(async (url: string) => {
+    const u = new URL(url, "https://test");
+    if (u.pathname === "/admin/api/vendors") return response({ items: [{ ...vendors[0]!, apps: apps.slice(0, 5), app_total: previewTotal }], page: 1, total: 13, total_pages: 2 });
+    if (u.pathname === "/admin/api/vendors/openai/apps") {
+      const filtered = u.searchParams.get("q") === "Preview" && u.searchParams.get("state") === "disabled";
+      return response({ items: filtered ? apps.slice(0, 8) : apps, page: 1, total: apps.length, total_pages: 1 });
+    }
+    return read(url);
+  });
+  vi.stubGlobal("fetch", fetch);
+  const { wrapper, router } = await mountPage("/admin/vendors?q=Preview&state=disabled");
+  const card = () => wrapper.get(".vendor-card");
+  expect(wrapper.get('.page-heading a[href="/admin/vendors/new"]').text()).toBe("Add vendor");
+  expect(wrapper.get('.page-heading a[href="/admin/vendors/new"]').find("svg").exists()).toBe(false);
+  expect(card().findAll(".vendor-previews li")).toHaveLength(9);
+  expect(card().findAll(".vendor-previews li").at(-1)!.classes()).toContain("add-application");
+  expect(card().findAll(".vendor-previews .is-disabled")).toHaveLength(8);
+  expect(card().get(".application-preview-name").text()).toBe(apps[0]!.name.en);
+  expect(card().get(".vendor-previews a").attributes("aria-label")).toContain(apps[0]!.name.en);
+  expect(card().get(".vendor-preview-scroll").attributes("tabindex")).toBe("0");
+  expect(card().text()).toContain("8 applications in this view");
+  expect(card().text()).toContain("Preview 7");
+  expect(card().find(".expanded-apps").exists()).toBe(false);
+  expect(card().get('.add-application [aria-label="Add application"]').attributes("href")).toBe("/admin/vendors/openai/apps/new");
+  expect(fetch.mock.calls.some(([url]) => new URL(url, "https://test").pathname.endsWith("/apps"))).toBe(true);
+  expect(wrapper.find('[aria-label="Vendor pages"]').exists()).toBe(true);
+  setLanguage("zh-CN");
+  await flushPromises();
+  expect(card().get(".app-count").text()).toBe("当前视图 8 个应用");
+  setLanguage("en");
+  await flushPromises();
+  await card().get(".app-count").trigger("click");
+  await flushPromises();
+  expect(router.currentRoute.value.path).toBe("/admin/vendors/openai/apps");
+  expect(router.currentRoute.value.query).toEqual({ q: "Preview", state: "disabled" });
+  expect(wrapper.get(".vendor-applications .notice").text()).toContain("Filtered applications: Preview · Disabled");
+  expect(fetch.mock.calls.some(([url]) => url.includes("vendors/openai/apps?q=Preview&state=disabled"))).toBe(true);
+  await wrapper.get('.vendor-applications .notice a').trigger("click");
+  await flushPromises();
+  expect(router.currentRoute.value.query).toEqual({});
+  expect(wrapper.find(".vendor-applications .notice").exists()).toBe(false);
+  // Counts remain links for zero and one app; the add tile always stays last.
+  previewTotal = 5;
+  await router.push("/admin/vendors");
+  await flushPromises();
+  expect(card().find(".vendor-all-apps").exists()).toBe(false);
+  apps = apps.slice(0, 1); previewTotal = 1;
+  await wrapper.get('[aria-label="Refresh"]').trigger("click");
+  await flushPromises();
+  expect(card().text()).toContain("1 application");
+  expect(card().text()).not.toContain("1 applications");
+  expect(card().findAll(".vendor-previews li")).toHaveLength(2);
+  expect(card().find(".add-application").exists()).toBe(true);
+  apps = []; previewTotal = 0;
+  await wrapper.get('[aria-label="Refresh"]').trigger("click");
+  await flushPromises();
+  expect(card().findAll(".vendor-previews li")).toHaveLength(1);
+  expect(card().get(".app-count").text()).toBe("0 applications");
+  expect(card().get(".app-count").attributes("href")).toBe("/admin/vendors/openai/apps");
+  expect(card().find(".add-application").exists()).toBe(true);
+  wrapper.unmount();
+});
+
+it.each(["vendor", "app"] as const)("edits private %s notes with conflict drafts, navigation protection, explicit save and clear", async (kind) => {
+  const endpoint = kind === "vendor" ? "/admin/api/vendors/openai/admin-notes" : "/admin/api/apps/openai/codex/admin-notes";
+  const path = kind === "vendor" ? "/admin/vendors/openai/admin-notes" : "/admin/vendors/openai/apps/codex/admin-notes";
+  let value = { text: "", revision: 0 }, conflict = true;
+  const writes: RequestInit[] = [];
+  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === endpoint) {
+      if (init?.method === "PUT") {
+        writes.push(init);
+        if (conflict) { conflict = false; value = { text: "Other administrator", revision: 1 }; return response({ error: { code: "DIRECTORY_REVISION_CONFLICT" } }, 409); }
+        expect(init.headers).toMatchObject({ "If-Match": `"${value.revision}"`, "X-CSRF-Token": "directory-token" });
+        value = { text: JSON.parse(init.body as string).text, revision: value.revision + 1 };
+      }
+      return response(value);
+    }
+    return read(url);
+  });
+  vi.stubGlobal("fetch", fetch);
+  const confirm = vi.fn().mockReturnValue(false); vi.stubGlobal("confirm", confirm);
+  const { wrapper, router } = await mountPage(path);
+  const editor = () => wrapper.get(".admin-notes-editor"), input = () => editor().get('[name="admin-notes"]');
+  expect(wrapper.get('.application-tabs a[aria-current="page"]').text()).toBe("Admin Notes");
+  expect((input().element as HTMLTextAreaElement).value).toBe("");
+  await input().setValue("Maintenance <script>private</script>\n  Keep whitespace");
+  expect(writes).toHaveLength(0);
+  expect(editor().find("script").exists()).toBe(false);
+  await editor().get("form").trigger("submit"); await flushPromises();
+  expect(editor().get('[role="alert"]').text()).toContain("draft is preserved");
+  expect((input().element as HTMLTextAreaElement).value).toContain("Keep whitespace");
+  await router.push(path.replace("admin-notes", "settings"));
+  expect(router.currentRoute.value.path).toBe(path);
+  await editor().get('[aria-label="Reload"]').trigger("click"); await flushPromises();
+  expect((input().element as HTMLTextAreaElement).value).toContain("Keep whitespace");
+  confirm.mockReturnValue(true);
+  await editor().get('[aria-label="Reload"]').trigger("click"); await flushPromises();
+  expect((input().element as HTMLTextAreaElement).value).toBe("Other administrator");
+  await input().setValue("  Saved private text\n"); await editor().get("form").trigger("submit"); await flushPromises();
+  expect(value.text).toBe("  Saved private text\n");
+  expect(editor().get('[role="status"]').text()).toBe("Changes saved.");
+  await input().setValue(""); await editor().get("form").trigger("submit"); await flushPromises();
+  expect(value).toEqual({ text: "", revision: 3 });
+  const before = confirm.mock.calls.length;
+  await router.push(path.replace("admin-notes", "settings")); await flushPromises();
+  expect(confirm.mock.calls.length).toBe(before);
+  expect(fetch.mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(0);
+  wrapper.unmount();
+});
+
+it.each(["vendor", "app"] as const)("ignores a late %s note save after changing the entity", async (kind) => {
+  const source = kind === "vendor" ? "/admin/vendors/openai/admin-notes" : "/admin/vendors/openai/apps/codex/admin-notes";
+  const destination = kind === "vendor" ? "/admin/vendors/anthropic/admin-notes" : "/admin/vendors/anthropic/apps/claude-code/admin-notes";
+  let finish: ((value: ReturnType<typeof response>) => void) | undefined;
+  vi.stubGlobal("confirm", () => true);
+  vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => {
+    if (url.endsWith("/admin-notes")) {
+      if (init?.method === "PUT") return new Promise<ReturnType<typeof response>>((resolve) => { finish = resolve; });
+      return Promise.resolve(response({ text: url.includes("anthropic") ? "Destination private note" : "", revision: 0 }));
+    }
+    return Promise.resolve(read(url));
+  }));
+  const { wrapper, router } = await mountPage(source);
+  await wrapper.get('[name="admin-notes"]').setValue("Source draft");
+  await wrapper.get(".admin-notes-editor form").trigger("submit"); await flushPromises();
+  await router.push(destination); await flushPromises();
+  finish!(response({ text: "Late source saved", revision: 1 })); await flushPromises();
+  expect((wrapper.get('[name="admin-notes"]').element as HTMLTextAreaElement).value).toBe("Destination private note");
+  expect(wrapper.find(".admin-notes-editor .notice").exists()).toBe(false);
+  wrapper.unmount();
+});
+
+it.each(["en", "zh-CN"] as const)("keeps detail titles free of provider/state badges and empty vendor logos in %s", async (locale) => {
+  setLanguage(locale);
+  apps[0]!.provider = "info"; apps[0]!.enabled = false;
+  vendors[0]!.icon = ""; vendors[0]!.enabled = false;
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => read(url)));
+  const { wrapper, router } = await mountPage("/admin/vendors/openai/apps/codex/settings");
+  const header = wrapper.get(".application-header");
+  expect(header.find(".application-meta").exists()).toBe(false);
+  expect(header.find(".state-label").exists()).toBe(false);
+  expect(header.text()).not.toContain(locale === "en" ? "App Info" : "应用介绍");
+  expect(wrapper.get('.directory-editor [name="enabled"]').attributes("aria-checked")).toBe("false");
+  await router.push("/admin/vendors/openai/settings"); await flushPromises();
+  expect(wrapper.get(".vendor-header h1").text()).toBe(vendors[0]!.name[locale]);
+  expect(wrapper.find(".vendor-header .entity-icon").exists()).toBe(false);
+  expect(wrapper.find(".vendor-header .state-label").exists()).toBe(false);
+  expect(wrapper.get('.directory-editor [name="enabled"]').attributes("aria-checked")).toBe("false");
+  wrapper.unmount();
+});
+
+it("saves optional vendor language logos through existing uploads without changing app fields, notes or enabled", async () => {
+  vendors[0]!.localized_icons = { en: "", "zh-CN": "" };
+  const writes: Record<string, unknown>[] = [];
+  let uploadCount = 0;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === "/admin/api/assets/icons") {
+      expect(init?.headers).toMatchObject({ "X-CSRF-Token": "directory-token" });
+      expect(init?.body).toBeInstanceOf(FormData);
+      return response({ icon: `/assets/icons/upload-${++uploadCount}.svg` });
+    }
+    if (url === "/admin/api/vendors/openai" && init?.method === "PATCH") {
+      const body = JSON.parse(init.body as string); writes.push(body);
+      Object.assign(vendors[0]!, body, { revision: vendors[0]!.revision + 1 });
+      return response({ vendor: structuredClone(vendors[0]) });
+    }
+    return read(url);
+  }));
+  const { wrapper, router } = await mountPage("/admin/vendors/openai/settings");
+  expect(wrapper.get(".vendor-language-icons").attributes("open")).toBeUndefined();
+  for (const name of ["icon-en", "icon-zh-CN"]) {
+    const upload = wrapper.get(`input[name="${name}"]`);
+    Object.defineProperty(upload.element, "files", { value: [new File(["safe svg fixture"], "logo.svg", { type: "image/svg+xml" })] });
+    await upload.trigger("change"); await flushPromises();
+  }
+  await wrapper.get('.directory-editor [name="enabled"]').trigger("click"); await flushPromises();
+  expect(writes[0]).not.toHaveProperty("localized_icons");
+  await wrapper.get(".directory-editor form").trigger("submit"); await flushPromises();
+  expect(writes[1]).toMatchObject({ localized_icons: { en: "/assets/icons/upload-1.svg", "zh-CN": "/assets/icons/upload-2.svg" } });
+  expect(writes[1]).not.toHaveProperty("enabled"); expect(writes[1]).not.toHaveProperty("text");
+  expect(wrapper.get(".vendor-header img").attributes("src")).toBe("/assets/icons/upload-1.svg");
+  setLanguage("zh-CN"); await flushPromises();
+  expect(wrapper.get(".vendor-header img").attributes("src")).toBe("/assets/icons/upload-2.svg");
+  setLanguage("en"); await flushPromises();
+  await wrapper.get('[aria-label="Remove English logo"]').trigger("click");
+  await wrapper.get(".directory-editor form").trigger("submit"); await flushPromises();
+  expect(vendors[0]!.localized_icons?.en).toBe("");
+  await router.push("/admin/vendors/openai/apps/codex/settings"); await flushPromises();
+  expect(wrapper.find(".vendor-language-icons").exists()).toBe(false);
+  wrapper.unmount();
+});

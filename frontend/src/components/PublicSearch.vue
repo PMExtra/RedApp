@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { vendorName } from "../vendorName";
 import EntityIcon from "./EntityIcon.vue";
+import VendorLogo from "./VendorLogo.vue";
 import { ref, watch, onUnmounted, useId } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { publicFetch } from "../public";
@@ -16,6 +17,7 @@ interface Suggestion {
   name: LocalizedText;
   url: string;
   icon: string;
+  localized_icons?: LocalizedText;
 }
 const search = ref(typeof route.query.q === "string" ? route.query.q : ""),
   items = ref<Suggestion[]>([]),
@@ -163,7 +165,7 @@ onUnmounted(stop);
           @mousedown.prevent
           @click="navigate(item)"
         >
-          <EntityIcon :src="item.icon" />
+          <VendorLogo v-if="item.kind === 'vendor'" :vendor="item" /><EntityIcon v-else :src="item.icon" />
           <span class="search-suggestion-text"
             ><span>{{ item.kind === "vendor" ? vendorName(item) : item.name[language] }}</span
             ><small

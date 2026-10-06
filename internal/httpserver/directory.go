@@ -79,6 +79,7 @@ type directoryInput struct {
 	ID              string               `json:"id"`
 	Name            *store.LocalizedText `json:"name"`
 	Description     *store.LocalizedText `json:"description"`
+	LocalizedIcons  *store.LocalizedText `json:"localized_icons"`
 	Icon            *string              `json:"icon"`
 	Enabled         *bool                `json:"enabled"`
 	Provider        string               `json:"provider"`
@@ -90,6 +91,9 @@ type directoryInput struct {
 
 func (in directoryInput) vendorInput() store.VendorInput {
 	v := store.VendorInput{ID: in.ID, Enabled: true}
+	if in.LocalizedIcons != nil {
+		v.LocalizedIcons = *in.LocalizedIcons
+	}
 	if in.Name != nil {
 		v.Name = *in.Name
 	}
@@ -106,6 +110,9 @@ func (in directoryInput) vendorInput() store.VendorInput {
 }
 
 func (in directoryInput) applicationInput() (store.ApplicationInput, error) {
+	if in.LocalizedIcons != nil {
+		return store.ApplicationInput{}, store.ErrInvalidDirectory
+	}
 	d, ok := application.ProviderDefinition(in.Provider)
 	if !ok {
 		return store.ApplicationInput{}, store.ErrInvalidDirectory
@@ -203,6 +210,14 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 		s.templateAPI(w, r, parts[1]+"/"+parts[2])
 		return true
 	}
+	if len(parts) == 3 && parts[0] == "vendors" && parts[2] == "admin-notes" {
+		s.adminNotesAPI(w, r, "vendor", parts[1])
+		return true
+	}
+	if len(parts) == 4 && parts[0] == "apps" && parts[3] == "admin-notes" {
+		s.adminNotesAPI(w, r, "app", parts[1]+"/"+parts[2])
+		return true
+	}
 	if len(parts) == 4 && parts[0] == "apps" && parts[3] == "instructions" {
 		s.instructionsAPI(w, r, parts[1]+"/"+parts[2])
 		return true
@@ -292,6 +307,18 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 			return true
 		}
 	}
+	if in.LocalizedIcons != nil {
+		if isApp || (create && endpoint != "vendors") {
+			fail(w, 400, "Unexpected application fields")
+			return true
+		}
+		for _, icon := range []string{in.LocalizedIcons.En, in.LocalizedIcons.ZhCN} {
+			if err := s.validateDirectoryIcon(icon); err != nil {
+				directoryError(w, err)
+				return true
+			}
+		}
+	}
 	s.directoryMu.Lock()
 	defer s.directoryMu.Unlock()
 	var result any
@@ -333,7 +360,10 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 			}
 			err = s.DB.PermanentlyDeleteVendor(parts[1], in.Revision)
 		} else if r.Method == http.MethodPatch {
-			changes := store.VendorChanges{Name: row.Name, Description: row.Description, Icon: row.Icon, Enabled: row.Enabled}
+			changes := store.VendorChanges{Name: row.Name, Description: row.Description, Icon: row.Icon, LocalizedIcons: row.LocalizedIcons, Enabled: row.Enabled}
+			if in.LocalizedIcons != nil {
+				changes.LocalizedIcons = *in.LocalizedIcons
+			}
 			if in.Name != nil {
 				changes.Name = *in.Name
 			}

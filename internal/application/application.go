@@ -154,24 +154,25 @@ func ReadBody(ctx context.Context, client *distributor.Client, path string, limi
 }
 
 type Entry struct {
-	Descriptor        Descriptor
-	Protocol          Protocol
-	Upstream          *distributor.Client
-	Upstreams         []*distributor.Client
-	SourceStrategy    string
-	PublicAssets      map[string]Representation
-	UID               string
-	Provider          string
-	Revision          int64
-	VendorRevision    int64
-	SourceEpoch       int64
-	Enabled           bool // effective app and vendor status for persisted entries
-	DeletedAt         *time.Time
-	TemplateID        string // reviewed built-in template, independent of public identity
-	VendorID          string
-	VendorName        Localized
-	VendorDescription Localized
-	VendorIcon        string
+	Descriptor           Descriptor
+	Protocol             Protocol
+	Upstream             *distributor.Client
+	Upstreams            []*distributor.Client
+	SourceStrategy       string
+	PublicAssets         map[string]Representation
+	UID                  string
+	Provider             string
+	Revision             int64
+	VendorRevision       int64
+	SourceEpoch          int64
+	Enabled              bool // effective app and vendor status for persisted entries
+	DeletedAt            *time.Time
+	TemplateID           string // reviewed built-in template, independent of public identity
+	VendorID             string
+	VendorName           Localized
+	VendorDescription    Localized
+	VendorIcon           string
+	VendorLocalizedIcons Localized
 }
 
 // StorageID isolates cache data whenever an application's source changes.

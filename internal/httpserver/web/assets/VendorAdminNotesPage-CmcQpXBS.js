@@ -1,0 +1,1 @@
+import{T as e,V as t,j as n}from"./bootstrap-CzaD_muc.js";import{t as r}from"./AdminNotesEditor-Dic_bGhl.js";var i=n({__name:`VendorAdminNotesPage`,props:{vendor:{}},setup(n){return(i,a)=>(t(),e(r,{endpoint:`vendors/${n.vendor.id}/admin-notes`,readonly:!!n.vendor.deleted_at},null,8,[`endpoint`,`readonly`]))}});export{i as default};

@@ -12,7 +12,7 @@ export type ProviderKey =
   | "codex"
   | "claude-code";
 export type SourceStrategy = "" | "ordered" | "round_robin" | "random";
-export interface Vendor {
+export interface DirectoryEntity {
   has_template?: boolean;
   uid: string;
   id: string;
@@ -23,7 +23,8 @@ export interface Vendor {
   revision: number;
   deleted_at?: string | null;
 }
-export interface ManagedApplication extends Vendor {
+export interface Vendor extends DirectoryEntity { localized_icons?: LocalizedText; }
+export interface ManagedApplication extends DirectoryEntity {
   builtin_template?: boolean;
   key: string;
   vendor_uid: string;

@@ -9,7 +9,7 @@ import (
 )
 
 func publicVendor(v store.Vendor) map[string]any {
-	return map[string]any{"id": v.ID, "name": v.Name, "description": v.Description, "icon": v.Icon}
+	return map[string]any{"id": v.ID, "name": v.Name, "description": v.Description, "icon": v.Icon, "localized_icons": v.LocalizedIcons}
 }
 func (s *Server) publicCatalogAPI(w http.ResponseWriter, r *http.Request, origin string) bool {
 	path := r.URL.Path
@@ -87,18 +87,18 @@ func (s *Server) publicCatalogAPI(w http.ResponseWriter, r *http.Request, origin
 			reply(w, 200, map[string]any{"items": results})
 			return true
 		}
-		rows, err := s.DB.DB.Query(`SELECT id,name_en,name_zh_cn,icon FROM vendors v WHERE v.enabled=1 AND v.deleted_at_s IS NULL AND (instr(lower(v.id),lower(?))>0 OR instr(lower(v.name_en),lower(?))>0 OR instr(lower(v.name_zh_cn),lower(?))>0) ORDER BY id LIMIT 4`, q, q, q)
+		rows, err := s.DB.DB.Query(`SELECT id,name_en,name_zh_cn,icon,icon_en,icon_zh_cn FROM vendors v WHERE v.enabled=1 AND v.deleted_at_s IS NULL AND (instr(lower(v.id),lower(?))>0 OR instr(lower(v.name_en),lower(?))>0 OR instr(lower(v.name_zh_cn),lower(?))>0) ORDER BY id LIMIT 4`, q, q, q)
 		if err != nil {
 			fail(w, 503, "Search unavailable")
 			return true
 		}
 		for rows.Next() {
 			var id, icon string
-			var name store.LocalizedText
-			if err = rows.Scan(&id, &name.En, &name.ZhCN, &icon); err != nil {
+			var name, icons store.LocalizedText
+			if err = rows.Scan(&id, &name.En, &name.ZhCN, &icon, &icons.En, &icons.ZhCN); err != nil {
 				break
 			}
-			results = append(results, map[string]any{"kind": "vendor", "id": id, "name": name, "icon": icon, "url": "/" + id})
+			results = append(results, map[string]any{"kind": "vendor", "id": id, "name": name, "icon": icon, "localized_icons": icons, "url": "/" + id})
 		}
 		rowErr := rows.Err()
 		rows.Close()

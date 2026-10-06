@@ -269,7 +269,7 @@ func TestOpenAIVendorDefaultIconBackfill(t *testing.T) {
 				t.Fatal(err)
 			}
 			s := &Store{DB: db}
-			v, err := s.CreateVendor(VendorInput{ID: "openai", Name: LocalizedText{En: "Custom", ZhCN: "Custom"}, Icon: icon, Enabled: true})
+			v, err := legacyVendor(t, db, VendorInput{ID: "openai", Name: LocalizedText{En: "Custom", ZhCN: "Custom"}, Icon: icon, Enabled: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -344,8 +344,7 @@ func TestOpenAIIconMigrationFailureCanRetry(t *testing.T) {
 	if _, err = db.Exec(schemaV7); err != nil {
 		t.Fatal(err)
 	}
-	legacy := &Store{DB: db}
-	v, err := legacy.CreateVendor(VendorInput{ID: "openai", Name: LocalizedText{En: "Custom", ZhCN: "Custom"}})
+	v, err := legacyVendor(t, db, VendorInput{ID: "openai", Name: LocalizedText{En: "Custom", ZhCN: "Custom"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +359,7 @@ func TestOpenAIIconMigrationFailureCanRetry(t *testing.T) {
 	if err = db.QueryRow(`SELECT version FROM schema_version`).Scan(&version); err != nil || version != 7 {
 		t.Fatal("failed migration advanced version", version, err)
 	}
-	unchanged, err := legacy.Vendor(v.ID)
+	unchanged, err := readLegacyVendor(db, v.ID)
 	if err != nil || !reflect.DeepEqual(v, unchanged) {
 		t.Fatal("failed migration changed vendor", unchanged, err)
 	}

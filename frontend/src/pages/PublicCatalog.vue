@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import EntityIcon from "../components/EntityIcon.vue";
+import VendorLogo from "../components/VendorLogo.vue";
 import { vendorName } from "../vendorName";
 import IconButton from "../components/IconButton.vue";
 import { computed, ref, watch, onUnmounted } from "vue";
@@ -58,7 +58,11 @@ const vendorData = usePublicResource<{
   name: LocalizedText;
   description: LocalizedText;
   icon: string;
-}>(vendorPath);
+  localized_icons?: LocalizedText;
+}>(vendorPath, (value) => value.id === vendor.value && !!value.name && !!value.description && typeof value.icon === "string");
+const visibleVendor = computed(() => vendorData.data.value?.id === vendor.value ? vendorData.data.value : undefined);
+const vendorReady = computed(() => !vendor.value || !!visibleVendor.value);
+function retry() { void refresh(); if (vendor.value) void vendorData.refresh(); }
 function go(next: number) {
   void router.push({
     query: {
@@ -69,27 +73,27 @@ function go(next: number) {
 }
 </script>
 <template>
-  <nav v-if="vendor" class="breadcrumbs" :aria-label="t('Breadcrumb')">
+  <nav v-if="vendor && visibleVendor" class="breadcrumbs" :aria-label="t('Breadcrumb')">
     <RouterLink to="/all">{{ t("All applications") }}</RouterLink
     ><span>›</span
-    ><span>{{ vendorName(vendorData.data.value, vendor) }}</span>
+    ><span>{{ vendorName(visibleVendor) }}</span>
   </nav>
-  <div class="page-heading">
+  <div v-if="vendorReady" class="page-heading" :class="{ 'vendor-public-heading': vendor }">
     <div>
       <h1>
         {{
           vendor
-            ? vendorName(vendorData.data.value, vendor)
+            ? vendorName(visibleVendor)
             : t("All applications")
         }}
       </h1>
       <p v-if="vendor" class="muted">
-        {{ vendorData.data.value?.description[language] }}
+        {{ visibleVendor?.description[language] }}
       </p>
     </div>
-    <EntityIcon v-if="vendor" :src="vendorData.data.value?.icon" size="detail" />
+    <VendorLogo v-if="vendor" :vendor="visibleVendor" />
   </div>
-  <label class="catalog-search"
+  <label v-if="vendorReady" class="catalog-search"
     ><span class="sr-only">{{ t("Search by ID or name") }}</span
     ><input
       v-model="search"
@@ -103,10 +107,10 @@ function go(next: number) {
     role="alert"
   >
     {{ errorText(error || vendorData.error.value) }}
-    <IconButton @click="refresh" icon="refresh" :label="t('Retry')" />
+    <IconButton @click="retry" icon="refresh" :label="t('Retry')" />
   </p>
-  <p v-if="loading" role="status">{{ t("Loading…") }}</p>
-  <template v-if="data"
+  <p v-if="loading || (vendor && vendorData.loading.value)" role="status">{{ t("Loading…") }}</p>
+  <template v-if="data && vendorReady"
     ><PublicCards :apps="data.items" />
     <p v-if="!data.items.length" class="empty">
       {{ t("No applications are available.") }}

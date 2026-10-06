@@ -13,8 +13,8 @@ import SwitchControl from "./SwitchControl.vue";
 const props = defineProps<{ application: string; kind?: "app" | "vendor" }>();
 const emit = defineEmits<{ saved: [] }>();
 interface Preview {
-  template: { application: ManagedApplication; instructions: LocalizedText };
-  current: ManagedApplication;
+  template: { application: (ManagedApplication & { localized_icons?: LocalizedText }); instructions: LocalizedText };
+  current: ManagedApplication & { localized_icons?: LocalizedText };
   instructions: LocalizedText & { revision: number };
   groups: string[];
 }
@@ -47,7 +47,7 @@ function text(group: string, after: boolean): string {
         2,
       );
     case "icon":
-      return app.icon || "—";
+      return props.kind === "vendor" ? JSON.stringify({ icon: app.icon, localized_icons: app.localized_icons || { en: "", "zh-CN": "" } }, null, 2) : app.icon || "—";
     case "source":
       return JSON.stringify(
         {

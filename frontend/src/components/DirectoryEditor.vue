@@ -40,6 +40,7 @@ interface Draft {
   name: LocalizedText;
   description: LocalizedText;
   icon: string;
+  localized_icons: LocalizedText;
   enabled: boolean;
   provider: ProviderKey;
   base_url: string;
@@ -52,6 +53,7 @@ const empty = (): Draft => ({
   name: { en: "", "zh-CN": "" },
   description: { en: "", "zh-CN": "" },
   icon: "",
+  localized_icons: { en: "", "zh-CN": "" },
   enabled: true,
   provider: "info",
   base_url: "",
@@ -89,6 +91,7 @@ function accept(value?: Vendor | ManagedApplication) {
         name: value.name,
         description: value.description,
         icon: value.icon,
+        localized_icons: "provider" in value ? { en: "", "zh-CN": "" } : value.localized_icons || { en: "", "zh-CN": "" },
         enabled: value.enabled,
         ...("provider" in value
           ? {
@@ -262,6 +265,7 @@ async function save(remove = false) {
         name,
         description,
         icon,
+        ...(kind === "vendor" ? { localized_icons: draft.value.localized_icons } : {}),
         ...(wasCreating ? { id, enabled } : { revision: record.value?.revision }),
         ...(kind === "app"
           ? {
@@ -323,7 +327,7 @@ async function save(remove = false) {
     }
   }
 }
-async function upload(event: Event) {
+async function upload(event: Event, locale?: "en" | "zh-CN") {
   const input = event.target as HTMLInputElement,
     file = input.files?.[0];
   if (!file || !draft.value || busy.value || readOnly.value) return;
@@ -340,7 +344,10 @@ async function upload(event: Event) {
       body,
       request.signal,
     );
-    if (attempt === ticket && draft.value) draft.value.icon = response.icon;
+    if (attempt === ticket && draft.value) {
+      if (locale && props.kind === "vendor") draft.value.localized_icons[locale] = response.icon;
+      else draft.value.icon = response.icon;
+    }
   } catch (reason) {
     if (attempt === ticket && !isCancellation(reason)) error.value = reason;
   } finally {
@@ -448,11 +455,21 @@ onUnmounted(() => {
             }}
           </p>
           <div class="icon-field" role="group" :aria-label="t('Icon')">
-            <EntityIcon :src="directoryIcon(draft.icon)" size="detail" />
+            <EntityIcon :src="directoryIcon(draft.icon)" size="detail" :vendor="kind === 'vendor'" />
             <FilePicker name="icon" :label="draft.icon ? t('Replace icon') : t('Choose icon')" accept="image/jpeg,image/png,image/svg+xml,.jpg,.jpeg,.png,.svg" :disabled="busy || readOnly" @change="upload" />
             <IconButton v-if="draft.icon" type="button" class="secondary" :disabled="busy || readOnly" @click="draft.icon = ''" icon="close" :label="t('Remove icon')" />
             <p v-if="uploading" role="status">{{ t('Uploading…') }}</p>
           </div>
+          <details v-if="kind === 'vendor'" class="vendor-language-icons">
+            <summary>{{ t('Language-specific logos (optional)') }}</summary>
+            <p class="muted small-text">{{ t('Use the current language logo when set; otherwise use the default logo.') }}</p>
+            <div v-for="locale in languages" :key="locale" class="icon-field" role="group" :aria-label="locale === 'en' ? t('English logo') : t('Chinese logo')">
+              <span>{{ locale === 'en' ? t('English logo') : t('Chinese logo') }}</span>
+              <EntityIcon :src="directoryIcon(draft.localized_icons[locale])" vendor />
+              <FilePicker :name="`icon-${locale}`" :label="draft.localized_icons[locale] ? t('Replace icon') : t('Choose icon')" accept="image/jpeg,image/png,image/svg+xml,.jpg,.jpeg,.png,.svg" :disabled="busy || readOnly" @change="upload($event, locale)" />
+              <IconButton v-if="draft.localized_icons[locale]" type="button" class="secondary" :disabled="busy || readOnly" @click="draft.localized_icons[locale] = ''" icon="close" :label="locale === 'en' ? t('Remove English logo') : t('Remove Chinese logo')" />
+            </div>
+          </details>
         </div>
         <div class="two-columns">
           <fieldset v-for="lang in languages" :key="lang" class="site-locale">

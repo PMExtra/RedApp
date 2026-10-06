@@ -41,7 +41,7 @@ func (s *Server) publicApplication(e application.Entry, origin string) (map[stri
 		}
 	}
 	definition, _ := application.ProviderDefinition(e.Provider)
-	item := map[string]any{"id": d.ID, "name": d.Name, "publisher": d.Publisher, "vendor": map[string]any{"id": e.VendorID, "name": e.VendorName, "description": e.VendorDescription, "icon": e.VendorIcon}, "summary": d.Summary, "origin": root, "detail_url": "/" + d.ID, "distribution_url": root, "icon": icon, "channels": d.Channels, "installers": publicInstallers(d.Installers), "update_policy": d.UpdatePolicy, "provider": e.Provider, "capabilities": definition.Capabilities, "instructions": usage.LocalizedText}
+	item := map[string]any{"id": d.ID, "name": d.Name, "publisher": d.Publisher, "vendor": map[string]any{"id": e.VendorID, "name": e.VendorName, "description": e.VendorDescription, "icon": e.VendorIcon, "localized_icons": e.VendorLocalizedIcons}, "summary": d.Summary, "origin": root, "detail_url": "/" + d.ID, "distribution_url": root, "icon": icon, "channels": d.Channels, "installers": publicInstallers(d.Installers), "update_policy": d.UpdatePolicy, "provider": e.Provider, "capabilities": definition.Capabilities, "instructions": usage.LocalizedText}
 	if definition.Capabilities.Versions && e.Protocol != nil {
 		latest, discovered, err := s.latestKnownVersion(e)
 		if err != nil {

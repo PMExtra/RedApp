@@ -1,10 +1,10 @@
 <script setup lang="ts">
+import VendorLogo from "../components/VendorLogo.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { api, isCancellation } from "../api";
-import { directoryIcon, applicationNavigation, type Vendor } from "../directory";
+import { applicationNavigation, type Vendor } from "../directory";
 import { errorText, language, t } from "../i18n";
-import EntityIcon from "../components/EntityIcon.vue";
 import IconButton from "../components/IconButton.vue";
 const route = useRoute();
 const id = computed(() => String(route.params.vendor));
@@ -44,15 +44,14 @@ onUnmounted(() => { ticket++; controller?.abort(); });
     </nav>
     <header class="application-header vendor-header">
       <div class="application-header-identity">
-        <EntityIcon :src="directoryIcon(vendor.icon)" size="detail" />
-        <div><h1>{{ vendor.name[language] }}</h1><p class="application-meta">
-          <span>{{ vendor.id }}</span><span class="state-label">{{ vendor.deleted_at ? t("Deleted") : vendor.enabled ? t("Enabled") : t("Disabled") }}</span>
-        </p></div>
+        <div><h1>{{ vendor.name[language] }}</h1></div>
       </div>
+      <VendorLogo :vendor="vendor" admin />
     </header>
     <nav class="application-tabs" :aria-label="t('Vendor sections')">
       <RouterLink :to="`/admin/vendors/${vendor.id}/settings`">{{ t("Vendor settings") }}</RouterLink>
       <RouterLink :to="`/admin/vendors/${vendor.id}/apps`">{{ applicationNavigation[language] }}</RouterLink>
+      <RouterLink :to="`/admin/vendors/${vendor.id}/admin-notes`">{{ t('Admin Notes') }}</RouterLink>
     </nav>
     <RouterView :key="vendor.uid" :vendor="vendor" @updated="updated" />
   </template>

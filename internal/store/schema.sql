@@ -1,6 +1,6 @@
 PRAGMA foreign_keys=ON;
 
-CREATE TABLE schema_version(version INTEGER NOT NULL CHECK(version=8));
+CREATE TABLE schema_version(version INTEGER NOT NULL CHECK(version=9));
 
 CREATE TABLE directory_state(
   id INTEGER PRIMARY KEY CHECK(id=1), seeded INTEGER NOT NULL CHECK(seeded IN (0,1))
@@ -13,7 +13,7 @@ CREATE TABLE vendors(
   icon TEXT NOT NULL,
   enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
   revision INTEGER NOT NULL CHECK(revision>=1), deleted_at_s INTEGER
-);
+, icon_en TEXT NOT NULL DEFAULT '', icon_zh_cn TEXT NOT NULL DEFAULT '');
 CREATE TABLE applications(
   uid TEXT PRIMARY KEY CHECK(length(uid)=32 AND uid NOT GLOB '*[^0-9a-f]*'),
   vendor_uid TEXT NOT NULL, id TEXT NOT NULL,
@@ -148,7 +148,7 @@ CREATE TABLE admin(
   id INTEGER PRIMARY KEY CHECK(id=1), hash BLOB NOT NULL, revision INTEGER NOT NULL
 );
 
-INSERT INTO schema_version VALUES(8);
+INSERT INTO schema_version VALUES(9);
 INSERT INTO directory_state VALUES(1,0);
 INSERT INTO metric_history_state VALUES(1,0);
 CREATE INDEX metric_samples_time ON metric_samples(t_s);
@@ -242,3 +242,13 @@ INSERT INTO catalog_state VALUES(1,0,randomblob(32));
 CREATE TABLE pending_object_deletes(path TEXT PRIMARY KEY);
 
 CREATE TABLE pending_application_deletes(app_uid TEXT PRIMARY KEY REFERENCES applications(uid) ON DELETE CASCADE,requested_revision INTEGER NOT NULL);
+
+-- Private administrator notes never belong to public entity records or templates.
+CREATE TABLE vendor_admin_notes(
+ entity_uid TEXT PRIMARY KEY REFERENCES vendors(uid) ON DELETE CASCADE,
+ revision INTEGER NOT NULL CHECK(revision>=1), text TEXT NOT NULL
+);
+CREATE TABLE application_admin_notes(
+ entity_uid TEXT PRIMARY KEY REFERENCES applications(uid) ON DELETE CASCADE,
+ revision INTEGER NOT NULL CHECK(revision>=1), text TEXT NOT NULL
+);

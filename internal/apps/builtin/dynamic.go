@@ -160,6 +160,7 @@ func EntriesFromRecords(vendors []store.Vendor, apps []store.Application, pool *
 			}
 		}
 		entry.UID, entry.Revision, entry.VendorRevision, entry.SourceEpoch = app.UID, app.Revision, vendor.Revision, app.SourceEpoch
+		entry.VendorLocalizedIcons = localized(vendor.LocalizedIcons)
 		entry.VendorID, entry.VendorName, entry.VendorDescription, entry.VendorIcon = vendor.ID, localized(vendor.Name), localized(vendor.Description), vendor.Icon
 		entry.Enabled, entry.DeletedAt = app.Enabled && vendor.Enabled && vendor.DeletedAt == nil, app.DeletedAt
 		entry.Descriptor.ID = app.Key

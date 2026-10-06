@@ -216,7 +216,7 @@ it("uploads with explicit replacement identity, shows progress and cancels witho
   expect(wrapper.find(".transfer-progress").exists()).toBe(false);
   wrapper.unmount();
 });
-it("bounds previews to five and shows a matching sixth app in expanded search", async () => {
+it("replaces an in-flight full strip with the filtered sixth application", async () => {
   signedIn.value = true;
   const apps = Array.from({ length: 6 }, (_, i) => ({
     ...adminApplications[0]!,
@@ -225,9 +225,8 @@ it("bounds previews to five and shows a matching sixth app in expanded search", 
     key: `openai/item-${i}`,
     name: { en: `Tool ${i + 1}`, "zh-CN": `工具${i + 1}` },
   }));
-  const fetch = vi.fn(async (_url: string) =>
-    response(page([apps[5]], 1, 1, 20)),
-  );
+  let finish: ((value: ReturnType<typeof response>) => void) | undefined;
+  const fetch = vi.fn((_url: string, _init?: RequestInit) => new Promise<ReturnType<typeof response>>((resolve) => { finish = resolve; }));
   vi.stubGlobal("fetch", fetch);
   const wrapper = mount(VendorCard, {
     props: {
@@ -238,15 +237,19 @@ it("bounds previews to five and shows a matching sixth app in expanded search", 
     global: { stubs: { RouterLink: { template: "<a><slot/></a>" } } },
   });
   expect(wrapper.text()).not.toContain("Tool 6");
-  expect(fetch).not.toHaveBeenCalled();
+  expect(fetch).toHaveBeenCalledTimes(1);
   await wrapper.setProps({
     query: "Tool 6",
     vendor: { ...managedVendors[0]!, apps: [apps[5]!], app_total: 1 },
   });
   await flushPromises();
+  expect(fetch.mock.calls[0]![1]!.signal?.aborted).toBe(true);
+  finish!(response(page(apps, 6, 1, 100)));
+  await flushPromises();
   expect(wrapper.text()).toContain("Tool 6");
   expect(wrapper.text()).not.toContain("Tool 1");
-  expect(fetch).not.toHaveBeenCalled();
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(wrapper.findAll(".directory-apps li:not(.add-application)")).toHaveLength(1);
   expect(wrapper.findAll(".directory-apps li")).toHaveLength(2);
   expect(wrapper.find(".vendor-actions button").exists()).toBe(false);
   wrapper.unmount();

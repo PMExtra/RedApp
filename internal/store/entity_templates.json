@@ -11,7 +11,11 @@
         "zh-CN": ""
       },
       "icon": "/assets/builtin/openai.svg",
-      "enabled": false
+      "enabled": false,
+      "localized_icons": {
+        "en": "",
+        "zh-CN": ""
+      }
     },
     "application": {
       "id": "codex",
@@ -48,7 +52,11 @@
         "zh-CN": ""
       },
       "icon": "/assets/builtin/anthropic.svg",
-      "enabled": false
+      "enabled": false,
+      "localized_icons": {
+        "en": "",
+        "zh-CN": ""
+      }
     },
     "application": {
       "id": "claude-code",

@@ -184,7 +184,7 @@ func (s *Store) ResetVendorTemplate(id string, in TemplateReset) (Vendor, error)
 	if err != nil {
 		return v, err
 	}
-	changes := VendorChanges{Name: v.Name, Description: v.Description, Icon: v.Icon, Enabled: v.Enabled}
+	changes := VendorChanges{Name: v.Name, Description: v.Description, Icon: v.Icon, LocalizedIcons: v.LocalizedIcons, Enabled: v.Enabled}
 	seen := map[string]bool{}
 	for _, group := range in.Groups {
 		if seen[group] {
@@ -197,6 +197,7 @@ func (s *Store) ResetVendorTemplate(id string, in TemplateReset) (Vendor, error)
 			changes.Description = template.Description
 		case "icon":
 			changes.Icon = template.Icon
+			changes.LocalizedIcons = template.LocalizedIcons
 		default:
 			return v, ErrInvalidDirectory
 		}

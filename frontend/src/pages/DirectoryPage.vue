@@ -78,11 +78,8 @@ onUnmounted(() => clearTimeout(debounce));
       </div>
       <RouterLink
         to="/admin/vendors/new"
-        class="button-link icon-button"
-        :aria-label="t('Add vendor')"
-        :title="t('Add vendor')"
-        ><Icon name="plus"
-      /></RouterLink>
+        class="button-link"
+        >{{ t('Add vendor') }}</RouterLink>
     </div>
     <div class="directory-toolbar">
       <label class="directory-search"
