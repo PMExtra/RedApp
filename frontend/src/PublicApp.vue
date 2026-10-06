@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { applicationVendorName } from "./vendorName";
+import PublicCards from "./components/PublicCards.vue";
 import IconButton from "./components/IconButton.vue";
 import { computed, watchEffect } from "vue";
 import { useRoute } from "vue-router";
@@ -63,12 +64,13 @@ watchEffect(() => {
         /><Icon v-else name="box" :size="48" />
       </div>
       <div class="public-heading">
-        <span class="eyebrow">{{
-          applicationCapabilities(selected).installers
-            ? t("Installation instructions")
-            : selected.provider === "info"
-              ? t("Usage instructions")
-              : t("Download files")
+        <span
+          v-if="!applicationCapabilities(selected).installers"
+          class="eyebrow"
+        >{{
+          selected.provider === "info"
+            ? t("Usage instructions")
+            : t("Download files")
         }}</span>
         <h1>{{ selected.name[language] }}</h1>
         <p class="public-lead">{{ selected.summary[language] }}</p>
@@ -114,36 +116,7 @@ watchEffect(() => {
     ><div class="public-heading">
       <h1>{{ t("Applications") }}</h1>
     </div>
-    <div class="application-list">
-      <RouterLink
-        v-for="app in bootstrap?.apps || []"
-        :key="app.id"
-        :to="`/${app.id}`"
-        class="application-card"
-        ><div class="application-card-brand">
-          <div class="application-logo">
-            <img
-              v-if="app.icon"
-              :src="app.icon"
-              :alt="applicationVendorName(app)"
-              width="40"
-              height="40"
-            /><Icon v-else name="box" :size="40" />
-          </div>
-          <span class="app-publisher">{{ applicationVendorName(app) }}</span>
-        </div>
-        <h2>{{ app.name[language] }}</h2>
-        <p>{{ app.summary[language] }}</p>
-        <span class="card-action"
-          >{{
-            applicationCapabilities(app).installers
-              ? t("Installation instructions")
-              : app.provider === "info"
-                ? t("Usage instructions")
-                : t("Download files")
-          }}<Icon name="arrow" /></span
-      ></RouterLink>
-    </div>
+    <PublicCards :apps="bootstrap?.apps || []" show-action />
     <p v-if="bootstrap && !bootstrap.apps.length" class="empty">
       {{ t("No applications are available.") }}
     </p></template

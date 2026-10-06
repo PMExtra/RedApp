@@ -35,6 +35,10 @@ it("uses canonical RouterLinks, navigates between applications without reload, a
     "/openai/codex",
   );
   expect(wrapper.text()).not.toContain("organization’s download service");
+  const card = wrapper.get(".application-card-brand");
+  expect(card.get(".application-card-heading h2").text()).toBe("Codex CLI");
+  expect(card.get(".application-card-heading .app-publisher").text()).toBe("English vendor");
+  expect(card.element.firstElementChild?.tagName.toLowerCase()).toMatch(/^(img|svg)$/);
   setLanguage("zh-CN");
   await flushPromises();
   expect(wrapper.get(".app-publisher").text()).toBe("中文厂商");
@@ -43,6 +47,8 @@ it("uses canonical RouterLinks, navigates between applications without reload, a
   await flushPromises();
   await flushPromises();
   expect(router.currentRoute.value.path).toBe("/openai/codex");
+  expect(wrapper.find(".application-identity .eyebrow").exists()).toBe(false);
+  expect(wrapper.text()).not.toContain("Installation instructions");
   expect(wrapper.get("iframe").attributes("src")).toBe(
     "/api/apps/openai/codex/instructions/document?lang=en",
   );

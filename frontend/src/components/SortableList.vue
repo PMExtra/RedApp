@@ -235,7 +235,7 @@ onUnmounted(() => {
           @keydown="keyboard(index, $event)"
           @dragstart.prevent
         >
-          <Icon name="sort" />
+          <Icon name="reorder" />
         </button>
         <div class="sortable-content">
           <slot :item="item" :index="index" />

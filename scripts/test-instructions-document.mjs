@@ -132,7 +132,7 @@ try {
   const instructions = await (
     await request("/admin/api/apps/openai/codex/instructions")
   ).json();
-  const en = `# Executable fixture\n\n{{app_name}} {{app_key}} {{base_url}}{{app_path}}\n\n<script>window.inlineFixture = "executed";</script>\n<script src="http://127.0.0.1:${fixturePort}/fixture.js"></script>\n\n{{unknown}}\n\n\`\`\`sh\n  first\n\nsecond  \n\`\`\`\n\n\`inline\`\n\n<pre id="raw"><code>raw block</code></pre>`;
+  const en = `# Executable fixture\n\n## Installation instructions\n\n{{app_name}} {{app_key}} {{base_url}}{{app_path}}\n\n<script>window.inlineFixture = "executed";</script>\n<script src="http://127.0.0.1:${fixturePort}/fixture.js"></script>\n\n{{unknown}}\n\n\`\`\`sh\n  first\n\nsecond  \n\`\`\`\n\n\`inline\`\n\n<pre id="raw"><code>raw block</code></pre>`;
   await request(
     "/admin/api/apps/openai/codex/instructions",
     { en, "zh-CN": "# 中文说明\n\n```\n中文代码\n```", revision: instructions.revision },
@@ -160,6 +160,7 @@ try {
     page.evaluate('document.querySelector("h1").textContent'),
     "Executable fixture",
   );
+  assert.equal(page.evaluate('document.querySelector("h2").textContent'), "Installation instructions");
   assert(page.evaluate("document.body.textContent").includes("openai/codex"));
   assert(page.evaluate("document.body.textContent").includes("{{unknown}}"));
   assert(page.evaluate("document.body.textContent").includes(origin + "/openai/codex"));
@@ -167,6 +168,15 @@ try {
   assert.equal(page.evaluate('document.querySelector("#raw").outerHTML'), '<pre id="raw"><code>raw block</code></pre>');
   await page.evaluate(`(async()=>{
     window.copied=[];
+    window.copyNow=0;
+    window.copyTimers=[];
+    window.setTimeout=(fn,delay)=>window.copyTimers.push({fn,at:window.copyNow+delay});
+    window.advanceCopy=ms=>{
+      window.copyNow+=ms;
+      const due=window.copyTimers.filter(timer=>timer.at<=window.copyNow);
+      window.copyTimers=window.copyTimers.filter(timer=>timer.at>window.copyNow);
+      due.forEach(timer=>timer.fn());
+    };
     Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>window.copied.push(text)},configurable:true});
     document.querySelector('.copy-block button').click();
     document.querySelector('.copy-inline button').click();
@@ -174,6 +184,21 @@ try {
   })()`);
   assert.deepEqual(Array.from(page.evaluate('window.copied')), ['  first\n\nsecond  \n','inline']);
   assert.equal(page.evaluate('document.querySelector("[role=status]").textContent'), 'Copied');
+  for (const kind of ['block', 'inline']) {
+    assert.equal(page.evaluate(`document.querySelector('.copy-${kind} button').disabled`), true);
+    assert.equal(page.evaluate(`document.querySelector('.copy-${kind} button').textContent`), 'Copied');
+    assert.equal(page.evaluate(`document.querySelector('.copy-${kind} button').getAttribute('aria-label')`), 'Copied');
+    assert.equal(page.evaluate(`document.querySelector('.copy-${kind} button svg path').getAttribute('d')`), 'M4 12l5 5L20 6');
+  }
+  page.evaluate('window.advanceCopy(2999);document.querySelector(".copy-block button").click()');
+  assert.equal(page.evaluate('document.querySelector(".copy-block button").disabled'), true);
+  assert.equal(page.evaluate('window.copied.length'), 2);
+  page.evaluate('window.advanceCopy(1)');
+  for (const kind of ['block', 'inline']) {
+    assert.equal(page.evaluate(`document.querySelector('.copy-${kind} button').disabled`), false);
+    assert.equal(page.evaluate(`document.querySelector('.copy-${kind} button').textContent`), 'Copy');
+    assert(page.evaluate(`document.querySelector('.copy-${kind} button svg rect') !== null`));
+  }
   await page.evaluate(`(async()=>{
     navigator.clipboard.writeText=async()=>{throw Error('denied')};
     document.querySelector('.copy-inline button').focus();
@@ -194,6 +219,9 @@ try {
   assert.equal(page.evaluate('document.querySelector(".copy-block button").disabled'), true);
   assert.equal(page.evaluate('document.querySelector(".copy-block button").textContent'), 'Copying…');
   await page.evaluate('(async()=>{window.finishCopy();await Promise.resolve()})()');
+  assert.equal(page.evaluate('document.querySelector(".copy-block button").disabled'), true);
+  assert.equal(page.evaluate('document.querySelector(".copy-block button").textContent'), 'Copied');
+  page.evaluate('window.advanceCopy(3000)');
   assert.equal(page.evaluate('document.querySelector(".copy-block button").disabled'), false);
   assert.equal(page.evaluate('getComputedStyle(document.querySelector(".copy-block .copy-status")).display'), 'block');
   await page.evaluate(`(async()=>{
@@ -208,8 +236,20 @@ try {
   );
   assert.equal(page.evaluate('document.querySelector(".copy-title").textContent'), '代码');
   assert.equal(page.evaluate('document.querySelector(".copy-code").textContent'), '复制');
+  await page.evaluate(`(async()=>{
+    window.setTimeout=(fn,delay)=>{window.resetCopy=fn;window.resetDelay=delay};
+    Object.defineProperty(navigator,'clipboard',{value:{writeText:async()=>{}},configurable:true});
+    document.querySelector('.copy-code').click();await Promise.resolve();
+  })()`);
+  assert.equal(page.evaluate('document.querySelector(".copy-code").textContent'), '已复制');
+  assert.equal(page.evaluate('document.querySelector(".copy-code").getAttribute("aria-label")'), '已复制');
+  assert.equal(page.evaluate('document.querySelector(".copy-code").disabled'), true);
+  assert.equal(page.evaluate('window.resetDelay'), 3000);
+  page.evaluate('window.resetCopy()');
+  assert.equal(page.evaluate('document.querySelector(".copy-code").textContent'), '复制');
+  assert.equal(page.evaluate('document.querySelector(".copy-code").disabled'), false);
   console.log(
-    "Real HTTP instruction document: Markdown-only copy controls, exact whitespace/newlines, keyboard focus, clipboard failure, controlled placeholders, inline and external local fixture scripts, bilingual navigation and separate CSP headers passed (Happy DOM; no GUI).",
+    "Real HTTP instruction document: Markdown-only copy controls, exact whitespace/newlines, check/Copied feedback and three-second reset, keyboard focus, clipboard failure, controlled placeholders, inline and external local fixture scripts, bilingual navigation and separate CSP headers passed (Happy DOM; no GUI).",
   );
 } finally {
   await browser.abort();
