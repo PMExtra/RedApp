@@ -18,12 +18,13 @@ import {
   sessionNotice,
   signedIn,
 } from "../session";
-import { errorText, t } from "../i18n";
+import { errorText, t, language } from "../i18n";
 import { siteTitle } from "../site";
 import { confirmDirtyDrafts } from "../composables/useDirtyDraft";
 import { adminReturnPath } from "../router";
 const router = useRouter(),
   route = useRoute();
+const applicationNavigation = { en: "Applications", "zh-CN": "应用管理" };
 const passwordOpen = ref(false),
   busy = ref(false),
   actionError = ref<unknown>();
@@ -88,7 +89,7 @@ onUnmounted(() => {
         :busy="busy"
         @password="passwordOpen = true"
         @logout="logout"
-      /><RouterLink v-else to="/" class="header-link">{{
+      /><RouterLink v-else-if="route.path !== '/admin/login'" to="/" class="header-link">{{
         t("Applications")
       }}</RouterLink></template
     >
@@ -109,7 +110,7 @@ onUnmounted(() => {
             ><Icon name="settings" />{{ t("Upstream proxy") }}</RouterLink
           >
           <RouterLink to="/admin/vendors"
-            ><Icon name="box" />{{ t("Vendors and applications") }}</RouterLink
+            ><Icon name="box" />{{ applicationNavigation[language] }}</RouterLink
           >
         </nav>
         <RouterLink to="/" class="sidebar-public"

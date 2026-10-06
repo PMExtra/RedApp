@@ -188,6 +188,7 @@ it("redirects every signed-out admin entry after abandoning login, including his
     );
     expect(router.currentRoute.value.query.returnTo).toBe(target);
     expect(wrapper.text()).not.toContain("Distribution overview");
+    expect(wrapper.find('.topbar-actions a.header-link[href="/"]').exists()).toBe(false);
   };
   for (let visit = 0; visit < 2; visit++) {
     await wrapper.get('a[href="/admin/overview"]').trigger("click");
@@ -214,5 +215,13 @@ it("redirects every signed-out admin entry after abandoning login, including his
   await vi.waitFor(() =>
     expect(wrapper.text()).toContain("Distribution overview"),
   );
+  expect(wrapper.get('.sidebar a[href="/admin/vendors"]').text()).toBe("Applications");
+  setLanguage("zh-CN");
+  await flushPromises();
+  expect(wrapper.get('.sidebar a[href="/admin/vendors"]').text()).toBe("应用管理");
+  expect(wrapper.find(".account-trigger").exists()).toBe(true);
+  await router.push("/");
+  await flushPromises();
+  expect(wrapper.get("h1").text()).toBe("应用");
   wrapper.unmount();
 });

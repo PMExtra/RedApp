@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vendorName } from "../vendorName";
 import EntityIcon from "./EntityIcon.vue";
 import { ref, watch, onUnmounted, useId } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -164,7 +165,7 @@ onUnmounted(stop);
         >
           <EntityIcon :src="item.icon" />
           <span class="search-suggestion-text"
-            ><span>{{ item.name[language] }}</span
+            ><span>{{ item.kind === "vendor" ? vendorName(item) : item.name[language] }}</span
             ><small
               >{{ item.kind === "vendor" ? t("Vendor") : t("Application") }} ·
               {{ item.id }}</small

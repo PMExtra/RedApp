@@ -22,3 +22,17 @@ func TestInstructionsCopyOnlyMarkdown(t *testing.T) {
 		}
 	}
 }
+
+func TestMarkdownCodeTitlesAndCustomHeadings(t *testing.T) {
+	for language, title := range map[string]string{"bash": "Shell", "powershell": "PowerShell", "python": "python", "": ""} {
+		var body bytes.Buffer
+		source := "### Custom title\n\n```" + language + "\necho hello\n```\n"
+		if err := instructionsMarkdown.Convert([]byte(source), &body); err != nil {
+			t.Fatal(err)
+		}
+		rendered := body.String()
+		if !strings.Contains(rendered, "<h3>Custom title</h3>") || !strings.Contains(rendered, `data-code-title="`+title+`"`) || !strings.Contains(rendered, `class="copy-heading"`) {
+			t.Fatal(rendered)
+		}
+	}
+}

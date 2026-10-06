@@ -30,7 +30,7 @@ func TestV074InstructionsUpgradePreservesCustomAndEmpty(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err = upgradeInstructionsV074(s.DB); err != nil {
+				if err = upgradeBuiltinInstructions(s.DB); err != nil {
 					t.Fatal(err)
 				}
 				after, err := s.Instructions(a.UID)
@@ -41,7 +41,7 @@ func TestV074InstructionsUpgradePreservesCustomAndEmpty(t *testing.T) {
 				if after.En != current.Instructions.En || after.ZhCN != custom || after.Revision != saved.Revision+1 {
 					t.Fatal(after)
 				}
-				if err = upgradeInstructionsV074(s.DB); err != nil {
+				if err = upgradeBuiltinInstructions(s.DB); err != nil {
 					t.Fatal(err)
 				}
 				again, _ := s.Instructions(a.UID)

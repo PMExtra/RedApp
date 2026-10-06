@@ -135,7 +135,7 @@ try {
   const en = `# Executable fixture\n\n{{app_name}} {{app_key}} {{base_url}}{{app_path}}\n\n<script>window.inlineFixture = "executed";</script>\n<script src="http://127.0.0.1:${fixturePort}/fixture.js"></script>\n\n{{unknown}}\n\n\`\`\`sh\n  first\n\nsecond  \n\`\`\`\n\n\`inline\`\n\n<pre id="raw"><code>raw block</code></pre>`;
   await request(
     "/admin/api/apps/openai/codex/instructions",
-    { en, "zh-CN": "# 中文说明", revision: instructions.revision },
+    { en, "zh-CN": "# 中文说明\n\n```\n中文代码\n```", revision: instructions.revision },
     "PUT",
   );
   const path = "/api/apps/openai/codex/instructions/document?lang=en";
@@ -181,12 +181,33 @@ try {
     await Promise.resolve();
   })()`);
   assert.equal(page.evaluate('document.activeElement.getAttribute("aria-label")'), 'Copy code');
-  assert.equal(page.evaluate('document.querySelector("[role=status]").textContent'), 'Copy failed; please copy manually');
+  assert.equal(page.evaluate('document.querySelector(".copy-inline [role=status]").textContent'), 'Copy failed; select and copy the code manually');
+  assert.equal(page.evaluate('document.querySelector(".copy-heading .copy-title").textContent'), 'Shell');
+  assert.equal(page.evaluate('document.querySelector(".copy-heading button").getAttribute("aria-label")'), 'Copy code');
+  await page.evaluate(`(()=>{
+    window.copyCalls=0;
+    navigator.clipboard.writeText=()=>{window.copyCalls++;return new Promise(resolve=>window.finishCopy=resolve)};
+    document.querySelector('.copy-block button').click();
+    document.querySelector('.copy-block button').click();
+  })()`);
+  assert.equal(page.evaluate('window.copyCalls'), 1);
+  assert.equal(page.evaluate('document.querySelector(".copy-block button").disabled'), true);
+  assert.equal(page.evaluate('document.querySelector(".copy-block button").textContent'), 'Copying…');
+  await page.evaluate('(async()=>{window.finishCopy();await Promise.resolve()})()');
+  assert.equal(page.evaluate('document.querySelector(".copy-block button").disabled'), false);
+  assert.equal(page.evaluate('getComputedStyle(document.querySelector(".copy-block .copy-status")).display'), 'block');
+  await page.evaluate(`(async()=>{
+    Object.defineProperty(navigator,'clipboard',{value:undefined,configurable:true});
+    document.querySelector('.copy-block button').click();await Promise.resolve();
+  })()`);
+  assert.equal(page.evaluate('document.querySelector(".copy-block .copy-status").hasAttribute("data-error")'), true);
   await page.goto(origin + path.replace("lang=en", "lang=zh-CN"));
   assert.equal(
     page.evaluate('document.querySelector("h1").textContent'),
     "中文说明",
   );
+  assert.equal(page.evaluate('document.querySelector(".copy-title").textContent'), '代码');
+  assert.equal(page.evaluate('document.querySelector(".copy-code").textContent'), '复制');
   console.log(
     "Real HTTP instruction document: Markdown-only copy controls, exact whitespace/newlines, keyboard focus, clipboard failure, controlled placeholders, inline and external local fixture scripts, bilingual navigation and separate CSP headers passed (Happy DOM; no GUI).",
   );

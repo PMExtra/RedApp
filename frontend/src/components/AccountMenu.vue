@@ -68,7 +68,7 @@ function select(action: "password" | "logout") {
       <Icon name="user" /><span>{{ t("Administrator") }}</span
       ><Icon name="chevron" :size="14" />
     </button>
-    <PopoverPanel
+    <PopoverPanel topbar
       v-if="open"
       :id="`${id}-menu`"
       role="menu"

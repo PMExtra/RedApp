@@ -9,6 +9,7 @@ const props = defineProps<{
   label: string;
   disabled?: boolean;
   icon?: boolean;
+  topbar?: boolean;
 }>();
 const emit = defineEmits<{ "update:modelValue": [string] }>();
 const {
@@ -167,6 +168,7 @@ watch(
     </button>
     <PopoverPanel
       as="ul"
+      :topbar="topbar"
       v-if="open"
       :id="`${id}-list`"
       class="select-options"

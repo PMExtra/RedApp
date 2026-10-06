@@ -33,7 +33,7 @@ const failed = bootstrapError;
       <PublicSearch v-if="router" />
       <div class="topbar-actions">
         <div class="language-control">
-          <SelectMenu
+          <SelectMenu topbar
             :model-value="language"
             @update:model-value="setLanguage($event as Language)"
             :label="t('Language')"

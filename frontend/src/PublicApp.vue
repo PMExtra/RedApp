@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { applicationVendorName } from "./vendorName";
 import IconButton from "./components/IconButton.vue";
 import { computed, watchEffect } from "vue";
 import { useRoute } from "vue-router";
@@ -47,7 +48,7 @@ watchEffect(() => {
       <RouterLink to="/all">{{ t("All applications") }}</RouterLink
       ><span>›</span
       ><RouterLink :to="`/${route.params.vendor}`">{{
-        selected.publisher
+        applicationVendorName(selected)
       }}</RouterLink
       ><span>›</span><span>{{ selected.name[language] }}</span>
     </nav>
@@ -56,7 +57,7 @@ watchEffect(() => {
         <img
           v-if="selected.icon"
           :src="selected.icon"
-          :alt="selected.publisher"
+          :alt="applicationVendorName(selected)"
           width="48"
           height="48"
         /><Icon v-else name="box" :size="48" />
@@ -124,12 +125,12 @@ watchEffect(() => {
             <img
               v-if="app.icon"
               :src="app.icon"
-              :alt="app.publisher"
+              :alt="applicationVendorName(app)"
               width="40"
               height="40"
             /><Icon v-else name="box" :size="40" />
           </div>
-          <span class="app-publisher">{{ app.publisher }}</span>
+          <span class="app-publisher">{{ applicationVendorName(app) }}</span>
         </div>
         <h2>{{ app.name[language] }}</h2>
         <p>{{ app.summary[language] }}</p>

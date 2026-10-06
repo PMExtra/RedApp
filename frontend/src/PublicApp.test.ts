@@ -9,15 +9,16 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 it("uses canonical RouterLinks, navigates between applications without reload, and preserves commands across locales", async () => {
+  const localizedApps = boot.apps.map(app => ({ ...app, vendor: { id: app.id.split("/")[0]!, name: { en: "English vendor", "zh-CN": "中文厂商" } } }));
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) =>
       response(
         url === "/api/home"
-          ? { pinned: boot.apps, ranking: [] }
+          ? { pinned: localizedApps, ranking: [] }
           : {
               ...boot,
-              apps: boot.apps.map((app) => ({
+              apps: localizedApps.map((app) => ({
                 ...app,
                 instructions: {
                   en: "{{install_commands}}",
@@ -34,6 +35,10 @@ it("uses canonical RouterLinks, navigates between applications without reload, a
     "/openai/codex",
   );
   expect(wrapper.text()).not.toContain("organization’s download service");
+  setLanguage("zh-CN");
+  await flushPromises();
+  expect(wrapper.get(".app-publisher").text()).toBe("中文厂商");
+  setLanguage("en");
   await wrapper.find(".application-card").trigger("click");
   await flushPromises();
   await flushPromises();
@@ -47,6 +52,7 @@ it("uses canonical RouterLinks, navigates between applications without reload, a
   setLanguage("zh-CN");
   await flushPromises();
   expect(wrapper.get("iframe").attributes("src")).toContain("lang=zh-CN");
+  expect(wrapper.findAll(".breadcrumbs a")[1]!.text()).toBe("中文厂商");
   await router.push("/anthropic/claude-code");
   await flushPromises();
   expect(wrapper.find("h1").text()).toBe("Claude Code");

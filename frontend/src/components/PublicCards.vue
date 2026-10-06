@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { applicationVendorName } from "../vendorName";
 import type { Application } from "../bootstrap";
 import { language, t } from "../i18n";
 import Icon from "./Icon.vue";
@@ -19,7 +20,7 @@ defineProps<{ apps: (Application & { download_clients?: number })[] }>();
           width="40"
           height="40"
         /><Icon v-else name="box" :size="40" /><span class="app-publisher">{{
-          app.publisher
+          applicationVendorName(app)
         }}</span>
       </div>
       <h2>{{ app.name[language] }}</h2>

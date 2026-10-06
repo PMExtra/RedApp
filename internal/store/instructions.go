@@ -81,12 +81,19 @@ func (s *Store) SaveInstructions(key string, expected int64, value LocalizedText
 //go:embed entity_templates_v073.json
 var instructionsV073 []byte
 
+//go:embed entity_templates_v074.json
+var instructionsV074 []byte
+
 // Upgrade only exact previous defaults, independently by language. Empty and
 // customized documents remain authoritative. Revision changes invalidate editors.
-func upgradeInstructionsV074(db *sql.DB) error {
+func upgradeBuiltinInstructions(db *sql.DB) error {
 	var old []EntityTemplate
-	if err := json.Unmarshal(instructionsV073, &old); err != nil {
-		return err
+	for _, snapshot := range [][]byte{instructionsV073, instructionsV074} {
+		var templates []EntityTemplate
+		if err := json.Unmarshal(snapshot, &templates); err != nil {
+			return err
+		}
+		old = append(old, templates...)
 	}
 	tx, err := db.Begin()
 	if err != nil {

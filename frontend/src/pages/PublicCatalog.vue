@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vendorName } from "../vendorName";
 import IconButton from "../components/IconButton.vue";
 import { computed, ref, watch, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -70,14 +71,14 @@ function go(next: number) {
   <nav v-if="vendor" class="breadcrumbs" :aria-label="t('Breadcrumb')">
     <RouterLink to="/all">{{ t("All applications") }}</RouterLink
     ><span>›</span
-    ><span>{{ vendorData.data.value?.name[language] || vendor }}</span>
+    ><span>{{ vendorName(vendorData.data.value, vendor) }}</span>
   </nav>
   <div class="page-heading">
     <div>
       <h1>
         {{
           vendor
-            ? vendorData.data.value?.name[language] || vendor
+            ? vendorName(vendorData.data.value, vendor)
             : t("All applications")
         }}
       </h1>

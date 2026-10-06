@@ -117,7 +117,7 @@ func Open(dir string) (*Store, error) {
 		err = checkSchema(db)
 	}
 	if err == nil {
-		err = upgradeInstructionsV074(db)
+		err = upgradeBuiltinInstructions(db)
 	}
 	if err == nil {
 		// Persist the immutable schema to the main file before a first successful

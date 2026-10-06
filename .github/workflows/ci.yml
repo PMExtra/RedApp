@@ -54,6 +54,7 @@ jobs:
         run: |
           python3 scripts/test-data-cli.py
           python3 scripts/test-http-cli.py
+          node scripts/test-instructions-document.mjs
           git diff --exit-code -- internal/httpserver/web
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Build and exercise Shell-only installer validation image
