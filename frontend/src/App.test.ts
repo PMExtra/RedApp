@@ -1,7 +1,7 @@
 import { flushPromises } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setLanguage } from "./i18n";
-import { boot, mountPage, resetStores, response, status } from "./testSupport";
+import { boot, mountPage, resetStores, response, status, adminApplications, managedVendors } from "./testSupport";
 import { defaultSite } from "./site";
 import { api } from "./api";
 beforeEach(resetStores);
@@ -223,5 +223,52 @@ it("redirects every signed-out admin entry after abandoning login, including his
   await router.push("/");
   await flushPromises();
   expect(wrapper.get("h1").text()).toBe("应用");
+  wrapper.unmount();
+});
+
+it("preserves the application admin destination through cancelled login, history, language and application changes", async () => {
+  let authenticated = false;
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url === "/api/bootstrap") return response(boot);
+    if (url.endsWith("/session")) return authenticated ? response({ csrf: "token" }) : response({}, 401);
+    if (url.endsWith("/login")) { authenticated = true; return response({ csrf: "token" }); }
+    const app = adminApplications.find(app => url === `/admin/api/apps/${app.key}`);
+    if (app) return response({ app });
+    const vendor = managedVendors.find(vendor => url === `/admin/api/vendors/${vendor.id}`);
+    if (vendor) return response({ vendor });
+    if (url.endsWith("/status")) return response(status);
+    return response({ items: [], total: 0, page: 1, total_pages: 1 });
+  }));
+  const { wrapper, router } = await mountPage("/openai/codex");
+  const codex = "/admin/vendors/openai/apps/codex/versions";
+  const claude = "/admin/vendors/anthropic/apps/claude-code/versions";
+  const enter = async (target: string) => {
+    expect(wrapper.get(".admin-link").attributes("href")).toBe(target);
+    await wrapper.get(".admin-link").trigger("click");
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe("/admin/login"));
+    expect(router.currentRoute.value.query.returnTo).toBe(target);
+  };
+  await enter(codex);
+  router.back();
+  await vi.waitFor(() => expect(router.currentRoute.value.path).toBe("/openai/codex"));
+  router.forward();
+  await vi.waitFor(() => expect(router.currentRoute.value.query.returnTo).toBe(codex));
+  router.back();
+  await vi.waitFor(() => expect(router.currentRoute.value.path).toBe("/openai/codex"));
+  setLanguage("zh-CN");
+  await router.push("/anthropic/claude-code"); await flushPromises();
+  await enter(claude);
+  await vi.waitFor(() => expect(wrapper.find("input[type=password]").exists()).toBe(true));
+  await wrapper.get("input[type=password]").setValue("fixture");
+  await wrapper.get(".login form").trigger("submit");
+  await vi.waitFor(() => expect(router.currentRoute.value.path).toBe(claude));
+  await vi.waitFor(() => expect(wrapper.get(".application-header h1").text()).toBe("Claude Code"));
+  await router.push("/openai/codex"); await flushPromises();
+  await wrapper.get(".admin-link").trigger("click");
+  await vi.waitFor(() => expect(router.currentRoute.value.path).toBe(codex));
+  expect(wrapper.find(".login").exists()).toBe(false);
+  await vi.waitFor(() => expect(wrapper.get(".application-header h1").text()).toBe("Codex CLI"));
+  await router.push("/"); await flushPromises();
+  expect(wrapper.get(".admin-link").attributes("href")).toBe("/admin/overview");
   wrapper.unmount();
 });

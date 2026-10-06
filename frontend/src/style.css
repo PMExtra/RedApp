@@ -1427,8 +1427,6 @@ dialog::backdrop {
 .application-card-icon img { width: 36px; height: 36px; object-fit: contain; }
 .application-card .app-publisher { font-size: 14px; }
 .application-card-footer { display: grid; gap: .65rem; padding-top: .85rem; border-top: 1px solid var(--line); }
-.application-card-footer .application-version { margin: 0; gap: .25rem .75rem; font-size: 12px; line-height: 1.55; }
-.application-card-footer .ranking-count { margin: 0; }
 .application-card-footer .card-action { font-size: .8rem; }
 .application-card-heading {
   min-width: 0;
@@ -2118,10 +2116,6 @@ button.switch-control {
   max-width: 36rem;
   margin-bottom: 1.5rem;
 }
-.ranking-count {
-  color: var(--accent);
-  font-size: 0.85rem;
-}
 @media (max-width: 680px) {
   .topbar {
     flex-wrap: wrap;
@@ -2314,3 +2308,17 @@ details[open] > summary > .disclosure-icon svg {
 .template-groups { display:flex; flex-wrap:wrap; gap:.6rem .85rem; }
 .template-reset > .form-actions { margin-top:var(--template-section-gap); gap:.6rem .85rem; }
 .template-reset > .template-diff { margin-top:var(--template-section-gap); }
+
+.application-card-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: .3rem .65rem; color: var(--muted); font-size: 14px; }
+.card-version { font-size: 12px; }
+.card-version strong { font-weight: 500; }
+.application-card:focus-visible .card-version .relative-time-tooltip { display: block; }
+.card-version .relative-time-tooltip { max-width: min(240px, 65vw); white-space: normal; }
+.public-app-identity { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, auto); align-items: start; margin-bottom: 1.25rem; }
+.public-app-identity .public-heading { min-width: 0; overflow-wrap: anywhere; }
+.public-app-identity .application-version { display: flex; flex-direction: column; align-items: flex-end; text-align: right; margin: .25rem 0 0; gap: .25rem; min-width: 0; overflow-wrap: anywhere; }
+.public-app-identity .relative-time-tooltip { left: auto; right: 0; }
+@media (max-width: 600px) {
+  .public-app-identity { grid-template-columns: auto minmax(0, 1fr); gap: .6rem 1rem; }
+  .public-app-identity .application-version { grid-column: 2; margin: 0; }
+}

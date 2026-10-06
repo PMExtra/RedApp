@@ -2,12 +2,14 @@ import { createRouter, createWebHistory, type RouterHistory } from "vue-router";
 import { nextTick } from "vue";
 import { validApplicationID } from "./bootstrap";
 export function adminReturnPath(value: unknown): string {
-  return typeof value === "string" &&
-    value.startsWith("/admin/") &&
-    !value.startsWith("/admin/login") &&
-    !/[\\\r\n]/.test(value)
-    ? value
-    : "/admin/vendors";
+  const fallback = "/admin/vendors";
+  if (typeof value !== "string" || !value.startsWith("/admin/") || /[\\\r\n]/.test(value)) return fallback;
+  try {
+    const url = new URL(value, "https://redapp.invalid");
+    const path = decodeURIComponent(url.pathname);
+    if (url.origin !== "https://redapp.invalid" || !path.startsWith("/admin/") || path.startsWith("/admin/login") || /[\\\x00-\x20]/.test(path)) return fallback;
+    return url.pathname + url.search + url.hash;
+  } catch { return fallback; }
 }
 export function makeRouter(history: RouterHistory = createWebHistory()) {
   const router = createRouter({
@@ -25,6 +27,7 @@ export function makeRouter(history: RouterHistory = createWebHistory()) {
           },
           {
             path: ":vendor/:app",
+            name: "public-application",
             component: () => import("./PublicApp.vue"),
             beforeEnter: (to) =>
               validApplicationID(`${to.params.vendor}/${to.params.app}`) || {

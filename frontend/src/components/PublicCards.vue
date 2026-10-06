@@ -3,7 +3,9 @@ import ApplicationVersion from "./ApplicationVersion.vue";
 import { applicationVendorName } from "../vendorName";
 import { applicationCapabilities, type Application } from "../bootstrap";
 import { language, t } from "../i18n";
+import { useId } from "vue";
 import Icon from "./Icon.vue";
+const versionTooltipID = useId();
 defineProps<{
   apps: (Application & { download_clients?: number })[];
   showAction?: boolean;
@@ -16,6 +18,7 @@ defineProps<{
       :key="app.id"
       :to="`/${app.id}`"
       class="application-card"
+      :aria-describedby="app.latest_known_version?.first_seen ? `${versionTooltipID}-${app.id}` : undefined"
       ><div class="application-card-brand">
         <span class="application-card-icon"><img
           v-if="app.icon"
@@ -26,15 +29,11 @@ defineProps<{
         /><Icon v-else name="box" :size="36" /></span>
         <div class="application-card-heading">
           <h2>{{ app.name[language] }}</h2>
-          <span class="app-publisher">{{ applicationVendorName(app) }}</span>
+          <div class="application-card-meta"><span class="app-publisher">{{ applicationVendorName(app) }}</span><ApplicationVersion :app="app" card :tooltip-id="`${versionTooltipID}-${app.id}`" /></div>
         </div>
       </div>
       <p>{{ app.summary[language] }}</p>
-      <div v-if="applicationCapabilities(app).versions || app.download_clients !== undefined || showAction" class="application-card-footer">
-      <ApplicationVersion :app="app" />
-      <span v-if="app.download_clients !== undefined" class="ranking-count">{{
-        t("About {count} download clients", { count: app.download_clients })
-      }}</span>
+      <div v-if="showAction" class="application-card-footer">
       <span v-if="showAction" class="card-action">{{
         applicationCapabilities(app).installers
           ? t("Installation instructions")

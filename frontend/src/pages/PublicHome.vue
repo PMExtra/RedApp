@@ -34,14 +34,7 @@ const { data, error, loading, refresh } = usePublicResource<{
       </p>
     </section>
     <section class="public-section">
-      <h2>{{ t("Popular downloads") }}</h2>
-      <p class="muted">
-        {{
-          t(
-            "Approximate unique download clients over the last seven days, using hourly summaries.",
-          )
-        }}
-      </p>
+      <h2>{{ t("Popular applications") }}</h2>
       <PublicCards :apps="data.ranking" />
       <p v-if="!data.ranking.length" class="muted">
         {{ t("No downloads yet.") }}

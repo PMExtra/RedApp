@@ -46,6 +46,11 @@ func (s *Server) instructionsDocument(w http.ResponseWriter, r *http.Request, or
 	if lang == "zh-CN" {
 		content = value.ZhCN
 	}
+	content, err = s.defaultVersionInstructions(entry, content, lang)
+	if err != nil {
+		fail(w, 503, "Instructions unavailable")
+		return true
+	}
 	var commands strings.Builder
 	for _, item := range entry.Descriptor.Installers {
 		label := "Shell"

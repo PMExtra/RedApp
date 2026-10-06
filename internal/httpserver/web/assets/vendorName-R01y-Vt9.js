@@ -1,1 +1,0 @@
-import{h as e}from"./bootstrap-B07rK86n.js";function t(t,n=``,r=``){return t?.name?.[e.value]?.trim()||t?.name?.en?.trim()||r.trim()||t?.id||n}function n(e){return t(e.vendor,e.id.split(`/`)[0],e.publisher)}export{t as n,n as t};

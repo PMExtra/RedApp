@@ -33,3 +33,24 @@ it("shares localized discovery time, exact keyboard tooltip, and live refresh wi
   expect(fetchSpy).not.toHaveBeenCalled();
   w.unmount(); expect(vi.getTimerCount()).toBe(0); fetchSpy.mockRestore();
 });
+
+it("keeps card metadata to the version and a localized date-only tooltip, omitting unknown metadata", async () => {
+  const first_seen = "2026-10-06T00:30:00Z";
+  const app = { ...boot.apps[0]!, latest_known_version: { version: "1.10.0", first_seen } };
+  const w = mount(ApplicationVersion, { props: { app, card: true } });
+  for (const locale of ["en", "zh-CN"] as const) {
+    setLanguage(locale); await w.vm.$nextTick();
+    const expected = new Intl.DateTimeFormat(locale, { year: "numeric", month: "short", day: "numeric" }).format(new Date(first_seen));
+    expect(w.get("strong").text()).toBe("1.10.0");
+    expect(w.get('[role="tooltip"]').text()).toBe(expected);
+    expect(w.get(".card-version").attributes("title")).toBe(expected);
+    expect(w.find("time").exists()).toBe(false);
+    expect(w.find(".application-version").exists()).toBe(false);
+  }
+  await w.setProps({ app: { ...app, latest_known_version: { version: "1.10.0", first_seen: null } } });
+  expect(w.text()).toBe("1.10.0");
+  expect(w.find('[role="tooltip"]').exists()).toBe(false);
+  await w.setProps({ app: { ...app, latest_known_version: null } });
+  expect(w.text()).toBe("");
+  w.unmount();
+});

@@ -50,8 +50,6 @@ export const messages = {
   "Just now": "刚刚",
   "Discovered {time}": "发现于{time}",
   "Discovery time unknown": "发现时间未知",
-  "Latest known version": "已知最新版本",
-  "Discovered": "发现于",
   "Version not known yet": "暂无已知版本",
   "Deletion is not complete. This application is blocked while its tasks stop. Retry deletion; restarting also resumes it.":
     "删除尚未完成。此应用已阻止新任务，正在等待现有任务退出。可重试删除；重启服务也会继续处理。",
@@ -452,7 +450,6 @@ export const messages = {
   "Add a vendor, then create an application and choose its provider. Built-in applications start disabled.":
     "添加厂商后创建应用并选择提供方。内置应用默认禁用。",
   Breadcrumb: "导航路径",
-  "About {count} download clients": "约 {count} 个下载客户端",
   "Search applications": "搜索应用",
   "Search suggestions": "搜索建议",
   Vendor: "厂商",
@@ -462,9 +459,7 @@ export const messages = {
     "暂无建议，按回车搜索全部应用。",
   "Pinned applications": "置顶应用",
   "No pinned applications.": "暂无置顶应用。",
-  "Popular downloads": "下载排行榜",
-  "Approximate unique download clients over the last seven days, using hourly summaries.":
-    "近七天下载客户端的近似去重数量，按小时汇总。",
+  "Popular applications": "热门应用",
   "No downloads yet.": "暂无下载记录。",
   "Choose application keys in display order. Disabled applications remain saved here and are hidden publicly.":
     "按展示顺序填写应用完整键。禁用的应用会保留在此列表中，公开页面不展示。",

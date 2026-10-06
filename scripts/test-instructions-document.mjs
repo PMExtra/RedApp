@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Execute only locally authored fixture scripts in a DOM emulator. No GUI.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -129,6 +129,60 @@ try {
     { revision: app.revision, enabled: true },
     "PATCH",
   );
+  // Default documents use native disclosure and Markdown code even inside details.
+  const claudeVendor = (await (await request("/admin/api/vendors/anthropic")).json()).vendor;
+  const claudeApp = (await (await request("/admin/api/apps/anthropic/claude-code")).json()).app;
+  await request("/admin/api/vendors/anthropic", { revision: claudeVendor.revision, enabled: true }, "PATCH");
+  await request("/admin/api/apps/anthropic/claude-code", { revision: claudeApp.revision, enabled: true }, "PATCH");
+  function observeVersion(app, version) {
+    execFileSync("python3", ["-c", "import sqlite3,sys,time; c=sqlite3.connect(sys.argv[1]); c.execute('INSERT INTO app_versions(app_id,version,first_seen_s) VALUES(?,?,?)',(sys.argv[2],sys.argv[3],int(time.time()))); c.commit()", join(temporary, "data", "state.sqlite"), `app/${app.uid}-e${app.source_epoch}`, version]);
+  }
+  for (const [key, record, versions] of [["openai/codex", app, ["0.110.0", "0.111.0"]], ["anthropic/claude-code", claudeApp, ["2.1.289", "2.1.291"]]]) {
+    const defaultsPage = browser.newPage();
+    for (const lang of ["en", "zh-CN"]) {
+      await defaultsPage.goto(`${origin}/api/apps/${key}/instructions/document?lang=${lang}`);
+      await defaultsPage.waitUntilComplete();
+      assert.equal(defaultsPage.evaluate('document.querySelector("details").open'), false);
+      assert.equal(defaultsPage.evaluate('document.querySelector("summary").textContent'), lang === "en" ? "Install a specific version" : "安装指定版本");
+      assert.equal(defaultsPage.evaluate('getComputedStyle(document.querySelector("summary")).marginBottom'), "0px");
+      assert.equal(defaultsPage.evaluate('document.querySelectorAll("details .copy-block").length'), key.startsWith("openai") ? 0 : 2);
+      assert(!defaultsPage.evaluate('document.body.textContent').includes("1.2.3"));
+    }
+    for (const version of versions) {
+      observeVersion(record, version);
+      for (const lang of ["en", "zh-CN"]) {
+        await defaultsPage.goto(`${origin}/api/apps/${key}/instructions/document?lang=${lang}`);
+        await defaultsPage.waitUntilComplete();
+        assert.equal(defaultsPage.evaluate('document.querySelector("details").open'), false);
+        defaultsPage.evaluate('document.querySelector("summary").focus()');
+        assert.equal(defaultsPage.evaluate('document.activeElement.tagName'), "SUMMARY");
+        for (let toggle = 0; toggle < 3; toggle++) {
+          defaultsPage.evaluate('document.querySelector("summary").click()');
+          assert.equal(defaultsPage.evaluate('document.querySelector("details").open'), true);
+          assert.notEqual(defaultsPage.evaluate('getComputedStyle(document.querySelector("summary")).marginBottom'), "0px");
+          defaultsPage.evaluate('document.querySelector("summary").click()');
+          assert.equal(defaultsPage.evaluate('document.querySelector("details").open'), false);
+          assert.equal(defaultsPage.evaluate('getComputedStyle(document.querySelector("summary")).marginBottom'), "0px");
+        }
+        defaultsPage.evaluate('document.querySelector("summary").click()');
+        const codes = defaultsPage.evaluate('Array.from(document.querySelectorAll("details .copy-block code"), e => e.textContent)');
+        assert.equal(codes.length, key.startsWith("openai") ? 2 : 4);
+        assert(codes[0].includes(`'${version}'`));
+        assert(codes[1].includes(`'${version}'`));
+        assert(!codes.join("\n").includes("1.2.3"));
+        assert(!codes.join("\n").includes("latest"));
+        for (let command = 0; command < 2; command++) {
+          await defaultsPage.evaluate(`(async()=>{
+            Object.defineProperty(navigator, 'clipboard', {value:{writeText:async text=>{window.copiedVersion=text}}, configurable:true});
+            document.querySelectorAll('details .copy-block .copy-code')[${command}].click(); await Promise.resolve();
+          })()`);
+          assert.equal(defaultsPage.evaluate('window.copiedVersion'), codes[command]);
+        }
+      }
+    }
+    await defaultsPage.close();
+  }
+  console.log("Default installation documents: collapsed native details, summary focus/toggle spacing, bilingual observed-version updates, no-data fallback, supported channels and exact Markdown copy passed (Happy DOM; no GUI).");
   const instructions = await (
     await request("/admin/api/apps/openai/codex/instructions")
   ).json();

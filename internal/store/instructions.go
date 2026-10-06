@@ -90,11 +90,14 @@ var instructionsV075 []byte
 //go:embed entity_templates_v076.json
 var instructionsV076 []byte
 
+//go:embed entity_templates_v077.json
+var instructionsV077 []byte
+
 // Upgrade only exact previous defaults, independently by language. Empty and
 // customized documents remain authoritative. Revision changes invalidate editors.
 func upgradeBuiltinInstructions(db *sql.DB) error {
 	var old []EntityTemplate
-	for _, snapshot := range [][]byte{instructionsV073, instructionsV074, instructionsV075, instructionsV076} {
+	for _, snapshot := range [][]byte{instructionsV073, instructionsV074, instructionsV075, instructionsV076, instructionsV077} {
 		var templates []EntityTemplate
 		if err := json.Unmarshal(snapshot, &templates); err != nil {
 			return err

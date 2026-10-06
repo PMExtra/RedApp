@@ -102,7 +102,7 @@ export async function loadApplication(key: string, preserve = false) {
 export function refreshApplication() {
   return selectedKey ? loadApplication(selectedKey, true) : Promise.resolve();
 }
-export function applicationPath(app: ManagedApplication, tab?: string) {
+export function applicationPath(app: Pick<ManagedApplication, "vendor_id" | "id"> & { provider: string }, tab?: string) {
   return `/admin/vendors/${app.vendor_id}/apps/${app.id}/${tab || (providerHasVersions(app.provider) ? "versions" : app.provider === "info" ? "settings" : app.provider === "hosted" ? "files" : "cache")}`;
 }
 export function providerHasVersions(provider: string) {

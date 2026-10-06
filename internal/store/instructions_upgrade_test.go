@@ -2,12 +2,14 @@ package store
 
 import (
 	"encoding/json"
+	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 )
 
 func TestInstructionHintsPreserveCustomAndEmptyLocales(t *testing.T) {
-	for _, snapshot := range [][]byte{instructionsV075, instructionsV076} {
+	for _, snapshot := range [][]byte{instructionsV075, instructionsV076, instructionsV077} {
 		testInstructionHintsMigration(t, snapshot)
 	}
 }
@@ -74,6 +76,39 @@ func testInstructionHintsMigration(t *testing.T, snapshot []byte) {
 				if again != after {
 					t.Fatal("migration is not idempotent")
 				}
+			}
+		}
+	}
+}
+
+func TestBuiltinInstructionReadingOrderAndCommands(t *testing.T) {
+	var previous []EntityTemplate
+	if err := json.Unmarshal(instructionsV077, &previous); err != nil {
+		t.Fatal(err)
+	}
+	commands := regexp.MustCompile("(?s)```.*?```")
+	for _, old := range previous {
+		current, _ := BuiltinApplicationTemplate(old.Vendor.ID + "/" + old.Application.ID)
+		for _, locale := range []struct {
+			before, after string
+			headings      []string
+		}{
+			{old.Instructions.En, current.Instructions.En, []string{"## Install", "### Getting started", "### Update", "<summary>Install a specific version</summary>"}},
+			{old.Instructions.ZhCN, current.Instructions.ZhCN, []string{"## 安装", "### 开始使用", "### 更新", "<summary>安装指定版本</summary>"}},
+		} {
+			if strings.Contains(locale.after, "1.2.3") || strings.Contains(locale.after, "--release latest") || strings.Contains(locale.after, "-s -- latest") || strings.Contains(locale.after, "'latest'") {
+				t.Fatal("redundant or fictional version example")
+			}
+			last := -1
+			for _, heading := range locale.headings {
+				index := strings.Index(locale.after, heading)
+				if index <= last {
+					t.Fatalf("incorrect instruction order for %s: %s", old.Application.ID, heading)
+				}
+				last = index
+			}
+			if !reflect.DeepEqual(commands.FindAllString(locale.before, -1)[:2], commands.FindAllString(locale.after, -1)[:2]) {
+				t.Fatalf("installation commands changed for %s", old.Application.ID)
 			}
 		}
 	}

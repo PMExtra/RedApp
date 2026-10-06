@@ -54,7 +54,7 @@ watchEffect(() => {
       }}</RouterLink
       ><span>›</span><span>{{ selected.name[language] }}</span>
     </nav>
-    <div class="application-identity">
+    <div class="application-identity public-app-identity">
       <div class="application-logo">
         <img
           v-if="selected.icon"
@@ -65,24 +65,15 @@ watchEffect(() => {
         /><Icon v-else name="box" :size="48" />
       </div>
       <div class="public-heading">
-        <span
-          v-if="!applicationCapabilities(selected).installers"
-          class="eyebrow"
-        >{{
-          selected.provider === "info"
-            ? t("Usage instructions")
-            : t("Download files")
-        }}</span>
         <h1>{{ selected.name[language] }}</h1>
         <p class="public-lead">{{ selected.summary[language] }}</p>
-        <ApplicationVersion :app="selected" />
       </div>
+      <ApplicationVersion :app="selected" />
     </div>
     <section
       v-if="selected.instructions?.[language]"
       class="panel usage-instructions"
     >
-      <h2>{{ t("Usage instructions") }}</h2>
       <InstructionsDocument
         :application="selected.id"
         :revision="bootstrap.revision"

@@ -1,0 +1,76 @@
+[
+  {
+    "vendor": {
+      "id": "openai",
+      "name": {
+        "en": "OpenAI",
+        "zh-CN": "OpenAI"
+      },
+      "description": {
+        "en": "",
+        "zh-CN": ""
+      },
+      "icon": "",
+      "enabled": false
+    },
+    "application": {
+      "id": "codex",
+      "name": {
+        "en": "Codex CLI",
+        "zh-CN": "Codex CLI"
+      },
+      "description": {
+        "en": "OpenAI’s coding agent for your terminal.",
+        "zh-CN": "OpenAI 的终端编程助手。"
+      },
+      "icon": "/openai/codex/icon.svg",
+      "provider": "codex",
+      "base_url": "https://releases.openai.com/codex",
+      "cache_ttl_seconds": 60,
+      "base_urls": null,
+      "source_strategy": "",
+      "enabled": false
+    },
+    "instructions": {
+      "en": "## Install {{app_name}}\n\nRun the appropriate command in your terminal.\n\nOn Linux or macOS, run this command in Shell:\n\n```sh\ncurl -fsSL '{{base_url}}{{app_path}}/install.sh' | sh\n```\n\nOn Windows, run this command in PowerShell:\n\n```powershell\nirm '{{base_url}}{{app_path}}/install.ps1' | iex\n```\n\nThis command downloads and runs an installer. Use a service you trust.\n\nInstaller and self-update downloads use this distribution service.\n\n### Select a version or channel\n\nReplace `1.2.3` with the required version. Codex supports `latest` and explicit versions; the `stable` channel is not supported.\n\nThese are alternative installation choices. Run only the command you need.\n\nLinux / macOS — Shell\n\n```sh\ncurl -fsSL '{{base_url}}{{app_path}}/install.sh' | sh -s -- --release 1.2.3\n```\n\n```sh\ncurl -fsSL '{{base_url}}{{app_path}}/install.sh' | sh -s -- --release latest\n```\n\nWindows — PowerShell\n\n```powershell\n& ([scriptblock]::Create((irm '{{base_url}}{{app_path}}/install.ps1'))) -Release '1.2.3'\n```\n\n```powershell\n& ([scriptblock]::Create((irm '{{base_url}}{{app_path}}/install.ps1'))) -Release 'latest'\n```\n\n### Getting started\n\nAfter installation, open a new terminal and run `codex`. Follow the application’s sign-in instructions.",
+      "zh-CN": "## 安装 {{app_name}}\n\n在终端中运行适合当前系统的命令。\n\n在 Linux 或 macOS 上，在 Shell 中运行：\n\n```sh\ncurl -fsSL '{{base_url}}{{app_path}}/install.sh' | sh\n```\n\n在 Windows 上，在 PowerShell 中运行：\n\n```powershell\nirm '{{base_url}}{{app_path}}/install.ps1' | iex\n```\n\n此命令会下载并执行安装脚本，请使用你信任的服务。\n\n安装脚本与自动更新通过此分发服务下载。\n\n### 指定版本或通道\n\n将 `1.2.3` 替换为需要的版本。Codex 支持 `latest` 和指定版本，不支持 `stable` 通道。\n\n以下为不同安装选择，按需运行其中一条命令。\n\nLinux / macOS — Shell\n\n```sh\ncurl -fsSL '{{base_url}}{{app_path}}/install.sh' | sh -s -- --release 1.2.3\n```\n\n```sh\ncurl -fsSL '{{base_url}}{{app_path}}/install.sh' | sh -s -- --release latest\n```\n\nWindows — PowerShell\n\n```powershell\n& ([scriptblock]::Create((irm '{{base_url}}{{app_path}}/install.ps1'))) -Release '1.2.3'\n```\n\n```powershell\n& ([scriptblock]::Create((irm '{{base_url}}{{app_path}}/install.ps1'))) -Release 'latest'\n```\n\n### 开始使用\n\n安装后打开新的终端，运行 `codex`，并按照应用提示登录。"
+    }
+  },
+  {
+    "vendor": {
+      "id": "anthropic",
+      "name": {
+        "en": "Anthropic",
+        "zh-CN": "Anthropic"
+      },
+      "description": {
+        "en": "",
+        "zh-CN": ""
+      },
+      "icon": "/assets/builtin/anthropic.svg",
+      "enabled": false
+    },
+    "application": {
+      "id": "claude-code",
+      "name": {
+        "en": "Claude Code",
+        "zh-CN": "Claude Code"
+      },
+      "description": {
+        "en": "Anthropic’s coding agent for your terminal.",
+        "zh-CN": "Anthropic 的终端编程助手。"
+      },
+      "icon": "/anthropic/claude-code/icon.svg",
+      "provider": "claude-code",
+      "base_url": "https://downloads.claude.ai/claude-code-releases",
+      "cache_ttl_seconds": 60,
+      "base_urls": null,
+      "source_strategy": "",
+      "enabled": false
+    },
+    "instructions": {
+      "en": "## Install {{app_name}}\n\nRun the appropriate command in your terminal.\n\nOn Linux or macOS, run this command in Shell:\n\n```bash\ncurl -fsSL '{{base_url}}{{app_path}}/install.sh' | bash\n```\n\nOn Windows, run this command in PowerShell:\n\n```powershell\nirm '{{base_url}}{{app_path}}/install.ps1' | iex\n```\n\nThis command downloads and runs an installer. Use a service you trust.\n\nThe installer verifies the signed manifest and artifact SHA256. The managed launcher disables official automatic updates; rerun this installer to update. Running the native binary directly bypasses the launcher’s update control.\n\n### Select a version or channel\n\nReplace `1.2.3` with the required version; use `stable` or `latest` for a channel.\n\nThese are alternative installation choices. Run only the command you need.\n\nLinux / macOS — Shell\n\n```bash\ncurl -fsSL '{{base_url}}{{app_path}}/install.sh' | bash -s -- 1.2.3\n```\n\n```bash\ncurl -fsSL '{{base_url}}{{app_path}}/install.sh' | bash -s -- stable\n```\n\n```bash\ncurl -fsSL '{{base_url}}{{app_path}}/install.sh' | bash -s -- latest\n```\n\nWindows — PowerShell\n\n```powershell\n& ([scriptblock]::Create((irm '{{base_url}}{{app_path}}/install.ps1'))) -Target '1.2.3'\n```\n\n```powershell\n& ([scriptblock]::Create((irm '{{base_url}}{{app_path}}/install.ps1'))) -Target 'stable'\n```\n\n```powershell\n& ([scriptblock]::Create((irm '{{base_url}}{{app_path}}/install.ps1'))) -Target 'latest'\n```\n\n### Getting started\n\nAfter installation, open a new terminal and run `claude`. Follow the application’s sign-in instructions.",
+      "zh-CN": "## 安装 {{app_name}}\n\n在终端中运行适合当前系统的命令。\n\n在 Linux 或 macOS 上，在 Shell 中运行：\n\n```bash\ncurl -fsSL '{{base_url}}{{app_path}}/install.sh' | bash\n```\n\n在 Windows 上，在 PowerShell 中运行：\n\n```powershell\nirm '{{base_url}}{{app_path}}/install.ps1' | iex\n```\n\n此命令会下载并执行安装脚本，请使用你信任的服务。\n\n安装脚本验证签名清单与制品 SHA256。受管启动器禁用官方自动更新；请重新运行本安装脚本更新。直接运行原生程序会绕过启动器的更新控制。\n\n### 指定版本或通道\n\n将 `1.2.3` 替换为需要的版本；通道可选 `stable` 或 `latest`。\n\n以下为不同安装选择，按需运行其中一条命令。\n\nLinux / macOS — Shell\n\n```bash\ncurl -fsSL '{{base_url}}{{app_path}}/install.sh' | bash -s -- 1.2.3\n```\n\n```bash\ncurl -fsSL '{{base_url}}{{app_path}}/install.sh' | bash -s -- stable\n```\n\n```bash\ncurl -fsSL '{{base_url}}{{app_path}}/install.sh' | bash -s -- latest\n```\n\nWindows — PowerShell\n\n```powershell\n& ([scriptblock]::Create((irm '{{base_url}}{{app_path}}/install.ps1'))) -Target '1.2.3'\n```\n\n```powershell\n& ([scriptblock]::Create((irm '{{base_url}}{{app_path}}/install.ps1'))) -Target 'stable'\n```\n\n```powershell\n& ([scriptblock]::Create((irm '{{base_url}}{{app_path}}/install.ps1'))) -Target 'latest'\n```\n\n### 开始使用\n\n安装后打开新的终端，运行 `claude`，并按照应用提示登录。"
+    }
+  }
+]
