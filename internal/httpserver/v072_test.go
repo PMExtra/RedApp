@@ -394,3 +394,82 @@ func TestV072UpgradePreservesV5AndReservedAllIsReadOnly(t *testing.T) {
 		})
 	}
 }
+
+func TestTemplateResetNeverChangesEnabled(t *testing.T) {
+	h := newDirectoryHarness(t, t.TempDir())
+	h.login(h.password)
+	for _, enabled := range []bool{true, false} {
+		for _, kind := range []string{"vendor", "app"} {
+			path := "/admin/api/vendors/openai"
+			if kind == "app" {
+				path = "/admin/api/apps/openai/codex"
+			}
+			data, _ := h.request("GET", path, nil, 200, nil)
+			current := directoryDecode[store.Application](t, data, kind)
+			data, _ = h.request("PATCH", path, map[string]any{"revision": current.Revision, "enabled": enabled}, 200, nil)
+			current = directoryDecode[store.Application](t, data, kind)
+			preview, _ := h.request("GET", path+"/template", nil, 200, nil)
+			var body struct {
+				Groups []string `json:"groups"`
+			}
+			if err := json.Unmarshal(preview, &body); err != nil {
+				t.Fatal(err)
+			}
+			for _, group := range body.Groups {
+				if group == "enabled" {
+					t.Fatal("enabled still offered", kind)
+				}
+			}
+			for _, groups := range [][]string{{"enabled"}, {"metadata", "enabled"}} {
+				h.request("POST", path+"/template", map[string]any{"revision": current.Revision, "groups": groups}, 400, nil)
+			}
+			h.request("POST", path+"/template", map[string]any{"revision": current.Revision, "groups": []string{"icon"}, "enabled": !enabled}, 400, nil)
+			data, _ = h.request("GET", path, nil, 200, nil)
+			if unchanged := directoryDecode[store.Application](t, data, kind); !reflect.DeepEqual(current, unchanged) {
+				t.Fatal("rejected reset mutated record", kind)
+			}
+			data, _ = h.request("POST", path+"/template", map[string]any{"revision": current.Revision, "groups": []string{"icon"}}, 200, nil)
+			after := directoryDecode[store.Application](t, data, kind)
+			if after.Enabled != enabled || after.Name != current.Name || after.Description != current.Description || after.Revision != current.Revision+1 {
+				t.Fatal("icon reset changed unselected fields", kind, after)
+			}
+		}
+	}
+}
+
+func TestVendorApplicationsPagesIncludeDisabledAndIsolateVendor(t *testing.T) {
+	h := newDirectoryHarness(t, t.TempDir())
+	h.login(h.password)
+	v := h.createVendor("many")
+	other := h.createVendor("other")
+	h.createApp(other.ID, "foreign", application.Info, nil)
+	for i := range 23 {
+		h.createApp(v.ID, fmt.Sprintf("tool-%02d", i), application.Info, map[string]any{"enabled": i%2 == 0})
+	}
+	h.request("PATCH", "/admin/api/vendors/many", map[string]any{"revision": v.Revision, "enabled": false}, 200, nil)
+	seen := map[string]bool{}
+	disabled := 0
+	for page := 1; page <= 2; page++ {
+		data, _ := h.request("GET", fmt.Sprintf("/admin/api/vendors/many/apps?state=current&page=%d&limit=20", page), nil, 200, nil)
+		var result store.Page[store.Application]
+		if err := json.Unmarshal(data, &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Total != 23 || result.TotalPages != 2 {
+			t.Fatal(result)
+		}
+		for _, app := range result.Items {
+			if app.VendorID != v.ID || seen[app.UID] {
+				t.Fatal("mixed vendor or duplicate", app)
+			}
+			seen[app.UID] = true
+			if !app.Enabled {
+				disabled++
+			}
+		}
+	}
+	if len(seen) != 23 || disabled != 11 {
+		t.Fatal("missing applications", len(seen), disabled)
+	}
+	h.request("GET", "/admin/vendors/many/apps", nil, 200, nil)
+}

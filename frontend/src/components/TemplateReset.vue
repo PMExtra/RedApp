@@ -29,7 +29,6 @@ let ticket = 0,
 const labels: Record<string, Message> = {
   metadata: "Name and description",
   icon: "Icon",
-  enabled: "Enabled",
   source: "Sources and delivery",
   cache: "Cache settings",
   instructions_en: "English instructions",
@@ -49,8 +48,6 @@ function text(group: string, after: boolean): string {
       );
     case "icon":
       return app.icon || "—";
-    case "enabled":
-      return app.enabled ? t("On") : t("Off");
     case "source":
       return JSON.stringify(
         {
@@ -71,7 +68,7 @@ function text(group: string, after: boolean): string {
       return "";
   }
 }
-const groups = computed(() => preview.value?.groups || []);
+const groups = computed(() => (preview.value?.groups || []).filter((group) => group in labels));
 async function load() {
   controller?.abort();
   const request = new AbortController(),

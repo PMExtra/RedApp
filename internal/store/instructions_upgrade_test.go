@@ -9,7 +9,7 @@ import (
 )
 
 func TestInstructionHintsPreserveCustomAndEmptyLocales(t *testing.T) {
-	for _, snapshot := range [][]byte{instructionsV075, instructionsV076, instructionsV077} {
+	for _, snapshot := range [][]byte{instructionsV075, instructionsV076, instructionsV077, instructionsV079} {
 		testInstructionHintsMigration(t, snapshot)
 	}
 }
@@ -28,7 +28,7 @@ func testInstructionHintsMigration(t *testing.T, snapshot []byte) {
 				}
 			}
 		}
-		for _, custom := range []string{"", "## Installation instructions\n\nMy custom heading and commands"} {
+		for _, custom := range []string{"", "## Installation instructions\n\nMy custom heading and commands", "Custom <!-- redapp:known-version --> {{latest_version}}", "Custom: This command downloads and runs an installer. Use a service you trust. 安装脚本与自动更新通过此分发服务下载。"} {
 			cases := []struct{ input, want LocalizedText }{
 				{template.Instructions, current.Instructions},
 				{LocalizedText{En: template.Instructions.En, ZhCN: custom}, LocalizedText{En: current.Instructions.En, ZhCN: custom}},
@@ -109,6 +109,34 @@ func TestBuiltinInstructionReadingOrderAndCommands(t *testing.T) {
 			}
 			if !reflect.DeepEqual(commands.FindAllString(locale.before, -1)[:2], commands.FindAllString(locale.after, -1)[:2]) {
 				t.Fatalf("installation commands changed for %s", old.Application.ID)
+			}
+		}
+	}
+}
+
+func TestBuiltinInstructionBasicCopy(t *testing.T) {
+	for _, template := range EntityTemplates() {
+		for _, locale := range []struct{ text, heading, wait string }{
+			{template.Instructions.En, "### Getting started", "Download progress may not be displayed. Please wait 1–2 minutes after running the command."},
+			{template.Instructions.ZhCN, "### 开始使用", "下载过程中可能无进度显示，执行后请等待1~2分钟。"},
+		} {
+			for _, removed := range []string{"This command downloads and runs an installer.", "Use a service you trust.", "Installer and self-update downloads use this distribution service.", "此命令会下载并执行安装脚本", "请使用你信任的服务", "安装脚本与自动更新通过此分发服务下载"} {
+				if strings.Contains(locale.text, removed) {
+					t.Fatal("obsolete default copy", template.Application.ID, removed)
+				}
+			}
+			count := 0
+			if template.Application.Provider == "claude-code" {
+				count = 1
+			}
+			if strings.Count(locale.text, locale.wait) != count {
+				t.Fatal("incorrect wait hint count", template.Application.ID)
+			}
+			if count == 1 {
+				position := strings.Index(locale.text, locale.wait)
+				if position < strings.Index(locale.text, "| iex\n```") || position > strings.Index(locale.text, locale.heading) {
+					t.Fatal("wait hint must follow basic installation commands")
+				}
 			}
 		}
 	}

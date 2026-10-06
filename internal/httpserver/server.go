@@ -362,7 +362,7 @@ func (s *Server) validUI(path string) bool {
 	}
 	if strings.HasPrefix(path, "/admin/vendors/") {
 		p := strings.Split(strings.TrimPrefix(path, "/admin/vendors/"), "/")
-		if len(p) == 2 && p[1] == "settings" || len(p) == 3 && p[1] == "apps" && p[2] == "new" {
+		if len(p) == 1 || len(p) == 2 && (p[1] == "settings" || p[1] == "apps") || len(p) == 3 && p[1] == "apps" && p[2] == "new" {
 			_, err := s.DB.Vendor(p[0])
 			return err == nil
 		}
@@ -393,7 +393,7 @@ func (s *Server) asset(w http.ResponseWriter, r *http.Request) {
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/")
 	name := strings.TrimPrefix(path, "assets/")
-	if strings.Contains(name, "/") || (filepath.Ext(name) != ".js" && filepath.Ext(name) != ".css") {
+	if strings.Contains(name, "/") || (filepath.Ext(name) != ".js" && filepath.Ext(name) != ".css" && filepath.Ext(name) != ".woff2" && name != "JetBrainsMono-OFL-v2.304.txt") {
 		fail(w, 404, "Asset not found")
 		return
 	}
@@ -406,6 +406,10 @@ func (s *Server) asset(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	if strings.HasSuffix(name, ".js") {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	} else if strings.HasSuffix(name, ".woff2") {
+		w.Header().Set("Content-Type", "font/woff2")
+	} else if strings.HasSuffix(name, ".txt") {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	} else {
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	}

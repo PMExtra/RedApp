@@ -2316,9 +2316,7 @@ details[open] > summary > .disclosure-icon svg {
 .directory-editor .site-locale legend { margin-bottom:.6rem; }
 .entity-save-actions { margin-top:1.25rem; padding-top:1rem; border-top:1px solid var(--line); align-items:center; }
 .entity-save-actions .delete-action { margin-inline-start:auto; }
-.directory-editor > .template-reset, .vendor-application-actions { margin-top:1.5rem; }
-.vendor-application-actions { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:.75rem; padding-top:1rem; border-top:1px solid var(--line); }
-.vendor-application-actions h3 { margin:0; }
+.directory-editor > .template-reset { margin-top:1.5rem; }
 .file-picker { display:flex; align-items:center; flex-wrap:wrap; gap:.6rem; min-width:0; }
 .file-picker-name { overflow-wrap:anywhere; }
 form > .form-actions { margin-top:1rem; }

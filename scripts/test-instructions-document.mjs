@@ -145,11 +145,17 @@ try {
       assert.equal(defaultsPage.evaluate('document.querySelector("details").open'), false);
       assert.equal(defaultsPage.evaluate('document.querySelector("summary").textContent'), lang === "en" ? "Install a specific version" : "安装指定版本");
       assert.equal(defaultsPage.evaluate('getComputedStyle(document.querySelector("summary")).marginBottom'), "0px");
-      assert.equal(defaultsPage.evaluate('document.querySelectorAll("details .copy-block").length'), key.startsWith("openai") ? 0 : 2);
+      assert.equal(defaultsPage.evaluate('document.querySelectorAll("details .copy-block").length'), key.startsWith("openai") ? 2 : 4);
       assert(!defaultsPage.evaluate('document.body.textContent').includes("1.2.3"));
+      const basicText = defaultsPage.evaluate('document.body.textContent');
+      for (const removed of ['Use a service you trust.', 'Installer and self-update downloads use this distribution service.', '请使用你信任的服务', '安装脚本与自动更新通过此分发服务下载']) assert(!basicText.includes(removed));
+      const waitHint = lang === 'en' ? 'Download progress may not be displayed. Please wait 1–2 minutes after running the command.' : '下载过程中可能无进度显示，执行后请等待1~2分钟。';
+      assert.equal(basicText.split(waitHint).length - 1, key.startsWith('anthropic') ? 1 : 0);
+      if (key.startsWith('anthropic')) assert(basicText.indexOf(waitHint) < basicText.indexOf(lang === 'en' ? 'Getting started' : '开始使用'));
+
     }
-    for (const version of versions) {
-      observeVersion(record, version);
+    for (const version of [null, ...versions]) {
+      if (version) observeVersion(record, version);
       for (const lang of ["en", "zh-CN"]) {
         await defaultsPage.goto(`${origin}/api/apps/${key}/instructions/document?lang=${lang}`);
         await defaultsPage.waitUntilComplete();
@@ -167,10 +173,14 @@ try {
         defaultsPage.evaluate('document.querySelector("summary").click()');
         const codes = defaultsPage.evaluate('Array.from(document.querySelectorAll("details .copy-block code"), e => e.textContent)');
         assert.equal(codes.length, key.startsWith("openai") ? 2 : 4);
-        assert(codes[0].includes(`'${version}'`));
-        assert(codes[1].includes(`'${version}'`));
+        assert(codes[0].includes(`'${version ?? '<version>'}'`));
+        assert(codes[1].includes(`'${version ?? '<version>'}'`));
         assert(!codes.join("\n").includes("1.2.3"));
         assert(!codes.join("\n").includes("latest"));
+        const text = defaultsPage.evaluate('document.body.textContent');
+        for (const removed of ['Install the latest known version:', '安装当前已知最新版本：', 'No version is known yet.', '尚无已知版本。']) assert(!text.includes(removed));
+        assert(!codes.join('\n').includes('&lt;version&gt;'));
+
         for (let command = 0; command < 2; command++) {
           await defaultsPage.evaluate(`(async()=>{
             Object.defineProperty(navigator, 'clipboard', {value:{writeText:async text=>{window.copiedVersion=text}}, configurable:true});
@@ -182,11 +192,14 @@ try {
     }
     await defaultsPage.close();
   }
-  console.log("Default installation documents: collapsed native details, summary focus/toggle spacing, bilingual observed-version updates, no-data fallback, supported channels and exact Markdown copy passed (Happy DOM; no GUI).");
+  console.log("Default installation documents: collapsed native details, summary focus/toggle spacing, bilingual editable scalar variables, observed-version updates, literal <version> fallback, supported channels and exact Markdown copy passed (Happy DOM; no GUI).");
   const instructions = await (
     await request("/admin/api/apps/openai/codex/instructions")
   ).json();
-  const en = `# Executable fixture\n\n## Installation instructions\n\n{{app_name}} {{app_key}} {{base_url}}{{app_path}}\n\n<script>window.inlineFixture = "executed";</script>\n<script src="http://127.0.0.1:${fixturePort}/fixture.js"></script>\n\n{{unknown}}\n\n\`\`\`sh\n  first\n\nsecond  \n\`\`\`\n\n\`inline\`\n\n<pre id="raw"><code>raw block</code></pre>`;
+  const scalarName = '<img id="scalar-injection" src="x" onerror="alert(1)"> & {{latest_version}}';
+  const currentApp = (await (await request('/admin/api/apps/openai/codex')).json()).app;
+  await request('/admin/api/apps/openai/codex', {revision:currentApp.revision, name:{en:scalarName,'zh-CN':scalarName}}, 'PATCH');
+  const en = `# Executable fixture\n\n## Installation instructions\n\n{{app_name}} {{app_key}} {{base_url}}{{app_path}}\n\n<script>window.inlineFixture = "executed";</script>\n<script src="http://127.0.0.1:${fixturePort}/fixture.js"></script>\n\n{{unknown}}\n\n\`\`\`sh\n  first\n\nsecond  \n\`\`\`\n\n\`inline\`\n\n\`\`\`bash\n0O 1lI 中文\n\`\`\`\n\n\`\`\`sh\nprintf '%s' '{{latest_version}}' '{{app_name}}' '{{base_url}}{{app_path}}'\n\`\`\`\n\n<pre id="raw"><code>raw block</code></pre>`;
   await request(
     "/admin/api/apps/openai/codex/instructions",
     { en, "zh-CN": "# 中文说明\n\n```\n中文代码\n```", revision: instructions.revision },
@@ -218,8 +231,17 @@ try {
   assert(page.evaluate("document.body.textContent").includes("openai/codex"));
   assert(page.evaluate("document.body.textContent").includes("{{unknown}}"));
   assert(page.evaluate("document.body.textContent").includes(origin + "/openai/codex"));
-  assert.equal(page.evaluate('document.querySelectorAll(".copy-code").length'), 2);
+  assert.equal(page.evaluate('document.querySelectorAll(".copy-code").length'), 4);
   assert.equal(page.evaluate('document.querySelector("#raw").outerHTML'), '<pre id="raw"><code>raw block</code></pre>');
+  assert.equal(page.evaluate('document.querySelector("#scalar-injection")'), null);
+  const variableCode = page.evaluate('document.querySelectorAll(".copy-block code")[2].textContent');
+  assert.equal(variableCode, `printf '%s' '0.111.0' '${scalarName}' '${origin}/openai/codex'\n`);
+  await page.evaluate(`(async()=>{
+    Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>window.variableCopy=text},configurable:true});
+    document.querySelectorAll('.copy-block button')[2].click();await Promise.resolve();
+  })()`);
+  assert.equal(page.evaluate('window.variableCopy'), variableCode);
+
   await page.evaluate(`(async()=>{
     window.copied=[];
     window.copyNow=0;
@@ -277,12 +299,47 @@ try {
   assert.equal(page.evaluate('document.querySelector(".copy-block button").textContent'), 'Copied');
   page.evaluate('window.advanceCopy(3000)');
   assert.equal(page.evaluate('document.querySelector(".copy-block button").disabled'), false);
-  assert.equal(page.evaluate('getComputedStyle(document.querySelector(".copy-block .copy-status")).display'), 'block');
+  assert.equal(page.evaluate('getComputedStyle(document.querySelector(".copy-block .copy-status")).position'), 'absolute');
+  assert.equal(page.evaluate('getComputedStyle(document.querySelector(".copy-block .copy-status")).padding'), '0px');
+  assert.equal(page.evaluate('getComputedStyle(document.querySelector(".copy-block .copy-status")).clipPath'), 'inset(50%)');
   await page.evaluate(`(async()=>{
     Object.defineProperty(navigator,'clipboard',{value:undefined,configurable:true});
     document.querySelector('.copy-block button').click();await Promise.resolve();
   })()`);
   assert.equal(page.evaluate('document.querySelector(".copy-block .copy-status").hasAttribute("data-error")'), true);
+  assert.equal(page.evaluate('getComputedStyle(document.querySelector(".copy-block .copy-status")).display'), 'block');
+  assert.notEqual(page.evaluate('getComputedStyle(document.querySelector(".copy-block .copy-status")).position'), 'absolute');
+  assert.equal(page.evaluate('document.querySelector(".copy-block button").disabled'), false);
+  // Retrying this block does not clear another block's error or alter code bytes.
+  await page.evaluate(`(async()=>{
+    Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>window.retried=text},configurable:true});
+    document.querySelector('.copy-block button').click();await Promise.resolve();
+  })()`);
+  assert.equal(page.evaluate('window.retried'), '  first\n\nsecond  \n');
+  assert.equal(page.evaluate('document.querySelector(".copy-block .copy-status").hasAttribute("data-error")'), false);
+  assert.equal(page.evaluate('getComputedStyle(document.querySelector(".copy-block .copy-status")).position'), 'absolute');
+  assert.equal(page.evaluate('document.querySelector(".copy-inline .copy-status").hasAttribute("data-error")'), true);
+  const secondBlock = 'document.querySelectorAll(".copy-block")[1]';
+  assert.equal(page.evaluate(`${secondBlock}.querySelector('button').disabled`), false);
+  await page.evaluate(`(async()=>{${secondBlock}.querySelector('button').click();await Promise.resolve()})()`);
+  assert.equal(page.evaluate('window.retried'), '0O 1lI 中文\n');
+  assert.equal(page.evaluate(`${secondBlock}.querySelector('button').textContent`), 'Copied');
+  assert.equal(page.evaluate(`getComputedStyle(${secondBlock}.querySelector('.copy-status')).position`), 'absolute');
+  assert(!page.evaluate('getComputedStyle(document.querySelector("#raw code")).fontFamily').includes('RedApp Code'));
+
+  assert.equal(page.evaluate('getComputedStyle(document.querySelector(".copy-block code")).fontVariantLigatures'), 'none');
+  assert(page.evaluate('getComputedStyle(document.querySelector(".copy-block code")).fontFamily').includes('RedApp Code'));
+  assert(page.evaluate('getComputedStyle(document.querySelector(".copy-inline code")).fontFamily').includes('RedApp Code'));
+  assert.equal(page.evaluate('getComputedStyle(document.querySelector(".copy-block pre")).whiteSpace'), 'pre');
+  assert.equal(page.evaluate('getComputedStyle(document.querySelector(".copy-block pre")).overflow'), 'auto');
+  const font = await request('/assets/JetBrainsMono-Regular-v2.304.woff2');
+  assert.equal(font.headers.get('Content-Type'), 'font/woff2');
+  const fontBytes = new Uint8Array(await font.arrayBuffer());
+  assert.equal(new TextDecoder().decode(fontBytes.slice(0,4)), 'wOF2');
+  assert.equal(fontBytes.length, 92164);
+  const license = await request('/assets/JetBrainsMono-OFL-v2.304.txt');
+  assert((await license.text()).includes('SIL OPEN FONT LICENSE Version 1.1'));
+
   await page.goto(origin + path.replace("lang=en", "lang=zh-CN"));
   assert.equal(
     page.evaluate('document.querySelector("h1").textContent'),

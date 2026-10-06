@@ -47,6 +47,7 @@ watch(
   { immediate: true, flush: "sync" },
 );
 export const messages = {
+  "Use {{base_url}} for the public address, {{app_path}} for /vendor/app, and {{latest_version}} for the latest known version or <version> when unavailable.": "{{base_url}} 为公开地址，{{app_path}} 为 /vendor/app，{{latest_version}} 为最新已知版本，无法获取时为 <version>。",
   "Just now": "刚刚",
   "Discovered {time}": "发现于{time}",
   "Discovery time unknown": "发现时间未知",
@@ -286,6 +287,8 @@ export const messages = {
     "管理应用资料、Provider 与启用状态。",
   "Add vendor": "添加厂商",
   "Add application": "添加应用",
+  "Vendor sections": "厂商功能",
+  "Vendor settings": "厂商设置",
   "Vendor details": "厂商资料",
   "Application details": "应用资料",
   "Saved on creation": "创建时保存",

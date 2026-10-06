@@ -186,7 +186,8 @@ it("creates a bilingual vendor and application with explicit provider defaults a
   await wrapper.get(".directory-editor form").trigger("submit");
   await flushPromises();
   await flushPromises();
-  expect(router.currentRoute.value.path).toBe("/admin/vendors/acme/settings");
+  await vi.waitFor(() => expect(router.currentRoute.value.path).toBe("/admin/vendors/acme/settings"));
+  await flushPromises();
   expect(vendors.at(-1)?.name["zh-CN"]).toBe("示例厂商");
   expect(vendors.at(-1)?.icon).toBe("/assets/icons/example.png");
   expect(wrapper.get('[name="id"]').attributes("disabled")).toBeDefined();
@@ -568,5 +569,63 @@ it("ignores an immediate-toggle response after switching applications", async ()
   await flushPromises();
   expect((wrapper.get('[name="name-en"]').element as HTMLInputElement).value).toBe(name);
   expect(wrapper.get('[name="id"]').element).toHaveProperty("value", "claude-code");
+  wrapper.unmount();
+});
+
+it("lists every vendor application across pages including disabled records, with vendor-scoped navigation and add context", async () => {
+  const original = apps[0]!;
+  apps = Array.from({ length: 23 }, (_, i) => ({ ...structuredClone(original), uid: `app-${i}`, id: `tool-${i}`, key: `openai/tool-${i}`, provider: "info" as const, enabled: i % 2 === 0, name: { en: `Tool ${i}`, "zh-CN": `工具 ${i}` } }));
+  apps.push(structuredClone(adminApplications[1]!));
+  const fetch = vi.fn(async (url: string) => {
+    const u = new URL(url, "https://test");
+    const vendor = u.pathname.match(/^\/admin\/api\/vendors\/([^/]+)\/apps$/)?.[1];
+    if (vendor) {
+      expect(u.searchParams.get("state")).toBe("current");
+      const page = Number(u.searchParams.get("page")), limit = Number(u.searchParams.get("limit"));
+      const items = apps.filter((a) => a.vendor_id === vendor);
+      return response({ items: items.slice((page - 1) * limit, page * limit), page, limit, total: items.length, total_pages: Math.max(1, Math.ceil(items.length / limit)) });
+    }
+    return read(url);
+  });
+  vi.stubGlobal("fetch", fetch);
+  const { wrapper, router } = await mountPage("/admin/vendors/openai/apps");
+  const list = () => wrapper.get(".vendor-applications");
+  expect(wrapper.get(".vendor-header h1").text()).toBe("OpenAI");
+  expect(wrapper.get('.application-tabs a[aria-current="page"]').text()).toBe("Applications");
+  expect(list().findAll("li:not(.add-application)")).toHaveLength(20);
+  expect(list().text()).toContain("Tool 1");
+  expect(list().text()).toContain("Disabled");
+  expect(list().text()).not.toContain("Claude Code");
+  const found = new Set(list().findAll("li:not(.add-application) a").map((a) => a.attributes("href")));
+  await list().get('[aria-label="Next page"]').trigger("click");
+  await flushPromises();
+  expect(list().findAll("li:not(.add-application)")).toHaveLength(3);
+  list().findAll("li:not(.add-application) a").forEach((a) => found.add(a.attributes("href")));
+  expect(found.size).toBe(23);
+  await list().get('a[href="/admin/vendors/openai/apps/tool-22/settings"]').trigger("click");
+  await flushPromises();
+  expect(router.currentRoute.value.path).toBe("/admin/vendors/openai/apps/tool-22/settings");
+  await wrapper.get('.breadcrumbs a[href="/admin/vendors/openai/apps"]').trigger("click");
+  await flushPromises();
+  await list().get('[aria-label="Add application"]').trigger("click");
+  await flushPromises();
+  expect(router.currentRoute.value.path).toBe("/admin/vendors/openai/apps/new");
+  expect((wrapper.get('[name="id"]').element as HTMLInputElement).value).toBe("");
+  await wrapper.get('.directory-editor .breadcrumbs a').trigger("click");
+  await flushPromises();
+  await wrapper.get('.application-tabs a[href$="/settings"]').trigger("click");
+  await flushPromises();
+  expect(wrapper.find(".directory-editor").exists()).toBe(true);
+  expect(wrapper.find('.directory-editor a[href$="/apps/new"]').exists()).toBe(false);
+  router.back();
+  await vi.waitFor(() => expect(router.currentRoute.value.path).toBe("/admin/vendors/openai/apps"));
+  await flushPromises();
+  expect(list().text()).toContain("Tool 1");
+  await router.push("/admin/vendors/anthropic/apps");
+  await flushPromises();
+  expect(wrapper.get(".vendor-header h1").text()).toBe("Anthropic");
+  expect(list().text()).toContain("Claude Code");
+  expect(list().text()).not.toContain("Tool 1");
+  expect(list().get('[aria-label="Add application"]').attributes("href")).toBe("/admin/vendors/anthropic/apps/new");
   wrapper.unmount();
 });

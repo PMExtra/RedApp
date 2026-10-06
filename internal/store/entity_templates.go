@@ -122,8 +122,6 @@ func (s *Store) ResetApplicationTemplate(key string, in TemplateReset) (Applicat
 			changes.Description = template.Application.Description
 		case "icon":
 			changes.Icon = template.Application.Icon
-		case "enabled":
-			changes.Enabled = template.Application.Enabled
 		case "instructions_en":
 			instructions.En = template.Instructions.En
 			writeInstructions = true
@@ -199,8 +197,6 @@ func (s *Store) ResetVendorTemplate(id string, in TemplateReset) (Vendor, error)
 			changes.Description = template.Description
 		case "icon":
 			changes.Icon = template.Icon
-		case "enabled":
-			changes.Enabled = template.Enabled
 		default:
 			return v, ErrInvalidDirectory
 		}

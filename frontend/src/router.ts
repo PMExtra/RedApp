@@ -73,9 +73,13 @@ export function makeRouter(history: RouterHistory = createWebHistory()) {
             props: { kind: "app" },
           },
           {
-            path: "vendors/:vendor/settings",
-            component: () => import("./components/DirectoryEditor.vue"),
-            props: { kind: "vendor" },
+            path: "vendors/:vendor",
+            component: () => import("./layouts/VendorLayout.vue"),
+            children: [
+              { path: "", redirect: (to) => `/admin/vendors/${to.params.vendor}/settings` },
+              { path: "settings", component: () => import("./pages/VendorSettingsPage.vue") },
+              { path: "apps", component: () => import("./pages/VendorApplicationsPage.vue") },
+            ],
           },
           {
             path: "vendors/:vendor/apps/:app",

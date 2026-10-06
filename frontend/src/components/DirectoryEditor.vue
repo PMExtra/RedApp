@@ -24,6 +24,7 @@ import { useDirtyDraft } from "../composables/useDirtyDraft";
 import { errorText, language, t } from "../i18n";
 import type { LocalizedText } from "../site";
 const props = defineProps<{ kind: "vendor" | "app" }>();
+const emit = defineEmits<{ updated: [Vendor | ManagedApplication] }>();
 const route = useRoute(),
   router = useRouter();
 const creating = computed(() =>
@@ -80,6 +81,7 @@ let ticket = 0,
   controller: AbortController | undefined;
 function accept(value?: Vendor | ManagedApplication) {
   record.value = value;
+  if (value) emit("updated", value);
   const fields = value
     ? {
         ...empty(),
@@ -204,6 +206,7 @@ async function changeEnabled(enabled: boolean) {
     const value = response[kind];
     if (!value) throw Error("Saved record unavailable");
     record.value = value;
+    emit("updated", value);
     draft.value.enabled = value.enabled;
     baseline.value = JSON.stringify({ ...JSON.parse(baseline.value), enabled: value.enabled });
     void synchronize();
@@ -360,6 +363,9 @@ onUnmounted(() => {
 </script>
 <template>
   <section class="panel directory-editor" :data-kind="kind">
+    <nav v-if="creating && kind === 'app'" class="breadcrumbs" :aria-label="t('Vendor sections')">
+      <RouterLink :to="`/admin/vendors/${route.params.vendor}/apps`">{{ route.params.vendor }} / {{ t("Applications") }}</RouterLink>
+    </nav>
     <div class="section-heading entity-editor-heading">
       <h2>
         {{
@@ -635,15 +641,6 @@ onUnmounted(() => {
         {{ t("Cancel") }}
       </button>
     </div>
-    <section v-if="kind === 'vendor' && record && !record.deleted_at" class="vendor-application-actions" :aria-label="t('Applications')">
-      <h3>{{ t('Applications') }}</h3>
-    <RouterLink
-      v-if="kind === 'vendor' && record && !record.deleted_at"
-      class="button-link"
-      :to="`/admin/vendors/${record.id}/apps/new`"
-      >{{ t("Add application") }}</RouterLink
-    >
-    </section>
     <TemplateReset
       v-if="kind === 'vendor' && record?.has_template && !readOnly"
       kind="vendor"

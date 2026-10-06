@@ -207,7 +207,7 @@ func (s *Server) templateAPI(w http.ResponseWriter, r *http.Request, key string)
 			directoryError(w, err)
 			return
 		}
-		groups := []string{"metadata", "icon", "instructions_en", "instructions_zh", "enabled"}
+		groups := []string{"metadata", "icon", "instructions_en", "instructions_zh"}
 		if a.Provider == template.Application.Provider {
 			groups = append(groups, "source", "cache")
 		}
@@ -251,7 +251,7 @@ func (s *Server) vendorTemplateAPI(w http.ResponseWriter, r *http.Request, id st
 		if err != nil {
 			directoryError(w, err)
 		} else {
-			reply(w, 200, map[string]any{"template": map[string]any{"application": template}, "current": v, "instructions": store.Instructions{}, "groups": []string{"metadata", "icon", "enabled"}})
+			reply(w, 200, map[string]any{"template": map[string]any{"application": template}, "current": v, "instructions": store.Instructions{}, "groups": []string{"metadata", "icon"}})
 		}
 		return
 	}

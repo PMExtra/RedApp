@@ -14,7 +14,7 @@ SQLite schema 为 7。精确匹配的 schema 5/6 可事务升级；schema 4 先�
 
 ## 选择性重置与永久删除
 
-模板重置默认不选任何字段。选择后展示当前值与模板值，再提交应用/厂商 revision；说明字段另校验 instructions_revision，冲突整笔回滚。应用可选择名称/描述、图标、启用、中英文说明以及 Provider 兼容的源和缓存设置；Provider 不同时不提供源/缓存重置。源变更沿用新 source epoch，不清空旧文件或历史。重置不删除任何上传图标、缓存、Hosted 文件或历史。
+模板重置默认不选任何字段。选择后展示当前值与模板值，再提交应用/厂商 revision；说明字段另校验 instructions_revision，冲突整笔回滚。应用可选择名称/描述、图标、中英文说明以及 Provider 兼容的源和缓存设置；Provider 不同时不提供源/缓存重置。源变更沿用新 source epoch，不清空旧文件或历史。重置不删除任何上传图标、缓存、Hosted 文件或历史。
 
 未匹配内置完整键的自定义应用可以永久删除。API 要求 revision、完整 `confirm_key` 和稳定 `confirm_uid`，UI 显示不可撤销确认。事务删除应用拥有的设置、缓存、文件记录、预览、说明、事件、指标历史、源记录、排行及置顶关联；公开 ID 可重新使用，但新应用获得不同内部 UID。迟到的后台观测不能重建被删除 UID 的历史。
 
@@ -54,7 +54,7 @@ SQLite schema 为 7。精确匹配的 schema 5/6 可事务升级；schema 4 先�
 
 说明是管理员控制的受信任同源内容，**不是安全隔离边界**。服务端仅注入公开资料，不传入密码、会话或代理设置；但同源脚本本身仍具有浏览器同源能力。后续边界收敛已有 [issue #4](https://github.com/PMExtra/RedApp/issues/4)，本轮不重复创建。
 
-受控占位符为 `{{base_url}}`（有效公开地址，无尾斜杠）、`{{app_path}}`（`/vendor/app`，有前导无尾斜杠）、`{{app_name}}`、`{{app_key}}`、`{{public_origin}}`、`{{app_url}}`、`{{install_commands}}`。未知占位符保持原文，不执行任意服务端表达式。Codex/Claude 双语默认说明作为模板配置保存，安装命令由公开地址和既有 descriptor 生成。保存空说明不会偷偷恢复默认。
+受控占位符为 `{{base_url}}`（有效公开地址，无尾斜杠）、`{{app_path}}`（`/vendor/app`，有前导无尾斜杠）、`{{latest_version}}`（当前源的最新已知版本，无法获取时为字面 `<version>`）、`{{app_name}}`、`{{app_key}}`、`{{public_origin}}`、`{{app_url}}`、`{{install_commands}}`。未知占位符保持原文，不执行任意服务端表达式。Codex/Claude 双语默认说明作为可编辑 Markdown 模板保存，命令由文档中的细粒度标量变量插值；`{{install_commands}}` 仅保留旧自定义内容兼容。保存空说明不会偷偷恢复默认。
 
 ## 验证与边界
 
@@ -123,7 +123,7 @@ Codex Shell 使用 `--release`，PowerShell 使用 `-Release`；只支持 `lates
 应用公开详情的后台入口使用该应用的默认管理页（版本、缓存、文件或设置），普通页面仍进入后台概览。复用会话与登录 returnTo，规范化回跳地址并限制在同源后台路径。DOM 路由回归覆盖取消登录、历史前进后退、应用/语言切换和已登录直达。本轮只使用 CLI/DOM 验证，未做 GUI 或视觉验收；发布要求精确 main 提交通过 Windows PowerShell 与 Linux 双架构 CI，再按摘要验证发布镜像运行。不部署用户服务器。
 
 
-“安装指定版本”使用原生 details/summary，默认折叠且放在末尾，折叠时 summary 下边距为零。内部 fenced Markdown 仍由既有 AST 复制增强处理，不增强原始 HTML 代码。只有内容完全等于当前内置默认时，才将版本示例位置换为当前 source epoch 的最高已知真实版本；无版本时保留纯文字说明，不生成占位版本命令。自定义文档和显式空值原样保留。版本经过 Provider 校验及 Shell/PowerShell 单引号转义，不触发回源，重新读取文档即可反映新发现版本。默认无参安装已使用 latest，因此不重复列 latest 示例；只有 Claude 提供 stable 示例，Codex 不编造 stable 支持。
+“安装指定版本”使用原生 details/summary，默认折叠且放在末尾，折叠时 summary 下边距为零。内部 fenced Markdown 仍由既有 AST 复制增强处理，不增强原始 HTML 代码。默认内容直接保存 Shell/PowerShell fenced Markdown 命令，以 `{{latest_version}}` 插入当前 source epoch 的最高已知有效版本；没有版本或查询失败时显示并复制字面 `<version>`。该标量在自定义文档中同样可用，不要求文档完全等于默认。Provider 校验过滤无效版本，不触发回源，重新读取文档即可反映新发现版本。标量在 Markdown 渲染之后做单次 HTML 转义替换，避免代码双重转义或把值解析成 Markdown/HTML；未知变量保留，值中的变量不递归解释。默认无参安装已使用 latest，因此不重复列 latest 示例；只有 Claude 提供 stable 示例，Codex 不编造 stable 支持。
 
 
 ## v0.7.9：图标与实体编辑
@@ -132,6 +132,22 @@ OpenAI 厂商默认图标使用 `/assets/builtin/openai.svg`，与 Codex 图标�
 
 共享 EntityIcon 按场景提供 28/32/36/40/48px 正方形，图片居中 contain，空值及加载失败使用相同尺寸的占位图标。覆盖公开搜索、卡片、厂商/应用详情、后台列表、标题和编辑/重置预览。上传内容不做缩放或改写。
 
-编辑表单按标题/状态、基础资料和图标、双语字段、操作区排列。厂商新增应用入口位于独立应用操作区；厂商不可变字段和重置说明独立表述。共享文件选择按钮提供本地化标签，保留原生文件选择行为。模板重置默认折叠，启用字段选择也必须检查差异后明确保存，不触发即时 PATCH。
+编辑表单按标题/状态、基础资料和图标、双语字段、操作区排列。厂商新增应用入口位于独立应用管理标签；厂商不可变字段和重置说明独立表述。共享文件选择按钮提供本地化标签，保留原生文件选择行为。模板重置默认折叠，选择字段后仍须检查差异并明确保存。启用状态不再提供模板重置；旧客户端或手写提交 enabled 分组/字段返回 400，现有开关状态始终保留。
 
 此轮使用 CLI 和 Happy DOM 验证行为；没有执行 GUI 或像素级视觉验收，发布须通过精确提交的 CI 和双架构镜像运行验证。
+
+
+## 未发布：厂商应用管理标签
+
+后台 `/admin/vendors/<vendor>/settings` 与 `/admin/vendors/<vendor>/apps` 共享厂商标题、图标、身份和标签导航。应用管理复用 DirectoryApps 及现有 `state=current` 分页接口，每页 20 项，覆盖该厂商全部未删除应用（含自身禁用、厂商禁用），不受目录卡片前五项预览限制，不混其他厂商。新增入口固定当前厂商；应用详情面包屑返回对应厂商应用标签。标签切换、直接地址和浏览器返回走既有路由及草稿离开保护。公开厂商页不变。
+
+Vendor/App 模板重置均不再支持 enabled，预览和提交白名单同步移除；服务端拒绝旧/手写分组，整笔不写入。合法字段重置保留当前 on/off。标题区独立即时启用开关、新对象创建开关和新模板默认禁用语义保持。
+
+
+## 未发布 0.7.10：指定版本的显式变量
+
+指定版本区保留普通 `<details class="installer-options">` / `<summary>` 与 fenced Markdown，位于末尾、默认折叠。删除隐藏 known-version marker 解释器、默认文档专用的动态代码块生成，以及中英文“安装当前已知最新版本”/“尚无已知版本”引导。命令直接用 `{{base_url}}{{app_path}}` 和单引号包裹的 `{{latest_version}}`；Claude stable 示例保留，不重复显式 latest 示例。编辑器显示三项标量的用途。
+
+存储升级复用既有精确默认匹配，按语言独立将 v0.7.9（与 v0.7.8 相同）的旧默认内容一次性更新为新 Markdown，保留自定义和显式空值，不增加 schema 迁移。旧默认快照只作数据匹配，运行期不再解释 marker。含旧 marker 的自定义文档原样保存，该注释按普通 HTML 注释处理；若要清理或改写这些自定义内容，需另行明确决定，本轮不自动修改。
+
+默认安装说明移除中英文“执行安装脚本请信任服务”提醒及“安装/自动更新通过分发服务下载”来源描述，平台与安装步骤保留。Claude 在基本安装命令后、开始使用前单处提示“下载过程中可能无进度显示，执行后请等待1~2分钟。”；英文为“Download progress may not be displayed. Please wait 1–2 minutes after running the command.”，Codex 不显示该提示。沿用旧默认精确匹配更新；不对用户自定义说明做短语替换。

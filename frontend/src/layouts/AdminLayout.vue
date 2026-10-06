@@ -6,7 +6,7 @@ import AppShell from "../components/AppShell.vue";
 import AccountMenu from "../components/AccountMenu.vue";
 import PasswordDialog from "../components/PasswordDialog.vue";
 import Icon from "../components/Icon.vue";
-import { resetDirectory } from "../directory";
+import { resetDirectory, applicationNavigation } from "../directory";
 import {
   checkSession,
   cancelSessionCheck,
@@ -24,7 +24,6 @@ import { confirmDirtyDrafts } from "../composables/useDirtyDraft";
 import { adminReturnPath } from "../router";
 const router = useRouter(),
   route = useRoute();
-const applicationNavigation = { en: "Applications", "zh-CN": "应用管理" };
 const passwordOpen = ref(false),
   busy = ref(false),
   actionError = ref<unknown>();

@@ -85,7 +85,7 @@ async function copyURL() {
         t("Vendors and applications")
       }}</RouterLink
       ><span aria-hidden="true">/</span
-      ><RouterLink :to="`/admin/vendors/${vendor.id}/settings`">{{
+      ><RouterLink :to="`/admin/vendors/${vendor.id}/apps`">{{
         vendor.name[language]
       }}</RouterLink
       ><span aria-hidden="true">/</span

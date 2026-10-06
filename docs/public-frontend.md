@@ -13,3 +13,21 @@ Overview 与应用摘要仅在当前页面可见时订阅状态；版本、资�
 Select 与账户菜单共享弹层基础设施和样式，但分别保留 combobox/listbox 与 menu 的键盘及 ARIA 语义。原 OpenAI SVG 仍以原始字节嵌入，通过 `/openai/codex/icon.svg` 提供；[素材来源说明](../internal/apps/codex/assets/README.md)不因 URL 改动而改变。
 
 本轮验证使用 CLI、类型检查和 DOM 测试，不声称完成截图、真实触摸设备或辅助技术验收。
+
+
+## 未发布：命令字体与复制反馈
+
+仅 Markdown 渲染的代码块和行内代码使用本地 JetBrains Mono Regular 400 v2.304；正文、原始 HTML 代码和增强边界不变。唯一 WOFF2 文件 92,164 字节（约 90 KiB），未引入斜体/粗体或全字重家族，也未修改上游字体；SHA-256 为 `a9cb1cd82332b23a47e3a1239d25d13c86d16c4220695e34b243effa999f45f2`。
+
+来源为 [JetBrains 官方仓库 v2.304](https://github.com/JetBrains/JetBrainsMono/tree/v2.304)，固定 commit `cd5227bd1f61dff3bbd6c814ceaf7ffd95e947d9` 的 `fonts/webfonts/JetBrainsMono-Regular.woff2`。SIL OFL 1.1 原文随字体打包在 `frontend/public/assets/JetBrainsMono-OFL-v2.304.txt`，构建后嵌入程序并可从同源 `/assets/JetBrainsMono-OFL-v2.304.txt` 读取；字体同源路径为 `/assets/JetBrainsMono-Regular-v2.304.woff2`，无需 CDN 或运行时外网。
+
+[官方字形说明](https://www.jetbrains.com/lp/mono/#design)明确区分 1/l/I，0 带中心点而 O 无中心点；同版本 TTF 的 CLI 字形检查也确认这些字符使用不同轮廓、相同 600 advance（0 三轮廓、O 两轮廓）。这不是 GUI/像素级视觉验收。代码块采用 15px（.9375rem）与 1.65 行高，行内代码随正文缩放；禁用 liga/calt，保留系统等宽及中文 fallback、横向滚动、选择与精确复制。iframe 样式自含并引用同源字体，现有 CSP 允许加载，无需放宽 CSP。
+
+多行块复制成功仅按钮显示勾选及“已复制”，禁用三秒后恢复；下方成功播报保留为脱离布局的屏幕阅读器文本，不产生可见重复或空白行。失败仍显示可见错误并允许重试；各代码块状态独立。原始 HTML 不增加复制控件或应用该字体。
+
+
+## 未发布 0.7.10：可编辑的指定版本命令
+
+`{{latest_version}}` 是与 `{{base_url}}`、`{{app_path}}` 并列的标量变量，可直接写入默认或自定义 Markdown 的普通代码块/行内代码。版本取当前源最高已知有效版本，不回源；无数据或无法读取时取字面 `<version>`。变量在 Markdown 渲染后单次 HTML 转义插入，DOM 与剪贴板保留 `<version>` 而非实体字符串。未知变量原样保留，不执行表达式，不递归展开值中的变量。
+
+末尾指定版本区保持可编辑的原生 details/summary，默认折叠；无隐藏 marker 或动态整块命令插槽。删除中英文重复引导和无版本说明文字。旧 `install_commands` 仅为现有自定义内容兼容保留，新默认不使用。历史自定义 marker 不解释、不自动改写。

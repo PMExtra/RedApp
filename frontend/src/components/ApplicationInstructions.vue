@@ -5,6 +5,7 @@ import { useSetting } from "../composables/useSetting";
 import { invalidateBootstrap, loadBootstrap } from "../bootstrap";
 import { errorText, t } from "../i18n";
 import type { LocalizedText } from "../site";
+const variableHint = computed(() => t("Use {{base_url}} for the public address, {{app_path}} for /vendor/app, and {{latest_version}} for the latest known version or <version> when unavailable."));
 const props = defineProps<{ application: string; readonly?: boolean }>();
 const { draft, loading, saving, error, saved, load, save } =
   useSetting<LocalizedText>(
@@ -27,6 +28,7 @@ const { draft, loading, saving, error, saved, load, save } =
         )
       }}
     </p>
+    <p class="muted small-text">{{ variableHint }}</p>
     <p v-if="error" class="error" role="alert">{{ errorText(error) }}</p>
     <p v-if="saved" class="notice" role="status">{{ t("Changes saved.") }}</p>
     <p v-if="loading" role="status">{{ t("Loading…") }}</p>

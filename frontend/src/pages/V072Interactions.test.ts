@@ -258,10 +258,8 @@ it("starts template reset unselected, reviews selected differences and preserves
   expect(wrapper.element.tagName).toBe("DETAILS");
   expect(wrapper.attributes("open")).toBeUndefined();
   await wrapper.get("summary").trigger("click");
-  const callsBeforeSelection = fetch.mock.calls.length;
-  await wrapper.get('[aria-label="Enabled"]').trigger("click");
-  expect(fetch.mock.calls.length).toBe(callsBeforeSelection);
-  await wrapper.get('[aria-label="Enabled"]').trigger("click");
+  // A stale server preview must not restore the removed enabled control.
+  expect(wrapper.find('[aria-label="Enabled"]').exists()).toBe(false);
   expect(wrapper.findAll("[role=switch][aria-checked=true]")).toHaveLength(0);
   expect(
     wrapper.find("button:not([role=switch])").attributes("disabled"),

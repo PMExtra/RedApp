@@ -1,0 +1,76 @@
+[
+  {
+    "vendor": {
+      "id": "openai",
+      "name": {
+        "en": "OpenAI",
+        "zh-CN": "OpenAI"
+      },
+      "description": {
+        "en": "",
+        "zh-CN": ""
+      },
+      "icon": "/assets/builtin/openai.svg",
+      "enabled": false
+    },
+    "application": {
+      "id": "codex",
+      "name": {
+        "en": "Codex CLI",
+        "zh-CN": "Codex CLI"
+      },
+      "description": {
+        "en": "OpenAI’s coding agent for your terminal.",
+        "zh-CN": "OpenAI 的终端编程助手。"
+      },
+      "icon": "/openai/codex/icon.svg",
+      "provider": "codex",
+      "base_url": "https://releases.openai.com/codex",
+      "cache_ttl_seconds": 60,
+      "base_urls": null,
+      "source_strategy": "",
+      "enabled": false
+    },
+    "instructions": {
+      "en": "## Install {{app_name}}\n\nRun the appropriate command in your terminal.\n\nOn Linux or macOS, run this command in Shell:\n\n```sh\ncurl -fsSL '{{base_url}}{{app_path}}/install.sh' | sh\n```\n\nOn Windows, run this command in PowerShell:\n\n```powershell\nirm '{{base_url}}{{app_path}}/install.ps1' | iex\n```\n\nThis command downloads and runs an installer. Use a service you trust.\n\nInstaller and self-update downloads use this distribution service.\n\n### Getting started\n\nAfter installation, open a new terminal and run `codex`. Follow the application’s sign-in instructions.\n\n### Update\n\nRerun the default installation command above to install the latest version. A command specifying a version installs that version.\n\n<details class=\"installer-options\">\n<summary>Install a specific version</summary>\n\n<!-- redapp:known-version -->\n\nNo version is known yet. Installation commands for a specific version will appear here after a version is discovered.\n\n</details>",
+      "zh-CN": "## 安装 {{app_name}}\n\n在终端中运行适合当前系统的命令。\n\n在 Linux 或 macOS 上，在 Shell 中运行：\n\n```sh\ncurl -fsSL '{{base_url}}{{app_path}}/install.sh' | sh\n```\n\n在 Windows 上，在 PowerShell 中运行：\n\n```powershell\nirm '{{base_url}}{{app_path}}/install.ps1' | iex\n```\n\n此命令会下载并执行安装脚本，请使用你信任的服务。\n\n安装脚本与自动更新通过此分发服务下载。\n\n### 开始使用\n\n安装后打开新的终端，运行 `codex`，并按照应用提示登录。\n\n### 更新\n\n重新执行上方默认安装命令即可安装最新版本；指定版本的命令仍安装所指定的版本。\n\n<details class=\"installer-options\">\n<summary>安装指定版本</summary>\n\n<!-- redapp:known-version -->\n\n尚无已知版本。发现版本后，此处将显示指定版本的安装命令。\n\n</details>"
+    }
+  },
+  {
+    "vendor": {
+      "id": "anthropic",
+      "name": {
+        "en": "Anthropic",
+        "zh-CN": "Anthropic"
+      },
+      "description": {
+        "en": "",
+        "zh-CN": ""
+      },
+      "icon": "/assets/builtin/anthropic.svg",
+      "enabled": false
+    },
+    "application": {
+      "id": "claude-code",
+      "name": {
+        "en": "Claude Code",
+        "zh-CN": "Claude Code"
+      },
+      "description": {
+        "en": "Anthropic’s coding agent for your terminal.",
+        "zh-CN": "Anthropic 的终端编程助手。"
+      },
+      "icon": "/anthropic/claude-code/icon.svg",
+      "provider": "claude-code",
+      "base_url": "https://downloads.claude.ai/claude-code-releases",
+      "cache_ttl_seconds": 60,
+      "base_urls": null,
+      "source_strategy": "",
+      "enabled": false
+    },
+    "instructions": {
+      "en": "## Install {{app_name}}\n\nRun the appropriate command in your terminal.\n\nOn Linux or macOS, run this command in Shell:\n\n```bash\ncurl -fsSL '{{base_url}}{{app_path}}/install.sh' | bash\n```\n\nOn Windows, run this command in PowerShell:\n\n```powershell\nirm '{{base_url}}{{app_path}}/install.ps1' | iex\n```\n\nThis command downloads and runs an installer. Use a service you trust.\n\n### Getting started\n\nAfter installation, open a new terminal and run `claude`. Follow the application’s sign-in instructions.\n\n### Update\n\nRerun the default installation command above to install the latest version. A command specifying a version installs that version. The managed launcher disables automatic updates; running the native binary directly bypasses this control.\n\n<details class=\"installer-options\">\n<summary>Install a specific version</summary>\n\n<!-- redapp:known-version -->\n\nNo version is known yet. Installation commands for a specific version will appear here after a version is discovered.\n\nInstall from the stable channel:\n\n```bash\ncurl -fsSL '{{base_url}}{{app_path}}/install.sh' | bash -s -- stable\n```\n\n```powershell\n& ([scriptblock]::Create((irm '{{base_url}}{{app_path}}/install.ps1'))) -Target 'stable'\n```\n\n</details>",
+      "zh-CN": "## 安装 {{app_name}}\n\n在终端中运行适合当前系统的命令。\n\n在 Linux 或 macOS 上，在 Shell 中运行：\n\n```bash\ncurl -fsSL '{{base_url}}{{app_path}}/install.sh' | bash\n```\n\n在 Windows 上，在 PowerShell 中运行：\n\n```powershell\nirm '{{base_url}}{{app_path}}/install.ps1' | iex\n```\n\n此命令会下载并执行安装脚本，请使用你信任的服务。\n\n### 开始使用\n\n安装后打开新的终端，运行 `claude`，并按照应用提示登录。\n\n### 更新\n\n重新执行上方默认安装命令即可安装最新版本；指定版本的命令仍安装所指定的版本。受管启动器禁用自动更新，直接运行原生程序会绕过此控制。\n\n<details class=\"installer-options\">\n<summary>安装指定版本</summary>\n\n<!-- redapp:known-version -->\n\n尚无已知版本。发现版本后，此处将显示指定版本的安装命令。\n\n安装 stable 通道版本：\n\n```bash\ncurl -fsSL '{{base_url}}{{app_path}}/install.sh' | bash -s -- stable\n```\n\n```powershell\n& ([scriptblock]::Create((irm '{{base_url}}{{app_path}}/install.ps1'))) -Target 'stable'\n```\n\n</details>"
+    }
+  }
+]

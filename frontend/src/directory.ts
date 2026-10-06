@@ -3,6 +3,8 @@ import { api, isCancellation } from "./api";
 import type { LocalizedText } from "./site";
 import type { ProviderCapabilities } from "./bootstrap";
 
+export const applicationNavigation = { en: "Applications", "zh-CN": "应用管理" };
+
 export type ProviderKey =
   | "info"
   | "hosted"
