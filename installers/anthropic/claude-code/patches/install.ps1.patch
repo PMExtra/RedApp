@@ -9,13 +9,9 @@
  $DOWNLOAD_DIR = "$env:USERPROFILE\.claude\downloads"
  
  # Use native ARM64 binary on ARM64 Windows, x64 otherwise
-@@ -23,28 +23,36 @@
- } else {
+@@ -24,19 +24,24 @@
      $platform = "win32-x64"
  }
-+foreach ($directory in @("$env:USERPROFILE\.claude", $DOWNLOAD_DIR)) {
-+    if ((Test-Path -LiteralPath $directory) -and ((Get-Item -LiteralPath $directory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Refusing a linked download directory: $directory" }
-+}
  New-Item -ItemType Directory -Force -Path $DOWNLOAD_DIR | Out-Null
 +$DOWNLOAD_DIR = Join-Path $DOWNLOAD_DIR ("redapp-" + [guid]::NewGuid().ToString('N'))
 +New-Item -ItemType Directory -Path $DOWNLOAD_DIR | Out-Null
@@ -26,7 +22,7 @@
 -    $version = Invoke-RestMethod -Uri "$DOWNLOAD_BASE_URL/latest" -ErrorAction Stop
 +    $version = $Target
 +    if ($Target -eq 'latest' -or $Target -eq 'stable') {
-+        $version = (Invoke-RestMethod -Uri "$DOWNLOAD_BASE_URL/$Target" -MaximumRedirection 0 -ErrorAction Stop).Trim()
++        $version = (Invoke-RestMethod -Uri "$DOWNLOAD_BASE_URL/$Target" -ErrorAction Stop).Trim()
 +    }
  }
  catch {
@@ -43,9 +39,8 @@
      exit 1
  }
  
- try {
--    $manifest = Invoke-RestMethod -Uri "$DOWNLOAD_BASE_URL/$version/manifest.json" -ErrorAction Stop
-+    $manifest = Invoke-RestMethod -Uri "$DOWNLOAD_BASE_URL/$version/manifest.json" -MaximumRedirection 0 -ErrorAction Stop
+@@ -44,7 +49,7 @@
+     $manifest = Invoke-RestMethod -Uri "$DOWNLOAD_BASE_URL/$version/manifest.json" -ErrorAction Stop
      $checksum = $manifest.platforms.$platform.checksum
  
 -    if (-not $checksum) {
@@ -53,16 +48,7 @@
          Write-Error "Platform $platform not found in manifest"
          exit 1
      }
-@@ -57,7 +65,7 @@
- # Download and verify
- $binaryPath = "$DOWNLOAD_DIR\claude-$version-$platform.exe"
- try {
--    Invoke-WebRequest -Uri "$DOWNLOAD_BASE_URL/$version/$platform/claude.exe" -OutFile $binaryPath -ErrorAction Stop
-+    Invoke-WebRequest -Uri "$DOWNLOAD_BASE_URL/$version/$platform/claude.exe" -OutFile $binaryPath -MaximumRedirection 0 -ErrorAction Stop
- }
- catch {
-     Write-Error "Failed to download binary: $_"
-@@ -76,35 +84,64 @@
+@@ -76,35 +81,49 @@
      exit 1
  }
  
@@ -74,34 +60,13 @@
 -        & $binaryPath install $Target
 +    $bin = "$env:USERPROFILE\.local\bin"
 +    $versions = "$env:USERPROFILE\.local\share\claude\versions"
-+    foreach ($directory in @("$env:USERPROFILE\.local", $bin, "$env:USERPROFILE\.local\share", "$env:USERPROFILE\.local\share\claude", $versions)) {
-+        if (Test-Path -LiteralPath $directory) {
-+            $item = Get-Item -LiteralPath $directory -Force
-+            if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Refusing an unsafe installation directory: $directory" }
-+        }
-     }
--    else {
--        & $binaryPath install
-+    if (Test-Path -LiteralPath "$bin\claude.exe") { throw "Existing Claude executable at $bin; remove or relocate it before using this installer." }
-+    foreach ($name in @('claude.ps1', 'claude.cmd')) {
-+        $launcher = Join-Path $bin $name
-+        if (Test-Path -LiteralPath $launcher) {
-+            $item = Get-Item -LiteralPath $launcher -Force
-+            if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Select-String -LiteralPath $launcher -Pattern 'RedApp managed Claude launcher' -SimpleMatch -Quiet)) { throw "Existing Claude installation at $launcher" }
-+        }
-     }
--    # Native exit codes don't trigger $ErrorActionPreference - capture explicitly
--    $installExitCode = $LASTEXITCODE
 +    New-Item -ItemType Directory -Force -Path $versions, $bin | Out-Null
 +    $installed = Join-Path $versions "$version.exe"
-+    if (Test-Path -LiteralPath $installed) {
-+        $item = Get-Item -LiteralPath $installed -Force
-+        if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or (Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash.ToLower() -ne $checksum) { throw "Existing version failed integrity verification: $installed" }
-+    } else {
-+        $stage = Join-Path $versions ([guid]::NewGuid().ToString('N') + '.tmp')
-+        try { [IO.File]::Copy($binaryPath, $stage); [IO.File]::Move($stage, $installed) }
-+        finally { if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Force } }
-+    }
++    $stage = Join-Path $versions ([guid]::NewGuid().ToString('N') + '.tmp')
++    try {
++        [IO.File]::Copy($binaryPath, $stage)
++        Move-Item -LiteralPath $stage -Destination $installed -Force
++    } finally { if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Force } }
 +    $psLauncher = @'
 +# RedApp managed Claude launcher
 +$previous = $env:DISABLE_UPDATES
@@ -121,7 +86,14 @@
 +            if (Test-Path -LiteralPath $launcher) { [IO.File]::Replace($stage, $launcher, [NullString]::Value) }
 +            else { [IO.File]::Move($stage, $launcher) }
 +        } finally { if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Force } }
-+    }
+     }
+-    else {
+-        & $binaryPath install
+-    }
+-    # Native exit codes don't trigger $ErrorActionPreference - capture explicitly
+-    $installExitCode = $LASTEXITCODE
++    # The official executable takes precedence over .cmd in cmd.exe.
++    if (Test-Path -LiteralPath "$bin\claude.exe") { Remove-Item -LiteralPath "$bin\claude.exe" -Force }
 +    Write-Output "Installed Claude Code $version at $bin"
 +    if (($env:PATH -split ';') -notcontains $bin) { Write-Output "Add $bin to your user PATH, then open a new terminal." }
  }

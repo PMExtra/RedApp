@@ -123,7 +123,7 @@ function Invoke-WebRequestWithFallback {
     if (-not $Metadata.Url.StartsWith("$ReleasesBaseUri/", [System.StringComparison]::Ordinal)) {
         throw "RedApp: blocked external URL"
     }
-    Invoke-WebRequest -UseBasicParsing -MaximumRedirection 0 -Uri $Metadata.Url -OutFile $OutFile -TimeoutSec $ReleasesAssetTimeoutSec
+    Invoke-WebRequest -UseBasicParsing -Uri $Metadata.Url -OutFile $OutFile -TimeoutSec $ReleasesAssetTimeoutSec
     Test-ArchiveDigest -ArchivePath $OutFile -ExpectedDigest $ExpectedDigest
     if (-not [string]::IsNullOrWhiteSpace($RequiredManifestAsset)) {
         $null = Get-PackageArchiveDigest -ManifestPath $OutFile -AssetName $RequiredManifestAsset
@@ -318,7 +318,7 @@ function Resolve-ReleaseFromReleases {
         "$ReleasesBaseUri/releases/$NormalizedVersion/release.json"
     }
     try {
-        $metadataResponse = Invoke-WebRequest -UseBasicParsing -MaximumRedirection 0 -Uri $metadataUri -TimeoutSec $ReleasesMetadataTimeoutSec
+        $metadataResponse = Invoke-WebRequest -UseBasicParsing -Uri $metadataUri -TimeoutSec $ReleasesMetadataTimeoutSec
         $releaseMetadata = [string]$metadataResponse.Content | ConvertFrom-Json -ErrorAction Stop
         $resolvedVersion = Resolve-VersionFromReleaseMetadata -ReleaseMetadata $releaseMetadata
         if ($NormalizedVersion -ne "latest" -and $resolvedVersion -cne $NormalizedVersion) {

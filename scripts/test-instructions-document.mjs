@@ -132,7 +132,7 @@ try {
   const instructions = await (
     await request("/admin/api/apps/openai/codex/instructions")
   ).json();
-  const en = `# Executable fixture\n\n{{app_name}} {{app_key}}\n\n<script>window.inlineFixture = "executed";</script>\n<script src="http://127.0.0.1:${fixturePort}/fixture.js"></script>\n\n{{unknown}}`;
+  const en = `# Executable fixture\n\n{{app_name}} {{app_key}} {{base_url}}{{app_path}}\n\n<script>window.inlineFixture = "executed";</script>\n<script src="http://127.0.0.1:${fixturePort}/fixture.js"></script>\n\n{{unknown}}\n\n\`\`\`sh\n  first\n\nsecond  \n\`\`\`\n\n\`inline\`\n\n<pre id="raw"><code>raw block</code></pre>`;
   await request(
     "/admin/api/apps/openai/codex/instructions",
     { en, "zh-CN": "# 中文说明", revision: instructions.revision },
@@ -162,13 +162,33 @@ try {
   );
   assert(page.evaluate("document.body.textContent").includes("openai/codex"));
   assert(page.evaluate("document.body.textContent").includes("{{unknown}}"));
+  assert(page.evaluate("document.body.textContent").includes(origin + "/openai/codex"));
+  assert.equal(page.evaluate('document.querySelectorAll(".copy-code").length'), 2);
+  assert.equal(page.evaluate('document.querySelector("#raw").outerHTML'), '<pre id="raw"><code>raw block</code></pre>');
+  await page.evaluate(`(async()=>{
+    window.copied=[];
+    Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>window.copied.push(text)},configurable:true});
+    document.querySelector('.copy-block button').click();
+    document.querySelector('.copy-inline button').click();
+    await Promise.resolve();
+  })()`);
+  assert.deepEqual(Array.from(page.evaluate('window.copied')), ['  first\n\nsecond  \n','inline']);
+  assert.equal(page.evaluate('document.querySelector("[role=status]").textContent'), 'Copied');
+  await page.evaluate(`(async()=>{
+    navigator.clipboard.writeText=async()=>{throw Error('denied')};
+    document.querySelector('.copy-inline button').focus();
+    document.querySelector('.copy-inline button').click();
+    await Promise.resolve();
+  })()`);
+  assert.equal(page.evaluate('document.activeElement.getAttribute("aria-label")'), 'Copy code');
+  assert.equal(page.evaluate('document.querySelector("[role=status]").textContent'), 'Copy failed; please copy manually');
   await page.goto(origin + path.replace("lang=en", "lang=zh-CN"));
   assert.equal(
     page.evaluate('document.querySelector("h1").textContent'),
     "中文说明",
   );
   console.log(
-    "Real HTTP instruction document: Markdown, controlled placeholders, inline and external local fixture scripts, bilingual navigation and separate CSP headers passed (Happy DOM; no GUI).",
+    "Real HTTP instruction document: Markdown-only copy controls, exact whitespace/newlines, keyboard focus, clipboard failure, controlled placeholders, inline and external local fixture scripts, bilingual navigation and separate CSP headers passed (Happy DOM; no GUI).",
   );
 } finally {
   await browser.abort();

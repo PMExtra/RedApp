@@ -4,7 +4,7 @@
 
 官方原始基线位于 `installers/openai/codex/upstream/`，固定 0.159.2 commit `ff6aec96948b70d94983af2641a6b67c94faeff5`；字节摘要与许可证来源记录在 `provenance.json`。禁止直接修改 upstream 原文。企业变换由 `patches/` 保存，`generated/` 必须逐字节等于原文加严格 patch 的结果。
 
-企业脚本限制下载 origin、关闭公网回退和重定向、保留原始哈希验证，并删除自动更新 marker。CLI 二进制和官方交互确认不改动；无人值守安装显式设置 `CODEX_NON_INTERACTIVE=1`。源码基线、完整许可证和 NOTICE 独立随服务交付，不在脚本头部重复维护记录。
+企业脚本将初始下载地址限定为 RedApp、关闭公网回退、保留官方正常重定向行为和原始哈希验证，并删除自动更新 marker。CLI 二进制和官方交互确认不改动；无人值守安装显式设置 `CODEX_NON_INTERACTIVE=1`。源码基线、完整许可证和 NOTICE 独立随服务交付，不在脚本头部重复维护记录。
 
 ```sh
 python3 scripts/update-installers.py --application openai/codex --source installers/openai/codex/upstream
@@ -16,14 +16,14 @@ python3 scripts/test-installers.py --platform shell
 
 ## 最小修改原则
 
-满足功能与安全要求的前提下，尽量减少补丁修改范围，降低后续上游更新适配成本和风险。保留上游函数结构、格式、参数声明及有价值的原有注释；不进行全文件格式化、无关重构或批量删注释。只移除项目额外添加的维护过程说明，并将其放在本文或维护工具中。URL 约束、关闭公网回退/重定向、原始哈希校验和自动更新 marker 抑制属于必要变化，不能为缩小 diff 撤销。
+满足功能与安全要求的前提下，尽量减少补丁修改范围，降低后续上游更新适配成本和风险。保留上游函数结构、格式、参数声明及有价值的原有注释；不进行全文件格式化、无关重构或批量删注释。只移除项目额外添加的维护过程说明，并将其放在本文或维护工具中。来源替换、关闭公网回退、原始哈希校验和自动更新 marker 抑制属于必要变化；不额外禁止正常重定向。
 
 当前基线补丁统计（不含 unified-diff 文件头和上下文）：
 
 | 脚本 | 新增行 | 删除行 | 修改类别 |
 | --- | ---: | ---: | --- |
-| install.sh | 31 | 128 | 简短修改声明；企业 URL；下载地址/重定向约束；移除 GitHub fallback 与重新获取摘要；保留清单/包校验；抑制更新 marker |
-| install.ps1 | 19 | 81 | 简短修改声明；企业 URL；请求/重定向约束；移除 GitHub fallback 与重新获取摘要；保留清单/包校验；抑制更新 marker |
+| install.sh | 31 | 128 | 简短修改声明；企业 URL；下载地址约束；移除 GitHub fallback 与重新获取摘要；保留清单/包校验；抑制更新 marker |
+| install.ps1 | 18 | 80 | 简短修改声明；企业 URL；请求地址约束；移除 GitHub fallback 与重新获取摘要；保留清单/包校验；抑制更新 marker |
 
 删除行主要是公网回退及其 digest 重新解析分支，不是对平台识别、安装/迁移确认或解包流程的改写。本次治理恢复了两处 PowerShell 原始多行参数声明格式；没有改写 upstream，没有删除上游原有注释。每次变更均须重新确认 generated 与 patch 一致、正常安装成功、篡改/截断失败、失败关闭及交互语义保持。
 
@@ -33,10 +33,10 @@ Claude 原文、来源、长度与 SHA256 独立记录于 `installers/anthropic/
 
 | 脚本 | 新增行 | 删除行 | 必要变更 |
 | --- | ---: | ---: | --- |
-| Claude install.sh | 63 | 17 | 企业 URL 和拒绝重定向；直接解析所选目标；安全临时目录；以版本文件/受管入口替代二阶段安装；入口子进程更新控制 |
-| Claude install.ps1 | 69 | 32 | 同上；Windows 路径、摘要格式、重解析点/冲突检查；独立原子替换 ps1/cmd 入口；失败清理 |
+| Claude install.sh | 32 | 13 | 企业 URL；直接解析所选目标；安全临时目录；以版本文件/受管入口替代二阶段安装；入口子进程更新控制 |
+| Claude install.ps1 | 50 | 31 | 同上；Windows 路径、摘要格式和既有官方安装接管；独立原子替换 ps1/cmd 入口；失败清理 |
 
-没有全文件格式化、无关重构或批量删上游注释。大部分新增行实现原来由下载后二进制承担的落盘与启动入口工作。删除的是与替代安装链冲突的引导、二阶段调用和清理。仍保留有用的原始注释及必要入口所有权标识；维护细节集中在文档和工具中。
+没有全文件格式化、无关重构或批量删上游注释。大部分新增行实现原来由下载后二进制承担的落盘与启动入口工作。删除的是与替代安装链冲突的引导、二阶段调用和清理。仍保留有用的原始注释；入口注释不作为允许替换的前置条件；维护细节集中在文档和工具中。
 
 ```sh
 python3 scripts/update-installers.py --application anthropic/claude-code --source installers/anthropic/claude-code/upstream
@@ -56,7 +56,7 @@ python3 scripts/test-update-installers.py
 
 `.github/workflows/installer-updates.yml` 每日 **06:23 UTC**、手动触发或 main 中维护工作流、工具和 manifest 等声明路径变更时运行，明确检出 main 并固定当次提交。同一维护任务串行运行。工作流的实际运行与结果以 Actions 为准；第三方脚本的许可和来源仍独立保留，不视为已取得额外再分发授权。
 
-唯一应用及脚本清单为 `internal/apps/builtin/manifest.json`，Go 服务和维护工具读取同一清单。检测源为受审查 descriptor 中的 `installers[].source`：Codex 的 `https://releases.openai.com/codex/install.sh` / `.ps1`，Claude 的 `https://claude.ai/install.sh` / `.ps1`。逐一验证 main 原文字节与 provenance 一致，获取官方当前脚本。维护下载器允许经有效证书验证的 HTTPS→HTTPS 跨域跳转，最多 5 次，不逐个维护目标白名单。拒绝 HTTP 降级、非 HTTPS 协议、URL 凭据/片段、重复 URL 和超限；请求前及每个目标检查 DNS，并在发送 TLS/HTTP 数据前再次检查实际 socket 对端，拒绝回环、私网、链路本地和 metadata 地址。只使用系统 TLS 信任，关闭环境代理继承，不关闭证书校验；DNS 查询结果与实际连接结果均须通过检查。写凭据任务仍不执行下载内容。终端安装器的仅 RedApp 下载边界不受此策略调整影响。异常状态、编码、HTML、空响应和超限失败，成功后计算当前摘要。这里的新脚本 SHA256 是经 HTTPS 获取后的观测值，不宣称是上游签名；Claude manifest 的二进制签名验证是独立流程。
+唯一应用及脚本清单为 `internal/apps/builtin/manifest.json`，Go 服务和维护工具读取同一清单。检测源为受审查 descriptor 中的 `installers[].source`：Codex 的 `https://releases.openai.com/codex/install.sh` / `.ps1`，Claude 的 `https://claude.ai/install.sh` / `.ps1`。逐一验证 main 原文字节与 provenance 一致，获取官方当前脚本。维护下载器允许经有效证书验证的 HTTPS→HTTPS 跨域跳转，最多 5 次，不逐个维护目标白名单。拒绝 HTTP 降级、非 HTTPS 协议、URL 凭据/片段、重复 URL 和超限；请求前及每个目标检查 DNS，并在发送 TLS/HTTP 数据前再次检查实际 socket 对端，拒绝回环、私网、链路本地和 metadata 地址。只使用系统 TLS 信任，关闭环境代理继承，不关闭证书校验；DNS 查询结果与实际连接结果均须通过检查。写凭据任务仍不执行下载内容。终端安装器的初始下载地址指向 RedApp，使用官方下载器的正常重定向行为；维护任务的上游获取策略独立。异常状态、编码、HTML、空响应和超限失败，成功后计算当前摘要。这里的新脚本 SHA256 是经 HTTPS 获取后的观测值，不宣称是上游签名；Claude manifest 的二进制签名验证是独立流程。
 
 全部 descriptor 声明的脚本检测结果统一记录在 Actions summary；数量随受审查清单变化，不在工具中固定为四份。全部不变时成功结束。下载或完整性检查失败仍报告其它脚本的结果，然后任务失败，不能记作无变化。有变化时依次：
 
@@ -98,6 +98,6 @@ python scripts/test-installer-candidates.py
 
 可用 `--application <vendor/app> --directory <generated-dir>` 指定单个候选，目录缺失会失败。每日更新使用 `--bundle <zip> --sha256 <digest> --baseline <commit>`，对完整候选集合验证，不能与单应用过滤混用。普通 CI 和每日候选共用同一个 Windows workflow 与 harness；普通 CI 的临时候选仅添加注释，还分别用两个引擎拒绝语法损坏候选，并确认 baseline 未变。
 
-共享层负责应用清单、受限制品包、HTTP 记录/指定阶段重定向、Codex 新旧制品布局、无害程序和旧文件快照；Shell/Windows 适配保留真实解释器、下载器和文件系统差异。Codex 检查 package/legacy 安装、版本选择、摘要/清单/截断失败、三阶段跳转拒绝、真实 junction 切换、重装/失败升级保留旧版本/成功升级、更新 marker 删除。Windows 用完恢复测试用户 PATH，受控 PATH 不发现系统中的真实 Codex。Claude 检查两个原生启动入口的参数、退出码、环境恢复、版本和入口保护、junction 拒绝、三阶段跳转与清理。平台/目标选择与完整生命周期分开，不展开全排列。
+共享层负责应用清单、受限制品包、HTTP 记录/正常重定向、Codex 新旧制品布局、无害程序和旧文件快照；Shell/Windows 适配保留真实解释器、下载器和文件系统差异。Codex 检查 package/legacy 安装、版本选择、摘要/清单/截断失败、正常重定向、真实 junction 切换、重装/失败升级保留旧版本/成功升级、更新 marker 删除。Windows 用完恢复测试用户 PATH，受控 PATH 不发现系统中的真实 Codex。Claude 检查两个原生启动入口的参数、退出码、环境恢复、既有安装接管、损坏同版本修复、junction 目录安装与临时文件清理。平台/目标选择与完整生命周期分开，不展开全排列。
 
 Windows 当前机器为 AMD64；Claude ARM64 仅通过环境变量模拟选路，Codex 使用真实 OSArchitecture、不模拟原生 ARM64。Linux 上 Darwin、musl、ARM64 也只是受控平台探测结果；没有宣称在这些机器运行官方程序。所有 CLI 均为无害桩；不执行官方 Codex/Claude 二进制，不测试 GUI。upstream/patch/generated、许可证、公钥与 0.6.3 字节一致。本次只统一测试和维护工具，不引入 0.7 Provider 产品架构。

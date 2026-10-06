@@ -54,7 +54,7 @@ SQLite schema 为 7。精确匹配的 schema 5/6 可事务升级；schema 4 先�
 
 说明是管理员控制的受信任同源内容，**不是安全隔离边界**。服务端仅注入公开资料，不传入密码、会话或代理设置；但同源脚本本身仍具有浏览器同源能力。后续边界收敛已有 [issue #4](https://github.com/PMExtra/RedApp/issues/4)，本轮不重复创建。
 
-受控占位符仅为 `{{app_name}}`、`{{app_key}}`、`{{public_origin}}`、`{{app_url}}`、`{{install_commands}}`。未知占位符保持原文，不执行任意服务端表达式。Codex/Claude 双语默认说明作为模板配置保存，安装命令由公开地址和既有 descriptor 生成。保存空说明不会偷偷恢复默认。
+受控占位符为 `{{base_url}}`（有效公开地址，无尾斜杠）、`{{app_path}}`（`/vendor/app`，有前导无尾斜杠）、`{{app_name}}`、`{{app_key}}`、`{{public_origin}}`、`{{app_url}}`、`{{install_commands}}`。未知占位符保持原文，不执行任意服务端表达式。Codex/Claude 双语默认说明作为模板配置保存，安装命令由公开地址和既有 descriptor 生成。保存空说明不会偷偷恢复默认。
 
 ## 验证与边界
 
@@ -74,3 +74,5 @@ sh scripts/test-docker-local.sh
 新增回归还覆盖目标 UID 跨 epoch 取消、release 校验取消、metadata/cache flight 与刷新批次、Hosted 导入、HTTP/2 响应隔离、待删超时/提交失败/重启与重复请求，以及取消登录后重复进入、历史导航和深链。新增行为回归覆盖模板不覆盖/默认禁用、全键删除保护、选择性双 revision 回滚、schema-5 既有业务表快照、Hosted 真实文件及升级前后下载保留与 `all` 冲突保护、代理单向迁移、合并去重/过期、删除范围和迟到写入保护、实际下载计数及缓存命中、焦点/IME/返回导航与会话重检。说明文档脚本测试使用真实 Go HTTP 服务和本地无害脚本，在 Happy DOM 中执行；它不替代原生浏览器 CSP 或视觉验收。
 
 交付包保存真实日志、安装器摘要对比、独立恢复记录及发布门禁结果。发布流程要求精确 main 提交通过完整 CI 后才创建版本标签，再按不可变 digest 验证双架构镜像。无 GUI/截图、真实官方客户端或用户环境部署；不修改用户真实数据、Stacks、仓库保护规则或权限。
+
+0.7.4 中英文默认说明直接用 `{{base_url}}{{app_path}}` 拼接 Markdown 安装命令；仅完全匹配 0.7.3 默认值的语言内容自动更新，自定义与显式空值保留。`{{install_commands}}` 保留旧输出兼容自定义说明。复制增强仅作用于 Markdown 代码节点，原始 HTML 不自动增强；代码块按钮位于右上角，行内按钮可悬停或键盘聚焦使用，复制内容保留代码空白和换行。

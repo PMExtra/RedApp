@@ -66,7 +66,6 @@ func TestV072PublicDirectoryPinsTemplatesAndInstructionDocuments(t *testing.T) {
 	}
 	h.request("GET", "/acme/tool-6", nil, 404, nil)
 	template, _ := h.server.DB.Application("openai/codex")
-	h.request("DELETE", "/admin/api/apps/openai/codex", map[string]any{"revision": template.Revision, "confirm_key": template.Key, "confirm_uid": template.UID}, 409, nil)
 	h.request("POST", "/admin/api/apps/openai/codex/template", map[string]any{"revision": template.Revision, "groups": []string{}}, 400, nil)
 	data, _ = h.request("GET", "/admin/api/apps/openai/codex/template", nil, 200, nil)
 	if !bytes.Contains(data, []byte("instructions_en")) {

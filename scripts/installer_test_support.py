@@ -64,6 +64,13 @@ class InstallerServer:
                     return
                 path = self.path[len(prefix):]
                 fixture.seen.append(path)
+                if fixture.config.get('redirect'):
+                    if not path.startswith('/redirected/'):
+                        self.send_response(302)
+                        self.send_header('Location', prefix + '/redirected' + path)
+                        self.end_headers()
+                        return
+                    path = path[len('/redirected'):]
                 status, body, headers = fixture.response(provider, path)
                 self.send_response(status)
                 content_type = 'application/json' if path.endswith('.json') or (provider == 'codex' and path.endswith('latest')) else 'text/plain'
@@ -92,15 +99,11 @@ class InstallerServer:
         if provider == 'codex':
             stage = 'metadata' if path.endswith(('latest', 'release.json')) else (
                 'manifest' if path.endswith('SHA256SUMS') else 'artifact')
-            if failure == 'redirect-' + stage:
-                return 302, b'', {'Location': '/escaped'}
             body = (b'not json' if failure == 'metadata' else json.dumps(config['metadata']).encode()) if stage == 'metadata' else config['files'].get(path.rsplit('/', 1)[-1])
         else:
             binary = config.get('binary', 'claude')
             artifact = f'/{version}/{config["platform"]}/{binary}'
             stage = { '/latest': 'channel', '/stable': 'channel', f'/{version}/manifest.json': 'manifest', artifact: 'artifact' }.get(path)
-            if failure == 'redirect-' + str(stage):
-                return 302, b'', {'Location': '/escaped'}
             if stage == 'channel':
                 body = b'2.1.285/../../escape' if failure == 'channel' else version.encode()
             elif stage == 'manifest':

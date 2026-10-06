@@ -67,15 +67,15 @@ download_file() {
     
     if [ "$DOWNLOADER" = "curl" ]; then
         if [ -n "$output" ]; then
-            curl -fsS -o "$output" "$url"
+            curl -fsSL -o "$output" "$url"
         else
-            curl -fsS "$url"
+            curl -fsSL "$url"
         fi
     elif [ "$DOWNLOADER" = "wget" ]; then
         if [ -n "$output" ]; then
-            wget --max-redirect=0 -q -O "$output" "$url"
+            wget -q -O "$output" "$url"
         else
-            wget --max-redirect=0 -q -O - "$url"
+            wget -q -O - "$url"
         fi
     else
         return 1
@@ -143,9 +143,6 @@ if [ "$os" = "linux" ]; then
 else
     platform="${os}-${arch}"
 fi
-for directory in "$HOME/.claude" "$DOWNLOAD_DIR"; do
-    if [ -L "$directory" ]; then echo "Refusing a linked download directory: $directory" >&2; exit 1; fi
-done
 mkdir -p "$DOWNLOAD_DIR"
 DOWNLOAD_DIR=$(mktemp -d "$DOWNLOAD_DIR/redapp.XXXXXXXX")
 trap 'rm -rf "$DOWNLOAD_DIR"' EXIT
@@ -229,35 +226,11 @@ chmod +x "$binary_path"
 
 install_redapp() {
     local versions="$HOME/.local/share/claude/versions" launcher="$HOME/.local/bin/claude"
-    local directory stage launcher_stage
-    for directory in "$HOME/.local" "$HOME/.local/bin" "$HOME/.local/share" "$HOME/.local/share/claude" "$versions"; do
-        if [ -L "$directory" ] || { [ -e "$directory" ] && [ ! -d "$directory" ]; }; then
-            echo "Refusing an unsafe installation directory: $directory" >&2
-            return 1
-        fi
-    done
-    if [ -e "$launcher" ] || [ -L "$launcher" ]; then
-        if [ -L "$launcher" ] || [ ! -f "$launcher" ] || ! grep -qx '# RedApp managed Claude launcher' "$launcher"; then
-            echo "Existing Claude installation at $launcher; remove or relocate it before using this installer." >&2
-            return 1
-        fi
-    fi
+    local stage launcher_stage
     mkdir -p "$versions" "$HOME/.local/bin" || return
-    if [ -e "$versions/$version" ] || [ -L "$versions/$version" ]; then
-        if [ -L "$versions/$version" ] || [ ! -f "$versions/$version" ] || ! checksum_matches "$versions/$version" "$checksum"; then
-            echo "Existing version failed integrity verification: $versions/$version" >&2
-            return 1
-        fi
-    else
-        stage=$(mktemp "$versions/.redapp.XXXXXXXX") || return
-        if ! cp "$binary_path" "$stage" || ! chmod 755 "$stage"; then rm -f "$stage"; return 1; fi
-        if ! ln "$stage" "$versions/$version" 2>/dev/null; then
-            if [ -L "$versions/$version" ] || [ ! -f "$versions/$version" ] || ! checksum_matches "$versions/$version" "$checksum"; then
-                rm -f "$stage"; return 1
-            fi
-        fi
-        rm -f "$stage" || return
-    fi
+    stage=$(mktemp "$versions/.redapp.XXXXXXXX") || return
+    if ! cp "$binary_path" "$stage" || ! chmod 755 "$stage"; then rm -f "$stage"; return 1; fi
+    mv -f "$stage" "$versions/$version" || { rm -f "$stage"; return 1; }
     launcher_stage=$(mktemp "$HOME/.local/bin/.claude.XXXXXXXX") || return
     if ! printf '%s\n' '#!/bin/sh' '# RedApp managed Claude launcher' 'DISABLE_UPDATES=1 exec "$(dirname "$0")/../share/claude/versions/'"$version"'" "$@"' > "$launcher_stage" || ! chmod 755 "$launcher_stage"; then
         rm -f "$launcher_stage"; return 1

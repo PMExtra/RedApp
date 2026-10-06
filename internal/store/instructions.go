@@ -2,6 +2,8 @@ package store
 
 import (
 	"database/sql"
+	_ "embed"
+	"encoding/json"
 	"errors"
 	"unicode"
 	"unicode/utf8"
@@ -74,4 +76,41 @@ func (s *Store) SaveInstructions(key string, expected int64, value LocalizedText
 		return Instructions{}, err
 	}
 	return Instructions{LocalizedText: value, Revision: expected + 1}, nil
+}
+
+//go:embed entity_templates_v073.json
+var instructionsV073 []byte
+
+// Upgrade only exact previous defaults, independently by language. Empty and
+// customized documents remain authoritative. Revision changes invalidate editors.
+func upgradeInstructionsV074(db *sql.DB) error {
+	var old []EntityTemplate
+	if err := json.Unmarshal(instructionsV073, &old); err != nil {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, previous := range old {
+		key := previous.Vendor.ID + "/" + previous.Application.ID
+		current, ok := BuiltinApplicationTemplate(key)
+		if !ok {
+			continue
+		}
+		_, err = tx.Exec(`UPDATE application_instructions SET
+   en=CASE WHEN en=? THEN ? ELSE en END,
+   zh_cn=CASE WHEN zh_cn=? THEN ? ELSE zh_cn END,
+   revision=revision+1
+   WHERE (en=? OR zh_cn=?) AND app_uid IN (
+    SELECT a.uid FROM applications a JOIN vendors v ON v.uid=a.vendor_uid
+    WHERE v.id||'/'||a.id=? AND a.provider=?)`,
+			previous.Instructions.En, current.Instructions.En, previous.Instructions.ZhCN, current.Instructions.ZhCN,
+			previous.Instructions.En, previous.Instructions.ZhCN, key, previous.Application.Provider)
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

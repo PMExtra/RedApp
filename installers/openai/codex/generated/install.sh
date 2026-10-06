@@ -118,11 +118,11 @@ download_file() {
   output="$2"
   case "$url" in "$RELEASES_BASE_URL"/*) ;; *) echo "RedApp: blocked external URL" >&2; return 1 ;; esac
   if command -v curl >/dev/null 2>&1; then
-    curl -fsS --max-redirs 0 --connect-timeout "$RELEASES_CONNECT_TIMEOUT" --max-time "$RELEASES_ASSET_TIMEOUT" "$url" -o "$output"
+    curl -fsSL --connect-timeout "$RELEASES_CONNECT_TIMEOUT" --max-time "$RELEASES_ASSET_TIMEOUT" "$url" -o "$output"
     return
   fi
   if command -v wget >/dev/null 2>&1; then
-    wget -q --max-redirect=0 -t 1 -T "$RELEASES_ASSET_TIMEOUT" -O "$output" "$url"
+    wget -q -t 1 -T "$RELEASES_ASSET_TIMEOUT" -O "$output" "$url"
     return
   fi
   echo "curl or wget is required" >&2
@@ -133,11 +133,11 @@ download_text() {
   url="$1"
   case "$url" in "$RELEASES_BASE_URL"/*) ;; *) echo "RedApp: blocked external URL" >&2; return 1 ;; esac
   if command -v curl >/dev/null 2>&1; then
-    curl -fsS --max-redirs 0 --connect-timeout "$RELEASES_CONNECT_TIMEOUT" --max-time "$RELEASES_METADATA_TIMEOUT" "$url"
+    curl -fsSL --connect-timeout "$RELEASES_CONNECT_TIMEOUT" --max-time "$RELEASES_METADATA_TIMEOUT" "$url"
     return
   fi
   if command -v wget >/dev/null 2>&1; then
-    wget -q --max-redirect=0 -t 1 -T "$RELEASES_ASSET_TIMEOUT" -O - "$url"
+    wget -q -t 1 -T "$RELEASES_ASSET_TIMEOUT" -O - "$url"
     return
   fi
   echo "curl or wget is required" >&2

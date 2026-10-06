@@ -87,7 +87,7 @@ HTTP Cache 设置提供有序缓存规则、默认开启的 `stale_fallback` 开
 
 ```sh
 curl -fsSL https://downloads.example.internal/openai/codex/install.sh | sh
-curl -fsSL https://downloads.example.internal/anthropic/claude-code/install.sh | sh
+curl -fsSL https://downloads.example.internal/anthropic/claude-code/install.sh | bash
 ```
 
 ```powershell
@@ -97,7 +97,7 @@ irm 'https://downloads.example.internal/anthropic/claude-code/install.ps1' | iex
 
 命令会下载并执行安装器，请按部署策略先审查脚本。Codex 使用已设置的 `CODEX_RELEASE`，否则选择 `latest`；无人值守 shell 安装时，将 `CODEX_NON_INTERACTIVE=1` 放在管道中 `sh` 前面。说明文档根据公共服务地址生成安装命令。旧公共路径和隐式选择 Codex 的管理 API 不再提供别名。
 
-安装器下载经过本服务，应用运行期/API 流量不改写。生产上游链路与 Windows/macOS 实机安装仍需上线验证；客户端出口策略独立管理。
+安装器从本服务开始下载并遵循正常 HTTP 重定向，应用运行期/API 流量不改写。生产上游链路与 Windows/macOS 实机安装仍需上线验证；客户端出口策略独立管理。
 
 ## 开发与许可
 

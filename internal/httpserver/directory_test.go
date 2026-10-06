@@ -26,6 +26,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/httpcache"
 	"github.com/PMExtra/RedApp/internal/media"
 	"github.com/PMExtra/RedApp/internal/store"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type directoryHarness struct {
@@ -104,6 +105,21 @@ func newDirectoryHarnessWithStore(t *testing.T, dir string, db *store.Store, con
 		t.Fatal(err)
 	}
 	h := &directoryHarness{t: t}
+	// Seed only absent accounts; authentication and restart tests keep real login/CSRF.
+	var admins int
+	if err := db.DB.QueryRow("SELECT COUNT(*) FROM admin").Scan(&admins); err != nil {
+		t.Fatal(err)
+	}
+	if admins == 0 {
+		h.password = "isolated-directory-test-password"
+		hash, err := bcrypt.GenerateFromPassword([]byte(h.password), bcrypt.MinCost)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.DB.Exec("INSERT INTO admin VALUES(1,?,1)", hash); err != nil {
+			t.Fatal(err)
+		}
+	}
 	a, err := auth.New(db, false, func(password string) { h.password = password })
 	if err != nil {
 		t.Fatal(err)

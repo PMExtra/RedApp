@@ -93,7 +93,7 @@ Replace `downloads.example.internal` with your service address. Application deta
 
 ```sh
 curl -fsSL https://downloads.example.internal/openai/codex/install.sh | sh
-curl -fsSL https://downloads.example.internal/anthropic/claude-code/install.sh | sh
+curl -fsSL https://downloads.example.internal/anthropic/claude-code/install.sh | bash
 ```
 
 ```powershell
@@ -103,7 +103,7 @@ irm 'https://downloads.example.internal/anthropic/claude-code/install.ps1' | iex
 
 These commands execute downloaded installers. Inspect scripts first when required by your deployment policy. Codex uses `CODEX_RELEASE` when supplied, otherwise `latest`; for unattended shell installation, put `CODEX_NON_INTERACTIVE=1` before `sh`. The application instructions provide commands generated from the public service address. Old public routes and implicit/default-Codex management APIs are not aliases in this architecture.
 
-Installer downloads stay on the service; application runtime/API traffic is not redirected. Validate Windows/macOS installation and the production upstream chain before rollout, and apply enterprise egress policy independently.
+Installer downloads start from this service and follow normal HTTP redirects; application runtime/API traffic is not redirected. Validate Windows/macOS installation and the production upstream chain before rollout, and apply enterprise egress policy independently.
 
 ## Development and license
 

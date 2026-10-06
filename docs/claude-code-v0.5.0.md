@@ -28,7 +28,7 @@ irm 'https://redapp.example.internal/claude-code/install.ps1' | iex
 | Unix | `~/.local/share/claude/versions/<version>` | `~/.local/bin/claude` |
 | Windows | `%USERPROFILE%\.local\share\claude\versions\<version>.exe` | `%USERPROFILE%\.local\bin\claude.ps1` / `claude.cmd` |
 
-入口缺少 PATH 时仅给出指引，不修改 shell profile 或系统环境。拒绝符号链接/重解析点、危险目录及非本安装拥有的现存入口，管理员须先自行迁移既有安装。重复安装验证已存在版本的摘要；升级不截断旧文件，入口单独原子替换，保留旧版本，不自动清理客户机版本或配置。Windows 两个入口分别替换，不构成跨文件原子事务。Windows CI 已验证两种 PowerShell 的参数、退出码、重复安装与摘要失败保护；仍未覆盖真实 Claude 进程占用文件或替换两个入口之间崩溃的窗口。
+入口缺少 PATH 时仅给出指引，不修改 shell profile 或系统环境。允许正常接管既有官方安装及链接目录；校验下载摘要后可替换同版本文件，修复损坏安装。入口单独替换，保留其他版本，不自动清理客户机版本或配置。Windows 创建 ps1/cmd 入口后移除优先级更高的既有 claude.exe；两个入口分别替换，不构成跨文件原子事务。0.7.4 Windows 改动仍需原生 Windows PowerShell 5.1/PS7 验证；Linux 不运行 PowerShell。
 
 正常经入口启动时，每次为子进程设置 `DISABLE_UPDATES=1`；PowerShell 恢复调用者原环境，CMD 使用 setlocal，Unix 设置仅作用于 exec 子进程。直接运行版本二进制会绕过入口。依据[官方环境变量说明](https://code.claude.com/docs/en/env-vars)，该变量用于阻止自动及手动更新；本轮没有执行真实 Claude 二进制，不能将无害桩测试当作运行期更新控制的证明。用户设置、启动方式及实际版本仍需上线验收。认证、模型、插件和其它运行流量不由 RedApp 改写，不能据此保证完全离线；[官方企业网络说明](https://code.claude.com/docs/en/network-config)区分原生分发与其它服务用途。
 

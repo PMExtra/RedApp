@@ -117,6 +117,9 @@ func Open(dir string) (*Store, error) {
 		err = checkSchema(db)
 	}
 	if err == nil {
+		err = upgradeInstructionsV074(db)
+	}
+	if err == nil {
 		// Persist the immutable schema to the main file before a first successful
 		// startup. Later WAL transactions contain data only, so read-only preflight
 		// needs no writable sidecar or full database copy.

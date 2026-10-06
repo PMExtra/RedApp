@@ -23,9 +23,6 @@ if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
 } else {
     $platform = "win32-x64"
 }
-foreach ($directory in @("$env:USERPROFILE\.claude", $DOWNLOAD_DIR)) {
-    if ((Test-Path -LiteralPath $directory) -and ((Get-Item -LiteralPath $directory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Refusing a linked download directory: $directory" }
-}
 New-Item -ItemType Directory -Force -Path $DOWNLOAD_DIR | Out-Null
 $DOWNLOAD_DIR = Join-Path $DOWNLOAD_DIR ("redapp-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $DOWNLOAD_DIR | Out-Null
@@ -34,7 +31,7 @@ try {
 try {
     $version = $Target
     if ($Target -eq 'latest' -or $Target -eq 'stable') {
-        $version = (Invoke-RestMethod -Uri "$DOWNLOAD_BASE_URL/$Target" -MaximumRedirection 0 -ErrorAction Stop).Trim()
+        $version = (Invoke-RestMethod -Uri "$DOWNLOAD_BASE_URL/$Target" -ErrorAction Stop).Trim()
     }
 }
 catch {
@@ -49,7 +46,7 @@ if ($version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9
 }
 
 try {
-    $manifest = Invoke-RestMethod -Uri "$DOWNLOAD_BASE_URL/$version/manifest.json" -MaximumRedirection 0 -ErrorAction Stop
+    $manifest = Invoke-RestMethod -Uri "$DOWNLOAD_BASE_URL/$version/manifest.json" -ErrorAction Stop
     $checksum = $manifest.platforms.$platform.checksum
 
     if ($checksum -notmatch '^[0-9a-f]{64}$') {
@@ -65,7 +62,7 @@ catch {
 # Download and verify
 $binaryPath = "$DOWNLOAD_DIR\claude-$version-$platform.exe"
 try {
-    Invoke-WebRequest -Uri "$DOWNLOAD_BASE_URL/$version/$platform/claude.exe" -OutFile $binaryPath -MaximumRedirection 0 -ErrorAction Stop
+    Invoke-WebRequest -Uri "$DOWNLOAD_BASE_URL/$version/$platform/claude.exe" -OutFile $binaryPath -ErrorAction Stop
 }
 catch {
     Write-Error "Failed to download binary: $_"
@@ -89,30 +86,13 @@ $installExitCode = 0
 try {
     $bin = "$env:USERPROFILE\.local\bin"
     $versions = "$env:USERPROFILE\.local\share\claude\versions"
-    foreach ($directory in @("$env:USERPROFILE\.local", $bin, "$env:USERPROFILE\.local\share", "$env:USERPROFILE\.local\share\claude", $versions)) {
-        if (Test-Path -LiteralPath $directory) {
-            $item = Get-Item -LiteralPath $directory -Force
-            if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Refusing an unsafe installation directory: $directory" }
-        }
-    }
-    if (Test-Path -LiteralPath "$bin\claude.exe") { throw "Existing Claude executable at $bin; remove or relocate it before using this installer." }
-    foreach ($name in @('claude.ps1', 'claude.cmd')) {
-        $launcher = Join-Path $bin $name
-        if (Test-Path -LiteralPath $launcher) {
-            $item = Get-Item -LiteralPath $launcher -Force
-            if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Select-String -LiteralPath $launcher -Pattern 'RedApp managed Claude launcher' -SimpleMatch -Quiet)) { throw "Existing Claude installation at $launcher" }
-        }
-    }
     New-Item -ItemType Directory -Force -Path $versions, $bin | Out-Null
     $installed = Join-Path $versions "$version.exe"
-    if (Test-Path -LiteralPath $installed) {
-        $item = Get-Item -LiteralPath $installed -Force
-        if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or (Get-FileHash -LiteralPath $installed -Algorithm SHA256).Hash.ToLower() -ne $checksum) { throw "Existing version failed integrity verification: $installed" }
-    } else {
-        $stage = Join-Path $versions ([guid]::NewGuid().ToString('N') + '.tmp')
-        try { [IO.File]::Copy($binaryPath, $stage); [IO.File]::Move($stage, $installed) }
-        finally { if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Force } }
-    }
+    $stage = Join-Path $versions ([guid]::NewGuid().ToString('N') + '.tmp')
+    try {
+        [IO.File]::Copy($binaryPath, $stage)
+        Move-Item -LiteralPath $stage -Destination $installed -Force
+    } finally { if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Force } }
     $psLauncher = @'
 # RedApp managed Claude launcher
 $previous = $env:DISABLE_UPDATES
@@ -133,6 +113,8 @@ exit $code
             else { [IO.File]::Move($stage, $launcher) }
         } finally { if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Force } }
     }
+    # The official executable takes precedence over .cmd in cmd.exe.
+    if (Test-Path -LiteralPath "$bin\claude.exe") { Remove-Item -LiteralPath "$bin\claude.exe" -Force }
     Write-Output "Installed Claude Code $version at $bin"
     if (($env:PATH -split ';') -notcontains $bin) { Write-Output "Add $bin to your user PATH, then open a new terminal." }
 }

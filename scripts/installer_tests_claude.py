@@ -47,17 +47,18 @@ def test_shell(directory, application):
             # rejected upgrade and successful atomic launcher replacement.
             run(use_jq=True, lifecycle=True)
             run(downloader='wget', lifecycle=True)
+            for downloader in ['curl','wget']:
+                run(downloader=downloader,redirect=True)
             print('Launcher lifecycle: PASS (curl/jq and wget/fallback)')
 
             # Exercise every actual downloader/parser pair at the failure boundaries.
             for downloader in ['curl', 'wget']:
                 for use_jq in [False, True]:
-                    for failure in ['channel', 'manifest', 'hash', 'download',
-                                    'redirect-channel', 'redirect-manifest', 'redirect-artifact']:
+                    for failure in ['channel', 'manifest', 'hash', 'download']:
                         run(downloader=downloader, use_jq=use_jq, requested='latest', failure=failure)
-            for failure in ['linked-directory', 'existing-launcher', 'existing-version']:
-                run(failure=failure)
-            print('Failure protection: PASS (jq/fallback × curl/wget; malformed data, hash, download, redirects, conflicts)')
+            for takeover in ['linked-directory', 'existing-launcher', 'existing-version', 'official-installation']:
+                run(takeover=takeover)
+            print('Failure protection: PASS (jq/fallback × curl/wget; malformed data, hash, download; official takeover and repair)')
     finally:
         fixture.__exit__()
     print('Claude Shell contracts: PASS (no official binary executed)')
@@ -65,7 +66,7 @@ def test_shell(directory, application):
 
 def case(root, script, config, seen, base, *, osname='Linux', arch='x86_64',
          musl=False, rosetta=False, platform='linux-x64', requested='', failure='',
-         use_jq=False, downloader='curl', lifecycle=False):
+         use_jq=False, downloader='curl', lifecycle=False, takeover='', redirect=False):
     work=root/str(len(list(root.iterdir()))); tools=work/'tools'; home=work/'user home'; tools.mkdir(parents=True); home.mkdir()
     def tool(name, content): p=tools/name;p.write_text(content);p.chmod(0o755)
     for name in ['id','mkdir','mktemp','rm','chmod','cp','ln','mv','grep','tr','sed','cut','head','dirname','sha256sum','stty','cat']:
@@ -81,13 +82,17 @@ def case(root, script, config, seen, base, *, osname='Linux', arch='x86_64',
     tool('shasum', '#!/bin/sh\nshift 2\nexec sha256sum "$@"\n')
     # Exercise the original optional compression fallback: unsigned compressed metadata is unavailable.
     tool('zstd','#!/bin/sh\nexit 77\n')
-    config.clear();config.update(version='2.1.285',platform=platform,failure=failure,body=b'#!/bin/sh\nprintf "%s\\n" "$DISABLE_UPDATES" "$@"\nexit 23\n')
+    config.clear();config.update(redirect=redirect,version='2.1.285',platform=platform,failure=failure,body=b'#!/bin/sh\nprintf "%s\\n" "$DISABLE_UPDATES" "$@"\nexit 23\n')
     env={'PATH':str(tools),'HOME':str(home),'SUDO_USER':'','DISABLE_UPDATES':'0','LC_ALL':'C'}
     destination=home/'.local/share/claude/versions/2.1.285';launcher=home/'.local/bin/claude'
     sentinel=work/'sentinel';sentinel.write_text('do not change')
-    if failure=='linked-directory': (home/'.local').symlink_to(sentinel)
-    if failure=='existing-launcher': launcher.parent.mkdir(parents=True);launcher.write_text('existing unrelated launcher')
-    if failure=='existing-version': destination.parent.mkdir(parents=True);destination.write_text('existing invalid version')
+    if takeover=='linked-directory':
+        linked=work/'linked';linked.mkdir();(home/'.local').symlink_to(linked)
+    if takeover=='existing-launcher': launcher.parent.mkdir(parents=True);launcher.write_text('existing unrelated launcher')
+    if takeover=='existing-version': destination.parent.mkdir(parents=True);destination.write_text('existing invalid version')
+    if takeover=='official-installation':
+        destination.parent.mkdir(parents=True);destination.write_text('old official binary')
+        launcher.parent.mkdir(parents=True);launcher.symlink_to(destination)
     original_launcher=launcher.read_bytes() if launcher.is_file() else None
     original_version=destination.read_bytes() if destination.is_file() else None
     seen.clear(); command=[shutil.which('bash'),'-s','--']+([requested] if requested else [])
@@ -102,9 +107,9 @@ def case(root, script, config, seen, base, *, osname='Linux', arch='x86_64',
         assert sentinel.read_text()=='do not change'
         if failure=='target': assert not seen, seen
         if failure=='hash': assert 'Checksum verification failed' in r.stderr, r.stderr
-        if failure in ['channel', 'redirect-channel']:
+        if failure == 'channel':
             assert seen == ['/latest'], seen
-        if failure in ['manifest', 'redirect-manifest']:
+        if failure == 'manifest':
             assert not any(path.endswith('/claude') for path in seen), seen
     else:
         assert r.returncode==0,(r.stdout,r.stderr)
@@ -119,9 +124,8 @@ def case(root, script, config, seen, base, *, osname='Linux', arch='x86_64',
         # A fresh process receives the same update policy; no parent/global environment change is needed.
         run=subprocess.run([str(launcher),'--version'],env={**env,'DISABLE_UPDATES':'false'},capture_output=True,text=True,timeout=5)
         assert run.stdout.splitlines()==['1','--version'] and env['DISABLE_UPDATES']=='0'
-        inode=destination.stat().st_ino
         rerun=subprocess.run(command,input=script,text=True,capture_output=True,env=env,timeout=20)
-        assert rerun.returncode==0 and destination.stat().st_ino==inode
+        assert rerun.returncode==0
         old_launcher=launcher.read_bytes();config['version']='2.1.286';config['failure']='hash'
         bad=subprocess.run([shutil.which('bash'),'-s','--','2.1.286'],input=script,text=True,capture_output=True,env=env,timeout=20)
         assert bad.returncode!=0 and launcher.read_bytes()==old_launcher and not (destination.parent/'2.1.286').exists()
@@ -130,7 +134,6 @@ def case(root, script, config, seen, base, *, osname='Linux', arch='x86_64',
         assert upgraded.returncode==0,(upgraded.stdout,upgraded.stderr)
         assert destination.exists() and '2.1.286' in launcher.read_text()
     assert not list((home/'.claude/downloads').glob('redapp.*')),'temporary download directory leaked'
-    assert '/escaped' not in seen,'redirect was followed'
     if failure != 'target':
         assert set(download_log.read_text().splitlines()) == {downloader}
 

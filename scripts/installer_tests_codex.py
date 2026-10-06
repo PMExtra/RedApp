@@ -31,15 +31,17 @@ def test_shell(directory, application):
             for legacy, requested in [(True, "latest"), (False, "0.159.2")]:
                 run_case(root, directory, base, curl, config, seen, *variants[0], legacy, requested, "")
                 count += 1
-            for failure in ["metadata", "tag", "missing-digest", "missing-package", "manifest-hash", "manifest-entry", "archive-hash", "truncated", "redirect-metadata", "redirect-manifest", "redirect-artifact"]:
+            for failure in ["metadata", "tag", "missing-digest", "missing-package", "manifest-hash", "manifest-entry", "archive-hash", "truncated"]:
                 run_case(root, directory, base, curl, config, seen, *variants[0], False, "latest", failure)
                 count += 1
+            run_case(root, directory, base, curl, config, seen, *variants[0], False, "latest", "", redirect=True)
+            count += 1
     finally:
         fixture.__exit__()
     print(f'Codex Shell: {count} offline cases PASS; platform selection simulated')
 
 
-def run_case(root, directory, base, curl, config, seen, osname, arch, target, npm, legacy, requested, failure):
+def run_case(root, directory, base, curl, config, seen, osname, arch, target, npm, legacy, requested, failure, redirect=False):
     case = root / (str(len(list(root.iterdir()))) + "-case")
     wrapper = case / "tools"
     bindir = case / "bin"
@@ -61,6 +63,7 @@ def run_case(root, directory, base, curl, config, seen, osname, arch, target, np
     if failure == 'tag': requested = '0.159.2'
     config.clear()
     config.update(codex_fixture(target, npm, legacy, failure=failure))
+    config["redirect"] = redirect
     seen.clear()
     script = case / "install.sh"
     script.write_text((directory / "install.sh").read_text().replace("@REDAPP_BASE_URL@", base))
@@ -75,7 +78,6 @@ def run_case(root, directory, base, curl, config, seen, osname, arch, target, np
             raise AssertionError(f"失败场景仍安装成功: {failure}\n{result.stdout}\n{result.stderr}")
     elif result.returncode != 0 or not installed.exists():
         raise AssertionError(f"正常场景失败: {target}/{legacy}/{requested}\n{result.stdout}\n{result.stderr}")
-    assert "/escaped" not in seen, "redirect followed"
     marker = case / "codex-home/packages/standalone/auto-update-version"
     if marker.exists():
         raise AssertionError("自动更新标记未抑制")
