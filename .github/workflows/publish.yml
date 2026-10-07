@@ -41,6 +41,12 @@ jobs:
           path: artifacts/arm64
           run-id: ${{ steps.release.outputs.run_id }}
           github-token: ${{ github.token }}
+      # The package post-install scripts reset binfmt registrations. Install it
+      # before the Docker ARM interpreter so that cross-architecture checks work.
+      - name: Install low-ISA validation tools before registering Docker emulation
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y qemu-user binutils
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
         with:
           platforms: arm64
@@ -68,8 +74,6 @@ jobs:
           REDAPP_TEST_IMAGE: ghcr.io/pmextra/redapp@${{ steps.candidate.outputs.digest }}
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y qemu-user binutils
           export RELEASE_REVISION="$GITHUB_SHA"
           sh scripts/verify-published.sh
       - name: Promote verified manifest, protecting existing releases and current main

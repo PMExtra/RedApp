@@ -15,3 +15,5 @@
 从 0.7.16 起，`scripts/build-native-container.sh` 和源码 Dockerfile 固定使用 `golang:1.27.1-trixie@sha256:8f58fd67ea075142d947a60e0caa4317746a55118d312f027793d382c7741734`；amd64、arm64 都在对应原生主机编译，不依赖 QEMU 编译。Go 基线分别为 GOAMD64=v1、GOARM64=v8.0。宿主 `make binary` 的 C/libc 依赖宿主环境，不作为发布制品。
 
 0.7.15 Ubuntu 宿主的静态 libc 带来 x86-64-v3 强制需求，导致无 AVX guest 在 glibc CPU 初始化执行 vmovd 时 SIGILL，退出 132 且尚无应用日志；仅修改 Go 或 C 编译 flags 不能降低预编译静态库的 ISA。现在 `test-cpu-baseline.py` 从实际候选镜像提取二进制，要求静态 amd64 ELF 只声明 x86-64-baseline，再使用 Nehalem（无 AVX）验证版本、镜像默认 serve、隔离空数据目录、健康和正常停止。CI 上传前及不可变候选推广前都执行，原生双架构运行门禁仍保留。QEMU 是额外 CPU 回归检查，不代表所有 CPU 或用户部署已验收。
+
+发布 runner 必须先安装 qemu-user/binutils，再注册 Docker ARM 的 binfmt 解释器：系统 QEMU 包的安装脚本会重置 binfmt 注册，顺序颠倒会令 ARM 容器在验收时 exec format error。依赖安装和低 ISA 检查均不得跳过候选门禁。
