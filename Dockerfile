@@ -13,7 +13,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=frontend /internal/httpserver/web ./internal/httpserver/web
-RUN CGO_ENABLED=1 go build -tags netgo,osusergo,sqlite_omit_load_extension -trimpath -ldflags="-linkmode external -extldflags '-static' -X main.version=${VERSION} -X main.revision=${REVISION}" -o /redapp ./cmd/redapp \
+RUN sh scripts/build-binary.sh /redapp "$VERSION" "$REVISION" \
     && mkdir -p /var/lib/redapp && chmod 0700 /var/lib/redapp
 
 FROM scratch AS runtime

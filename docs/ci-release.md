@@ -1,0 +1,13 @@
+# CI 与发布产物
+
+`CI` 的 frontend job 执行类型/DOM 回归并构建一次，上传 `frontend-<SHA>`（web.tar.gz 与 SHA256SUMS）。两个原生源码 test job 并行保留 vet/race/安装器检查；两个 runtime job 消费本次 run 的前端，调用共享 `scripts/build-binary.sh`，执行真实 HTTP/数据/文档和 Docker 测试。Windows PowerShell 7/5.1 独立并行。
+
+可信 PMExtra/RedApp main push 的 runtime job 才上传 `runtime-<SHA>-<arch>`，包含 image.tar 与 metadata.json。归档为已测试的 scratch 镜像，保留 3 天。PR 运行完整验证但不会产生可发布运行产物。Go setup 缓存按 runner OS/架构、Go 版本和 go.sum 分键；npm 下载缓存由 setup-node 按 OS/锁文件分键。缓存失效或冷启动不改变门禁；不能将缓存当作可信镜像。
+
+先等待准确 main commit 的完整 CI 成功，再创建新的 annotated `v<版本>` 标签。发布脚本按 SHA、main、push、ci.yml、completed/success 选择准确 run ID，要求两个唯一未过期产物。下载明确 run ID 和含 SHA/架构的名称，验证 SHA256、元数据、实际镜像平台与 labels。不会用最新的任意产物，也不会回退另一提交。
+
+发布只 load/push 已测试镜像，构造 candidate manifest，通过不可变摘要运行双架构验收后推广。版本标签已存在且摘要不同会失败；候选验收失败不更新版本/0.7/latest。推广前再次要求 main 等于该 SHA，加上单一发布 concurrency 防止旧提交覆盖新 rolling 标签。注册表多标签写入不能原子提交；验收后的推广若遭遇网络失败，应核对全部四个标签并重跑同一任务，不重编译或更换产物。
+
+产物过期/缺失须为仍处于 main 的同一提交重跑 CI，再重跑原发布任务。若 main 已前进，使用新的版本与提交；不能移动旧 tag。候选/ci-SHA 架构标签便于恢复，尚无自动删除策略；后续按仓库保留政策清理已被正式索引引用的候选，避免删除仍需引用的镜像。
+
+本地 `make build` 及 `docker build` 仍从源码构建；均通过共享原生 CGO/static 编译脚本。`make binary` 仅编译，调用前须准备正确前端。正式 CI runtime 使用 `.github/runtime/Dockerfile`，不含 npm/Go 编译。
