@@ -68,7 +68,7 @@ onUnmounted(() => { clearTimeout(scrollTimer); observer?.disconnect(); window.re
     <div class="vendor-strip" :class="{ 'strip-can-left': overflow && !atStart, 'strip-can-right': overflow && !atEnd }">
       <IconButton v-if="overflow" class="strip-arrow strip-previous secondary" :class="{ 'strip-arrow-visible': hovered }" tabindex="-1" icon="left" :label="t('Scroll applications left')" :disabled="atStart" @click="scroll(-1)" />
       <div ref="viewport" class="vendor-preview-scroll" :class="{ 'is-scrolling': scrolling }" tabindex="0" role="region" :aria-label="t('Applications for {vendor}', { vendor: vendor.name[language] })" @scroll.passive="onScroll" @keydown="keyboardScroll">
-        <ul class="directory-apps vendor-previews" :style="{ '--strip-count': Math.max(1, list.items.length + (vendor.deleted_at ? 0 : 1)) }">
+        <ul class="vendor-previews">
           <li v-for="app in list.items" :key="app.uid" :class="{ 'is-disabled': !app.enabled || !vendor.enabled }">
             <RouterLink :to="applicationPath(app, app.deleted_at ? 'settings' : undefined)" :title="app.name[language]" :aria-label="stateLabel(app) ? `${app.name[language]} — ${stateLabel(app)}` : app.name[language]">
               <EntityIcon :src="directoryIcon(app.icon)" size="preview" />
@@ -76,13 +76,13 @@ onUnmounted(() => { clearTimeout(scrollTimer); observer?.disconnect(); window.re
             </RouterLink>
           </li>
           <li v-if="!vendor.deleted_at" class="add-application">
-            <RouterLink :to="`/admin/vendors/${vendor.id}/apps/new`" :aria-label="t('Add application')" :title="t('Add application')"><Icon name="plus" :size="44" /><span class="application-preview-name">{{ t('Add App') }}</span></RouterLink>
+            <RouterLink :to="`/admin/vendors/${vendor.id}/apps/new`" :aria-label="t('Add application')" :title="t('Add application')"><Icon name="plus" :size="44" /><span class="add-application-label" aria-hidden="true">{{ t('Add App') }}</span></RouterLink>
           </li>
         </ul>
       </div>
       <IconButton v-if="overflow" class="strip-arrow strip-next secondary" :class="{ 'strip-arrow-visible': hovered }" tabindex="-1" icon="right" :label="t('Scroll applications right')" :disabled="atEnd" @click="scroll(1)" />
     </div>
-    <div class="vendor-strip-status">
+    <div v-if="list.loading || list.error" class="vendor-strip-status">
       <span v-if="list.loading" role="status">{{ t('Loading…') }}</span>
       <template v-else-if="list.error"><span class="error" role="alert" :title="errorText(list.error)">{{ errorText(list.error) }}</span><IconButton class="secondary" icon="refresh" :label="t('Retry')" @click="list.refresh" /></template>
     </div>

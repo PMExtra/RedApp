@@ -249,8 +249,8 @@ it("replaces an in-flight full strip with the filtered sixth application", async
   expect(wrapper.text()).toContain("Tool 6");
   expect(wrapper.text()).not.toContain("Tool 1");
   expect(fetch).toHaveBeenCalledTimes(1);
-  expect(wrapper.findAll(".directory-apps li:not(.add-application)")).toHaveLength(1);
-  expect(wrapper.findAll(".directory-apps li")).toHaveLength(2);
+  expect(wrapper.findAll(".vendor-previews li:not(.add-application)")).toHaveLength(1);
+  expect(wrapper.findAll(".vendor-previews li")).toHaveLength(2);
   expect(wrapper.find(".vendor-actions button").exists()).toBe(false);
   wrapper.unmount();
 });
