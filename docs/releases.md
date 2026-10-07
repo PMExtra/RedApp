@@ -1,5 +1,13 @@
 # 版本说明
 
+## v0.7.16
+
+修复 0.7.15 amd64 镜像在未暴露 AVX/XSAVE 的 CPU 或虚拟机中启动前退出 132、没有应用日志的问题。0.7.15 原生 CI 编译静态链入 Ubuntu 26.04 的 x86-64-v3 libc；即使 Go 标记 GOAMD64=v1，glibc 初始化仍执行 AVX 指令。
+
+发布二进制改为在各自原生 amd64/arm64 runner 的固定 Go 1.27.1 / Debian trixie 容器中编译，锁定镜像摘要，与源码 Dockerfile 共用静态构建参数。保留前端单次构建、双架构制品复用、原生运行回归和 Windows PowerShell 7/5.1。实际 amd64 候选镜像须通过 ELF baseline 检查及无 AVX 的 Nehalem version、默认 serve、健康和正常停止检查；发布前对不可变候选再次执行该门禁。
+
+只修复 CPU 兼容回归，无 schema、产品功能或 0.8.0 变更。拉取 0.7.16 并重建容器后，应在实际主机确认恢复；隔离 CI 验证不能代替用户部署验收。
+
 ## v0.7.15
 
 CI 前端只构建一次并共享受校验文件；源码测试与原生运行产物构建分开并行，amd64/arm64 runner 各只编译一次 CGO/static 二进制。运行镜像仅复制该二进制、CA 和权限受控数据目录，保留 scratch/non-root、健康检查、labels 与入口。共享构建脚本保持本地 Dockerfile 和 Make 编译参数一致。

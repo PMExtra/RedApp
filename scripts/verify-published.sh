@@ -28,5 +28,9 @@ while read -r platform digest; do
   docker pull --platform "$platform" "$REDAPP_TEST_IMAGE"
   test "$(docker run --platform "$platform" --rm --network none "$REDAPP_TEST_IMAGE" version)" = "RedApp $RELEASE_VERSION (commit $RELEASE_REVISION)"
   sh "$task_root/scripts/test-docker-local.sh"
+  if [ "$platform" = linux/amd64 ]; then
+    python3 "$task_root/scripts/test-cpu-baseline.py" --image "$REDAPP_TEST_IMAGE" \
+      --version "$RELEASE_VERSION" --revision "$RELEASE_REVISION"
+  fi
   printf 'Verified %s: %s\n' "$platform" "$REDAPP_TEST_IMAGE"
 done < "$task_variants"

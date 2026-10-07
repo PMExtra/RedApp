@@ -68,6 +68,8 @@ jobs:
           REDAPP_TEST_IMAGE: ghcr.io/pmextra/redapp@${{ steps.candidate.outputs.digest }}
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
         run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y qemu-user binutils
           export RELEASE_REVISION="$GITHUB_SHA"
           sh scripts/verify-published.sh
       - name: Promote verified manifest, protecting existing releases and current main

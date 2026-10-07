@@ -90,10 +90,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          go-version: '1.27.1'
-          cache: true
+          path: ${{ runner.temp }}/redapp-native-go
+          key: native-go-linux-${{ matrix.arch }}-trixie-1.27.1-8f58fd67ea075142-${{ hashFiles('go.sum') }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '24.19.0'
@@ -104,11 +104,13 @@ jobs:
           name: frontend-${{ github.sha }}
           path: frontend-artifact
       - name: Verify frontend and build native binary once
+        env:
+          REDAPP_NATIVE_CACHE: ${{ runner.temp }}/redapp-native-go
         run: |
           (cd frontend-artifact && sha256sum -c SHA256SUMS)
           tar -xzf frontend-artifact/web.tar.gz -C internal/httpserver
           git diff --exit-code -- internal/httpserver/web
-          make binary
+          sh scripts/build-native-container.sh "$(cat VERSION)" "$GITHUB_SHA"
           test "$(bin/redapp version)" = "RedApp $(cat VERSION) (commit $GITHUB_SHA)"
       - name: Real HTTP, data and instruction document CLI
         run: |
@@ -130,6 +132,11 @@ jobs:
             -t "$image" runtime-input
           test "$(docker run --rm --network none "$image" version)" = "RedApp $(cat VERSION) (commit $GITHUB_SHA)"
           REDAPP_TEST_IMAGE="$image" REDAPP_TEST_PLATFORM="linux/$ARCH" sh scripts/test-docker-local.sh
+          if [ "$ARCH" = amd64 ]; then
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends -y qemu-user binutils
+            python3 scripts/test-cpu-baseline.py --image "$image" --version "$(cat VERSION)" --revision "$GITHUB_SHA"
+          fi
           python3 scripts/ci-image-artifact.py record runtime-artifact "$(cat VERSION)" "$GITHUB_SHA" "$ARCH"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: github.repository == 'PMExtra/RedApp' && github.event_name == 'push' && github.ref == 'refs/heads/main'

@@ -8,6 +8,7 @@ on:
       - '.github/workflows/verify-published.yml'
       - 'scripts/verify-published.sh'
       - 'scripts/test-docker-local.sh'
+      - 'scripts/test-cpu-baseline.py'
 
 permissions:
   contents: read
@@ -54,6 +55,10 @@ jobs:
           RELEASE_REVISION: ${{ steps.release.outputs.revision }}
           REDAPP_VERIFY_PLATFORM: linux/${{ matrix.arch }}
         run: |
+          if [ "$REDAPP_VERIFY_PLATFORM" = linux/amd64 ]; then
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends -y qemu-user binutils
+          fi
           image="ghcr.io/pmextra/redapp:v$RELEASE_VERSION"
           digest=$(docker buildx imagetools inspect "$image" --format '{{.Manifest.Digest}}')
           export REDAPP_TEST_IMAGE="ghcr.io/pmextra/redapp@$digest"

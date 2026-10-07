@@ -5,7 +5,7 @@ RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
 
-FROM golang:1.27.1-trixie AS build
+FROM golang:1.27.1-trixie@sha256:8f58fd67ea075142d947a60e0caa4317746a55118d312f027793d382c7741734 AS build
 ARG VERSION=dev
 ARG REVISION=unknown
 WORKDIR /src
