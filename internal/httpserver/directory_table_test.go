@@ -104,3 +104,38 @@ func TestVendorApplicationTableFiltersSortsBeforePagingAndUsesRecordedStatistics
 	}
 	h.request("GET", "/admin/api/vendors/missing/apps?view=table", nil, 404, nil)
 }
+
+func TestApplicationTableMutationReconcilesFilteredLastPage(t *testing.T) {
+	h := newDirectoryHarness(t, t.TempDir())
+	h.login(h.password)
+	var last store.Application
+	for i := 0; i < 21; i++ {
+		var err error
+		last, err = h.server.DB.CreateApplication("openai", store.ApplicationInput{ID: fmt.Sprintf("managed-%02d", i), Name: store.LocalizedText{En: fmt.Sprintf("Managed %02d", i), ZhCN: fmt.Sprintf("测试 %02d", i)}, Provider: "info", Enabled: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.server.ReloadDirectory(); err != nil {
+		t.Fatal(err)
+	}
+	get := func(state string, wantPage int, wantTotal int64) {
+		t.Helper()
+		data, _ := h.request("GET", "/admin/api/vendors/openai/apps?view=table&q=managed&state="+state+"&page=2&limit=20", nil, 200, nil)
+		var p store.Page[applicationTableRow]
+		if err := json.Unmarshal(data, &p); err != nil {
+			t.Fatal(err)
+		}
+		if p.Page != wantPage || p.Total != wantTotal {
+			t.Fatalf("%+v", p)
+		}
+	}
+	get("enabled", 2, 21)
+	h.request("PATCH", "/admin/api/apps/"+last.Key, map[string]any{"revision": last.Revision, "enabled": false}, 200, nil)
+	get("enabled", 1, 20)
+	get("disabled", 1, 1)
+	h.request("PATCH", "/admin/api/apps/"+last.Key, map[string]any{"revision": last.Revision, "enabled": true}, 409, nil)
+	get("disabled", 1, 1)
+	h.request("DELETE", "/admin/api/apps/"+last.Key, map[string]any{"revision": last.Revision + 1, "confirm_key": last.Key, "confirm_uid": last.UID}, 200, nil)
+	get("disabled", 1, 0)
+}

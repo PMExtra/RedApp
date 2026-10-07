@@ -79,12 +79,12 @@ onUnmounted(() => clearTimeout(debounce));
       <RouterLink
         to="/admin/vendors/new"
         class="button-link"
-        >{{ t('Add vendor') }}</RouterLink>
+        ><Icon name="plus" />{{ t('Add vendor') }}</RouterLink>
     </div>
     <div class="directory-toolbar">
-      <label class="directory-search"
+      <label class="directory-search search-field"
         ><span class="sr-only">{{ t("Search vendors and applications") }}</span
-        ><input
+        ><Icon name="search" class="search-input-icon" /><input
           v-model="search"
           type="search"
           maxlength="128"

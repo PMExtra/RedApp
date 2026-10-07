@@ -168,6 +168,7 @@ export function useNumberedCollection<T>(
     loading,
     error,
     refresh,
+    reload: () => { stop(); return refresh(); },
     go,
     previous: () => go(page.value - 1),
     next: () => go(page.value + 1),

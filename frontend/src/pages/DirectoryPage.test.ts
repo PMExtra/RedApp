@@ -647,7 +647,7 @@ it("loads all vendor apps into a single strip and links filtered counts to the v
   const { wrapper, router } = await mountPage("/admin/vendors?q=Preview&state=disabled");
   const card = () => wrapper.get(".vendor-card");
   expect(wrapper.get('.page-heading a[href="/admin/vendors/new"]').text()).toBe("Add vendor");
-  expect(wrapper.get('.page-heading a[href="/admin/vendors/new"]').find("svg").exists()).toBe(false);
+  expect(wrapper.get('.page-heading a[href="/admin/vendors/new"]').find("svg").exists()).toBe(true);
   expect(card().findAll(".vendor-previews li")).toHaveLength(9);
   expect(card().findAll(".vendor-previews li").at(-1)!.classes()).toContain("add-application");
   expect(card().findAll(".vendor-previews .is-disabled")).toHaveLength(8);
@@ -669,9 +669,12 @@ it("loads all vendor apps into a single strip and links filtered counts to the v
   await flushPromises();
   expect(router.currentRoute.value.path).toBe("/admin/vendors/openai/apps");
   expect(router.currentRoute.value.query).toEqual({ q: "Preview", state: "disabled" });
-  expect(wrapper.get(".vendor-applications .notice").text()).toContain("Filtered applications: Preview · Disabled");
+  expect(wrapper.get(".application-table-toolbar input").element).toHaveProperty("value", "Preview");
+  expect(wrapper.get(".application-table-toolbar .status-filter [aria-pressed=true]").text()).toBe("Disabled");
   expect(fetch.mock.calls.some(([url]) => url.includes("vendors/openai/apps?q=Preview&state=disabled"))).toBe(true);
-  await wrapper.get('.vendor-applications .notice a').trigger("click");
+  await wrapper.get(".application-table-toolbar input").setValue("");
+  await flushPromises();
+  await wrapper.findAll(".application-table-toolbar .status-filter button")[0]!.trigger("click");
   await flushPromises();
   expect(router.currentRoute.value.query).toEqual({});
   expect(wrapper.find(".vendor-applications .notice").exists()).toBe(false);
@@ -845,14 +848,17 @@ it("requests server-wide table sorting/search, resets paging and renders zero, m
   const { wrapper, router } = await mountPage('/admin/vendors/openai/apps');
   const table = () => wrapper.get('.application-table');
   expect(table().findAll('tbody tr')).toHaveLength(20);
-  expect(table().get('tbody tr td:last-child').text()).toBe('0');
+  expect(table().get('th:first-child').attributes('aria-sort')).toBe('ascending');
+  expect(table().get('th:first-child svg').classes()).toContain('lucide-arrow-up');
+  expect(table().get('th:nth-child(4) svg').classes()).toContain('lucide-arrow-up-down');
+  expect(table().get('tbody tr td.numeric').text()).toBe('0');
   expect(table().findAll('tbody tr')[1]!.findAll('td')[3]!.text()).toBe('—');
   expect(table().get('tbody tr td:nth-child(2)').text()).toBe('—');
   expect(table().get('time').attributes('title')).toBeTruthy();
   expect(wrapper.get('.application-table-toolbar a').text()).toBe('Add application');
   await wrapper.get('[aria-label="Next page"]').trigger('click'); await flushPromises();
   expect(calls.at(-1)!.get('page')).toBe('2');
-  await table().get('th:last-child button').trigger('click'); await flushPromises();
+  await table().get('th:nth-child(4) button').trigger('click'); await flushPromises();
   expect(calls.at(-1)!.get('page')).toBe('1');
   expect(calls.at(-1)!.get('sort')).toBe('downloads');
   expect(table().get('tbody tr').text()).toContain('Item 22');
@@ -865,5 +871,81 @@ it("requests server-wide table sorting/search, resets paging and renders zero, m
   expect(table().text()).toContain('版本发现时间');
   expect(table().text()).toContain('项目 22');
   expect(wrapper.get('.application-table-toolbar a').text()).toBe('添加应用');
+  wrapper.unmount();
+});
+
+it("mutates table availability with CAS, refreshes filtered last pages, and confirms protected deletion", async () => {
+  const base=structuredClone(apps[0]!);
+  apps=[{...base,enabled:true,builtin_template:true},...Array.from({length:20},(_,i)=>({...structuredClone(base),uid:`custom-${i}`,id:`custom-${i}`,key:`openai/custom-${i}`,enabled:true,builtin_template:false,name:{en:`Custom ${i}`,'zh-CN':`自定义 ${i}`}}))];
+  let conflict=true, failDelete=true, finish: (()=>void)|undefined;
+  const writes:{url:string;method:string;body:Record<string,unknown>}[]=[];
+  const fetch=vi.fn(async(url:string,init?:RequestInit)=>{
+    if(init?.method==='PATCH'||init?.method==='DELETE'){
+      const body=JSON.parse(init.body as string), a=apps.find(a=>`/admin/api/apps/${a.key}`===url)!;
+      expect(init.headers).toMatchObject({'X-CSRF-Token':'directory-token'});
+      writes.push({url,method:init.method,body});
+      if(init.method==='PATCH') {
+        expect(Object.keys(body).sort()).toEqual(['enabled','revision']);
+        return new Promise<ReturnType<typeof response>>(resolve=>{finish=()=>{
+          if(conflict){conflict=false;a.revision++;resolve(response({error:{code:'DIRECTORY_REVISION_CONFLICT'}},409));}
+          else {expect(body.revision).toBe(a.revision);a.enabled=body.enabled;a.revision++;resolve(response({app:structuredClone(a)}));}
+        };});
+      }
+      expect(body).toEqual({revision:a.revision,confirm_uid:a.uid,confirm_key:a.key});
+      if(failDelete){failDelete=false;return response({error:{code:'INTERNAL_ERROR'}},500);}
+      apps=apps.filter(x=>x.uid!==a.uid);return response({deleted:true});
+    }
+    const u=new URL(url,'https://test');
+    if(u.pathname==='/admin/api/vendors/openai/apps') {
+      const state=u.searchParams.get('state');const items=apps.filter(a=>state==='enabled'?a.enabled:state==='disabled'?!a.enabled:true);
+      const pages=Math.max(1,Math.ceil(items.length/20)),page=Math.min(pages,Number(u.searchParams.get('page')));
+      return response({items:structuredClone(items.slice((page-1)*20,page*20)),page,total:items.length,total_pages:pages});
+    }
+    return read(url);
+  });
+  vi.stubGlobal('fetch',fetch);
+  const {wrapper,router}=await mountPage('/admin/vendors/openai/apps?state=enabled');
+  const rows=()=>wrapper.findAll('.application-table tbody tr');
+  expect(rows()[0]!.get('.danger-link').attributes('disabled')).toBeDefined();
+  expect(rows()[0]!.get('.application-row-actions a').attributes('href')).toContain('/settings');
+  expect(wrapper.find('.vendor-applications h2').exists()).toBe(false);
+  expect(wrapper.get('.table-help button').attributes('aria-describedby')).toBe(wrapper.get('.table-help [role=tooltip]').attributes('id'));
+  await wrapper.get('[aria-label="Next page"]').trigger('click');await flushPromises();expect(rows()).toHaveLength(1);
+  await rows()[0]!.get('.link-action').trigger('click');await rows()[0]!.get('.link-action').trigger('click');
+  expect(writes).toHaveLength(1);expect(rows()[0]!.get('.link-action').attributes('disabled')).toBeDefined();
+  finish!();await flushPromises();expect(wrapper.get('[role=alert]').text()).toBeTruthy();expect(rows()[0]!.get('.link-action').text()).toBe('Enabled');
+  await rows()[0]!.get('.link-action').trigger('click');finish!();await flushPromises();
+  expect(rows()).toHaveLength(20);expect(wrapper.text()).toContain('Page 1 of 1');expect(wrapper.text()).toContain('20 items');
+  await wrapper.findAll('.application-table-toolbar .status-filter button')[2]!.trigger('click');await flushPromises();
+  expect(router.currentRoute.value.query.state).toBe('disabled');expect(rows()).toHaveLength(1);
+  expect(rows()[0]!.find('td:first-child small').exists()).toBe(false);
+  setLanguage('zh-CN');await flushPromises();expect(rows()[0]!.get('.link-action').text()).toBe('已禁用');
+  await rows()[0]!.get('.danger-link').trigger('click');expect(wrapper.get('.delete-review').text()).toContain('openai/custom-19');
+  await wrapper.get('.delete-review .secondary').trigger('click');expect(writes).toHaveLength(2);
+  await rows()[0]!.get('.danger-link').trigger('click');await wrapper.get('.delete-review .danger').trigger('click');await flushPromises();
+  expect(wrapper.find('.delete-review').exists()).toBe(true);expect(wrapper.find('[role=alert]').exists()).toBe(true);
+  await wrapper.get('.delete-review .danger').trigger('click');await flushPromises();
+  expect(wrapper.find('.delete-review').exists()).toBe(false);expect(wrapper.text()).toContain('没有匹配的应用');
+  wrapper.unmount();
+});
+
+it("ignores a late availability result after changing vendors",async()=>{
+  let finish: ((result:ReturnType<typeof response>)=>void)|undefined, signal:AbortSignal|undefined;
+  const fetch=vi.fn(async(url:string,init?:RequestInit)=>{
+    if(init?.method==='PATCH'){signal=init.signal as AbortSignal;return new Promise<ReturnType<typeof response>>(resolve=>{finish=resolve;});}
+    const vendor=new URL(url,'https://test').pathname.match(/^\/admin\/api\/vendors\/([^/]+)\/apps$/)?.[1];
+    if(vendor){const items=apps.filter(a=>a.vendor_id===vendor);return response({items:structuredClone(items),page:1,total:items.length,total_pages:1});}
+    return read(url);
+  });vi.stubGlobal('fetch',fetch);
+  const {wrapper,router}=await mountPage('/admin/vendors/openai/apps');
+  await wrapper.get('.application-row-actions .link-action').trigger('click');
+  await router.push('/admin/vendors/anthropic/apps');await flushPromises();
+  expect(signal?.aborted).toBe(true);
+  const calls=fetch.mock.calls.length;
+  finish!(response({app:{...apps[0]!,enabled:!apps[0]!.enabled,revision:90}}));await flushPromises();
+  expect(fetch.mock.calls.length).toBe(calls);
+  expect(wrapper.get('.vendor-header h1').text()).toBe('Anthropic');
+  expect(wrapper.get('.application-table').text()).toContain('Claude Code');
+  expect(wrapper.find('[role=alert]').exists()).toBe(false);
   wrapper.unmount();
 });

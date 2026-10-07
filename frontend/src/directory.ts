@@ -125,3 +125,8 @@ export function directoryIcon(path: string): string {
     ? `/admin/api/assets/builtin-icon?path=${encodeURIComponent(path)}`
     : path;
 }
+
+// Shared immediate availability update: never include unsaved profile fields.
+export function patchEntityEnabled(kind: "vendor" | "app", key: string, revision: number, enabled: boolean, signal: AbortSignal) {
+  return api<{ vendor?: Vendor; app?: ManagedApplication }>(`${kind === "vendor" ? "vendors" : "apps"}/${key}`, { revision, enabled }, signal, {}, "PATCH");
+}

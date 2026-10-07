@@ -47,6 +47,8 @@ watch(
   { immediate: true, flush: "sync" },
 );
 export const messages = {
+  Edit: "编辑",
+  "Statistics information": "统计口径说明",
   "Popular applications unavailable. Press Enter to open all applications.": "热门应用暂不可用，按 Enter 查看全部应用。",
   "No popular applications yet. Press Enter to open all applications.": "暂无热门应用，按 Enter 查看全部应用。",
   "Add App": "添加应用",
@@ -342,7 +344,7 @@ export const messages = {
     "文件路径相对于此 HTTP 或 HTTPS 目录地址。",
   "The provider supplies a default upstream URL. You can replace it for this application.":
     "Provider 提供默认回源地址，可为此应用覆盖。",
-  Enabled: "启用",
+  Enabled: "已启用",
   Disabled: "已禁用",
   Deleted: "已删除",
   Show: "显示",

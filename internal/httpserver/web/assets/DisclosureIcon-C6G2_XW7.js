@@ -1,0 +1,1 @@
+import{A as e,D as t,V as n,j as r}from"./bootstrap-BEb85WMG.js";import{f as i}from"./api-BgfjzUVf.js";var a={class:`disclosure-icon`,"aria-hidden":`true`},o=r({__name:`DisclosureIcon`,setup(r){return(r,o)=>(n(),t(`span`,a,[e(i,{name:`chevron`})]))}});export{o as t};

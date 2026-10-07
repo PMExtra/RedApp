@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import Icon from "../components/Icon.vue";
 import VendorLogo from "../components/VendorLogo.vue";
 import { vendorName } from "../vendorName";
 import IconButton from "../components/IconButton.vue";
@@ -93,9 +94,9 @@ function go(next: number) {
     </div>
     <VendorLogo v-if="vendor" :vendor="visibleVendor" :height="48" />
   </div>
-  <label v-if="vendorReady" class="catalog-search"
+  <label v-if="vendorReady" class="catalog-search search-field"
     ><span class="sr-only">{{ t("Search by ID or name") }}</span
-    ><input
+    ><Icon name="search" class="search-input-icon" /><input
       v-model="search"
       type="search"
       maxlength="128"

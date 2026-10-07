@@ -10,6 +10,7 @@
     "build": "npm run typecheck && vite build"
   },
   "dependencies": {
+    "@lucide/vue": "1.52.0",
     "uplot": "1.6.32",
     "vue": "3.5.43",
     "vue-router": "4.6.4"

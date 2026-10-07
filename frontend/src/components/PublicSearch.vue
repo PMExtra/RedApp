@@ -130,7 +130,7 @@ onUnmounted(() => { stop(); document.removeEventListener("pointerdown", outside)
 <template>
   <div
     ref="root"
-    class="public-search"
+    class="public-search search-field"
     @focusout="
       !($event.currentTarget as HTMLElement).contains(
         $event.relatedTarget as Node,

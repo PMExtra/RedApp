@@ -6,7 +6,7 @@ import { adminApplications, managedVendors, response } from "../testSupport";
 
 const links = { RouterLink: { template: '<a href="#"><slot /></a>' } };
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
-it("keeps strip and title heights stable, watermarks vendor marks without changing app frames, and updates scrolling hints at both boundaries", async () => {
+it("keeps strip and title heights stable, watermarks vendor marks with frameless preview icons, and updates scrolling hints at both boundaries", async () => {
   const style = document.createElement("style");
   style.textContent = readFileSync("src/style.css", "utf8");
   document.head.append(style);
@@ -17,16 +17,21 @@ it("keeps strip and title heights stable, watermarks vendor marks without changi
   try {
     const nameHeight = css(".application-preview-name").height, headingHeight = css(".directory-heading").height, rowHeight = css(".vendor-previews").gridTemplateRows;
     expect(css(".vendor-preview-scroll").overflowX).toBe("auto");
+    expect(css(".vendor-preview-scroll").overflowY).toBe("hidden");
+    expect(parseFloat(css(".vendor-strip").paddingInline)).toBe(0);
+    expect(wrapper.find('.vendor-card-description').exists()).toBe(false);
+    expect(wrapper.find('.vendor-card-state').exists()).toBe(false);
+    expect(css('.add-application .application-preview-name').opacity).toBe('0');
     expect(css(".vendor-preview-scroll").height).not.toBe("");
     expect(css(".vendor-previews").gridAutoFlow).toBe("column");
     expect(css(".vendor-previews").gridAutoColumns).toBe("minmax(88px, calc((100% - 1.4rem) / 4.5))");
     expect(css(".entity-icon--vendor").maxWidth).toBe("35%");
-    expect(css(".entity-icon--vendor").height).toBe("70px");
+    expect(css(".entity-icon--vendor").height).toBe("60px");
     expect(Number(css(".entity-icon--vendor").opacity)).toBe(.22);
     expect(css(".entity-icon--vendor").pointerEvents).toBe("none");
     expect(css(".entity-icon--vendor img").objectFit).toBe("contain");
     expect(css(".entity-icon--vendor").borderTopStyle).not.toBe("solid");
-    expect(css(".vendor-previews .entity-icon").borderTopStyle).toBe("solid");
+    expect(css(".vendor-previews .entity-icon").borderTopStyle).not.toBe("solid");
     expect(css(".vendor-previews .is-disabled").backgroundColor).toBe("#eef0f2");
     expect(css(".vendor-previews .is-disabled .entity-icon").filter).toContain("grayscale(1)");
     expect(css(".add-application svg").borderTopStyle).not.toBe("solid");
@@ -53,7 +58,7 @@ it("keeps strip and title heights stable, watermarks vendor marks without changi
     expect(css('.add-application a').height).toBe('auto');
     expect(wrapper.get('.add-application').text()).toBe('Add App');
     expect(wrapper.find('.vendor-previews .state-label').exists()).toBe(false);
-    expect(wrapper.get('.vendor-previews .entity-icon').attributes('style')).toContain('44px');
+    expect(wrapper.get('.vendor-previews .entity-icon').attributes('style')).toContain('52px');
     viewport.scrollLeft=100; await wrapper.get('.vendor-preview-scroll').trigger('scroll');
     expect(wrapper.get('.vendor-strip').classes()).toContain('strip-can-left');
     expect(wrapper.get('.vendor-strip').classes()).toContain('strip-can-right');

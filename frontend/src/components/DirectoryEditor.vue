@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import DeleteConfirmation from "./DeleteConfirmation.vue";
 import FilePicker from "./FilePicker.vue";
 import EntityIcon from "./EntityIcon.vue";
+import Icon from "./Icon.vue";
 import IconButton from "./IconButton.vue";
 import SortableList from "./SortableList.vue";
 import TemplateReset from "./TemplateReset.vue";
@@ -12,6 +14,7 @@ import { api, isCancellation } from "../api";
 import { invalidateBootstrap, loadBootstrap } from "../bootstrap";
 import {
   directoryIcon,
+  patchEntityEnabled,
   refreshApplication,
   applicationPath,
   type ManagedApplication,
@@ -202,9 +205,7 @@ async function changeEnabled(enabled: boolean) {
   error.value = undefined;
   draft.value.enabled = enabled;
   try {
-    const response = await api<{ vendor?: Vendor; app?: ManagedApplication }>(
-      path.value, { revision: record.value.revision, enabled }, request.signal, {}, "PATCH",
-    );
+    const response = await patchEntityEnabled(kind, kind === "vendor" ? record.value.id : (record.value as ManagedApplication).key, record.value.revision, enabled, request.signal);
     if (attempt !== ticket) return;
     const value = response[kind];
     if (!value) throw Error("Saved record unavailable");
@@ -609,7 +610,7 @@ onUnmounted(() => {
         </template>
       </fieldset>
       <div class="form-actions entity-save-actions">
-        <button v-if="!readOnly" :disabled="busy || !draft">
+        <button v-if="!readOnly" :disabled="busy || !draft"><Icon v-if="creating" name="plus" />
           {{ saving ? t("Saving…") : t("Save changes") }}
         </button>
         <IconButton
@@ -633,31 +634,7 @@ onUnmounted(() => {
         />
       </div>
     </form>
-    <div
-      v-if="deleteReview"
-      class="delete-review"
-      role="group"
-      :aria-label="t('Confirm deletion')"
-    >
-      <p>
-        {{
-          t(
-            kind === "app"
-              ? "Permanently delete this record and its files, settings and history? Active downloads, uploads and background tasks of this application will be interrupted. This cannot be undone."
-              : "Permanently delete this record and its files, settings and history? This cannot be undone.",
-          )
-        }}
-      </p>
-      <p v-if="kind === 'vendor'" class="muted">
-        {{ t("Delete applications under this vendor first.") }}
-      </p>
-      <button class="danger" :disabled="busy" @click="save(true)">
-        {{ t("Confirm deletion") }}
-      </button>
-      <button class="secondary" :disabled="busy" @click="deleteReview = false">
-        {{ t("Cancel") }}
-      </button>
-    </div>
+    <DeleteConfirmation v-if="deleteReview && record" :application="kind === 'app'" :record-key="kind === 'app' ? (record as ManagedApplication).key : record.id" :busy="busy" @confirm="save(true)" @cancel="deleteReview = false" />
     <TemplateReset
       v-if="kind === 'vendor' && record?.has_template && !readOnly"
       kind="vendor"

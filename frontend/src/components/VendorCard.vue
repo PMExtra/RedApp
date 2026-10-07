@@ -63,14 +63,12 @@ onUnmounted(() => { clearTimeout(scrollTimer); observer?.disconnect(); window.re
         <h2><RouterLink :to="`/admin/vendors/${vendor.id}/settings`" :title="vendor.name[language]">{{ vendor.name[language] }}</RouterLink></h2>
         <RouterLink class="app-count" :to="allPath" :title="countLabel">{{ countLabel }}</RouterLink>
       </div>
-      <VendorLogo :vendor="vendor" admin :height="70" />
+      <VendorLogo :vendor="vendor" admin :height="60" />
     </div>
-    <p class="vendor-card-description muted" :title="vendor.description[language]">{{ vendor.description[language] }}</p>
-    <p class="vendor-card-state state-label">{{ vendor.deleted_at ? t('Deleted') : !vendor.enabled ? t('Disabled') : '' }}</p>
     <div class="vendor-strip" :class="{ 'strip-can-left': overflow && !atStart, 'strip-can-right': overflow && !atEnd }">
       <IconButton v-if="overflow" class="strip-arrow strip-previous secondary" :class="{ 'strip-arrow-visible': hovered }" tabindex="-1" icon="left" :label="t('Scroll applications left')" :disabled="atStart" @click="scroll(-1)" />
       <div ref="viewport" class="vendor-preview-scroll" :class="{ 'is-scrolling': scrolling }" tabindex="0" role="region" :aria-label="t('Applications for {vendor}', { vendor: vendor.name[language] })" @scroll.passive="onScroll" @keydown="keyboardScroll">
-        <ul class="directory-apps vendor-previews">
+        <ul class="directory-apps vendor-previews" :style="{ '--strip-count': Math.max(1, list.items.length + (vendor.deleted_at ? 0 : 1)) }">
           <li v-for="app in list.items" :key="app.uid" :class="{ 'is-disabled': !app.enabled || !vendor.enabled }">
             <RouterLink :to="applicationPath(app, app.deleted_at ? 'settings' : undefined)" :title="app.name[language]" :aria-label="stateLabel(app) ? `${app.name[language]} — ${stateLabel(app)}` : app.name[language]">
               <EntityIcon :src="directoryIcon(app.icon)" size="preview" />
