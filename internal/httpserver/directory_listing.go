@@ -16,7 +16,12 @@ func positivePage(raw string, fallback int) (int, bool) {
 	return n, e == nil && n >= 1 && n <= 1000000000 && strconv.Itoa(n) == raw
 }
 func (s *Server) directoryList(w http.ResponseWriter, r *http.Request, parts []string) {
-	if !queryAllowed(r, "page", "limit", "q", "state") {
+	table := len(parts) == 3 && r.URL.Query().Get("view") == "table"
+	allowed := []string{"page", "limit", "q", "state"}
+	if table {
+		allowed = append(allowed, "view", "sort", "order", "lang")
+	}
+	if !queryAllowed(r, allowed...) {
 		fail(w, 400, "Invalid directory query")
 		return
 	}
@@ -47,6 +52,10 @@ func (s *Server) directoryList(w http.ResponseWriter, r *http.Request, parts []s
 			directoryError(w, err)
 			return
 		}
+	}
+	if table {
+		s.applicationTable(w, r, vendor, page, limit, q, state)
+		return
 	}
 	value, err := s.DB.ApplicationPage(vendor, page, limit, q, state)
 	if err != nil {

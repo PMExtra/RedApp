@@ -28,6 +28,9 @@ it("withholds vendor identity until loaded, clears it on navigation, ignores lat
   await flushPromises();
   expect(wrapper.get(".vendor-public-heading h1").text()).toBe("Loaded vendor");
   expect(wrapper.get(".vendor-public-heading img").attributes("src")).toBe("/en.svg");
+  expect(wrapper.get(".vendor-public-heading .entity-icon").attributes("style")).toContain("height: 48px");
+  expect(wrapper.get(".public-search .search-input-icon").attributes("aria-hidden")).toBe("true");
+  expect(wrapper.get(".public-search input").attributes("aria-label")).toBe("Search vendors and applications");
   setLanguage("zh-CN"); await flushPromises();
   expect(wrapper.get(".vendor-public-heading h1").text()).toBe("真实厂商");
   expect(wrapper.get(".vendor-public-heading img").attributes("src")).toBe("/zh.svg");

@@ -2,7 +2,7 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import AppShell from "./AppShell.vue";
 import { applySite, defaultSite } from "../site";
-import { setLanguage } from "../i18n";
+import { language, setLanguage } from "../i18n";
 import { bootstrap, loadBootstrap } from "../bootstrap";
 import { boot, resetStores, response } from "../testSupport";
 beforeEach(resetStores);
@@ -55,5 +55,27 @@ it("does not overwrite a newly saved site with a late bootstrap response", async
     global: { stubs: { RouterLink: { template: "<a><slot/></a>" } } },
   });
   expect(w.get(".brand").text()).toContain("Newly saved");
+  w.unmount();
+});
+
+it.each([false, true])('keeps decorative En/Zh icons, full names and selection in the shared language menu (admin=%s)', async (admin) => {
+  resetStores();
+  const w = mount(AppShell, { props: { admin }, global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } } });
+  for (const locale of ['en', 'zh-CN'] as const) {
+    setLanguage(locale); await flushPromises();
+    await w.get('.language-control button').trigger('click');
+    const options = w.findAll('.language-control [role=option]');
+    expect(options.map(o => o.get('.select-option-text-icon').text())).toEqual(['En','Zh']);
+    expect(options.map(o => o.get('.select-option-label').text())).toEqual(['English','简体中文']);
+    for (const option of options) {
+      expect(option.get('.select-option-text-icon').attributes('aria-hidden')).toBe('true');
+      expect(option.find('img').exists()).toBe(false);
+      expect(option.text().includes('✓')).toBe(option.attributes('data-value') === locale);
+    }
+    const other = locale === 'en' ? 'zh-CN' : 'en';
+    await w.get(`[data-value="${other}"]`).trigger('click');
+    expect(language.value).toBe(other);
+    expect(w.find('[role=listbox]').exists()).toBe(false);
+  }
   w.unmount();
 });

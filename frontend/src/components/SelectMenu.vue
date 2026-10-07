@@ -5,7 +5,7 @@ import Icon from "./Icon.vue";
 import { usePopover } from "../composables/usePopover";
 const props = defineProps<{
   modelValue: string;
-  options: { value: string; label: string; description?: string }[];
+  options: { value: string; label: string; description?: string; iconText?: string }[];
   label: string;
   disabled?: boolean;
   icon?: boolean;
@@ -190,7 +190,8 @@ watch(
         @pointermove="active = index"
         @click="choose(index)"
       >
-        <span
+        <span v-if="item.iconText" class="select-option-text-icon" aria-hidden="true">{{ item.iconText }}</span>
+        <span class="select-option-label"
           >{{ item.label
           }}<small v-if="item.description" class="select-description">{{
             item.description

@@ -383,7 +383,8 @@ it("filters vendors with three buttons, resets pages, preserves search and norma
     "disabled",
     "1",
   ]);
-  expect(wrapper.get(".vendor-card").text()).toContain("Disabled by vendor");
+  expect(wrapper.get(".vendor-previews a").attributes("aria-label")).toContain("Disabled by vendor");
+  expect(wrapper.get(".vendor-previews").text()).not.toContain("Disabled by vendor");
   expect(buttons()[2]!.attributes("aria-pressed")).toBe("true");
   await router.push("/admin/vendors?q=Next&state=enabled");
   await flushPromises();

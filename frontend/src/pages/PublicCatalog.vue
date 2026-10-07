@@ -91,7 +91,7 @@ function go(next: number) {
         {{ visibleVendor?.description[language] }}
       </p>
     </div>
-    <VendorLogo v-if="vendor" :vendor="visibleVendor" />
+    <VendorLogo v-if="vendor" :vendor="visibleVendor" :height="48" />
   </div>
   <label v-if="vendorReady" class="catalog-search"
     ><span class="sr-only">{{ t("Search by ID or name") }}</span

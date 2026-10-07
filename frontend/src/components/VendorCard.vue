@@ -21,6 +21,17 @@ function stateLabel(app: ManagedApplication) {
   return app.deleted_at ? t("Deleted") : !app.enabled ? t("Disabled") : !props.vendor.enabled ? t("Disabled by vendor") : "";
 }
 const viewport = ref<HTMLElement>(), overflow = ref(false), atStart = ref(true), atEnd = ref(true);
+const scrolling = ref(false), hovered = ref(false);
+let scrollTimer: ReturnType<typeof setTimeout> | undefined;
+function onScroll() {
+  measure(); scrolling.value = true; clearTimeout(scrollTimer);
+  scrollTimer = setTimeout(() => { scrolling.value = false; }, 700);
+}
+function keyboardScroll(event: KeyboardEvent) {
+  if (event.target !== viewport.value) return;
+  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); scroll(event.key === 'ArrowLeft' ? -1 : 1); }
+  if (event.key === 'Home' || event.key === 'End') { event.preventDefault(); viewport.value?.scrollTo({ left: event.key === 'Home' ? 0 : viewport.value.scrollWidth - viewport.value.clientWidth }); }
+}
 let observer: ResizeObserver | undefined;
 function measure() {
   const el = viewport.value;
@@ -43,36 +54,35 @@ onMounted(() => {
   if (typeof ResizeObserver !== 'undefined') { observer = new ResizeObserver(measure); if (viewport.value) observer.observe(viewport.value); }
   window.addEventListener('resize', measure); measure();
 });
-onUnmounted(() => { observer?.disconnect(); window.removeEventListener('resize', measure); });
+onUnmounted(() => { clearTimeout(scrollTimer); observer?.disconnect(); window.removeEventListener('resize', measure); });
 </script>
 <template>
-  <article class="panel vendor-card" :class="{ 'is-disabled': !vendor.enabled }">
+  <article class="panel vendor-card" :class="{ 'is-disabled': !vendor.enabled }" @mouseenter="hovered = true" @mouseleave="hovered = false">
     <div class="directory-heading">
       <div class="vendor-card-heading">
         <h2><RouterLink :to="`/admin/vendors/${vendor.id}/settings`" :title="vendor.name[language]">{{ vendor.name[language] }}</RouterLink></h2>
         <RouterLink class="app-count" :to="allPath" :title="countLabel">{{ countLabel }}</RouterLink>
       </div>
-      <VendorLogo :vendor="vendor" admin />
+      <VendorLogo :vendor="vendor" admin :height="70" />
     </div>
     <p class="vendor-card-description muted" :title="vendor.description[language]">{{ vendor.description[language] }}</p>
     <p class="vendor-card-state state-label">{{ vendor.deleted_at ? t('Deleted') : !vendor.enabled ? t('Disabled') : '' }}</p>
     <div class="vendor-strip" :class="{ 'strip-can-left': overflow && !atStart, 'strip-can-right': overflow && !atEnd }">
-      <IconButton v-if="overflow" class="strip-arrow strip-previous secondary" icon="left" :label="t('Scroll applications left')" :disabled="atStart" @click="scroll(-1)" />
-      <div ref="viewport" class="vendor-preview-scroll" tabindex="0" role="region" :aria-label="t('Applications for {vendor}', { vendor: vendor.name[language] })" @scroll.passive="measure">
+      <IconButton v-if="overflow" class="strip-arrow strip-previous secondary" :class="{ 'strip-arrow-visible': hovered }" tabindex="-1" icon="left" :label="t('Scroll applications left')" :disabled="atStart" @click="scroll(-1)" />
+      <div ref="viewport" class="vendor-preview-scroll" :class="{ 'is-scrolling': scrolling }" tabindex="0" role="region" :aria-label="t('Applications for {vendor}', { vendor: vendor.name[language] })" @scroll.passive="onScroll" @keydown="keyboardScroll">
         <ul class="directory-apps vendor-previews">
           <li v-for="app in list.items" :key="app.uid" :class="{ 'is-disabled': !app.enabled || !vendor.enabled }">
             <RouterLink :to="applicationPath(app, app.deleted_at ? 'settings' : undefined)" :title="app.name[language]" :aria-label="stateLabel(app) ? `${app.name[language]} — ${stateLabel(app)}` : app.name[language]">
-              <EntityIcon :src="directoryIcon(app.icon)" size="tile" />
+              <EntityIcon :src="directoryIcon(app.icon)" size="preview" />
               <span class="application-preview-name">{{ app.name[language] }}</span>
             </RouterLink>
-            <span class="state-label" :title="stateLabel(app)">{{ stateLabel(app) }}</span>
           </li>
           <li v-if="!vendor.deleted_at" class="add-application">
-            <RouterLink :to="`/admin/vendors/${vendor.id}/apps/new`" :aria-label="t('Add application')" :title="t('Add application')"><Icon name="plus" :size="24" /></RouterLink>
+            <RouterLink :to="`/admin/vendors/${vendor.id}/apps/new`" :aria-label="t('Add application')" :title="t('Add application')"><Icon name="plus" :size="44" /><span class="application-preview-name">{{ t('Add App') }}</span></RouterLink>
           </li>
         </ul>
       </div>
-      <IconButton v-if="overflow" class="strip-arrow strip-next secondary" icon="right" :label="t('Scroll applications right')" :disabled="atEnd" @click="scroll(1)" />
+      <IconButton v-if="overflow" class="strip-arrow strip-next secondary" :class="{ 'strip-arrow-visible': hovered }" tabindex="-1" icon="right" :label="t('Scroll applications right')" :disabled="atEnd" @click="scroll(1)" />
     </div>
     <div class="vendor-strip-status">
       <span v-if="list.loading" role="status">{{ t('Loading…') }}</span>

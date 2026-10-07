@@ -160,3 +160,28 @@ func applicationPage(tx *sql.Tx, vendor string, page, limit int, q, state string
 	}
 	return result, rows.Err()
 }
+
+// ApplicationsMatching reads the complete filtered set in one snapshot. The
+// caller can order provider-derived metadata before applying page boundaries.
+func (s *Store) ApplicationsMatching(vendor, q, state string) ([]Application, error) {
+	if !validDirectoryPage(1, 1, state) {
+		return nil, ErrInvalidDirectory
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	first, err := applicationPage(tx, vendor, 1, 1, q, state)
+	if err != nil {
+		return nil, err
+	}
+	if first.Total <= 1 {
+		return first.Items, tx.Commit()
+	}
+	all, err := applicationPage(tx, vendor, 1, int(first.Total), q, state)
+	if err != nil {
+		return nil, err
+	}
+	return all.Items, tx.Commit()
+}

@@ -2,8 +2,8 @@
 import { computed, ref, watch } from "vue";
 import Icon from "./Icon.vue";
 import { entityIconSizes } from "../entityIconSizes";
-const props = withDefaults(defineProps<{ src?: string; fallbackSrc?: string; size?: keyof typeof entityIconSizes; vendor?: boolean }>(), { size: "search" });
-const pixels = computed(() => props.vendor ? 32 : entityIconSizes[props.size]);
+const props = withDefaults(defineProps<{ src?: string; fallbackSrc?: string; size?: keyof typeof entityIconSizes; vendor?: boolean; vendorHeight?: number }>(), { size: "search" });
+const pixels = computed(() => props.vendor ? (props.vendorHeight || 32) : entityIconSizes[props.size]);
 const failedURLs = ref(new Set<string>());
 const loadedURLs = ref(new Set<string>());
 const imageSource = computed(() => [props.src, props.fallbackSrc].find((url) => url && !failedURLs.value.has(url)) || "");

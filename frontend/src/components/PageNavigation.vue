@@ -25,15 +25,21 @@ watch(
   () => {
     requested.value = String(props.page);
     invalid.value = false;
+    submitted = undefined;
   },
 );
+let submitted: string | undefined;
 function jump() {
+  if (props.loading || props.total === 0) return;
   const n = Number(requested.value);
   invalid.value =
     !/^[1-9]\d*$/.test(requested.value) ||
     !Number.isSafeInteger(n) ||
     n > (props.totalPages || 1);
-  if (!invalid.value) emit("go", n);
+  if (!invalid.value && n !== props.page && requested.value !== submitted) {
+    submitted = requested.value;
+    emit("go", n);
+  }
 }
 </script>
 <template>
@@ -71,15 +77,10 @@ function jump() {
             inputmode="numeric"
             :aria-invalid="invalid"
             :disabled="loading || total === 0"
-            @input="invalid = false"
+            @input="invalid = false; submitted = undefined"
+            @blur="jump"
+            @keydown.enter.prevent="!$event.isComposing && jump()"
         /></label>
-        <IconButton
-          class="secondary"
-          :disabled="loading || total === 0"
-          type="submit"
-          icon="arrow"
-          :label="t('Go')"
-        />
       </form>
       <IconButton
         type="button"

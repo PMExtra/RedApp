@@ -47,6 +47,13 @@ watch(
   { immediate: true, flush: "sync" },
 );
 export const messages = {
+  "Popular applications unavailable. Press Enter to open all applications.": "热门应用暂不可用，按 Enter 查看全部应用。",
+  "No popular applications yet. Press Enter to open all applications.": "暂无热门应用，按 Enter 查看全部应用。",
+  "Add App": "添加应用",
+  "Latest version": "最新版本",
+  "Version discovered": "版本发现时间",
+  "No applications found.": "没有匹配的应用。",
+  "Version time is when RedApp first discovered the latest known version, not its publication or configuration time. Downloads count recorded successful transfers across source changes; unavailable statistics show —.": "版本时间为 RedApp 首次发现最新已知版本的时间，并非发布时间或配置修改时间。下载次数为跨来源变更累计记录的成功传输次数；未统计的数据显示 —。",
   "Use {{base_url}} for the public address, {{app_path}} for /vendor/app, and {{latest_version}} for the latest known version or <version> when unavailable.": "{{base_url}} 为公开地址，{{app_path}} 为 /vendor/app，{{latest_version}} 为最新已知版本，无法获取时为 <version>。",
   "Just now": "刚刚",
   "Discovered {time}": "发现于{time}",

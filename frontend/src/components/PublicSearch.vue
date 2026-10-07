@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { vendorName } from "../vendorName";
+import Icon from "./Icon.vue";
 import EntityIcon from "./EntityIcon.vue";
 import VendorLogo from "./VendorLogo.vue";
-import { ref, watch, onUnmounted, useId } from "vue";
+import { computed, ref, watch, onMounted, onUnmounted, useId } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { publicFetch } from "../public";
 import { isCancellation } from "../api";
@@ -26,6 +27,8 @@ const search = ref(typeof route.query.q === "string" ? route.query.q : ""),
   loading = ref(false),
   failed = ref(false);
 const composing = ref(false);
+const root = ref<HTMLElement>();
+const popular = computed(() => !search.value.trim());
 let ticket = 0,
   controller: AbortController | undefined,
   timer: ReturnType<typeof setTimeout> | undefined;
@@ -46,23 +49,30 @@ function close() {
 function suggest() {
   stop();
   failed.value = false;
-  if (composing.value || !search.value.trim()) {
+  if (composing.value) {
     open.value = false;
     return;
   }
   open.value = true;
-  const attempt = ticket;
+  const attempt = ticket, query = search.value.trim();
+  loading.value = true;
   timer = setTimeout(async () => {
     const request = new AbortController();
     controller = request;
     loading.value = true;
     try {
-      const data = await publicFetch<{ items: Suggestion[] }>(
-        `/api/search?q=${encodeURIComponent(search.value.trim())}`,
-        request.signal,
-      );
+      let suggestions: Suggestion[];
+      if (query) {
+        const data = await publicFetch<{ items: Suggestion[] }>(`/api/search?q=${encodeURIComponent(query)}`, request.signal);
+        suggestions = data.items;
+      } else {
+        // Reuse the public homepage's ranking and visibility filtering. Keep
+        // the same six-application limit as ordinary application suggestions.
+        const data = await publicFetch<{ ranking: { id: string; name: LocalizedText; icon: string; detail_url: string }[] }>("/api/home", request.signal);
+        suggestions = data.ranking.slice(0, 6).map(item => ({ kind: "app", id: item.id, name: item.name, icon: item.icon, url: item.detail_url }));
+      }
       if (attempt === ticket) {
-        items.value = data.items;
+        items.value = suggestions;
         active.value = -1;
       }
     } catch (e) {
@@ -104,17 +114,22 @@ function key(event: KeyboardEvent) {
     event.preventDefault();
     if (!open.value) suggest();
     else if (items.value.length)
-      active.value =
+      active.value = active.value < 0 ? (event.key === "ArrowDown" ? 0 : items.value.length - 1) :
         (active.value +
           (event.key === "ArrowDown" ? 1 : -1) +
           items.value.length) %
         items.value.length;
   }
 }
-onUnmounted(stop);
+function outside(event: PointerEvent) {
+  if (!root.value?.contains(event.target as Node)) close();
+}
+onMounted(() => document.addEventListener("pointerdown", outside));
+onUnmounted(() => { stop(); document.removeEventListener("pointerdown", outside); });
 </script>
 <template>
   <div
+    ref="root"
     class="public-search"
     @focusout="
       !($event.currentTarget as HTMLElement).contains(
@@ -122,6 +137,7 @@ onUnmounted(stop);
       ) && close()
     "
   >
+    <Icon name="search" class="search-input-icon" />
     <input
       v-model="search"
       role="combobox"
@@ -147,14 +163,15 @@ onUnmounted(stop);
       "
     />
     <div v-if="open" class="search-popover">
+      <p v-if="popular" class="search-suggestions-heading">{{ t("Popular applications") }}</p>
       <p v-if="loading" role="status">{{ t("Loading…") }}</p>
       <p v-else-if="failed" role="status">
-        {{ t("Search unavailable. Press Enter to open all applications.") }}
+        {{ popular ? t("Popular applications unavailable. Press Enter to open all applications.") : t("Search unavailable. Press Enter to open all applications.") }}
       </p>
       <ul
         :id="`${id}-suggestions`"
         role="listbox"
-        :aria-label="t('Search suggestions')"
+        :aria-label="popular ? t('Popular applications') : t('Search suggestions')"
       >
         <li
           v-for="(item, index) in items"
@@ -176,7 +193,7 @@ onUnmounted(stop);
         </li>
       </ul>
       <p v-if="!loading && !failed && !items.length" class="muted">
-        {{ t("No suggestions. Press Enter to search all applications.") }}
+        {{ popular ? t("No popular applications yet. Press Enter to open all applications.") : t("No suggestions. Press Enter to search all applications.") }}
       </p>
     </div>
   </div>

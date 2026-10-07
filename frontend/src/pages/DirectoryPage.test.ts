@@ -592,15 +592,15 @@ it("lists every vendor application across pages including disabled records, with
   const list = () => wrapper.get(".vendor-applications");
   expect(wrapper.get(".vendor-header h1").text()).toBe("OpenAI");
   expect(wrapper.get('.application-tabs a[aria-current="page"]').text()).toBe("Applications");
-  expect(list().findAll("li:not(.add-application)")).toHaveLength(20);
+  expect(list().findAll("tbody tr")).toHaveLength(20);
   expect(list().text()).toContain("Tool 1");
   expect(list().text()).toContain("Disabled");
   expect(list().text()).not.toContain("Claude Code");
-  const found = new Set(list().findAll("li:not(.add-application) a").map((a) => a.attributes("href")));
+  const found = new Set(list().findAll("tbody tr td:first-child a").map((a) => a.attributes("href")));
   await list().get('[aria-label="Next page"]').trigger("click");
   await flushPromises();
-  expect(list().findAll("li:not(.add-application)")).toHaveLength(3);
-  list().findAll("li:not(.add-application) a").forEach((a) => found.add(a.attributes("href")));
+  expect(list().findAll("tbody tr")).toHaveLength(3);
+  list().findAll("tbody tr td:first-child a").forEach((a) => found.add(a.attributes("href")));
   expect(found.size).toBe(23);
   await list().get('a[href="/admin/vendors/openai/apps/tool-22/settings"]').trigger("click");
   await flushPromises();
@@ -824,5 +824,46 @@ it("saves optional vendor language logos through existing uploads without changi
   expect(vendors[0]!.localized_icons?.en).toBe("");
   await router.push("/admin/vendors/openai/apps/codex/settings"); await flushPromises();
   expect(wrapper.find(".vendor-language-icons").exists()).toBe(false);
+  wrapper.unmount();
+});
+
+it("requests server-wide table sorting/search, resets paging and renders zero, missing values and bilingual times", async () => {
+  const all = Array.from({ length: 23 }, (_, i) => ({ ...structuredClone(apps[0]!), uid: `table-${i}`, id: `item-${i}`, key: `openai/item-${i}`, name: { en: `Item ${i}`, "zh-CN": `项目 ${i}` }, enabled: i % 2 === 0, latest_version: i ? '1.10.0' : '', version_discovered_at: i ? '2026-10-01T00:00:00Z' : null, successful_downloads: i === 1 ? null : i }));
+  const calls: URLSearchParams[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    const u = new URL(url, 'https://test');
+    if (u.pathname === '/admin/api/vendors/openai/apps') {
+      calls.push(u.searchParams);
+      expect(u.searchParams.get('view')).toBe('table');
+      let items = all.filter(a => a.name.en.includes(u.searchParams.get('q') || ''));
+      if (u.searchParams.get('sort') === 'downloads') items = [...items].sort((a,b) => (b.successful_downloads ?? -1) - (a.successful_downloads ?? -1));
+      const page = Number(u.searchParams.get('page'));
+      return response({ items: items.slice((page-1)*20,page*20), page, total: items.length, total_pages: Math.max(1,Math.ceil(items.length/20)) });
+    }
+    return read(url);
+  }));
+  const { wrapper, router } = await mountPage('/admin/vendors/openai/apps');
+  const table = () => wrapper.get('.application-table');
+  expect(table().findAll('tbody tr')).toHaveLength(20);
+  expect(table().get('tbody tr td:last-child').text()).toBe('0');
+  expect(table().findAll('tbody tr')[1]!.findAll('td')[3]!.text()).toBe('—');
+  expect(table().get('tbody tr td:nth-child(2)').text()).toBe('—');
+  expect(table().get('time').attributes('title')).toBeTruthy();
+  expect(wrapper.get('.application-table-toolbar a').text()).toBe('Add application');
+  await wrapper.get('[aria-label="Next page"]').trigger('click'); await flushPromises();
+  expect(calls.at(-1)!.get('page')).toBe('2');
+  await table().get('th:last-child button').trigger('click'); await flushPromises();
+  expect(calls.at(-1)!.get('page')).toBe('1');
+  expect(calls.at(-1)!.get('sort')).toBe('downloads');
+  expect(table().get('tbody tr').text()).toContain('Item 22');
+  await wrapper.get('.application-table-toolbar input').setValue('Item 22'); await flushPromises();
+  expect(router.currentRoute.value.query.q).toBe('Item 22');
+  expect(calls.at(-1)!.get('q')).toBe('Item 22');
+  expect(table().findAll('tbody tr')).toHaveLength(1);
+  setLanguage('zh-CN'); await flushPromises();
+  expect(calls.at(-1)!.get('lang')).toBe('zh-CN');
+  expect(table().text()).toContain('版本发现时间');
+  expect(table().text()).toContain('项目 22');
+  expect(wrapper.get('.application-table-toolbar a').text()).toBe('添加应用');
   wrapper.unmount();
 });

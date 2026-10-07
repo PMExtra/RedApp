@@ -3,6 +3,7 @@ const props = withDefaults(defineProps<{ name: string; size?: number }>(), {
   size: 18,
 });
 const paths: Record<string, string> = {
+  search: "M17 17l4 4 M19 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0",
   plus: "M12 5v14 M5 12h14",
   reorder: "M12 3v5 M8 7l4-4 4 4 M5 12h14 M12 16v5 M8 17l4 4 4-4",
   trash: "M3 6h18 M9 6V3h6v3 M5 6l1 15h12l1-15 M10 10v7 M14 10v7",

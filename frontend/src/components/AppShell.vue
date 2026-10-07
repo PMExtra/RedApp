@@ -39,8 +39,8 @@ const failed = bootstrapError;
             :label="t('Language')"
             :icon="true"
             :options="[
-              { value: 'en', label: 'English' },
-              { value: 'zh-CN', label: '简体中文' },
+              { value: 'en', label: 'English', iconText: 'En' },
+              { value: 'zh-CN', label: '简体中文', iconText: 'Zh' },
             ]"
           />
         </div>

@@ -6,7 +6,7 @@ import { adminApplications, managedVendors, response } from "../testSupport";
 
 const links = { RouterLink: { template: '<a href="#"><slot /></a>' } };
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
-it("keeps strip and title heights stable, frames brand marks, and updates scrolling hints at both boundaries", async () => {
+it("keeps strip and title heights stable, watermarks vendor marks without changing app frames, and updates scrolling hints at both boundaries", async () => {
   const style = document.createElement("style");
   style.textContent = readFileSync("src/style.css", "utf8");
   document.head.append(style);
@@ -19,10 +19,13 @@ it("keeps strip and title heights stable, frames brand marks, and updates scroll
     expect(css(".vendor-preview-scroll").overflowX).toBe("auto");
     expect(css(".vendor-preview-scroll").height).not.toBe("");
     expect(css(".vendor-previews").gridAutoFlow).toBe("column");
-    expect(css(".vendor-previews").gridAutoColumns).toBe("minmax(96px, calc((100% - 2.4rem) / 4.5))");
-    expect(css(".entity-icon--vendor").maxWidth).toBe("min(128px, 35%)");
+    expect(css(".vendor-previews").gridAutoColumns).toBe("minmax(88px, calc((100% - 1.4rem) / 4.5))");
+    expect(css(".entity-icon--vendor").maxWidth).toBe("35%");
+    expect(css(".entity-icon--vendor").height).toBe("70px");
+    expect(Number(css(".entity-icon--vendor").opacity)).toBe(.22);
+    expect(css(".entity-icon--vendor").pointerEvents).toBe("none");
     expect(css(".entity-icon--vendor img").objectFit).toBe("contain");
-    expect(css(".entity-icon--vendor").borderTopStyle).toBe("solid");
+    expect(css(".entity-icon--vendor").borderTopStyle).not.toBe("solid");
     expect(css(".vendor-previews .entity-icon").borderTopStyle).toBe("solid");
     expect(css(".vendor-previews .is-disabled").backgroundColor).toBe("#eef0f2");
     expect(css(".vendor-previews .is-disabled .entity-icon").filter).toContain("grayscale(1)");
@@ -38,7 +41,31 @@ it("keeps strip and title heights stable, frames brand marks, and updates scroll
     expect(wrapper.get(".vendor-strip").classes()).toContain("strip-can-right");
     expect(wrapper.get(".vendor-strip").classes()).not.toContain("strip-can-left");
     expect(wrapper.get(".strip-previous").attributes("disabled")).toBeDefined();
-    await wrapper.get(".strip-next").trigger("click"); await flushPromises();
+    expect(css('.strip-next').visibility).toBe('hidden');
+    expect(css('.strip-next').pointerEvents).toBe('none');
+    await wrapper.trigger('mouseenter');
+    expect(css('.strip-next').visibility).toBe('visible');
+    await wrapper.get('.vendor-preview-scroll').trigger('focusin');
+    await wrapper.trigger('mouseleave');
+    expect(css('.strip-next').visibility).toBe('hidden');
+    expect(wrapper.get('.strip-next').attributes('tabindex')).toBe('-1');
+    expect(css('.vendor-previews li').flexWrap).toBe('nowrap');
+    expect(css('.add-application a').height).toBe('auto');
+    expect(wrapper.get('.add-application').text()).toBe('Add App');
+    expect(wrapper.find('.vendor-previews .state-label').exists()).toBe(false);
+    expect(wrapper.get('.vendor-previews .entity-icon').attributes('style')).toContain('44px');
+    viewport.scrollLeft=100; await wrapper.get('.vendor-preview-scroll').trigger('scroll');
+    expect(wrapper.get('.vendor-strip').classes()).toContain('strip-can-left');
+    expect(wrapper.get('.vendor-strip').classes()).toContain('strip-can-right');
+    vi.useFakeTimers();
+    await wrapper.get('.vendor-preview-scroll').trigger('scroll');
+    expect(wrapper.get('.vendor-preview-scroll').classes()).toContain('is-scrolling');
+    await vi.advanceTimersByTimeAsync(701);
+    expect(wrapper.get('.vendor-preview-scroll').classes()).not.toContain('is-scrolling');
+    vi.useRealTimers();
+    viewport.scrollLeft=0; await wrapper.get('.vendor-preview-scroll').trigger('scroll');
+
+    await wrapper.get(".vendor-preview-scroll").trigger("keydown", { key: "ArrowRight" }); await flushPromises();
     expect(scroll).toHaveBeenCalled();
     expect(wrapper.get(".strip-next").attributes("disabled")).toBeDefined();
     expect(wrapper.get(".vendor-strip").classes()).toContain("strip-can-left");
@@ -59,7 +86,7 @@ it("keeps strip and title heights stable, frames brand marks, and updates scroll
     expect(css(".vendor-previews").gridTemplateRows).toBe(rowHeight);
     expect(wrapper.findAll(".vendor-previews li")).toHaveLength(1);
     expect(wrapper.get(".vendor-previews li").classes()).toContain("add-application");
-  } finally { wrapper.unmount(); host.remove(); style.remove(); }
+  } finally { vi.useRealTimers(); wrapper.unmount(); host.remove(); style.remove(); }
 });
 
 it("collects every API page, keeps add last, and retries a partial-load failure without a paging UI", async () => {
