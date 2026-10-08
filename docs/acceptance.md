@@ -1,5 +1,29 @@
 # RedApp 实现与验收记录
 
+## 0.8.0 本地候选统一验收（2026-10-08，未发布）
+
+VERSION=0.8.0，SQLite schema=10；基线 HEAD 为 `2cbef7e34e95fff597ce8231e15a88892326f307`。七阶段全部实现，字段与限制见 [配置契约](configuration-v0.8.0.md)。只接受新空目录或精确 schema10；旧schema2–9/未知目录不迁移、不自动删除，拒绝后数据库及sidecars原字节保持。保留完整旧目录可使用对应旧程序切回。以下历史版本记录不代表本候选 CI/发布证据。
+
+本地候选 runtime 为 `redapp:080-local`，image ID `sha256:65403b9b58e4734af50a9d48233cb14ca29833bdaf7599ffb214de3b729fb165`，revision 标识为基线 SHA + `-dirty`，不是已提交/发布产物。使用固定 `golang:1.27.1-trixie@sha256:8f58fd67ea075142d947a60e0caa4317746a55118d312f027793d382c7741734` 原生 amd64 构建；镜像抽取二进制与 `bin/redapp` 字节一致，复用该二进制进行所有最终 runtime/CLI 检查，嵌入前端与最终源一致。
+
+| 本地门禁 | 结果与证据 |
+| --- | --- |
+| 格式、Go vet、完整 race | PASS，`make check` + `go test -race ./... -count=1 -timeout=180s`，host Go1.27.0；`/tmp/redapp-080-final-go.log` |
+| 前端 typecheck/full DOM/生产资源 | PASS，49 文件/149 测试；`/tmp/redapp-080-final-frontend-test.log`、`...-frontend-build.log` |
+| Shell installers/update/maintenance/offline candidate | PASS，Codex 15 场景、Claude 目标/入口/失败保护；维护 16 测试含 candidate 白名单/摘要/物化与基线保护；`/tmp/redapp-080-final-check-test.log` |
+| 实际 data/HTTP/instructions/retention/prewarm/taxonomy/exchange CLI | PASS，`make runtime-test`；`/tmp/redapp-080-runtime-cli.log` |
+| 固定工具链候选/runtime | PASS，amd64 native、non-root/只读 root、临时数据卷、新建schema10→重启/重建、健康、实例锁/崩溃恢复/正常停止；`/tmp/redapp-080-native-build.log`、`...-docker-runtime.log` |
+| 实际镜像 CPU 基线 | PASS，static ELF 只声明 x86-64-baseline；原有 QEMU 10.0.13 Nehalem无AVX version/default serve/health/正常停止；`/tmp/redapp-080-cpu-baseline.log` |
+| workflow/shell/最终diff | actionlint1.7.7 通过，临时配置只识别既有 ubuntu-26.04/arm 标签；shell语法/diff检查通过 |
+| 官方Claude成功联网下载 | BLOCKED：已确认出口 CONNECT403，本轮未重试/换源；仅 `_test.go` 的真实 RSA签名→清单→Catalog→授权→下载组件链为离线证据，生产根/验签无绕过 |
+| Windows PS7/5.1 / 原生arm64 | NOT RUN：当前为amd64 Linux，虽有QEMU工具但无当前原生arm64候选/runner；不安装工具或改网络，不用LinuxPS替代，待准确SHA远端CI |
+
+收尾发现并修复 Hosted 在响应头前取消被错误净化为502（保留ctx取消并覆盖真实组件链），及永久删除应用的 sources入口返回空200（未知/删除统一404）。前端旧夹具补齐完整配置叶和新configuration API，异步DOM等待使用完成条件/有限超时；没有降低生产auth cost12或认证引导测试。proxy/prewarm/retention完整叶覆盖经模板更新和DB重开验证；JPEG/SVG保持原字节/hash。preview会话/CSRF/CAS/UID ABA、整包prepare/DB失败rollback与终态receipt在完整suite及原生A→B中验证，不重复手工矩阵。
+
+所有七项合同已实现，Not planned/backlog未实施。未提交、推送、tag、发布或部署，没有本候选准确提交的远端CI。安装许可及既有static资源保留，新增 x/net0.44.0 LICENSE/PATENTS记录，补齐已有doublestar4.10.2许可原文。全部本地检查为CLI/HappyDOM，不代表GUI像素/触控或真实Windows/macOS安装验收。
+
+下述为历史验收记录。
+
 > 本文保留 v0.5.0 及更早的历史设计/验收记录。当前架构、CLI、路由与目录契约见 [多应用实施设计](multi-application-architecture-next.md) 和 [运维说明](operations.md)；历史测试结果不代表当前分支已验收。
 
 日期：2026-09-30。验证平台：Linux/amd64、Go 1.25.1；使用 CLI、确定性本地 HTTP 上游和进程测试。

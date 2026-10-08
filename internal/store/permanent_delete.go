@@ -17,8 +17,25 @@ func queueDelete(tx *sql.Tx, path string) error {
 	return err
 }
 func (s *Store) PermanentlyDeleteApplication(key string, revision int64) error {
-	if _, ok := BuiltinApplicationTemplate(key); ok {
+	if protected, err := s.canonicalApplicationProtected(key); err != nil {
+		return err
+	} else if protected {
 		return ErrBuiltinTemplate
+	}
+	// Physical purge may run under Downloads.mu. Admission is fenced before
+	// entering that callback, so this cleanup never acquires the publication gate.
+	current, e := s.Application(key)
+	if e != nil {
+		return e
+	}
+	if current.Revision != revision {
+		return ErrConflict
+	}
+	if current.DeletedAt == nil {
+		if e = s.DeleteApplication(key, revision); e != nil {
+			return e
+		}
+		revision++
 	}
 	tx, err := s.DB.Begin()
 	if err != nil {
@@ -129,6 +146,19 @@ func (s *Store) PermanentlyDeleteApplication(key string, revision int64) error {
 	return tx.Commit()
 }
 func (s *Store) PermanentlyDeleteVendor(id string, revision int64) error {
+	current, e := s.Vendor(id)
+	if e != nil {
+		return e
+	}
+	if current.Revision != revision {
+		return ErrConflict
+	}
+	if current.DeletedAt == nil {
+		if e = s.DeleteVendor(id, revision); e != nil {
+			return e
+		}
+		revision++
+	}
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return err

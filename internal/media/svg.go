@@ -24,7 +24,7 @@ var (
 // This is deliberately a static icon subset, not an SVG sanitizer that tries
 // to preserve arbitrary input. Unsupported elements and attributes are errors.
 var svgElementAttrs = map[string]string{
-	"svg":            "viewBox width height preserveAspectRatio version",
+	"svg":            "viewBox width height preserveAspectRatio version role",
 	"g":              "",
 	"defs":           "",
 	"title":          "",
@@ -192,6 +192,8 @@ func wordIn(words, value string) bool {
 
 func validSVGAttribute(key, value string) bool {
 	switch key {
+	case "role":
+		return value == "img"
 	case "id":
 		return svgID.MatchString(value)
 	case "fill", "stroke", "stop-color", "color":

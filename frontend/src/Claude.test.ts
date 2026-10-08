@@ -4,7 +4,7 @@ import { defineComponent } from "vue";
 import ChannelSettings from "./components/ChannelSettings.vue";
 import Resources from "./components/Resources.vue";
 import Maintenance from "./components/Maintenance.vue";
-import { response } from "./testSupport";
+import { response, configurationFixture } from "./testSupport";
 import { setLanguage } from "./i18n";
 import { signedIn } from "./session";
 afterEach(() => {
@@ -156,7 +156,7 @@ it("clears TTL on failed app switch, rejects late results, and binds cleanup to 
   const fetch = vi.fn((url: string, init?: RequestInit) =>
     url.endsWith("/sources")
       ? Promise.resolve(response({ sources: [] }))
-      : url.endsWith("/settings")
+      : url.endsWith("/configuration")
         ? fail
           ? Promise.resolve(response({}, 503))
           : delay
@@ -164,7 +164,7 @@ it("clears TTL on failed app switch, rejects late results, and binds cleanup to 
                 resolveLoad = r;
               })
             : Promise.resolve(
-                response({ channel_ttl_seconds: 60, revision: 0 }),
+                response(configurationFixture({cache_ttl_seconds:60},0)),
               )
         : url.endsWith("/preview")
           ? new Promise((r) => {
@@ -199,7 +199,7 @@ it("clears TTL on failed app switch, rejects late results, and binds cleanup to 
   delay = false;
   await wrapper.setProps({ application: "anthropic/claude-code" });
   await flushPromises();
-  resolveLoad?.(response({ channel_ttl_seconds: 999, revision: 0 }));
+  resolveLoad?.(response(configurationFixture({cache_ttl_seconds:999},0)));
   await flushPromises();
   expect(
     (wrapper.find("input[type=number]").element as HTMLInputElement).value,

@@ -12,7 +12,9 @@ on:
       - '.github/workflows/windows-installers.yml'
       - 'scripts/installer*.py'
       - 'scripts/test-installer*.py'
-      - 'internal/apps/builtin/manifest.json'
+      - 'presets/**'
+      - 'internal/yamlconfig/**'
+      - 'cmd/preset-inventory/**'
 
 permissions:
   contents: read
@@ -35,9 +37,15 @@ jobs:
         with:
           ref: main
           persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.27.1'
+          cache: true
       - name: Compare all official originals with main
         id: check
-        run: python3 scripts/installer_maintenance.py prepare .installer-prepared
+        run: |
+          make installer-inventory
+          python3 scripts/installer_maintenance.py prepare .installer-prepared
       - name: Build trusted validation tools
         if: steps.check.outputs.changed == 'true'
         run: docker build --pull -t installer-validator -f .github/installer-check/Dockerfile .github/installer-check
@@ -93,9 +101,15 @@ jobs:
         with:
           name: installer-update
           path: ${{ runner.temp }}/installer-bundle
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.27.1'
+          cache: true
       - name: Publish allowed files as an idempotent draft PR
         env:
           GH_TOKEN: ${{ github.token }}
           BUNDLE_SHA256: ${{ needs.validate.outputs.sha256 }}
           BASELINE_SHA: ${{ needs.validate.outputs.baseline }}
-        run: python3 scripts/publish-installer-update.py "$RUNNER_TEMP/installer-bundle/installer-update.zip" --sha256 "$BUNDLE_SHA256" --baseline "$BASELINE_SHA"
+        run: |
+          make installer-inventory
+          python3 scripts/publish-installer-update.py "$RUNNER_TEMP/installer-bundle/installer-update.zip" --sha256 "$BUNDLE_SHA256" --baseline "$BASELINE_SHA"

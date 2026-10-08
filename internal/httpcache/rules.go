@@ -23,7 +23,9 @@ func (s *Service) readPolicy(entry application.Entry) (*cachepolicy.Policy, erro
 			return nil, err
 		}
 		if revision != entry.Revision {
-			return nil, store.ErrSourceInactive
+			if err := s.db.CheckSourceActive(entry.StorageID(), fence(entry)); err != nil {
+				return nil, store.ErrSourceInactive
+			}
 		}
 	}
 	return cachepolicy.Compile(config)

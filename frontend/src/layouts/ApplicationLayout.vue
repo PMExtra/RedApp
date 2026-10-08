@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ConfigurationExchange from "../components/ConfigurationExchange.vue";
 import EntityIcon from "../components/EntityIcon.vue";
 import IconButton from "../components/IconButton.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
@@ -18,6 +19,7 @@ import {
 } from "../directory";
 import { errorText, language, t } from "../i18n";
 import Icon from "../components/Icon.vue";
+const exchange=ref<"export"|"copy">();
 const route = useRoute(),
   copied = ref(false),
   copyError = ref<unknown>();
@@ -25,6 +27,7 @@ const key = computed(() => `${route.params.vendor}/${route.params.app}`);
 watch(
   key,
   (value) => {
+    exchange.value=undefined;
     copied.value = false;
     copyError.value = undefined;
     if (validApplicationID(value)) void loadApplication(value);
@@ -91,6 +94,7 @@ async function copyURL() {
       ><span aria-hidden="true">/</span
       ><span>{{ application.name[language] }}</span>
     </nav>
+    <ConfigurationExchange v-if="exchange" :action="exchange" kind="App" :record-key="application.key" :source-u-i-d="application.uid" @close="exchange=undefined" />
     <header class="application-header">
       <div class="application-header-identity">
         <EntityIcon :src="directoryIcon(application.icon)" size="detail" />
@@ -99,6 +103,7 @@ async function copyURL() {
 
         </div>
       </div>
+      <div v-if="!application.deleted_at" class="form-actions"><IconButton icon="download" :label="t('Export configuration')" @click="exchange='export'" /><IconButton icon="duplicate" :label="t('Copy application')" @click="exchange='copy'" /></div>
       <div v-if="applicationEnabled(application)" class="form-actions">
         <RouterLink
           :to="`/${application.key}`"

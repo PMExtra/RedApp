@@ -102,7 +102,11 @@ func (s *Server) cacheAPI(w http.ResponseWriter, r *http.Request, app, endpoint 
 			fail(w, 405, "Method not allowed")
 			return true
 		}
-		entry, _ := s.Registry.LookupAny(app)
+		entry, found := s.Registry.LookupAny(app)
+		if !found || entry.DeletedAt != nil {
+			fail(w, 404, "Application not found")
+			return true
+		}
 		rows, err := s.DB.Sources()
 		if err != nil {
 			fail(w, 503, "Application sources unavailable")
@@ -348,10 +352,6 @@ func (s *Server) httpPolicy(w http.ResponseWriter, r *http.Request, app string) 
 			} else {
 				directoryError(w, err)
 			}
-			return
-		}
-		if err = s.ReloadDirectory(); err != nil {
-			directoryError(w, err)
 			return
 		}
 	}

@@ -2,6 +2,7 @@ package application
 
 import (
 	"errors"
+	"github.com/PMExtra/RedApp/presets"
 
 	"github.com/PMExtra/RedApp/internal/distributor"
 )
@@ -45,8 +46,8 @@ func Definitions() []Definition {
 		{Key: Info, Name: Localized{"en": "App Info", "zh-CN": "应用介绍"}, Description: Localized{"en": "Application details and instructions, without file hosting or caching.", "zh-CN": "展示应用资料与使用说明，不托管或缓存文件。"}, Capabilities: contentCapabilities(false, false, false, false)},
 		{Key: Hosted, Name: Localized{"en": "Hosted Files", "zh-CN": "文件托管"}, Description: Localized{"en": "Upload files or import a URL for permanent storage and downloads.", "zh-CN": "上传文件或从网址导入，持久保存并提供下载。"}, Capabilities: hostedCapabilities()},
 		{Key: HttpCache, Name: Localized{"en": "HTTP Cache", "zh-CN": "HTTP 缓存"}, Description: Localized{"en": "Fetch and cache HTTP upstream files on demand.", "zh-CN": "按需获取并缓存 HTTP 上游文件。"}, DefaultCacheTTLSeconds: 300, Capabilities: contentCapabilities(true, false, false, true)},
-		{Key: Codex, Name: Localized{"en": "Codex", "zh-CN": "Codex"}, Description: Localized{"en": "Distribute Codex releases and installation resources.", "zh-CN": "分发 Codex 版本及安装资源。"}, DefaultBaseURL: "https://releases.openai.com/codex", DefaultCacheTTLSeconds: 60, Capabilities: contentCapabilities(true, true, true, false)},
-		{Key: ClaudeCode, Name: Localized{"en": "Claude Code", "zh-CN": "Claude Code"}, Description: Localized{"en": "Distribute Claude Code releases and installation resources.", "zh-CN": "分发 Claude Code 版本及安装资源。"}, DefaultBaseURL: "https://downloads.claude.ai/claude-code-releases", DefaultCacheTTLSeconds: 60, Capabilities: contentCapabilities(true, true, true, false)},
+		{Key: Codex, Name: Localized{"en": "Codex", "zh-CN": "Codex"}, Description: Localized{"en": "Distribute Codex releases and installation resources.", "zh-CN": "分发 Codex 版本及安装资源。"}, DefaultBaseURL: presetDefault(Codex).BaseURL, DefaultCacheTTLSeconds: presetDefault(Codex).CacheTTLSeconds, Capabilities: contentCapabilities(true, true, true, false)},
+		{Key: ClaudeCode, Name: Localized{"en": "Claude Code", "zh-CN": "Claude Code"}, Description: Localized{"en": "Distribute Claude Code releases and installation resources.", "zh-CN": "分发 Claude Code 版本及安装资源。"}, DefaultBaseURL: presetDefault(ClaudeCode).BaseURL, DefaultCacheTTLSeconds: presetDefault(ClaudeCode).CacheTTLSeconds, Capabilities: contentCapabilities(true, true, true, false)},
 	}
 }
 
@@ -141,4 +142,19 @@ func NormalizeConfig(provider string, config ProviderConfig) (ProviderConfig, er
 	}
 	config.BaseURL = base
 	return config, nil
+}
+
+func presetDefault(provider string) presets.AppSpec {
+	key := "openai/codex"
+	if provider == ClaudeCode {
+		key = "anthropic/claude-code"
+	}
+	for _, a := range presets.Embedded().Apps {
+		if a.Key() == key && a.Spec.Provider == provider {
+			return a.Spec
+		}
+	}
+	// Existing effective records supply their explicit source/TTL. A removed
+	// display preset must not remove the compiled provider or invent defaults.
+	return presets.AppSpec{}
 }

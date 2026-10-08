@@ -25,7 +25,7 @@ func TestHTTPPolicyApplicationCASAndAtomicPersistence(t *testing.T) {
 	}
 	// Missing persisted fields inherit the documented default; an explicit false
 	// must remain false. Read configuration and app revision share one transaction.
-	if _, err = s.DB.Exec(`INSERT INTO settings VALUES('app',?,'http_policy',1,?)`, app.MetricsID(), []byte(`{"rules":[],"auto_cleanup":[]}`)); err != nil {
+	if _, err = s.DB.Exec(`INSERT OR REPLACE INTO settings VALUES('app',?,'http_policy',1,?)`, app.MetricsID(), []byte(`{"rules":[],"auto_cleanup":[]}`)); err != nil {
 		t.Fatal(err)
 	}
 	legacy, _, err := s.ReadHTTPPolicy(app.Key)

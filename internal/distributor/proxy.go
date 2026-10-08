@@ -2,9 +2,9 @@ package distributor
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/PMExtra/RedApp/internal/networkproxy"
 	"github.com/PMExtra/RedApp/internal/store"
 	"net"
 	"net/http"
@@ -29,11 +29,15 @@ func invalidProxy(message string) error {
 // The administrative API returns the exact saved URL, including encoded userinfo.
 // It must never be included in public output, diagnostics, or events.
 type ProxyView struct {
+	Mode     string `json:"mode"`
+	URL      string `json:"url,omitempty"`
 	Server   string `json:"server"`
 	DNS      string `json:"dns"`
 	Revision int64  `json:"revision"`
 }
 type ProxyUpdate struct {
+	Mode   string `json:"mode,omitempty"`
+	URL    string `json:"url,omitempty"`
 	Server string `json:"server"`
 }
 
@@ -45,6 +49,7 @@ type Pool struct {
 	proxyStore    *store.Store
 	proxyRevision int64
 	transports    atomic.Pointer[transportSet]
+	scopes        atomic.Pointer[scopeSnapshot]
 }
 
 type transportSet struct {
@@ -71,12 +76,19 @@ func (p *Pool) CloseIdleConnections() {
 		if transports := p.transports.Load(); transports != nil {
 			transports.closeIdle()
 		}
+		if scoped := p.scopes.Load(); scoped != nil {
+			for _, tr := range scoped.byURL {
+				tr.closeIdle()
+			}
+		}
 	}
 }
 
 type transportReference struct {
 	pool       *Pool
 	configured bool
+	appUID     string
+	vendorUID  string
 }
 
 func (r transportReference) Load() *http.Transport {
@@ -90,6 +102,21 @@ func (r transportReference) Load() *http.Transport {
 type transportSwitch struct{ current transportReference }
 
 func (s *transportSwitch) RoundTrip(r *http.Request) (*http.Response, error) {
+	if s.current.appUID != "" {
+		snapshot := s.current.pool.scopes.Load()
+		if snapshot == nil {
+			return nil, errors.New("Unknown application transport scope")
+		}
+		scope, ok := snapshot.scopes[s.current.appUID]
+		if !ok || !scope.allowed || scope.vendorUID != s.current.vendorUID {
+			return nil, errors.New("Inactive application transport scope")
+		}
+		transport := scope.transports.public
+		if s.current.configured {
+			transport = scope.transports.configured
+		}
+		return transport.RoundTrip(r)
+	}
 	return s.current.Load().RoundTrip(r)
 }
 
@@ -115,89 +142,53 @@ func (c *Client) SetProxy(update ProxyUpdate, expected int64) error {
 }
 
 func (c *Pool) LoadProxy(db *store.Store) error {
-	c.proxyMu.Lock()
-	defer c.proxyMu.Unlock()
-	// Legacy fields exist only during this one-way persisted migration.
-	var legacy struct {
-		Server   string  `json:"server"`
-		Username *string `json:"username"`
-		Password *string `json:"password"`
-	}
-	revision, err := db.ReadSetting("global", "", "upstream_proxy", &legacy)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	snapshot, err := db.DirectoryConfigurationSnapshot()
+	if err != nil {
 		return errors.New("Failed to read upstream proxy settings")
 	}
-	conf := proxyConfig{Server: legacy.Server}
-	if (legacy.Username != nil || legacy.Password != nil) && conf.Server != "" {
-		u, parseErr := url.Parse(conf.Server)
-		if parseErr != nil || u.User != nil {
-			return invalidProxy("Invalid legacy proxy URL")
-		}
-		username, password := "", ""
-		if legacy.Username != nil {
-			username = *legacy.Username
-		}
-		if legacy.Password != nil {
-			password = *legacy.Password
-		}
-		if username != "" || password != "" {
-			u.User = url.UserPassword(username, password)
-		}
-		conf.Server = u.String()
-	}
-	tr, err := transportsFor(conf)
+	plan, err := c.PrepareConfiguration(snapshot)
 	if err != nil {
 		return err
 	}
-	if legacy.Username != nil || legacy.Password != nil {
-		revision, err = db.CompareAndSwapSetting("global", "", "upstream_proxy", revision, conf)
-		if err != nil {
-			tr.closeIdle()
-			return errors.New("Failed to migrate upstream proxy settings")
-		}
-	}
-	if c.transports.Load() == nil {
-		return errors.New("Upstream transport is not configurable")
-	}
-	old := c.transports.Swap(tr)
-	old.closeIdle()
+	plan.Publish()
 	c.proxyStore = db
-	c.proxyConfig = conf
-	c.proxyRevision = revision
+	// Startup/standalone callers receive the same config CAS/publish protocol.
+	// Server subsequently replaces this hook with the composite runtime plan.
+	db.SetInitialConfigurationPrepare(func(snapshot store.DirectorySnapshot) (store.ConfigurationPublication, error) {
+		return c.PrepareConfiguration(snapshot)
+	})
 	return nil
 }
 func (c *Pool) Proxy() ProxyView {
 	c.proxyMu.Lock()
 	defer c.proxyMu.Unlock()
 	conf := c.proxyConfig
-	dns := "local"
+	mode, dns := "direct", "local"
 	if conf.Server != "" {
-		dns = "proxy"
+		mode, dns = "url", "proxy"
 	}
-	return ProxyView{Server: conf.Server, DNS: dns, Revision: c.proxyRevision}
+	return ProxyView{Mode: mode, URL: conf.Server, Server: conf.Server, DNS: dns, Revision: c.proxyRevision}
 }
 func (c *Pool) SetProxy(update ProxyUpdate, expected int64) error {
-	c.proxyMu.Lock()
-	defer c.proxyMu.Unlock()
-	if c.proxyStore == nil || c.transports.Load() == nil {
+	if c.proxyStore == nil {
 		return errors.New("Upstream proxy settings are unavailable")
 	}
-	conf := proxyConfig{Server: update.Server}
-	tr, err := transportsFor(conf)
-	if err != nil {
-		return invalidProxy(err.Error())
+	conf := networkproxy.Config{Mode: update.Mode, URL: update.URL}
+	if conf.Mode == "" {
+		conf = networkproxy.Direct()
+		if update.Server != "" {
+			conf = networkproxy.Config{Mode: "url", URL: update.Server}
+		}
+	} else if update.Server != "" {
+		return invalidProxy("Ambiguous proxy fields")
 	}
-	revision, err := c.proxyStore.CompareAndSwapSetting("global", "", "upstream_proxy", expected, conf)
-	if err != nil {
-		tr.closeIdle()
-		return err
+	if err := conf.Validate(false); err != nil {
+		return invalidProxy("Invalid proxy settings")
 	}
-	c.proxyConfig = conf
-	c.proxyRevision = revision
-	old := c.transports.Swap(tr)
-	old.closeIdle()
-	return nil
+	_, err := c.proxyStore.PatchGlobalProxy(expected, conf)
+	return err
 }
+
 func transportsFor(conf proxyConfig) (*transportSet, error) {
 	public, err := transportForMode(conf, false)
 	if err != nil {
@@ -278,4 +269,92 @@ func resolvedDial(ctx context.Context, network, addr string, requirePublic bool)
 		last = e
 	}
 	return nil, last
+}
+
+type scopedTransport struct {
+	vendorUID  string
+	allowed    bool
+	transports *transportSet
+}
+type scopeSnapshot struct {
+	scopes map[string]scopedTransport
+	byURL  map[string]*transportSet
+}
+type ProxyPublication struct {
+	pool     *Pool
+	next     *scopeSnapshot
+	global   *transportSet
+	config   networkproxy.Config
+	revision int64
+	created  []*transportSet
+}
+
+func (p *Pool) PrepareConfiguration(snapshot store.DirectorySnapshot) (*ProxyPublication, error) {
+	p.proxyMu.Lock()
+	result := &ProxyPublication{pool: p, next: &scopeSnapshot{scopes: map[string]scopedTransport{}, byURL: map[string]*transportSet{}}, config: snapshot.GlobalProxy, revision: snapshot.GlobalProxyRevision}
+	fail := func(err error) (*ProxyPublication, error) { result.Abort(); return nil, err }
+	old := p.scopes.Load()
+	obtain := func(c networkproxy.Config) (*transportSet, error) {
+		if err := c.Validate(false); err != nil {
+			return nil, invalidProxy("Invalid proxy settings")
+		}
+		key := c.URL
+		if tr := result.next.byURL[key]; tr != nil {
+			return tr, nil
+		}
+		if old != nil {
+			if tr := old.byURL[key]; tr != nil {
+				result.next.byURL[key] = tr
+				return tr, nil
+			}
+		}
+		tr, err := transportsFor(proxyConfig{Server: c.URL})
+		if err != nil {
+			return nil, invalidProxy("Invalid proxy settings")
+		}
+		result.created = append(result.created, tr)
+		result.next.byURL[key] = tr
+		return tr, nil
+	}
+	var err error
+	result.global, err = obtain(snapshot.GlobalProxy)
+	if err != nil {
+		return fail(err)
+	}
+	for uid, scope := range snapshot.ProxyScopes {
+		tr, err := obtain(scope.Proxy.Config)
+		if err != nil {
+			return fail(err)
+		}
+		result.next.scopes[uid] = scopedTransport{vendorUID: scope.VendorUID, allowed: scope.Allowed, transports: tr}
+	}
+	return result, nil
+}
+func (p *ProxyPublication) Abort() {
+	for _, tr := range p.created {
+		tr.closeIdle()
+	}
+	p.pool.proxyMu.Unlock()
+}
+func (p *ProxyPublication) Publish() {
+	c := p.pool
+	old := c.scopes.Swap(p.next)
+	previousGlobal := c.transports.Swap(p.global)
+	c.proxyConfig = proxyConfig{Server: p.config.URL}
+	c.proxyRevision = p.revision
+	retained := map[*transportSet]bool{}
+	for _, tr := range p.next.byURL {
+		retained[tr] = true
+	}
+	if old != nil {
+		for _, tr := range old.byURL {
+			if !retained[tr] {
+				tr.closeIdle()
+			}
+		}
+	}
+	if !retained[previousGlobal] {
+		previousGlobal.closeIdle()
+	}
+	c.proxyMu.Unlock()
 }

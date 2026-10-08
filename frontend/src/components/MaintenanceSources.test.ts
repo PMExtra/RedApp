@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { defineComponent } from "vue";
 import ChannelSettings from "./ChannelSettings.vue";
 import Maintenance from "./Maintenance.vue";
-import { response } from "../testSupport";
+import { response, configurationFixture } from "../testSupport";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -42,9 +42,15 @@ it("scopes release cleanup to a historical source, keeps TTL current and permits
           ],
         }),
       );
-    if (path.endsWith("/settings"))
+    if (path.endsWith("/configuration"))
       return Promise.resolve(
-        response({ channel_ttl_seconds: 60, revision: 1 }),
+        response(
+          configurationFixture(
+            { cache_ttl_seconds: init?.method === "PATCH" ? 120 : 60 },
+            init?.method === "PATCH" ? 2 : 1,
+            "openai/codex",
+          ),
+        ),
       );
     if (path.endsWith("/preview"))
       return delay
@@ -68,8 +74,8 @@ it("scopes release cleanup to a historical source, keeps TTL current and permits
   await wrapper.get(".ttl-form input").setValue("120");
   await wrapper.get(".ttl-form").trigger("submit");
   await flushPromises();
-  const ttl = fetch.mock.calls.find(([, init]) => init?.method === "PUT")!;
-  expect(ttl[0]).toBe("/admin/api/apps/openai/codex/settings");
+  const ttl = fetch.mock.calls.find(([, init]) => init?.method === "PATCH")!;
+  expect(ttl[0]).toBe("/admin/api/apps/openai/codex/configuration");
   await wrapper.get(".cleanup input").setValue("1.2.3");
   await wrapper.get(".cleanup").trigger("submit");
   await flushPromises();

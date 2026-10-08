@@ -68,10 +68,17 @@ func (s *Store) ReadHTTPPolicy(key string) (cachepolicy.Config, int64, error) {
 
 // SaveHTTPPolicy shares directory CAS and changes no source epoch. Configuration
 // and the admission revision commit together so older background work is fenced.
-func (s *Store) SaveHTTPPolicy(key string, expectedAppRevision int64, config cachepolicy.Config) (Application, error) {
+func (s *Store) SaveHTTPPolicy(key string, revision int64, config cachepolicy.Config) (Application, error) {
 	config, err := cachepolicy.Normalize(config)
 	if err != nil {
 		return Application{}, err
+	}
+	a, err := s.Application(key)
+	if err != nil {
+		return Application{}, err
+	}
+	if a.Provider != "http-cache" {
+		return Application{}, ErrInvalidDirectory
 	}
 	for i := range config.Rules {
 		if config.Rules[i].ID == "" {
@@ -81,32 +88,9 @@ func (s *Store) SaveHTTPPolicy(key string, expectedAppRevision int64, config cac
 			}
 		}
 	}
-	raw, err := json.Marshal(config)
-	if err != nil {
+	patch := ConfigurationPatch{Revision: revision, Set: map[string]json.RawMessage{"http_policy.rules": encode(config.Rules), "http_policy.auto_cleanup": encode(config.AutoCleanup), "http_policy.stale_fallback": encode(config.StaleFallback)}}
+	if err = s.patchConfiguration("App", key, patch, nil, nil); err != nil {
 		return Application{}, err
 	}
-	tx, err := s.DB.Begin()
-	if err != nil {
-		return Application{}, err
-	}
-	defer tx.Rollback()
-	app, err := policyApplication(tx, key, false)
-	if err != nil {
-		return Application{}, err
-	}
-	if app.Revision != expectedAppRevision {
-		return Application{}, ErrConflict
-	}
-	if _, err = tx.Exec(`INSERT INTO settings(scope,app_id,key,revision,payload) VALUES('app',?,'http_policy',?,?) ON CONFLICT(scope,app_id,key) DO UPDATE SET revision=excluded.revision,payload=excluded.payload`, app.MetricsID(), app.Revision+1, raw); err != nil {
-		return Application{}, err
-	}
-	result, err := tx.Exec(`UPDATE applications SET revision=revision+1 WHERE uid=? AND revision=? AND deleted_at_s IS NULL`, app.UID, expectedAppRevision)
-	if err = affected(result, err); err != nil {
-		return Application{}, err
-	}
-	app.Revision++
-	if err = tx.Commit(); err != nil {
-		return Application{}, err
-	}
-	return app, nil
+	return s.Application(key)
 }

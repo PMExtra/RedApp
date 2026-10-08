@@ -51,12 +51,27 @@ type Row struct {
 	current      bool
 }
 
+type fetchLengthKey struct{}
+type fetchObserverKey struct{}
+type fetchFlightKey struct{}
+type fetchWaiter struct {
+	observe func(int64) error
+	check   func(int64) error
+	failed  chan struct{}
+	err     error
+}
 type flight struct {
-	done  chan struct{}
-	rowID string
-	err   error
-	retry bool
-	stale bool
+	releaseOnce sync.Once
+	waiters     map[*fetchWaiter]bool
+	cancel      context.CancelFunc
+	result      fetchResult
+	finished    bool
+	claimed     bool
+	done        chan struct{}
+	rowID       string
+	err         error
+	retry       bool
+	stale       bool
 }
 
 type transfer struct {
@@ -120,7 +135,7 @@ func (s *Service) Close() error {
 }
 
 func fence(entry application.Entry) store.SourceFence {
-	return store.SourceFence{AppRevision: entry.Revision, VendorRevision: entry.VendorRevision}
+	return store.SourceFence{AppRevision: entry.RuntimeRevision, VendorRevision: entry.VendorRuntimeRevision}
 }
 func (s *Service) begin(entry application.Entry) error {
 	s.mu.Lock()

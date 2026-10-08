@@ -3,6 +3,7 @@ package httpserver
 import (
 	"bytes"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,25 +24,22 @@ func (s *Server) ReloadDirectory() error {
 	if s.Pool == nil {
 		return errors.New("Application transport unavailable")
 	}
-	vendors, err := s.DB.Vendors(true)
+	snapshot, err := s.DB.DirectoryConfigurationSnapshot()
 	if err != nil {
 		return err
 	}
-	apps, err := s.DB.Applications(true)
+	entries, err := builtin.EntriesFromConfiguration(snapshot, s.Pool)
 	if err != nil {
 		return err
 	}
-	next, err := builtin.NewDynamic(vendors, apps, s.Pool)
+	next, err := application.NewRegistry(entries)
 	if err != nil {
 		return err
 	}
-	sources, err := s.DB.Sources()
-	if err != nil {
-		return err
-	}
+	sources := snapshot.Sources
 	clients := make(map[string]*distributor.Client, len(sources))
 	for _, source := range sources {
-		client, e := builtin.NewSourceClient(source.Provider, source.BaseURL, s.Pool)
+		client, e := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, snapshot.ProviderDefaults[source.Provider], source.AppUID, snapshot.ProxyScopes[source.AppUID].VendorUID, s.Pool)
 		if e != nil {
 			return e
 		}
@@ -62,17 +60,17 @@ func (s *Server) setDirectoryTTL(key string, expected int64, seconds int) (int64
 	if err != nil {
 		return 0, err
 	}
-	row, err = s.DB.UpdateApplication(key, expected, store.ApplicationChanges{Name: row.Name, Description: row.Description, Icon: row.Icon, BaseURL: row.BaseURL, BaseURLs: row.BaseURLs, SourceStrategy: row.SourceStrategy, CacheTTLSeconds: seconds, Enabled: row.Enabled})
+	row, err = s.DB.PatchApplicationFields(key, expected, map[string]json.RawMessage{"cache_ttl_seconds": encodeJSON(seconds)}, nil)
 	if err != nil {
-		return 0, err
-	}
-	if err = s.ReloadDirectory(); err != nil {
 		return 0, err
 	}
 	return row.Revision, nil
 }
 
 type directoryInput struct {
+	Category        *string   `json:"category"`
+	Tags            *[]string `json:"tags"`
+	explicit        map[string]json.RawMessage
 	ConfirmUID      string               `json:"confirm_uid"`
 	ConfirmKey      string               `json:"confirm_key"`
 	Revision        int64                `json:"revision"`
@@ -119,6 +117,12 @@ func (in directoryInput) applicationInput() (store.ApplicationInput, error) {
 	}
 	v := in.vendorInput()
 	a := store.ApplicationInput{ID: v.ID, Name: v.Name, Description: v.Description, Icon: v.Icon, Enabled: v.Enabled, Provider: in.Provider, CacheTTLSeconds: d.DefaultCacheTTLSeconds}
+	if in.Category != nil {
+		a.Category = *in.Category
+	}
+	if in.Tags != nil {
+		a.Tags = append([]string{}, (*in.Tags)...)
+	}
 	if in.BaseURL != nil {
 		a.BaseURL = *in.BaseURL
 	}
@@ -183,6 +187,14 @@ func directoryError(w http.ResponseWriter, err error) {
 func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 	endpoint := strings.TrimPrefix(r.URL.Path, "/admin/api/")
 	parts := strings.Split(endpoint, "/")
+	if len(parts) == 3 && parts[0] == "vendors" && parts[2] == "configuration" {
+		s.configurationAPI(w, r, "Vendor", parts[1])
+		return true
+	}
+	if len(parts) == 4 && parts[0] == "apps" && parts[3] == "configuration" {
+		s.configurationAPI(w, r, "App", parts[1]+"/"+parts[2])
+		return true
+	}
 	if endpoint == "assets/builtin-icon" {
 		if r.Method != http.MethodGet || !queryAllowed(r, "path") {
 			fail(w, 400, "Invalid icon request")
@@ -194,6 +206,7 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 			return true
 		}
 		w.Header().Set("Content-Type", asset.ContentType)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
 		w.Write(asset.Body)
 		return true
@@ -326,7 +339,7 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 	status := 200
 	switch {
 	case create && endpoint == "vendors":
-		if in.Provider != "" || in.BaseURL != nil || in.BaseURLs != nil || in.SourceStrategy != nil || in.CacheTTLSeconds != nil {
+		if in.Category != nil || in.Tags != nil || in.Provider != "" || in.BaseURL != nil || in.BaseURLs != nil || in.SourceStrategy != nil || in.CacheTTLSeconds != nil {
 			fail(w, 400, "Unexpected vendor fields")
 			return true
 		}
@@ -344,7 +357,7 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 			status = 201
 		}
 	case isVendor && len(parts) == 2:
-		if in.BaseURL != nil || in.BaseURLs != nil || in.SourceStrategy != nil || in.CacheTTLSeconds != nil {
+		if in.Category != nil || in.Tags != nil || in.BaseURL != nil || in.BaseURLs != nil || in.SourceStrategy != nil || in.CacheTTLSeconds != nil {
 			fail(w, 400, "Unexpected vendor fields")
 			return true
 		}
@@ -360,23 +373,12 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 			}
 			err = s.DB.PermanentlyDeleteVendor(parts[1], in.Revision)
 		} else if r.Method == http.MethodPatch {
-			changes := store.VendorChanges{Name: row.Name, Description: row.Description, Icon: row.Icon, LocalizedIcons: row.LocalizedIcons, Enabled: row.Enabled}
-			if in.LocalizedIcons != nil {
-				changes.LocalizedIcons = *in.LocalizedIcons
+			set, e := in.configurationFields("Vendor")
+			if e != nil {
+				err = e
+				break
 			}
-			if in.Name != nil {
-				changes.Name = *in.Name
-			}
-			if in.Description != nil {
-				changes.Description = *in.Description
-			}
-			if in.Icon != nil {
-				changes.Icon = *in.Icon
-			}
-			if in.Enabled != nil {
-				changes.Enabled = *in.Enabled
-			}
-			row, err = s.DB.UpdateVendor(parts[1], in.Revision, changes)
+			row, err = s.DB.PatchVendorFields(parts[1], in.Revision, set, in.Enabled)
 		} else {
 			fail(w, 405, "Method not allowed")
 			return true
@@ -404,50 +406,26 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 			}
 			err = s.deleteApplication(r.Context(), key, in.Revision)
 		} else if r.Method == http.MethodPatch {
-			input := store.ApplicationInput{ID: row.ID, Name: row.Name, Description: row.Description, Icon: row.Icon, Provider: row.Provider, BaseURL: row.BaseURL, BaseURLs: row.BaseURLs, SourceStrategy: row.SourceStrategy, CacheTTLSeconds: row.CacheTTLSeconds, Enabled: row.Enabled}
-			if in.Name != nil {
-				input.Name = *in.Name
-			}
-			if in.Description != nil {
-				input.Description = *in.Description
-			}
-			if in.Icon != nil {
-				input.Icon = *in.Icon
-			}
-			if in.Enabled != nil {
-				input.Enabled = *in.Enabled
-			}
-			if in.BaseURL != nil {
-				input.BaseURL = *in.BaseURL
-				if row.Provider == application.HttpCache {
-					var base string
-					base, err = distributor.NormalizeBase(*in.BaseURL, distributor.GeneralHTTP)
-					if err != nil {
-						err = fmt.Errorf("%w: %v", store.ErrInvalidDirectory, err)
-						break
-					}
-					if base != row.BaseURL {
-						input.BaseURLs = nil
-					}
-				}
-			}
-			if in.BaseURLs != nil {
-				input.BaseURLs = append([]string{}, (*in.BaseURLs)...)
-			}
-			if in.SourceStrategy != nil {
-				input.SourceStrategy = *in.SourceStrategy
-			}
-			if in.BaseURL != nil && in.BaseURLs != nil {
-				err = fmt.Errorf("%w: provide base_urls or base_url, not both", store.ErrInvalidDirectory)
+			set, e := in.configurationFields("App")
+			if e != nil {
+				err = e
 				break
 			}
-			if in.CacheTTLSeconds != nil {
-				input.CacheTTLSeconds = *in.CacheTTLSeconds
+			if in.BaseURL != nil && in.BaseURLs != nil {
+				err = store.ErrInvalidDirectory
+				break
 			}
-			input, err = normalizedApplication(input)
-			if err == nil {
-				row, err = s.DB.UpdateApplication(key, in.Revision, store.ApplicationChanges{Name: input.Name, Description: input.Description, Icon: input.Icon, BaseURL: input.BaseURL, BaseURLs: input.BaseURLs, SourceStrategy: input.SourceStrategy, CacheTTLSeconds: input.CacheTTLSeconds, Enabled: input.Enabled})
+			if row.Provider == application.HttpCache && in.BaseURL != nil {
+				base, e := distributor.NormalizeBase(*in.BaseURL, distributor.GeneralHTTP)
+				if e != nil {
+					err = e
+					break
+				}
+				if base != row.BaseURL {
+					set["base_urls"] = encodeJSON([]string{base})
+				}
 			}
+			row, err = s.DB.PatchApplicationFields(key, in.Revision, set, in.Enabled)
 		} else {
 			fail(w, 405, "Method not allowed")
 			return true
@@ -456,9 +434,6 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 	default:
 		fail(w, 405, "Method not allowed")
 		return true
-	}
-	if err == nil {
-		err = s.ReloadDirectory()
 	}
 	if err != nil {
 		directoryError(w, err)

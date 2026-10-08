@@ -24,6 +24,7 @@ func TestV072TemplateInsertionProtectionAndSelectiveCAS(t *testing.T) {
 	if _, err = s.SaveInstructions(a.Key, 0, LocalizedText{}); err != nil {
 		t.Fatal(err)
 	}
+	a, _ = s.Application(a.Key)
 	if err = s.EnsureEntityTemplates(); err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +33,7 @@ func TestV072TemplateInsertionProtectionAndSelectiveCAS(t *testing.T) {
 		t.Fatal("existing template key overwritten", same)
 	}
 	blank, _ := s.Instructions(a.UID)
-	if blank.Revision != 1 || blank.En != "" {
+	if blank.Revision != 0 || blank.En != "" {
 		t.Fatal("explicit blank replaced", blank)
 	}
 	claude, _ := s.Application("anthropic/claude-code")
@@ -52,7 +53,7 @@ func TestV072TemplateInsertionProtectionAndSelectiveCAS(t *testing.T) {
 	if _, err = s.ResetApplicationTemplate(a.Key, TemplateReset{Revision: a.Revision}); !errors.Is(err, ErrInvalidDirectory) {
 		t.Fatal("empty selection mutated configuration", err)
 	}
-	if _, err = s.ResetApplicationTemplate(a.Key, TemplateReset{Revision: a.Revision, InstructionsRevision: 0, Groups: []string{"metadata", "instructions_en"}}); !errors.Is(err, ErrConflict) {
+	if _, err = s.ResetApplicationTemplate(a.Key, TemplateReset{Revision: a.Revision, InstructionsRevision: 99, Groups: []string{"metadata", "instructions_en"}}); !errors.Is(err, ErrConflict) {
 		t.Fatal("instruction CAS missing", err)
 	}
 	after, _ := s.Application(a.Key)
@@ -60,14 +61,15 @@ func TestV072TemplateInsertionProtectionAndSelectiveCAS(t *testing.T) {
 		t.Fatal("partial reset escaped rollback")
 	}
 	after, err = s.ResetApplicationTemplate(a.Key, TemplateReset{Revision: a.Revision, Groups: []string{"metadata"}})
-	if err != nil {
-		t.Fatal(err)
+	if !errors.Is(err, ErrInvalidDirectory) {
+		t.Fatal("independent entity must not acquire inheritance through reset", err)
 	}
+	after, _ = s.Application(a.Key)
 	if after.Provider != a.Provider || after.SourceEpoch != a.SourceEpoch || after.Enabled != a.Enabled || after.UID != a.UID {
 		t.Fatal("unselected fields changed", after)
 	}
 	blank, _ = s.Instructions(a.UID)
-	if blank.En != "" || blank.Revision != 1 {
+	if blank.En != "" || blank.Revision != 0 {
 		t.Fatal("unselected instructions changed")
 	}
 	if err = s.EnsureEntityTemplates(); err != nil {
@@ -154,6 +156,7 @@ func TestV072PermanentRemovalIsScopedAndRestartable(t *testing.T) {
 	s.AddFor(a.MetricsID(), "artifact_requests", 4)
 	s.AddFor(sibling.MetricsID(), "artifact_requests", 7)
 	s.SaveInstructions(a.Key, 0, LocalizedText{"remove me", "移除"})
+	a, _ = s.Application(a.Key)
 	s.SaveHomepagePins(HomepagePins{Keys: []string{a.Key, sibling.Key}})
 	id := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	path := filepath.Join(dir, "objects", "hosted", id)
@@ -237,6 +240,7 @@ func TestV072CompatibleResetPreservesOtherLanguageAndOwnedData(t *testing.T) {
 		t.Fatal(err)
 	}
 	resource := releaseFixture(t, s, a.StorageID(), "1.0.0")
+	a, _ = s.Application(a.Key)
 	reset, err := s.ResetApplicationTemplate(a.Key, TemplateReset{Revision: a.Revision, InstructionsRevision: instructions.Revision, Groups: []string{"cache", "instructions_en"}})
 	if err != nil {
 		t.Fatal(err)
@@ -254,128 +258,5 @@ func TestV072CompatibleResetPreservesOtherLanguageAndOwnedData(t *testing.T) {
 	counts, _ := s.CountersFor(a.MetricsID())
 	if counts["artifact_requests"] != 7 {
 		t.Fatal("reset removed history", counts)
-	}
-}
-
-func TestOpenAIVendorDefaultIconBackfill(t *testing.T) {
-	for _, icon := range []string{"", "/assets/icons/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.svg"} {
-		t.Run(icon, func(t *testing.T) {
-			dir := t.TempDir()
-			db, err := sql.Open("sqlite3", filepath.Join(dir, "state.sqlite"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err = db.Exec(schemaV7); err != nil {
-				t.Fatal(err)
-			}
-			s := &Store{DB: db}
-			v, err := legacyVendor(t, db, VendorInput{ID: "openai", Name: LocalizedText{En: "Custom", ZhCN: "Custom"}, Icon: icon, Enabled: true})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = s.DB.Close(); err != nil {
-				t.Fatal(err)
-			}
-			s, err = Open(dir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { s.DB.Close() })
-			if err = s.EnsureEntityTemplates(); err != nil {
-				t.Fatal(err)
-			}
-			got, err := s.Vendor(v.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			want, revision := icon, v.Revision
-			if icon == "" {
-				want = "/assets/builtin/openai.svg"
-				revision++
-			}
-			if got.Icon != want || got.Revision != revision || got.Name != v.Name || got.Enabled != v.Enabled || got.UID != v.UID {
-				t.Fatalf("unexpected backfill: %+v", got)
-			}
-			if err = s.EnsureEntityTemplates(); err != nil {
-				t.Fatal(err)
-			}
-			again, _ := s.Vendor(v.ID)
-			if !reflect.DeepEqual(got, again) {
-				t.Fatal("repeated backfill changed vendor")
-			}
-			// After migration a deliberate clear must survive a real close/reopen.
-			if icon == "" {
-				changes := vendorChanges(got)
-				changes.Icon = ""
-				got, err = s.UpdateVendor(v.ID, got.Revision, changes)
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
-			if err = s.DB.Close(); err != nil {
-				t.Fatal(err)
-			}
-			s, err = Open(dir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = s.EnsureEntityTemplates(); err != nil {
-				t.Fatal(err)
-			}
-			again, _ = s.Vendor(v.ID)
-			if !reflect.DeepEqual(got, again) {
-				t.Fatal("restart replaced cleared or custom icon", again)
-			}
-			reset, err := s.ResetVendorTemplate(v.ID, TemplateReset{Revision: got.Revision, Groups: []string{"icon"}})
-			if err != nil || reset.Icon != "/assets/builtin/openai.svg" || reset.Name != v.Name || reset.Enabled != v.Enabled {
-				t.Fatal("icon reset", reset, err)
-			}
-		})
-	}
-}
-
-func TestOpenAIIconMigrationFailureCanRetry(t *testing.T) {
-	dir := t.TempDir()
-	db, err := sql.Open("sqlite3", filepath.Join(dir, "state.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if _, err = db.Exec(schemaV7); err != nil {
-		t.Fatal(err)
-	}
-	v, err := legacyVendor(t, db, VendorInput{ID: "openai", Name: LocalizedText{En: "Custom", ZhCN: "Custom"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = db.Exec(`CREATE TRIGGER reject_icon AFTER UPDATE OF icon ON vendors BEGIN SELECT RAISE(ABORT, 'test migration failure'); END`); err != nil {
-		t.Fatal(err)
-	}
-	if opened, err := Open(dir); err == nil {
-		opened.DB.Close()
-		t.Fatal("migration failure was ignored")
-	}
-	var version int
-	if err = db.QueryRow(`SELECT version FROM schema_version`).Scan(&version); err != nil || version != 7 {
-		t.Fatal("failed migration advanced version", version, err)
-	}
-	unchanged, err := readLegacyVendor(db, v.ID)
-	if err != nil || !reflect.DeepEqual(v, unchanged) {
-		t.Fatal("failed migration changed vendor", unchanged, err)
-	}
-	if _, err = db.Exec(`DROP TRIGGER reject_icon`); err != nil {
-		t.Fatal(err)
-	}
-	if err = db.Close(); err != nil {
-		t.Fatal(err)
-	}
-	s, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.DB.Close()
-	got, err := s.Vendor(v.ID)
-	if err != nil || got.Icon != "/assets/builtin/openai.svg" || got.Revision != v.Revision+1 {
-		t.Fatal("retry did not migrate", got, err)
 	}
 }

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import ProxySection from "./ProxySection.vue";
+import type { ProxyConfig } from "../configuration";
 import IconButton from "./IconButton.vue";
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { api, isCancellation, putSetting, type ProxySettings } from "../api";
@@ -7,13 +9,29 @@ import { useDirtyDraft } from "../composables/useDirtyDraft";
 const emit = defineEmits<{ error: [unknown] }>();
 const error = ref<unknown>();
 const revision = ref<number>();
+const proxy = ref<ProxyConfig>({ mode: "direct" });
 const server = ref(""),
   saved = ref<ProxySettings>(),
   busy = ref(false),
   message = ref(false),
   loading = ref(false);
 const dirty = computed(
-  () => !!saved.value && server.value !== saved.value.server,
+  () =>
+    !!saved.value &&
+    JSON.stringify(proxy.value) !==
+      JSON.stringify(
+        saved.value.mode
+          ? {
+              mode: saved.value.mode,
+              ...(saved.value.mode === "url"
+                ? { url: saved.value.url || saved.value.server }
+                : {}),
+            }
+          : {
+              mode: saved.value.server ? "url" : "direct",
+              ...(saved.value.server ? { url: saved.value.server } : {}),
+            },
+      ),
 );
 const confirmDiscard = useDirtyDraft(dirty);
 let controller: AbortController | undefined,
@@ -36,6 +54,15 @@ async function load() {
       revision.value = data.revision;
       saved.value = data;
       server.value = data.server;
+      proxy.value = data.mode
+        ? {
+            mode: data.mode,
+            ...(data.mode === "url" ? { url: data.url || data.server } : {}),
+          }
+        : {
+            mode: data.server ? "url" : "direct",
+            ...(data.server ? { url: data.server } : {}),
+          };
     }
   } catch (reason) {
     if (!disposed && !isCancellation(reason)) {
@@ -49,7 +76,13 @@ async function load() {
   }
 }
 async function save() {
-  if (busy.value || !saved.value || revision.value === undefined) return;
+  if (
+    busy.value ||
+    !saved.value ||
+    revision.value === undefined ||
+    !dirty.value
+  )
+    return;
   busy.value = true;
   message.value = false;
   error.value = undefined;
@@ -57,9 +90,7 @@ async function save() {
   try {
     const data = await putSetting<ProxySettings & { revision: number }>(
       "settings/proxy",
-      {
-        server: server.value,
-      },
+      proxy.value,
       revision.value,
       controller.signal,
     );
@@ -67,6 +98,15 @@ async function save() {
       revision.value = data.revision;
       saved.value = data;
       server.value = data.server;
+      proxy.value = data.mode
+        ? {
+            mode: data.mode,
+            ...(data.mode === "url" ? { url: data.url || data.server } : {}),
+          }
+        : {
+            mode: data.server ? "url" : "direct",
+            ...(data.server ? { url: data.server } : {}),
+          };
       message.value = true;
     }
   } catch (reason) {
@@ -91,7 +131,7 @@ onUnmounted(() => {
     <p class="muted">
       {{
         t(
-          "Optional HTTP / HTTPS / SOCKS5 proxy for metadata, artifacts and resume requests. Empty means direct; environment proxy variables are ignored. SOCKS5 uses proxy-side DNS; the proxy must be trusted.",
+          "HTTP / HTTPS / SOCKS5 proxy for metadata, artifacts and imports. Select Direct connection to disable the proxy. Environment proxy variables are ignored; SOCKS5 uses proxy-side DNS.",
         )
       }}
     </p>
@@ -106,18 +146,12 @@ onUnmounted(() => {
     <p v-if="error" class="error" role="alert">{{ errorText(error) }}</p>
     <form @submit.prevent="save">
       <fieldset :disabled="busy || !saved">
-        <input
-          v-model="server"
-          :aria-label="t('Proxy URL')"
-          placeholder="http://user:password@proxy.example:3128"
-          autocomplete="off"
-          spellcheck="false"
-        />
+        <ProxySection v-model="proxy" global :disabled="busy" />
       </fieldset>
       <p class="muted small-text">
         {{
           t(
-            "Enter one complete URL with percent-encoded credentials. The saved URL is visible to administrators. Empty means direct.",
+            "Enter one complete URL with percent-encoded credentials. The saved URL is visible to administrators.",
           )
         }}
       </p>

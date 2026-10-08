@@ -1,0 +1,1 @@
+import{t as e}from"./DirectoryEditor-CGhepMRS.js";import{E as t,H as n,M as r}from"./bootstrap-hXK8P1qH.js";var i=r({__name:`VendorSettingsPage`,props:{vendor:{}},emits:[`updated`],setup(r,{emit:i}){let a=i;return(i,o)=>(n(),t(e,{key:r.vendor.uid,kind:`vendor`,onUpdated:o[0]||=e=>a(`updated`,e)}))}});export{i as default};

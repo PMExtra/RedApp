@@ -124,4 +124,12 @@ if grep -q 'Initial admin password' "$task_temp/recreated.log"; then
   exit 1
 fi
 docker stop --time 20 "$task_name" >/dev/null
+docker cp "$task_name:/state/state.sqlite" "$task_temp/state.sqlite"
+python3 - "$task_temp/state.sqlite" <<'PY'
+import sqlite3
+import sys
+with sqlite3.connect('file:' + sys.argv[1] + '?mode=ro&immutable=1', uri=True) as db:
+    assert db.execute('SELECT version FROM schema_version').fetchall() == [(10,)]
+print('Fresh schema 10 persisted through runtime restart/recreation')
+PY
 echo "Docker runtime (${REDAPP_TEST_PLATFORM:-host})：无配置默认启动、YAML/JSON单文件选择/失败保护、新writer/reader字段和容量简写、环境变量改路径/端口、禁用网络、非 root、只读根、持久性/健康/实例锁/崩溃恢复通过。"

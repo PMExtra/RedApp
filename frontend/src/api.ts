@@ -78,6 +78,8 @@ export interface CleanupPreview {
   unknown_versions: string[];
 }
 export interface ProxySettings {
+ mode?: "direct"|"url";
+ url?: string;
   server: string;
   dns: string;
 }
@@ -313,4 +315,13 @@ export function putSetting<T>(
   signal?: AbortSignal,
 ) {
   return api<T>(path, body, signal, { "If-Match": `"${revision}"` }, "PUT");
+}
+
+export async function configurationDownload(body: unknown, signal?: AbortSignal): Promise<Blob> {
+  const generation=sessionGeneration;
+  const response=await fetchResponse('/admin/api/configuration/export',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body),signal});
+  if(!response.ok){if(response.status===401)unauthorized?.();const data=await response.json().catch(()=>({}));throw new ApiError(data.error||'Export failed',response.status)}
+  const blob=await response.blob();
+  if(signal?.aborted||generation!==sessionGeneration)throw new DOMException('Session changed','AbortError');
+  return blob;
 }

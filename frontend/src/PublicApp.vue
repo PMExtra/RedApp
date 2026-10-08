@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { usePublicResource } from "./public";
+import type { Application } from "./bootstrap";
 import EntityIcon from "./components/EntityIcon.vue";
 import ApplicationVersion from "./components/ApplicationVersion.vue";
 import { applicationVendorName } from "./vendorName";
@@ -26,6 +28,7 @@ const detail = computed(() => !!route.params.vendor);
 const selected = computed(() =>
   bootstrap.value?.apps.find((app) => app.id === selectedID.value),
 );
+const related = usePublicResource<{items:Application[]}>(computed(()=>detail.value && selected.value ? `/api/apps/${selectedID.value}/related` : ""), value=>Array.isArray(value.items));
 watchEffect(() => {
   document.title = `${detail.value ? selected.value?.name[language.value] || t("Applications") : t("Applications")} · ${siteTitle.value}`;
 });
@@ -94,7 +97,8 @@ watchEffect(() => {
           )
         }}
       </p>
-    </section></template
+    </section>
+    <section v-if="related.data.value?.items.length" class="related-applications"><h2>{{t("Related applications")}}</h2><PublicCards :apps="related.data.value.items" /></section></template
   >
   <section v-else-if="detail" class="panel empty-state">
     <h1>{{ t("Page not found") }}</h1>

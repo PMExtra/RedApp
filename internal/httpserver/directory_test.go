@@ -50,29 +50,58 @@ func newDirectoryHarness(t *testing.T, dir string, configure ...func(*Server)) *
 	return newDirectoryHarnessWithStore(t, dir, db, configure...)
 }
 
-// A pre-opened store lets upgrade tests serve real schema-5 files before migration.
+// A pre-opened current-schema store preserves real login/CSRF/restart coverage.
 func newDirectoryHarnessWithStore(t *testing.T, dir string, db *store.Store, configure ...func(*Server)) *directoryHarness {
 	t.Helper()
-	vendors, apps, err := builtin.Seeds()
+	var initialized bool
+	if err := db.DB.QueryRow(`SELECT seeded FROM directory_state WHERE id=1`).Scan(&initialized); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.EnsureEntityTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	vendors, err := db.Vendors(false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = db.SeedDirectory(vendors, apps); err != nil {
+	if !initialized {
+		for _, v := range vendors {
+			if !v.Enabled {
+				enabled := true
+				if _, err = db.PatchVendorFields(v.ID, v.Revision, nil, &enabled); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	apps, err := db.Applications(false)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !initialized {
+		for _, a := range apps {
+			if !a.Enabled {
+				enabled := true
+				if _, err = db.PatchApplicationFields(a.Key, a.Revision, nil, &enabled); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+
 	}
 	pool := distributor.NewPool()
 	if err = pool.LoadProxy(db); err != nil {
 		t.Fatal(err)
 	}
-	vendorRecords, err := db.Vendors(true)
+	snapshot, err := db.DirectoryConfigurationSnapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
-	appRecords, err := db.Applications(true)
+	entries, err := builtin.EntriesFromConfiguration(snapshot, pool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	registry, err := builtin.NewDynamic(vendorRecords, appRecords, pool)
+	registry, err := application.NewRegistry(entries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +111,7 @@ func newDirectoryHarnessWithStore(t *testing.T, dir string, db *store.Store, con
 	}
 	clients := make(map[string]*distributor.Client, len(sources))
 	for _, source := range sources {
-		client, err := builtin.NewSourceClient(source.Provider, source.BaseURL, pool)
+		client, err := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, snapshot.ProviderDefaults[source.Provider], source.AppUID, snapshot.ProxyScopes[source.AppUID].VendorUID, pool)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -136,6 +165,7 @@ func newDirectoryHarnessWithStore(t *testing.T, dir string, db *store.Store, con
 	for _, apply := range configure {
 		apply(h.server)
 	}
+	h.server.ConfigurePublication()
 	h.http = httptest.NewServer(h.server)
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -146,6 +176,9 @@ func newDirectoryHarnessWithStore(t *testing.T, dir string, db *store.Store, con
 	h.close = func() {
 		once.Do(func() {
 			h.http.Close()
+			if h.server.prewarmer != nil {
+				h.server.prewarmer.Close()
+			}
 			hostedFiles.Close()
 			httpCache.Close()
 			manager.Close()

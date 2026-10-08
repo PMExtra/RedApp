@@ -1,16 +1,10 @@
 package store
 
 import (
-	"database/sql"
-	_ "embed"
-	"encoding/json"
 	"errors"
+	"github.com/PMExtra/RedApp/presets"
+	"strings"
 )
-
-// Entity configuration is separate from the provider's immutable release protocol.
-//
-//go:embed entity_templates.json
-var entityTemplatesJSON []byte
 
 type EntityTemplate struct {
 	Vendor       VendorInput      `json:"vendor"`
@@ -19,11 +13,24 @@ type EntityTemplate struct {
 }
 
 func EntityTemplates() []EntityTemplate {
-	var result []EntityTemplate
-	if err := json.Unmarshal(entityTemplatesJSON, &result); err != nil {
-		panic("Invalid embedded entity templates")
+	set := presets.Embedded()
+	vendors := map[string]VendorInput{}
+	for _, v := range set.Vendors {
+		vendors[v.Metadata.ID] = vendorTemplate(v)
 	}
-	return result
+	out := []EntityTemplate{}
+	for _, a := range set.Apps {
+		icon, _ := presets.Icon(a.Spec.Icon)
+		out = append(out, EntityTemplate{Vendor: vendors[a.Metadata.Vendor], Application: ApplicationInput{ID: a.Metadata.ID, Name: LocalizedText{En: a.Spec.Name.En, ZhCN: a.Spec.Name.ZhCN}, Description: LocalizedText{En: a.Spec.Description.En, ZhCN: a.Spec.Description.ZhCN}, Icon: icon, Provider: a.Spec.Provider, BaseURL: a.Spec.BaseURL, BaseURLs: a.Spec.BaseURLs, SourceStrategy: a.Spec.SourceStrategy, CacheTTLSeconds: a.Spec.CacheTTLSeconds}, Instructions: LocalizedText{En: a.Spec.Instructions.En, ZhCN: a.Spec.Instructions.ZhCN}})
+	}
+	return out
+}
+
+func vendorTemplate(v presets.Vendor) VendorInput {
+	icon, _ := presets.Icon(v.Spec.Icon)
+	en, _ := presets.Icon(v.Spec.LocalizedIcons.En)
+	zh, _ := presets.Icon(v.Spec.LocalizedIcons.ZhCN)
+	return VendorInput{ID: v.Metadata.ID, Name: LocalizedText{En: v.Spec.Name.En, ZhCN: v.Spec.Name.ZhCN}, Description: LocalizedText{En: v.Spec.Description.En, ZhCN: v.Spec.Description.ZhCN}, Icon: icon, LocalizedIcons: LocalizedText{En: en, ZhCN: zh}}
 }
 func BuiltinApplicationTemplate(key string) (EntityTemplate, bool) {
 	for _, v := range EntityTemplates() {
@@ -36,43 +43,7 @@ func BuiltinApplicationTemplate(key string) (EntityTemplate, bool) {
 
 var ErrBuiltinTemplate = errors.New("Applications matching a built-in template cannot be deleted; disable them instead")
 
-func (s *Store) EnsureEntityTemplates() error {
-	tx, err := s.DB.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for _, template := range EntityTemplates() {
-		v, e := readVendor(tx, template.Vendor.ID)
-		if errors.Is(e, sql.ErrNoRows) {
-			template.Vendor.Enabled = false
-			v, e = createVendor(tx, template.Vendor)
-		}
-		if e != nil {
-			return e
-		}
-		var exists int
-		if e = tx.QueryRow(`SELECT count(*) FROM applications WHERE vendor_uid=? AND id=?`, v.UID, template.Application.ID).Scan(&exists); e != nil {
-			return e
-		}
-		// A deleted legacy parent or any existing full-key record remains untouched.
-		if exists != 0 || v.DeletedAt != nil {
-			continue
-		}
-		template.Application.Enabled = false
-		a, e := createApplication(tx, v.ID, template.Application)
-		if e != nil {
-			return e
-		}
-		if _, e = tx.Exec(`INSERT INTO application_instructions VALUES(?,1,?,?)`, a.UID, template.Instructions.En, template.Instructions.ZhCN); e != nil {
-			return e
-		}
-	}
-	if _, err = tx.Exec(`UPDATE directory_state SET seeded=1 WHERE id=1`); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
+func (s *Store) EnsureEntityTemplates() error { return s.ReconcileTemplates(presets.Embedded()) }
 
 type TemplateReset struct {
 	Revision             int64    `json:"revision"`
@@ -81,130 +52,54 @@ type TemplateReset struct {
 }
 
 func (s *Store) ResetApplicationTemplate(key string, in TemplateReset) (Application, error) {
-	template, ok := BuiltinApplicationTemplate(key)
-	if !ok {
-		return Application{}, sql.ErrNoRows
-	}
-	if len(in.Groups) == 0 {
-		return Application{}, ErrInvalidDirectory
-	}
-	tx, err := s.DB.Begin()
+	fields := map[string][]string{"metadata": {"name.en", "name.zh-CN", "description.en", "description.zh-CN"}, "icon": {"icon"}, "instructions_en": {"instructions.en"}, "instructions_zh": {"instructions.zh-CN"}, "source": {"base_url", "base_urls", "source_strategy"}, "cache": {"cache_ttl_seconds"}}
+	unset, err := resetFields(in.Groups, fields)
 	if err != nil {
 		return Application{}, err
 	}
-	defer tx.Rollback()
-	a, err := readApplication(tx, key)
-	if err != nil {
-		return a, err
+	var expected *int64
+	for _, p := range unset {
+		if strings.HasPrefix(p, "instructions.") {
+			expected = &in.InstructionsRevision
+		}
 	}
-	if a.Revision != in.Revision {
-		return a, ErrConflict
+	if err = s.patchConfiguration("App", key, ConfigurationPatch{Revision: in.Revision, Unset: unset}, nil, expected); err != nil {
+		return Application{}, err
 	}
-	changes := ApplicationChanges{Name: a.Name, Description: a.Description, Icon: a.Icon, BaseURL: a.BaseURL, BaseURLs: a.BaseURLs, SourceStrategy: a.SourceStrategy, CacheTTLSeconds: a.CacheTTLSeconds, Enabled: a.Enabled}
-	var instructions Instructions
-	err = tx.QueryRow(`SELECT revision,en,zh_cn FROM application_instructions WHERE app_uid=?`, a.UID).Scan(&instructions.Revision, &instructions.En, &instructions.ZhCN)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return a, err
+	return s.Application(key)
+}
+func resetFields(groups []string, fields map[string][]string) ([]string, error) {
+	if len(groups) == 0 {
+		return nil, ErrInvalidDirectory
 	}
-	if instructions.Revision == 0 && a.Provider == template.Application.Provider {
-		instructions.LocalizedText = template.Instructions
-	}
-	writeInstructions := false
 	seen := map[string]bool{}
-	for _, group := range in.Groups {
-		if seen[group] {
-			return a, ErrInvalidDirectory
+	var out []string
+	for _, g := range groups {
+		p, ok := fields[g]
+		if !ok || seen[g] {
+			return nil, ErrInvalidDirectory
 		}
-		seen[group] = true
-		switch group {
-		case "metadata":
-			changes.Name = template.Application.Name
-			changes.Description = template.Application.Description
-		case "icon":
-			changes.Icon = template.Application.Icon
-		case "instructions_en":
-			instructions.En = template.Instructions.En
-			writeInstructions = true
-		case "instructions_zh":
-			instructions.ZhCN = template.Instructions.ZhCN
-			writeInstructions = true
-		case "source":
-			if a.Provider != template.Application.Provider {
-				return a, ErrInvalidDirectory
-			}
-			changes.BaseURL = template.Application.BaseURL
-			changes.BaseURLs = template.Application.BaseURLs
-			changes.SourceStrategy = template.Application.SourceStrategy
-		case "cache":
-			if a.Provider != template.Application.Provider {
-				return a, ErrInvalidDirectory
-			}
-			changes.CacheTTLSeconds = template.Application.CacheTTLSeconds
-		default:
-			return a, ErrInvalidDirectory
-		}
+		seen[g] = true
+		out = append(out, p...)
 	}
-	if writeInstructions {
-		if instructions.Revision != in.InstructionsRevision {
-			return a, ErrConflict
-		}
-		if _, err = tx.Exec(`INSERT INTO application_instructions(app_uid,revision,en,zh_cn) VALUES(?,?,?,?) ON CONFLICT(app_uid) DO UPDATE SET revision=excluded.revision,en=excluded.en,zh_cn=excluded.zh_cn`, a.UID, instructions.Revision+1, instructions.En, instructions.ZhCN); err != nil {
-			return a, err
-		}
-	}
-	a, err = updateApplication(tx, key, in.Revision, changes)
-	if err != nil {
-		return a, err
-	}
-	return a, tx.Commit()
+	return out, nil
 }
 
 func BuiltinVendorTemplate(id string) (VendorInput, bool) {
-	for _, value := range EntityTemplates() {
-		if value.Vendor.ID == id {
-			return value.Vendor, true
+	for _, value := range presets.Embedded().Vendors {
+		if value.Metadata.ID == id {
+			return vendorTemplate(value), true
 		}
 	}
 	return VendorInput{}, false
 }
 func (s *Store) ResetVendorTemplate(id string, in TemplateReset) (Vendor, error) {
-	template, ok := BuiltinVendorTemplate(id)
-	if !ok {
-		return Vendor{}, sql.ErrNoRows
-	}
-	if len(in.Groups) == 0 {
-		return Vendor{}, ErrInvalidDirectory
-	}
-	tx, err := s.DB.Begin()
+	unset, err := resetFields(in.Groups, map[string][]string{"metadata": {"name.en", "name.zh-CN", "description.en", "description.zh-CN"}, "icon": {"icon", "localized_icons.en", "localized_icons.zh-CN"}})
 	if err != nil {
 		return Vendor{}, err
 	}
-	defer tx.Rollback()
-	v, err := readVendor(tx, id)
-	if err != nil {
-		return v, err
+	if err = s.patchConfiguration("Vendor", id, ConfigurationPatch{Revision: in.Revision, Unset: unset}, nil, nil); err != nil {
+		return Vendor{}, err
 	}
-	changes := VendorChanges{Name: v.Name, Description: v.Description, Icon: v.Icon, LocalizedIcons: v.LocalizedIcons, Enabled: v.Enabled}
-	seen := map[string]bool{}
-	for _, group := range in.Groups {
-		if seen[group] {
-			return v, ErrInvalidDirectory
-		}
-		seen[group] = true
-		switch group {
-		case "metadata":
-			changes.Name = template.Name
-			changes.Description = template.Description
-		case "icon":
-			changes.Icon = template.Icon
-			changes.LocalizedIcons = template.LocalizedIcons
-		default:
-			return v, ErrInvalidDirectory
-		}
-	}
-	v, err = updateVendor(tx, id, in.Revision, changes)
-	if err != nil {
-		return v, err
-	}
-	return v, tx.Commit()
+	return s.Vendor(id)
 }

@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"github.com/PMExtra/RedApp/internal/identity"
 	"io"
 	"net"
 	"net/http"
@@ -79,6 +80,15 @@ func New(base string) (*Client, error) { return NewPool().NewClient(base, Public
 // NewClient creates a fixed initial origin/root boundary sharing this pool's proxy.
 // Its construction performs no network I/O.
 func (p *Pool) NewClient(base string, mode ClientMode) (*Client, error) {
+	return p.newClient(base, mode, "", "")
+}
+func (p *Pool) NewScopedClient(base string, mode ClientMode, appUID, vendorUID string) (*Client, error) {
+	if !identity.ValidUID(appUID) || !identity.ValidUID(vendorUID) {
+		return nil, errors.New("Application transport scope required")
+	}
+	return p.newClient(base, mode, appUID, vendorUID)
+}
+func (p *Pool) newClient(base string, mode ClientMode, appUID, vendorUID string) (*Client, error) {
 	base, err := NormalizeBase(base, mode)
 	if err != nil {
 		return nil, err
@@ -88,7 +98,7 @@ func (p *Pool) NewClient(base string, mode ClientMode) (*Client, error) {
 	}
 	u, _ := url.Parse(base)
 	c := &Client{Base: u, mode: mode, pool: p}
-	c.transports = &transportSwitch{current: transportReference{pool: p, configured: mode != PublicRelease}}
+	c.transports = &transportSwitch{current: transportReference{pool: p, configured: mode != PublicRelease, appUID: appUID, vendorUID: vendorUID}}
 	c.HTTP = &http.Client{Transport: c.transports, Timeout: 5 * time.Minute, CheckRedirect: c.checkRedirect}
 	return c, nil
 }
@@ -241,6 +251,12 @@ func (c *Client) Do(ctx context.Context, method, source string, headers http.Hea
 		return nil, err
 	}
 	r.Header.Set("Accept-Encoding", "identity")
+	if indexed, _ := ctx.Value(indexKey{}).(bool); indexed {
+		if !c.IndexBoundary(u) {
+			return nil, errIndexBoundary
+		}
+		r.Header.Set("Accept", "application/json,text/html")
+	}
 	for _, key := range []string{"Range", "If-Range", "If-None-Match", "If-Modified-Since", "If-Match", "If-Unmodified-Since"} {
 		if v := headers.Get(key); v != "" {
 			r.Header.Set(key, v)
@@ -253,6 +269,9 @@ func (c *Client) Do(ctx context.Context, method, source string, headers http.Hea
 	// boundary for production clients and fixture clients alike.
 	httpClient := *c.HTTP
 	httpClient.CheckRedirect = func(request *http.Request, via []*http.Request) error {
+		if indexed, _ := ctx.Value(indexKey{}).(bool); indexed && !c.IndexBoundary(request.URL) {
+			return errIndexBoundary
+		}
 		if err := c.checkRedirect(request, via); err != nil {
 			return &redirectPolicyError{err}
 		}

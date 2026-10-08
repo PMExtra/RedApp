@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/PMExtra/RedApp/presets"
 	"io"
 	"net/http"
 	"regexp"
@@ -41,32 +42,10 @@ func ParseKey(id string) (Key, error) {
 }
 func (k Key) String() string { return k.Vendor + "/" + k.App }
 
-type Localized map[string]string
-type Installer struct {
-	File   string `json:"file"`
-	Source string `json:"source"`
-	Shell  string `json:"shell"`
-}
-type Asset struct {
-	File string `json:"file"`
-	Kind string `json:"kind"`
-}
-type Descriptor struct {
-	ID                       string      `json:"id"`
-	Name                     Localized   `json:"name"`
-	Publisher                string      `json:"publisher"`
-	Summary                  Localized   `json:"summary"`
-	Protocol                 string      `json:"protocol"`
-	TrustRevision            int64       `json:"trust_revision"`
-	Upstream                 string      `json:"upstream"`
-	Channels                 []string    `json:"channels"`
-	DefaultChannelTTLSeconds int         `json:"default_channel_ttl_seconds"`
-	InstallerValidator       string      `json:"installer_validator"`
-	Installers               []Installer `json:"installers"`
-	Assets                   []Asset     `json:"assets"`
-	Icon                     string      `json:"icon"`
-	UpdatePolicy             Localized   `json:"update_policy"`
-}
+type Localized = presets.Localized
+type Installer = presets.Installer
+type Asset = presets.Asset
+type Descriptor = presets.Descriptor
 
 type OperationKind string
 
@@ -154,25 +133,28 @@ func ReadBody(ctx context.Context, client *distributor.Client, path string, limi
 }
 
 type Entry struct {
-	Descriptor           Descriptor
-	Protocol             Protocol
-	Upstream             *distributor.Client
-	Upstreams            []*distributor.Client
-	SourceStrategy       string
-	PublicAssets         map[string]Representation
-	UID                  string
-	Provider             string
-	Revision             int64
-	VendorRevision       int64
-	SourceEpoch          int64
-	Enabled              bool // effective app and vendor status for persisted entries
-	DeletedAt            *time.Time
-	TemplateID           string // reviewed built-in template, independent of public identity
-	VendorID             string
-	VendorName           Localized
-	VendorDescription    Localized
-	VendorIcon           string
-	VendorLocalizedIcons Localized
+	Descriptor            Descriptor
+	Protocol              Protocol
+	Upstream              *distributor.Client
+	Upstreams             []*distributor.Client
+	SourceStrategy        string
+	PublicAssets          map[string]Representation
+	UID                   string
+	Provider              string
+	Revision              int64 // administrative configuration CAS revision
+	VendorRevision        int64
+	RuntimeRevision       int64 // admission/publication fence, independent of metadata/proxy edits
+	VendorRuntimeRevision int64
+	SourceEpoch           int64
+	Enabled               bool // effective app and vendor status for persisted entries
+	DeletedAt             *time.Time
+	TemplateID            string // reviewed built-in template, independent of public identity
+	VendorUID             string
+	VendorID              string
+	VendorName            Localized
+	VendorDescription     Localized
+	VendorIcon            string
+	VendorLocalizedIcons  Localized
 }
 
 // StorageID isolates cache data whenever an application's source changes.
@@ -214,59 +196,73 @@ func NewRegistry(entries []Entry) (*Registry, error) {
 	return r, nil
 }
 
+type PreparedRegistry struct{ snapshot *registrySnapshot }
+
 func (r *Registry) Replace(entries []Entry) error {
+	plan, err := PrepareRegistry(entries)
+	if err != nil {
+		return err
+	}
+	r.Publish(plan)
+	return nil
+}
+
+// Publish only swaps a fully validated immutable snapshot; it cannot fail.
+func (r *Registry) Publish(plan *PreparedRegistry) { r.current.Store(plan.snapshot) }
+
+func PrepareRegistry(entries []Entry) (*PreparedRegistry, error) {
 	snapshot := &registrySnapshot{byID: make(map[string]int, len(entries)), byStore: make(map[string]int, len(entries))}
 	uids := map[string]bool{}
 	for _, e := range entries {
 		d := e.Descriptor
 		if _, err := ParseKey(d.ID); err != nil {
-			return err
+			return nil, err
 		}
 		if _, found := snapshot.byID[d.ID]; found {
-			return fmt.Errorf("Duplicate application %s", d.ID)
+			return nil, fmt.Errorf("Duplicate application %s", d.ID)
 		}
 		if e.Provider != "" {
 			if _, known := ProviderDefinition(e.Provider); !known {
-				return fmt.Errorf("Unknown provider for %s", d.ID)
+				return nil, fmt.Errorf("Unknown provider for %s", d.ID)
 			}
 		}
 		if e.UID != "" {
 			if !identity.ValidUID(e.UID) || e.Revision < 1 || e.VendorRevision < 1 || e.SourceEpoch < 1 || uids[e.UID] {
-				return fmt.Errorf("Invalid runtime identity for %s", d.ID)
+				return nil, fmt.Errorf("Invalid runtime identity for %s", d.ID)
 			}
 			uids[e.UID] = true
 		}
 		if e.Upstream == nil && e.Provider != Info && e.Provider != Hosted || d.DefaultChannelTTLSeconds < 0 || d.DefaultChannelTTLSeconds > 86400 {
-			return fmt.Errorf("Incomplete application %s", d.ID)
+			return nil, fmt.Errorf("Incomplete application %s", d.ID)
 		}
 		if e.Provider == Info || e.Provider == Hosted {
 			if e.Upstream != nil || len(e.Upstreams) != 0 || e.Protocol != nil || len(d.Channels) != 0 || len(d.Installers) != 0 || len(d.Assets) != 0 || len(e.PublicAssets) != 0 || d.Upstream != "" || d.DefaultChannelTTLSeconds != 0 || d.TrustRevision != 0 || e.TemplateID != "" {
-				return fmt.Errorf("Content providers cannot declare upstream capabilities for %s", d.ID)
+				return nil, fmt.Errorf("Content providers cannot declare upstream capabilities for %s", d.ID)
 			}
 		} else if e.Provider == HttpCache {
 			if e.Protocol != nil || len(d.Channels) != 0 || len(d.Installers) != 0 || d.TrustRevision != 0 || e.TemplateID != "" {
-				return fmt.Errorf("GeneralHttp cannot declare release capabilities for %s", d.ID)
+				return nil, fmt.Errorf("GeneralHttp cannot declare release capabilities for %s", d.ID)
 			}
 		} else if e.Protocol == nil || d.TrustRevision < 1 || d.DefaultChannelTTLSeconds < 1 || len(d.Channels) == 0 {
-			return fmt.Errorf("Incomplete release application %s", d.ID)
+			return nil, fmt.Errorf("Incomplete release application %s", d.ID)
 		}
 		channels := map[string]bool{}
 		for _, ch := range d.Channels {
 			if !slug.MatchString(ch) || channels[ch] {
-				return fmt.Errorf("Invalid or duplicate channel for %s", d.ID)
+				return nil, fmt.Errorf("Invalid or duplicate channel for %s", d.ID)
 			}
 			channels[ch] = true
 		}
 		files := map[string]bool{}
 		for _, installer := range d.Installers {
 			if !safePath(installer.File) || files[installer.File] || (installer.Shell != "sh" && installer.Shell != "bash" && installer.Shell != "powershell") {
-				return fmt.Errorf("Invalid installer descriptor for %s", d.ID)
+				return nil, fmt.Errorf("Invalid installer descriptor for %s", d.ID)
 			}
 			files[installer.File] = true
 		}
 		for _, asset := range d.Assets {
 			if !safePath(asset.File) || files[asset.File] {
-				return fmt.Errorf("Invalid public asset descriptor for %s", d.ID)
+				return nil, fmt.Errorf("Invalid public asset descriptor for %s", d.ID)
 			}
 			files[asset.File] = true
 		}
@@ -274,8 +270,7 @@ func (r *Registry) Replace(entries []Entry) error {
 		snapshot.byStore[e.StorageID()] = len(snapshot.entries)
 		snapshot.entries = append(snapshot.entries, cloneEntry(e))
 	}
-	r.current.Store(snapshot)
-	return nil
+	return &PreparedRegistry{snapshot: snapshot}, nil
 }
 func (r *Registry) Lookup(id string) (Entry, bool) {
 	e, ok := r.LookupAny(id)

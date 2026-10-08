@@ -4,7 +4,7 @@
 
 RedApp distributes **HTTP files, Codex CLI and Claude Code** through one service. Administrators manage vendors and applications, choose a provider and upstream base URL, and inspect cache, traffic and service settings.
 
-**0.7.2** uses SQLite schema **7**. Exact published v0.7.1 schema-5, v0.7.0 schema-4, and reviewed local schema-6 directories upgrade in place while preserving existing application identities, configuration, sources, cache and history. Earlier or unrecognized schemas remain refused without modification. Stop the instance and back up its complete data directory before upgrading. A pre-existing vendor ID `all` blocks the upgrade with an explicit collision error. See [0.7.2 runtime changes](docs/admin-experience-v0.7.2.md).
+**0.8.0 is a local, unpublished candidate using SQLite schema 10.** Start with a new empty directory/volume, or reuse an exact schema-10 directory. Old schema 2–9 and unknown directories are refused without migration or deletion. Keep the original directory unchanged to switch back to its matching older program. The deployment file format remains schema_version 1. See the [configuration contract](docs/configuration-v0.8.0.md) and [acceptance status](docs/acceptance.md).
 
 ## Start the service
 
@@ -14,11 +14,11 @@ No configuration file is required. The native executable accepts `redapp` or `re
 docker build -t redapp:local .
 docker run -d --name redapp --read-only \
   -p 127.0.0.1:8080:8080 \
-  -v redapp-v07-data:/var/lib/redapp \
+  -v redapp-v08-data:/var/lib/redapp \
   redapp:local
 ```
 
-Defaults are `:8080`, `/var/lib/redapp`, and no trusted proxies. RedApp accepts any syntactically valid request Host; configure domain and network access policy at the reverse proxy. Use a new empty directory/volume for this schema, including when upgrading from v0.6. Directory permission failures never fall back elsewhere.
+Defaults are `:8080`, `/var/lib/redapp`, and no trusted proxies. RedApp accepts any syntactically valid request Host; configure domain and network access policy at the reverse proxy. Use a new empty directory/volume for this schema, when moving from any older schema. Directory permission failures never fall back elsewhere.
 
 Deployment environment variables work without a file, for example:
 
@@ -73,6 +73,14 @@ An explicit path rule may intentionally override source `no-store`/`private` and
 
 Manual cleanup combines a path pattern, time basis and cutoff in a frozen preview. Automatic cleanup is disabled until rules are saved, then runs every 15 minutes without an immediate startup deletion. It only processes active HTTP Cache applications' current source epochs, scanning at most 1,000 files and retiring at most 100 per application per pass; cursors prevent starvation. A cleanup rule's first path match owns the file even when its age threshold is not yet met. See the [runtime guide](docs/provider-runtime-v0.7.0.md) for rule examples, limits and API details. New source authentication, private CA and signing options are outside this version; normal TLS certificate verification and existing administrator/release protections remain in place.
 
+## Configuration, maintenance and portability
+
+Trusted defaults are embedded from `presets/<vendor>.yaml`, `presets/<vendor>/<app>.yaml` and `presets/_taxonomy.yaml`. Bound objects save a template reference and sparse explicit overrides; independent objects save a complete spec. Equal custom values, explicit blanks and empty lists stay custom. Language fields inherit independently; ordered lists and proxy/prewarm/retention replace whole values. Reset removes selected overrides; enabled, identity, Provider and private notes remain separate.
+
+Codex/Claude retention keeps the latest N complete cached versions in the current source, plus fresh channel targets, active readers/writers and incomparable versions. Historical sources are preserved. Release-platform and HTTP path/list/directory prewarm share the existing verified catalog/download/cache pipeline. Maintenance runs every 15 minutes without immediate startup work. Manual prewarm uses one global worker with no queue; defaults are 10,000 files, depth 16, 10 GiB and one hour, with hard limits 100,000/32/1 TiB/24 hours. Cancellation removes its shared waiter while public requests can continue; restart marks work interrupted. Taxonomy adds bilingual category/tag names, shareable category search and up to six related enabled applications.
+
+Administration can export ZIP or import ZIP/single YAML in linked or independent mode. Export includes selected configuration, parent Vendor, referenced taxonomy and validated static image assets. It excludes Hosted binaries, runtime IDs/state/cache/history/tasks; notes and proxy credentials default off each time. Import previews source text without running HTML/JS and requires explicit trust for changed instructions. Choices, UID/revisions and notes are fenced; the whole configuration transaction either commits or rolls back. Copy creates a disabled App with fresh UID/epoch and no old data; its own `inherit` proxy follows the target Vendor. Successful receipts last 24 hours and return the same committed result after administrator re-login, while unexecuted previews expire on restart/session change. See the [full fields, limits and API contract](docs/configuration-v0.8.0.md).
+
 ## Public address and proxy trust
 
 The global public address determines generated download links and installers. Its priority is:
@@ -85,7 +93,7 @@ Clearing the administrator override restores the environment default, if present
 
 For enterprise access, use an HTTPS reverse proxy. Configure the proxy's CIDRs in `trusted_proxies` and make the proxy overwrite forwarded headers. Headers from untrusted peers are ignored. RedApp validates Host syntax and derives the request origin from the trusted proxy chain; the proxy controls accepted domains. Health checks connect to the configured local listener, independently of the public address.
 
-Site branding, outbound proxy, and public address are global settings. Cache TTL and provider configuration are per application. Every administrator update uses a revision check so stale browser forms cannot silently overwrite another update. The proxy setting is one full URL, including percent-encoded user information, returned unchanged by the protected administrator API. Public responses, logs and events exclude proxy credentials. Existing separate proxy credentials migrate once into that URL.
+Site branding and public address are global. Outbound proxy resolves global → Vendor → App: `inherit` uses the parent, `direct` stops inheritance, and `url` supplies a complete HTTP(S)/SOCKS5 proxy URL. Vendor/App proxy is an atomic configuration leaf; changing it does not silently rewrite a child override. Global settings use an empty server for direct access. Complete URLs and their percent-encoded user information are available only through protected administrator APIs; public responses, logs and events exclude credentials. Configuration commits use revision/CAS and prepare transports before publishing; started readers retain their previous transport. There is no old credential migration.
 
 ## Install applications
 
@@ -107,8 +115,8 @@ Installer downloads start from this service and follow normal HTTP redirects; ap
 
 ## Development and license
 
-The Go executable embeds the frontend built by `npm ci && npm run build` in `frontend/`. Run Go tests and the frontend's typecheck/DOM tests before building `./cmd/redapp`. CLI smoke checks in `scripts/test-data-cli.py` and `scripts/test-http-cli.py` use `bin/redapp` and isolated temporary data.
+The Go executable embeds the frontend built by `npm ci && npm run build` in `frontend/`. Run Go tests and the frontend's typecheck/DOM tests before building `./cmd/redapp`. `make check test frontend-test` covers format/vet/race, offline Shell/maintenance and full DOM tests; build the native binary once, then `make runtime-test` covers data, HTTP, instruction, retention, prewarm, taxonomy and exchange CLI in temporary directories. Official Claude network checks and Windows PS7/5.1 are separate gates.
 
-The current changes, provider IDs and API boundaries are in [the 0.7.2 runtime guide](docs/admin-experience-v0.7.2.md). The [v0.7.0 guide](docs/provider-runtime-v0.7.0.md) remains the historical cache-policy reference. Older versioned operational references describe their respective releases and are not configuration instructions for this architecture.
+The current changes, provider IDs and API boundaries are in [the 0.8.0 configuration contract](docs/configuration-v0.8.0.md). The [v0.7.0 guide](docs/provider-runtime-v0.7.0.md) remains the historical cache-policy reference. Older versioned operational references describe their respective releases and are not configuration instructions for this architecture.
 
 Original RedApp code is [MIT licensed](LICENSE). [Third-party licenses](third_party/README.md), including upstream installer LICENSE/NOTICE, remain separate.

@@ -5,16 +5,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
+	"path"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/PMExtra/RedApp/internal/cachepolicy"
 	"github.com/PMExtra/RedApp/internal/identity"
+	"github.com/PMExtra/RedApp/presets"
 	"github.com/mattn/go-sqlite3"
 )
 
@@ -49,19 +52,22 @@ type VendorChanges struct {
 }
 
 type Vendor struct {
-	HasTemplate    bool          `json:"has_template"`
-	UID            string        `json:"uid"`
-	ID             string        `json:"id"`
-	Name           LocalizedText `json:"name"`
-	Description    LocalizedText `json:"description"`
-	Icon           string        `json:"icon"`
-	LocalizedIcons LocalizedText `json:"localized_icons"`
-	Enabled        bool          `json:"enabled"`
-	Revision       int64         `json:"revision"`
-	DeletedAt      *time.Time    `json:"deleted_at"`
+	HasTemplate     bool          `json:"has_template"`
+	UID             string        `json:"uid"`
+	ID              string        `json:"id"`
+	Name            LocalizedText `json:"name"`
+	Description     LocalizedText `json:"description"`
+	Icon            string        `json:"icon"`
+	LocalizedIcons  LocalizedText `json:"localized_icons"`
+	Enabled         bool          `json:"enabled"`
+	Revision        int64         `json:"revision"`
+	RuntimeRevision int64         `json:"runtime_revision"`
+	DeletedAt       *time.Time    `json:"deleted_at"`
 }
 
 type ApplicationInput struct {
+	Category        string        `json:"category"`
+	Tags            []string      `json:"tags"`
 	ID              string        `json:"id"`
 	Name            LocalizedText `json:"name"`
 	Description     LocalizedText `json:"description"`
@@ -86,6 +92,8 @@ type ApplicationChanges struct {
 }
 
 type Application struct {
+	Category        string        `json:"category"`
+	Tags            []string      `json:"tags"`
 	BuiltinTemplate bool          `json:"builtin_template"`
 	UID             string        `json:"uid"`
 	ID              string        `json:"id"`
@@ -102,6 +110,7 @@ type Application struct {
 	CacheTTLSeconds int           `json:"cache_ttl_seconds"`
 	Enabled         bool          `json:"enabled"`
 	Revision        int64         `json:"revision"`
+	RuntimeRevision int64         `json:"runtime_revision"`
 	SourceEpoch     int64         `json:"source_epoch"`
 	DeletedAt       *time.Time    `json:"deleted_at"`
 }
@@ -115,7 +124,9 @@ type ApplicationSeed struct {
 }
 
 // SourceFence captures admission eligibility, including a vendor's enable/disable
-// revision. A source epoch alone cannot fence work admitted before disable/enable.
+// runtime revision. The legacy AppRevision/VendorRevision field names now
+// contain runtime_revision values, never administrative configuration revisions.
+// A source epoch alone cannot fence work admitted before disable/enable.
 type SourceFence struct{ AppRevision, VendorRevision int64 }
 
 // Provider/BaseURL/BaseURLs/SourceStrategy/CreatedAt are the immutable source
@@ -151,7 +162,7 @@ func validatePresentation(name, description LocalizedText, icon string) error {
 			return fmt.Errorf("%w: description is too long or contains NUL", ErrInvalidDirectory)
 		}
 	}
-	if icon != "" && !builtinTemplateIcon(icon) && !iconPath.MatchString(icon) {
+	if icon != "" && !builtinTemplateIcon(icon) && !iconPath.MatchString(icon) && !frozenPresetIcon(icon) {
 		return fmt.Errorf("%w: icon must reference a stored image or reviewed seed asset", ErrInvalidDirectory)
 	}
 	return nil
@@ -269,13 +280,13 @@ func directoryError(err error) error {
 type directoryQuerier interface{ QueryRow(string, ...any) *sql.Row }
 type directoryScanner interface{ Scan(...any) error }
 
-const vendorColumns = `uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,enabled,revision,deleted_at_s,icon_en,icon_zh_cn`
-const applicationColumns = `a.uid,a.id,v.id||'/'||a.id,a.vendor_uid,v.id,a.name_en,a.name_zh_cn,a.description_en,a.description_zh_cn,a.icon,a.provider,a.base_url,a.base_urls_json,a.source_strategy,a.cache_ttl_seconds,a.enabled,a.revision,a.source_epoch,a.deleted_at_s`
+const vendorColumns = `uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,enabled,revision,deleted_at_s,icon_en,icon_zh_cn,runtime_revision`
+const applicationColumns = `a.uid,a.id,v.id||'/'||a.id,a.vendor_uid,v.id,a.name_en,a.name_zh_cn,a.description_en,a.description_zh_cn,a.icon,a.provider,a.base_url,a.base_urls_json,a.source_strategy,a.cache_ttl_seconds,a.enabled,a.revision,a.source_epoch,a.deleted_at_s,a.runtime_revision,EXISTS(SELECT 1 FROM template_snapshots t WHERE t.kind='App' AND t.canonical_key=v.id||'/'||a.id),COALESCE((SELECT category_id FROM application_categories WHERE app_uid=a.uid),''),COALESCE((SELECT json_group_array(tag_id) FROM (SELECT tag_id FROM application_tags WHERE app_uid=a.uid ORDER BY tag_id)),'[]')`
 
 func scanVendor(row directoryScanner) (Vendor, error) {
 	var v Vendor
 	var deleted sql.NullInt64
-	err := row.Scan(&v.UID, &v.ID, &v.Name.En, &v.Name.ZhCN, &v.Description.En, &v.Description.ZhCN, &v.Icon, &v.Enabled, &v.Revision, &deleted, &v.LocalizedIcons.En, &v.LocalizedIcons.ZhCN)
+	err := row.Scan(&v.UID, &v.ID, &v.Name.En, &v.Name.ZhCN, &v.Description.En, &v.Description.ZhCN, &v.Icon, &v.Enabled, &v.Revision, &deleted, &v.LocalizedIcons.En, &v.LocalizedIcons.ZhCN, &v.RuntimeRevision)
 	_, v.HasTemplate = BuiltinVendorTemplate(v.ID)
 	v.DeletedAt = timePointer(deleted)
 	return v, err
@@ -283,12 +294,17 @@ func scanVendor(row directoryScanner) (Vendor, error) {
 func scanApplication(row directoryScanner) (Application, error) {
 	var a Application
 	var deleted sql.NullInt64
-	var bases []byte
-	err := row.Scan(&a.UID, &a.ID, &a.Key, &a.VendorUID, &a.VendorID, &a.Name.En, &a.Name.ZhCN, &a.Description.En, &a.Description.ZhCN, &a.Icon, &a.Provider, &a.BaseURL, &bases, &a.SourceStrategy, &a.CacheTTLSeconds, &a.Enabled, &a.Revision, &a.SourceEpoch, &deleted)
+	var bases, tags []byte
+	err := row.Scan(&a.UID, &a.ID, &a.Key, &a.VendorUID, &a.VendorID, &a.Name.En, &a.Name.ZhCN, &a.Description.En, &a.Description.ZhCN, &a.Icon, &a.Provider, &a.BaseURL, &bases, &a.SourceStrategy, &a.CacheTTLSeconds, &a.Enabled, &a.Revision, &a.SourceEpoch, &deleted, &a.RuntimeRevision, &a.BuiltinTemplate, &a.Category, &tags)
 	if err == nil {
 		err = json.Unmarshal(bases, &a.BaseURLs)
+		if err == nil {
+			err = json.Unmarshal(tags, &a.Tags)
+		}
 	}
-	_, a.BuiltinTemplate = BuiltinApplicationTemplate(a.Key)
+	if _, ok := BuiltinApplicationTemplate(a.Key); ok {
+		a.BuiltinTemplate = true
+	}
 	a.DeletedAt = timePointer(deleted)
 	return a, err
 }
@@ -354,90 +370,53 @@ func createVendor(tx *sql.Tx, in VendorInput) (Vendor, error) {
 	if err != nil {
 		return Vendor{}, err
 	}
-	_, err = tx.Exec(`INSERT INTO vendors(`+vendorColumns+`) VALUES(?,?,?,?,?,?,?,?,1,NULL,?,?)`, uid, in.ID, in.Name.En, in.Name.ZhCN, in.Description.En, in.Description.ZhCN, in.Icon, in.Enabled, in.LocalizedIcons.En, in.LocalizedIcons.ZhCN)
+	_, err = tx.Exec(`INSERT INTO vendors(`+vendorColumns+`) VALUES(?,?,?,?,?,?,?,?,1,NULL,?,?,1)`, uid, in.ID, in.Name.En, in.Name.ZhCN, in.Description.En, in.Description.ZhCN, in.Icon, in.Enabled, in.LocalizedIcons.En, in.LocalizedIcons.ZhCN)
 	if err != nil {
 		return Vendor{}, directoryError(err)
 	}
-	return readVendor(tx, in.ID)
-}
-func (s *Store) CreateVendor(in VendorInput) (Vendor, error) {
-	tx, err := s.DB.Begin()
-	if err != nil {
-		return Vendor{}, err
-	}
-	defer tx.Rollback()
-	v, err := createVendor(tx, in)
-	if err != nil {
-		return Vendor{}, err
-	}
-	if err = tx.Commit(); err != nil {
-		return Vendor{}, err
-	}
-	return v, nil
-}
-func (s *Store) UpdateVendor(id string, expectedRevision int64, in VendorChanges) (Vendor, error) {
-	tx, err := s.DB.Begin()
-	if err != nil {
-		return Vendor{}, err
-	}
-	defer tx.Rollback()
-	v, err := updateVendor(tx, id, expectedRevision, in)
+	v, err := readVendor(tx, in.ID)
 	if err != nil {
 		return v, err
 	}
-	return v, tx.Commit()
+	_, err = tx.Exec(`INSERT INTO vendor_config VALUES(?,NULL,?,?)`, uid, encode(Object{}), encode(vendorSpec(v)))
+	return v, err
 }
-func updateVendor(tx *sql.Tx, id string, expectedRevision int64, in VendorChanges) (Vendor, error) {
-	if err := validateVendorPresentation(in.Name, in.Description, in.Icon, in.LocalizedIcons); err != nil {
-		return Vendor{}, err
-	}
-	v, err := readVendor(tx, id)
-	if err != nil {
-		return Vendor{}, err
-	}
-	if v.DeletedAt != nil {
-		return Vendor{}, ErrDirectoryDeleted
-	}
-	if expectedRevision != v.Revision {
-		return Vendor{}, ErrConflict
-	}
-	_, err = tx.Exec(`UPDATE vendors SET name_en=?,name_zh_cn=?,description_en=?,description_zh_cn=?,icon=?,enabled=?,icon_en=?,icon_zh_cn=?,revision=revision+1 WHERE uid=? AND revision=?`, in.Name.En, in.Name.ZhCN, in.Description.En, in.Description.ZhCN, in.Icon, in.Enabled, in.LocalizedIcons.En, in.LocalizedIcons.ZhCN, v.UID, expectedRevision)
-	if err != nil {
-		return Vendor{}, err
-	}
-	v, err = readVendor(tx, id)
-	if err != nil {
-		return Vendor{}, err
-	}
-	return v, nil
+func (s *Store) CreateVendor(in VendorInput) (Vendor, error) {
+	return s.CreateConfiguredVendor(in, nil)
 }
-func (s *Store) DeleteVendor(id string, expectedRevision int64) error {
-	tx, err := s.DB.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	v, err := readVendor(tx, id)
-	if err != nil {
-		return err
-	}
-	if v.DeletedAt != nil {
-		return ErrDirectoryDeleted
-	}
-	if expectedRevision != v.Revision {
-		return ErrConflict
-	}
-	var live int
-	if err = tx.QueryRow(`SELECT count(*) FROM applications WHERE vendor_uid=? AND deleted_at_s IS NULL`, v.UID).Scan(&live); err != nil {
-		return err
-	}
-	if live != 0 {
-		return ErrVendorHasApplications
-	}
-	if _, err = tx.Exec(`UPDATE vendors SET enabled=0,revision=revision+1,deleted_at_s=? WHERE uid=? AND revision=?`, time.Now().UTC().Unix(), v.UID, expectedRevision); err != nil {
-		return err
-	}
-	return tx.Commit()
+func (s *Store) UpdateVendor(id string, revision int64, in VendorChanges) (Vendor, error) {
+	spec := object(presets.VendorSpec{Name: presets.Text{En: in.Name.En, ZhCN: in.Name.ZhCN}, Description: presets.Text{En: in.Description.En, ZhCN: in.Description.ZhCN}, Icon: in.Icon, LocalizedIcons: presets.Text{En: in.LocalizedIcons.En, ZhCN: in.LocalizedIcons.ZhCN}})
+	set := patchObject(spec, "Vendor")
+	delete(set, "proxy")
+	return s.PatchVendorFields(id, revision, set, &in.Enabled)
+}
+
+func (s *Store) DeleteVendor(id string, revision int64) error {
+	return s.changeConfiguration(func(st *configurationState) error {
+		for i := range st.Vendors {
+			v := &st.Vendors[i]
+			if v.ID != id {
+				continue
+			}
+			if v.Revision != revision {
+				return ErrConflict
+			}
+			if v.DeletedAt != nil {
+				return ErrDirectoryDeleted
+			}
+			for _, a := range st.Applications {
+				if a.VendorUID == v.UID && a.DeletedAt == nil {
+					return ErrVendorHasApplications
+				}
+			}
+			now := time.Now().UTC()
+			v.Enabled = false
+			v.DeletedAt = &now
+			v.Revision++
+			return nil
+		}
+		return sql.ErrNoRows
+	})
 }
 
 func createApplication(tx *sql.Tx, vendorID string, in ApplicationInput) (Application, error) {
@@ -469,22 +448,15 @@ func createApplication(tx *sql.Tx, vendorID string, in ApplicationInput) (Applic
 	if err != nil {
 		return Application{}, err
 	}
-	return readApplication(tx, vendorID+"/"+in.ID)
+	a, err := readApplication(tx, vendorID+"/"+in.ID)
+	if err != nil {
+		return a, err
+	}
+	_, err = tx.Exec(`INSERT INTO application_config VALUES(?,NULL,?,?)`, uid, encode(Object{}), encode(appSpec(a, LocalizedText{}, cachepolicy.Empty())))
+	return a, err
 }
 func (s *Store) CreateApplication(vendorID string, in ApplicationInput) (Application, error) {
-	tx, err := s.DB.Begin()
-	if err != nil {
-		return Application{}, err
-	}
-	defer tx.Rollback()
-	a, err := createApplication(tx, vendorID, in)
-	if err != nil {
-		return Application{}, err
-	}
-	if err = tx.Commit(); err != nil {
-		return Application{}, err
-	}
-	return a, nil
+	return s.CreateConfiguredApplication(vendorID, in, nil)
 }
 
 // UpdateApplication replaces mutable presentation and configuration under CAS.
@@ -492,97 +464,71 @@ func (s *Store) CreateApplication(vendorID string, in ApplicationInput) (Applica
 // empty list is invalid. Legacy BaseURL-only edits preserve the existing list
 // when the normalized first URL is unchanged, or replace it with a single source
 // when it changes. An omitted SourceStrategy preserves the existing strategy.
-func (s *Store) UpdateApplication(key string, expectedRevision int64, in ApplicationChanges) (Application, error) {
-	tx, err := s.DB.Begin()
+func (s *Store) UpdateApplication(key string, revision int64, in ApplicationChanges) (Application, error) {
+	a, err := s.Application(key)
 	if err != nil {
 		return Application{}, err
-	}
-	defer tx.Rollback()
-	a, err := updateApplication(tx, key, expectedRevision, in)
-	if err != nil {
-		return Application{}, err
-	}
-	return a, tx.Commit()
-}
-func updateApplication(tx *sql.Tx, key string, expectedRevision int64, in ApplicationChanges) (Application, error) {
-	a, err := readApplication(tx, key)
-	if err != nil {
-		return Application{}, err
-	}
-	if a.DeletedAt != nil {
-		return Application{}, ErrDirectoryDeleted
-	}
-	if expectedRevision != a.Revision {
-		return Application{}, ErrConflict
 	}
 	validated := ApplicationInput{ID: a.ID, Name: in.Name, Description: in.Description, Icon: in.Icon, Provider: a.Provider, BaseURL: in.BaseURL, BaseURLs: in.BaseURLs, SourceStrategy: in.SourceStrategy, CacheTTLSeconds: in.CacheTTLSeconds, Enabled: in.Enabled}
-	if a.Provider == "http-cache" {
-		if validated.BaseURLs == nil {
-			base, err := normalizeDirectoryBase(in.BaseURL)
-			if err != nil {
-				return Application{}, err
-			}
-			if base == a.BaseURL {
-				validated.BaseURLs = a.BaseURLs
-			}
+	if a.Provider == "http-cache" && validated.BaseURLs == nil {
+		base, err := normalizeDirectoryBase(in.BaseURL)
+		if err != nil {
+			return Application{}, err
 		}
-		if validated.SourceStrategy == "" {
-			validated.SourceStrategy = a.SourceStrategy
+		if base == a.BaseURL {
+			validated.BaseURLs = a.BaseURLs
 		}
+	}
+	if a.Provider == "http-cache" && validated.SourceStrategy == "" {
+		validated.SourceStrategy = a.SourceStrategy
 	}
 	if err = validateApplication(&validated); err != nil {
 		return Application{}, err
 	}
-	bases, err := json.Marshal(validated.BaseURLs)
-	if err != nil {
-		return Application{}, err
+	if validated.BaseURLs == nil {
+		validated.BaseURLs = []string{}
 	}
-	epoch := a.SourceEpoch
-	if a.BaseURL != validated.BaseURL || !slices.Equal(a.BaseURLs, validated.BaseURLs) || a.SourceStrategy != validated.SourceStrategy {
-		epoch++
-		_, err = tx.Exec(`INSERT INTO application_sources(app_uid,epoch,provider,base_url,base_urls_json,source_strategy,created_at_s) VALUES(?,?,?,?,?,?,?)`, a.UID, epoch, a.Provider, validated.BaseURL, string(bases), validated.SourceStrategy, time.Now().UTC().Unix())
-		if err != nil {
-			return Application{}, err
-		}
-	}
-	_, err = tx.Exec(`UPDATE applications SET name_en=?,name_zh_cn=?,description_en=?,description_zh_cn=?,icon=?,base_url=?,base_urls_json=?,source_strategy=?,cache_ttl_seconds=?,enabled=?,revision=revision+1,source_epoch=? WHERE uid=? AND revision=?`, in.Name.En, in.Name.ZhCN, in.Description.En, in.Description.ZhCN, in.Icon, validated.BaseURL, string(bases), validated.SourceStrategy, in.CacheTTLSeconds, in.Enabled, epoch, a.UID, expectedRevision)
-	if err != nil {
-		return Application{}, err
-	}
-	a, err = readApplication(tx, key)
-	if err != nil {
-		return Application{}, err
-	}
-	return a, nil
+	set := map[string]json.RawMessage{"name.en": encode(in.Name.En), "name.zh-CN": encode(in.Name.ZhCN), "description.en": encode(in.Description.En), "description.zh-CN": encode(in.Description.ZhCN), "icon": encode(in.Icon), "base_url": encode(validated.BaseURL), "base_urls": encode(validated.BaseURLs), "source_strategy": encode(validated.SourceStrategy), "cache_ttl_seconds": encode(validated.CacheTTLSeconds)}
+	return s.PatchApplicationFields(key, revision, set, &in.Enabled)
 }
-func (s *Store) DeleteApplication(key string, expectedRevision int64) error {
+
+func (s *Store) DeleteApplication(key string, revision int64) error {
 	if _, ok := BuiltinApplicationTemplate(key); ok {
 		return ErrBuiltinTemplate
 	}
-	tx, err := s.DB.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	a, err := readApplication(tx, key)
-	if err != nil {
-		return err
-	}
-	if a.DeletedAt != nil {
-		return ErrDirectoryDeleted
-	}
-	if expectedRevision != a.Revision {
-		return ErrConflict
-	}
-	if _, err = tx.Exec(`UPDATE applications SET enabled=0,revision=revision+1,deleted_at_s=? WHERE uid=? AND revision=?`, time.Now().UTC().Unix(), a.UID, expectedRevision); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.changeConfiguration(func(st *configurationState) error {
+		if _, ok := st.Templates[templateKey("App", key)]; ok {
+			return ErrBuiltinTemplate
+		}
+		for i := range st.Applications {
+			a := &st.Applications[i]
+			if a.Key != key {
+				continue
+			}
+			if a.Revision != revision {
+				return ErrConflict
+			}
+			if a.DeletedAt != nil {
+				return ErrDirectoryDeleted
+			}
+			now := time.Now().UTC()
+			a.Enabled = false
+			a.DeletedAt = &now
+			a.Revision++
+			return nil
+		}
+		return sql.ErrNoRows
+	})
 }
 
 // SeedDirectory runs exactly once, atomically with its completion marker. Empty
 // seeds are valid and intentional; deleted defaults are never resurrected.
 func (s *Store) SeedDirectory(vendors []VendorInput, apps []ApplicationSeed) error {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	if s.prepareConfiguration != nil {
+		return errors.New("SeedDirectory is initialization-only before publication installation")
+	}
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return err
@@ -611,7 +557,7 @@ func (s *Store) SeedDirectory(vendors []VendorInput, apps []ApplicationSeed) err
 	return tx.Commit()
 }
 
-const sourceColumns = `src.app_uid,src.epoch,src.provider,src.base_url,src.base_urls_json,src.source_strategy,src.created_at_s,a.revision,v.revision,(a.enabled=1 AND v.enabled=1 AND a.deleted_at_s IS NULL AND v.deleted_at_s IS NULL AND src.epoch=a.source_epoch)`
+const sourceColumns = `src.app_uid,src.epoch,src.provider,src.base_url,src.base_urls_json,src.source_strategy,src.created_at_s,a.runtime_revision,v.runtime_revision,(a.enabled=1 AND v.enabled=1 AND a.deleted_at_s IS NULL AND v.deleted_at_s IS NULL AND src.epoch=a.source_epoch)`
 const sourceJoin = ` FROM application_sources src JOIN applications a ON a.uid=src.app_uid JOIN vendors v ON v.uid=a.vendor_uid`
 
 func scanSource(row directoryScanner) (SourceRecord, error) {
@@ -691,14 +637,14 @@ func (s *Store) SourceActive(storageID string) (bool, error) {
 	return err == nil, err
 }
 
-// Only icons declared by the compiled templates may bypass uploaded-image paths.
+// Only reviewed embedded images may bypass uploaded-image paths. Legacy routes
+// remain accepted for existing data, independently of new template display URLs.
 func builtinTemplateIcon(path string) bool {
-	for _, template := range EntityTemplates() {
-		if path != "" && (path == template.Vendor.Icon || path == template.Application.Icon) {
-			return true
-		}
+	if _, ok := presets.Embedded().Image(path); ok {
+		return true
 	}
-	return false
+	_, ok := presets.LegacyImage(path)
+	return ok
 }
 
 func validateVendorPresentation(name, description LocalizedText, icon string, localized LocalizedText) error {
@@ -708,4 +654,16 @@ func validateVendorPresentation(name, description LocalizedText, icon string, lo
 		}
 	}
 	return nil
+}
+
+func frozenPresetIcon(icon string) bool {
+	relative := strings.TrimPrefix(icon, presets.ImagePrefix)
+	if relative == icon || !fs.ValidPath(relative) || strings.ContainsAny(relative, "\\:?#") {
+		return false
+	}
+	switch path.Ext(relative) {
+	case ".svg", ".png", ".jpg", ".jpeg":
+		return true
+	}
+	return false
 }

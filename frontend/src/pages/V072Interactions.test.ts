@@ -8,7 +8,7 @@ import {
   boot,
   mountPage,
   resetStores,
-  response,
+  response, configurationFixture,
   adminApplications,
   managedVendors,
 } from "../testSupport";
@@ -246,9 +246,9 @@ it("starts template reset unselected, reviews selected differences and preserves
     groups: ["metadata", "instructions_en", "enabled"],
   };
   const fetch = vi.fn(async (_url: string, init?: RequestInit) =>
-    init?.method === "POST"
+    init?.method === "PATCH"
       ? response({ error: { code: "DIRECTORY_REVISION_CONFLICT" } }, 409)
-      : response(preview),
+      : response(_url.endsWith("/configuration")?configurationFixture(current as unknown as Record<string,unknown>,9,current.key):preview),
   );
   vi.stubGlobal("fetch", fetch);
   const wrapper = mount(TemplateReset, {
@@ -277,11 +277,10 @@ it("starts template reset unselected, reviews selected differences and preserves
     .find((b) => b.text() === "Save selected fields")!
     .trigger("click");
   await flushPromises();
-  const write = fetch.mock.calls.find(([, init]) => init?.method === "POST")!;
+  const write = fetch.mock.calls.find(([, init]) => init?.method === "PATCH")!;
   expect(JSON.parse(write[1]!.body as string)).toEqual({
     revision: 9,
-    instructions_revision: 4,
-    groups: ["metadata"],
+    unset:["name.en","name.zh-CN","description.en","description.zh-CN"],
   });
   expect(wrapper.get("[role=alert]").text()).toContain("draft is preserved");
   expect(

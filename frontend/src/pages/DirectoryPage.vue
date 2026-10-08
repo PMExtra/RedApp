@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ConfigurationExchange from "../components/ConfigurationExchange.vue";
 import Icon from "../components/Icon.vue";
 import IconButton from "../components/IconButton.vue";
 import { computed, onUnmounted, reactive, ref, watch } from "vue";
@@ -20,6 +21,7 @@ const path = computed(
   () =>
     `vendors?${new URLSearchParams({ q: query.value, state: state.value })}`,
 );
+const importing=ref(false);
 const list = reactive(useNumberedCollection<Card>(path, 12));
 let debounce: ReturnType<typeof setTimeout> | undefined;
 watch(search, (value) => {
@@ -81,7 +83,9 @@ onUnmounted(() => clearTimeout(debounce));
         class="button-link"
         ><Icon name="plus" />{{ t('Add vendor') }}</RouterLink>
     </div>
-    <div class="directory-toolbar">
+    <ConfigurationExchange v-if="importing" action="import" @close="importing=false" @applied="list.reload" />
+    <div class="directory-toolbar"><IconButton icon="upload" :label="t('Import configuration')" @click="importing=true" />
+      <RouterLink to="/admin/taxonomy" class="icon-button" :title="t('Manage categories and tags')" :aria-label="t('Manage categories and tags')"><Icon name="tags" /></RouterLink>
       <label class="directory-search search-field"
         ><span class="sr-only">{{ t("Search vendors and applications") }}</span
         ><Icon name="search" class="search-input-icon" /><input

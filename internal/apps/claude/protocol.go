@@ -90,9 +90,14 @@ func Compare(a, b string) (int, error) {
 	return 0, errors.New("Unordered prerelease identifiers")
 }
 
-type Protocol struct{ upstream *distributor.Client }
+type Protocol struct {
+	upstream       *distributor.Client
+	verifyManifest func([]byte, []byte) error
+}
 
-func NewProtocol(upstream *distributor.Client) *Protocol { return &Protocol{upstream: upstream} }
+func NewProtocol(upstream *distributor.Client) *Protocol {
+	return &Protocol{upstream: upstream, verifyManifest: Verify}
+}
 func (p *Protocol) ValidateVersion(v string) (string, error) {
 	if !ValidVersion(v) {
 		return "", errors.New("Invalid Claude version")
@@ -142,7 +147,11 @@ func (p *Protocol) FetchRelease(ctx context.Context, version string) (applicatio
 	return application.Envelope{Raw: raw, Signature: signature}, nil
 }
 func (p *Protocol) VerifyRelease(version string, envelope application.Envelope) (application.Release, error) {
-	if err := Verify(envelope.Raw, envelope.Signature); err != nil {
+	verify := p.verifyManifest
+	if verify == nil {
+		verify = Verify
+	}
+	if err := verify(envelope.Raw, envelope.Signature); err != nil {
 		return application.Release{}, err
 	}
 	m, err := parse(envelope.Raw, version)

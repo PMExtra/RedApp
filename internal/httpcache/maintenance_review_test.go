@@ -10,21 +10,21 @@ import (
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
-func TestCleanupStopsBetweenBatchesWhenApplicationRevisionChanges(t *testing.T) {
+func TestCleanupStopsBetweenBatchesWhenRuntimeRevisionChanges(t *testing.T) {
 	f := newFixture(t, http.NotFoundHandler(), 300)
 	seedMaintenanceRows(t, f, 1205)
 	preview, err := f.s.Preview(f.entry, "fetched_at", f.s.now())
 	if err != nil || preview.SelectedFiles != 1205 {
 		t.Fatal(preview, err)
 	}
-	// Advance the application's management revision as the hundredth item's
+	// Advance the application's runtime revision as the hundredth item's
 	// result is recorded. Both become visible at the first batch commit; the
 	// next batch must recheck the captured fence before retiring another row.
 	// This models a policy edit without adding a production synchronization hook.
 	_, err = f.db.DB.Exec(`CREATE TEMP TRIGGER change_revision_after_cleanup_batch
 		AFTER UPDATE OF completed_count ON http_cleanup_previews
 		WHEN NEW.kind='cleanup' AND OLD.completed_count=99 AND NEW.completed_count=100
-		BEGIN UPDATE applications SET revision=revision+1; END`)
+		BEGIN UPDATE applications SET revision=revision+1,runtime_revision=runtime_revision+1; END`)
 	if err != nil {
 		t.Fatal(err)
 	}

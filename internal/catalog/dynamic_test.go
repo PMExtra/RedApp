@@ -31,7 +31,7 @@ func dynamicEntry(t *testing.T, db *store.Store, client *distributor.Client) (ap
 	if err != nil {
 		t.Fatal(err)
 	}
-	return application.Entry{Descriptor: descriptor(app.Key, "latest"), Protocol: codex.NewProtocol(client), Upstream: client, UID: app.UID, Provider: app.Provider, Revision: app.Revision, VendorRevision: vendor.Revision, SourceEpoch: app.SourceEpoch, Enabled: true}, app
+	return application.Entry{Descriptor: descriptor(app.Key, "latest"), Protocol: codex.NewProtocol(client), Upstream: client, UID: app.UID, Provider: app.Provider, Revision: app.Revision, VendorRevision: vendor.Revision, RuntimeRevision: app.RuntimeRevision, VendorRuntimeRevision: vendor.RuntimeRevision, SourceEpoch: app.SourceEpoch, Enabled: true}, app
 }
 
 // Even when disable/enable returns to the same source epoch, the delayed flight
@@ -65,6 +65,7 @@ func TestDynamicMetadataFlightFencesVendorDisableEnable(t *testing.T) {
 		t.Fatal(err)
 	}
 	entry.VendorRevision = vendor.Revision
+	entry.VendorRuntimeRevision = vendor.RuntimeRevision
 	if err = reg.Replace([]application.Entry{entry}); err != nil {
 		t.Fatal(err)
 	}
@@ -91,6 +92,7 @@ func TestHistoricalCleanupCandidatesRequireSourceOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	entry.RuntimeRevision = app.RuntimeRevision
 	entry.SourceEpoch, entry.Revision, entry.Enabled = app.SourceEpoch, app.Revision, false
 	other, err := db.CreateApplication("example", store.ApplicationInput{ID: "other", Name: app.Name, Provider: "codex", BaseURL: app.BaseURL, CacheTTLSeconds: 60, Enabled: true})
 	if err != nil {

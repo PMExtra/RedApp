@@ -19,5 +19,9 @@ func (c *Client) sibling(base string, mode ClientMode) (*Client, error) {
 	if c.pool == nil {
 		return nil, errors.New("Upstream transport is not configurable")
 	}
+	scope := c.transports.current
+	if scope.appUID != "" {
+		return c.pool.NewScopedClient(base, mode, scope.appUID, scope.vendorUID)
+	}
 	return c.pool.NewClient(base, mode)
 }

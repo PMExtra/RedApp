@@ -35,8 +35,8 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(sum(r['status']=='changed' for r in rows),1)
     def test_manifest_extends_inventory_and_allowlist_without_protocol_code(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp);target=root/'internal/apps/builtin/manifest.json';target.parent.mkdir(parents=True)
-            manifest=json.loads((m.ROOT/'internal/apps/builtin/manifest.json').read_text())
+            root=Path(tmp);target=root/'.generated/installer-inventory.json';target.parent.mkdir(parents=True)
+            manifest=json.loads((m.ROOT/'.generated/installer-inventory.json').read_text())
             extra=copy.deepcopy(manifest['applications'][0]);extra['id']='example/third-app'
             manifest['applications'].append(extra);target.write_text(json.dumps(manifest))
             self.assertEqual(len(m.inventory(root)),len(m.inventory())+len(extra['installers']))
@@ -64,8 +64,8 @@ class CheckTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
             shutil.copytree(m.ROOT/'installers',root/'installers')
-            target=root/'internal/apps/builtin';target.mkdir(parents=True)
-            shutil.copyfile(m.ROOT/'internal/apps/builtin/manifest.json',target/'manifest.json')
+            target=root/'.generated';target.mkdir(parents=True)
+            shutil.copyfile(m.ROOT/'.generated/installer-inventory.json',target/'installer-inventory.json')
             (root/'installers/openai/codex/upstream/install.sh').write_bytes(b'#!/bin/sh\nmodified locally\n')
             rows=m.inspect(root=root,fetch=self.original)
             self.assertEqual(rows[0]['status'],'error')
@@ -168,8 +168,8 @@ class PublishTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name)/'repo';self.root.mkdir();self.remote=Path(self.temp.name)/'remote.git'
         p.git(self.root,'init','-b','main');p.git(self.root,'config','user.name','Fixture');p.git(self.root,'config','user.email','fixture@example.invalid')
-        target=self.root/'internal/apps/builtin';target.mkdir(parents=True)
-        shutil.copyfile(m.ROOT/'internal/apps/builtin/manifest.json',target/'manifest.json')
+        target=self.root/'.generated';target.mkdir(parents=True)
+        shutil.copyfile(m.ROOT/'.generated/installer-inventory.json',target/'installer-inventory.json')
         for name in sorted(p.allowed_paths(self.root)):
             file=self.root/name;file.parent.mkdir(parents=True,exist_ok=True);file.write_text('{}\n' if name.endswith('.json') else 'old\n')
         p.git(self.root,'add','.');p.git(self.root,'commit','-m','baseline')

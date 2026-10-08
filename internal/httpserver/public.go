@@ -12,12 +12,17 @@ import (
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/config"
 	"github.com/PMExtra/RedApp/internal/site"
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
 func (s *Server) publicApplications(origin string) ([]map[string]any, error) {
+	taxonomy, _, err := s.DB.PublicTaxonomy()
+	if err != nil {
+		return nil, err
+	}
 	out := make([]map[string]any, 0, len(s.Registry.Entries()))
 	for _, e := range s.Registry.Entries() {
-		item, err := s.publicApplication(e, origin)
+		item, err := s.publicApplicationWithTaxonomy(e, origin, taxonomy[e.UID])
 		if err != nil {
 			return nil, err
 		}
@@ -26,6 +31,16 @@ func (s *Server) publicApplications(origin string) ([]map[string]any, error) {
 	return out, nil
 }
 func (s *Server) publicApplication(e application.Entry, origin string) (map[string]any, error) {
+	taxonomy, _, err := s.DB.PublicTaxonomy()
+	if err != nil {
+		return nil, err
+	}
+	return s.publicApplicationWithTaxonomy(e, origin, taxonomy[e.UID])
+}
+func (s *Server) publicApplicationWithTaxonomy(e application.Entry, origin string, taxonomy store.AppTaxonomy) (map[string]any, error) {
+	if taxonomy.Tags == nil {
+		taxonomy.Tags = []store.TaxonomyLabel{}
+	}
 	usage, err := s.DB.Instructions(e.UID)
 	if err != nil {
 		return nil, err
@@ -41,7 +56,7 @@ func (s *Server) publicApplication(e application.Entry, origin string) (map[stri
 		}
 	}
 	definition, _ := application.ProviderDefinition(e.Provider)
-	item := map[string]any{"id": d.ID, "name": d.Name, "publisher": d.Publisher, "vendor": map[string]any{"id": e.VendorID, "name": e.VendorName, "description": e.VendorDescription, "icon": e.VendorIcon, "localized_icons": e.VendorLocalizedIcons}, "summary": d.Summary, "origin": root, "detail_url": "/" + d.ID, "distribution_url": root, "icon": icon, "channels": d.Channels, "installers": publicInstallers(d.Installers), "update_policy": d.UpdatePolicy, "provider": e.Provider, "capabilities": definition.Capabilities, "instructions": usage.LocalizedText}
+	item := map[string]any{"category": taxonomy.Category, "tags": taxonomy.Tags, "id": d.ID, "name": d.Name, "publisher": d.Publisher, "vendor": map[string]any{"id": e.VendorID, "name": e.VendorName, "description": e.VendorDescription, "icon": e.VendorIcon, "localized_icons": e.VendorLocalizedIcons}, "summary": d.Summary, "origin": root, "detail_url": "/" + d.ID, "distribution_url": root, "icon": icon, "channels": d.Channels, "installers": publicInstallers(d.Installers), "update_policy": d.UpdatePolicy, "provider": e.Provider, "capabilities": definition.Capabilities, "instructions": usage.LocalizedText}
 	if definition.Capabilities.Versions && e.Protocol != nil {
 		latest, discovered, err := s.latestKnownVersion(e)
 		if err != nil {
@@ -100,6 +115,9 @@ func publicInstallers(items []application.Installer) []map[string]string {
 	return out
 }
 func (s *Server) publicAPI(w http.ResponseWriter, r *http.Request, publicView config.PublicView) {
+	if s.relatedAPI(w, r, publicView.EffectiveURL) {
+		return
+	}
 	if s.instructionsDocument(w, r, publicView.EffectiveURL) || s.publicCatalogAPI(w, r, publicView.EffectiveURL) {
 		return
 	}
@@ -155,7 +173,12 @@ func (s *Server) publicAPI(w http.ResponseWriter, r *http.Request, publicView co
 			version = "dev"
 		}
 		publicRevision := publicView.Revision
-		identity, _ := json.Marshal([]any{version, settings.Revision, publicRevision, public, apps})
+		taxonomyRevision, err := s.DB.TaxonomyPublicRevision()
+		if err != nil {
+			fail(w, 503, "Directory unavailable")
+			return
+		}
+		identity, _ := json.Marshal([]any{version, settings.Revision, publicRevision, taxonomyRevision, public, apps})
 		digest := sha256.Sum256(identity)
 		reply(w, 200, map[string]any{"version": version, "os": runtime.GOOS, "arch": runtime.GOARCH, "site": settings.Settings, "apps": apps, "public_origin": public, "revision": hex.EncodeToString(digest[:])})
 		return

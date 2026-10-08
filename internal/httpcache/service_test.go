@@ -67,7 +67,7 @@ func newFixture(t *testing.T, h http.Handler, ttl int) *fixture {
 	}
 	client, _ := distributor.NewPool().NewClient(app.BaseURL, distributor.GeneralHTTP)
 	f := &fixture{db: db, app: app, vendor: vendor, budget: &testBudget{limit: 1024}}
-	f.entry = application.Entry{Descriptor: application.Descriptor{ID: app.Key, DefaultChannelTTLSeconds: ttl}, UID: app.UID, SourceEpoch: app.SourceEpoch, Revision: app.Revision, VendorRevision: vendor.Revision, Provider: application.HttpCache, Enabled: true, Upstream: client}
+	f.entry = application.Entry{Descriptor: application.Descriptor{ID: app.Key, DefaultChannelTTLSeconds: ttl}, UID: app.UID, SourceEpoch: app.SourceEpoch, Revision: app.Revision, VendorRevision: vendor.Revision, RuntimeRevision: app.RuntimeRevision, VendorRuntimeRevision: vendor.RuntimeRevision, Provider: application.HttpCache, Enabled: true, Upstream: client}
 	f.clock.Store(time.Now().Unix())
 	f.s, err = New(dir, db, f.budget)
 	if err != nil {
@@ -585,6 +585,7 @@ func TestSourceEpochIsolationAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.entry.Revision = changed.Revision
+	f.entry.RuntimeRevision = changed.RuntimeRevision
 	f.entry.SourceEpoch = changed.SourceEpoch
 	f.entry.Upstream, _ = distributor.NewPool().NewClient(changed.BaseURL, distributor.GeneralHTTP)
 	w, err := f.serve(t, "GET", http.Header{})

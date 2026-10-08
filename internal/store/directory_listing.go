@@ -123,8 +123,16 @@ func (s *Store) ApplicationPage(vendor string, page, limit int, q, state string)
 	return result, tx.Commit()
 }
 func applicationPage(tx *sql.Tx, vendor string, page, limit int, q, state string) (Page[Application], error) {
+	return applicationCategoryPage(tx, vendor, page, limit, q, state, "")
+}
+
+func applicationCategoryPage(tx *sql.Tx, vendor string, page, limit int, q, state, category string) (Page[Application], error) {
 	where := appState(state)
 	args := []any{}
+	if category != "" {
+		where += ` AND EXISTS(SELECT 1 FROM application_categories c WHERE c.app_uid=a.uid AND c.category_id=?)`
+		args = append(args, category)
+	}
 	if vendor != "" {
 		where += ` AND v.id=?`
 		args = append(args, vendor)
@@ -184,4 +192,20 @@ func (s *Store) ApplicationsMatching(vendor, q, state string) ([]Application, er
 		return nil, err
 	}
 	return all.Items, tx.Commit()
+}
+
+func (s *Store) ApplicationCategoryPage(vendor string, page, limit int, q, category string) (Page[Application], error) {
+	if !validDirectoryPage(page, limit, "enabled") {
+		return Page[Application]{}, ErrInvalidDirectory
+	}
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return Page[Application]{}, err
+	}
+	defer tx.Rollback()
+	result, err := applicationCategoryPage(tx, vendor, page, limit, q, "enabled", category)
+	if err != nil {
+		return result, err
+	}
+	return result, tx.Commit()
 }

@@ -30,6 +30,16 @@ jobs:
         with:
           name: ${{ inputs.artifact }}
           path: ${{ runner.temp }}/installer-bundle
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.27.1'
+          cache: true
+      - name: Export trusted preset inventory before installer validation
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .generated | Out-Null
+          go run ./cmd/preset-inventory | Set-Content -Encoding utf8 .generated/installer-inventory.json
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Validate exact installer candidate with PowerShell 7 and 5.1
         shell: pwsh
         env:

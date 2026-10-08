@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/PMExtra/RedApp/installers"
@@ -31,6 +32,8 @@ import (
 	"github.com/PMExtra/RedApp/internal/httpcache"
 	"github.com/PMExtra/RedApp/internal/jsoncheck"
 	"github.com/PMExtra/RedApp/internal/media"
+	"github.com/PMExtra/RedApp/internal/prewarm"
+	"github.com/PMExtra/RedApp/internal/releasemaintenance"
 	"github.com/PMExtra/RedApp/internal/site"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -52,14 +55,22 @@ type Server struct {
 		Proxy() distributor.ProxyView
 		SetProxy(distributor.ProxyUpdate, int64) error
 	}
-	Pool         *distributor.Pool
-	Icons        *media.Store
-	directoryMu  sync.Mutex
-	deleteWait   time.Duration
-	History      *history.History
-	PublicConfig *config.PublicSettings
-	Dir          string
-	Started      time.Time
+	Pool                     *distributor.Pool
+	Icons                    *media.Store
+	directoryMu              sync.Mutex
+	configurationOnce        sync.Once
+	exchangeMu               sync.Mutex
+	exchangePreviews         map[string]exchangePreview
+	retention                atomic.Pointer[releasemaintenance.Service]
+	prewarmOnce              sync.Once
+	prewarmer                *prewarm.Service
+	prewarmErr               error
+	testConfigurationPrepare func(store.DirectorySnapshot) error
+	deleteWait               time.Duration
+	History                  *history.History
+	PublicConfig             *config.PublicSettings
+	Dir                      string
+	Started                  time.Time
 }
 
 func reply(w http.ResponseWriter, status int, value any) {
@@ -133,6 +144,7 @@ func queryAllowed(r *http.Request, allowed ...string) bool {
 	return true
 }
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.ConfigurePublication()
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "same-origin")
 	w.Header().Set("X-Frame-Options", "DENY")
@@ -193,7 +205,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasPrefix(path, "/assets/") {
-		if r.Method != "GET" && !(r.Method == "HEAD" && (strings.HasPrefix(path, "/assets/icons/") || strings.HasPrefix(path, "/assets/builtin/"))) {
+		if r.Method != "GET" && !(r.Method == "HEAD" && (strings.HasPrefix(path, "/assets/icons/") || strings.HasPrefix(path, "/assets/builtin/") || strings.HasPrefix(path, "/assets/presets/"))) {
 			fail(w, 405, "Method not allowed")
 			return
 		}
@@ -387,6 +399,7 @@ func (s *Server) page(w http.ResponseWriter, status int) {
 func (s *Server) asset(w http.ResponseWriter, r *http.Request) {
 	if asset, ok := builtin.BrandAsset(r.URL.Path); ok {
 		w.Header().Set("Content-Type", asset.ContentType)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
 		http.ServeContent(w, r, "icon.svg", time.Time{}, bytes.NewReader(asset.Body))
 		return
@@ -542,6 +555,12 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 		fail(w, 403, "CSRF validation failed")
 		return
 	}
+	if s.exchangeAPI(w, r, session) {
+		return
+	}
+	if s.taxonomyAPI(w, r) {
+		return
+	}
 	if s.directoryAPI(w, r) {
 		return
 	}
@@ -602,8 +621,19 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 			fail(w, 400, "Invalid source selection")
 			return
 		}
+	} else if app != "" && r.Method == http.MethodGet && (strings.HasPrefix(endpoint, "retention/") || strings.HasPrefix(endpoint, "prewarm/")) && strings.HasSuffix(endpoint, "/items") {
+		if !queryAllowed(r, "page", "limit") {
+			fail(w, 400, "Invalid query")
+			return
+		}
 	} else if !queryAllowed(r) {
 		fail(w, 400, "Invalid query")
+		return
+	}
+	if s.prewarmAPI(w, r, app, endpoint) {
+		return
+	}
+	if s.retentionAPI(w, r, app, endpoint) {
 		return
 	}
 	if s.cacheAPI(w, r, app, endpoint) {

@@ -12,6 +12,8 @@
 | Lucide Vue UI 图标 | 1.52.0 | [lucide.LICENSE](lucide.LICENSE) |
 | uPlot 图表运行时 | 1.6.32 | [uplot.LICENSE](uplot.LICENSE) |
 | go.yaml.in/yaml/v3 | 3.0.5 | [go-yaml.LICENSE](go-yaml.LICENSE)、[go-yaml.NOTICE](go-yaml.NOTICE) |
+| golang.org/x/net（HTML 目录解析） | 0.44.0 | [x-net.LICENSE](x-net.LICENSE)、[x-net.PATENTS](x-net.PATENTS) |
+| github.com/bmatcuk/doublestar/v4 | 4.10.2 | [doublestar.LICENSE](doublestar.LICENSE) |
 | golang.org/x/crypto | 0.42.0 | [x-crypto.LICENSE](x-crypto.LICENSE) |
 
 Codex 固定安装器的 LICENSE/NOTICE 在 `installers/openai/codex/upstream/`，同时嵌入服务并通过 `/openai/codex/licenses/LICENSE` 与 `/openai/codex/licenses/NOTICE` 提供。该目录不代表已完成六平台 Codex 二进制捆绑组件许可核查；对应门禁见验收记录。

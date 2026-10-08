@@ -27,12 +27,12 @@ func importURL(raw string) (*url.URL, error) {
 // FetchImport grants one administrator-requested download, with the existing
 // configured-origin transport limits. Its URL (including signed query strings)
 // is never persisted or returned in errors. It creates no upstream rule.
-func (p *Pool) FetchImport(ctx context.Context, raw string) (*http.Response, error) {
+func (p *Pool) FetchImport(ctx context.Context, appUID, vendorUID, raw string) (*http.Response, error) {
 	u, err := importURL(raw)
 	if err != nil {
 		return nil, err
 	}
-	c, err := p.NewClient(u.Scheme+"://"+u.Host, GeneralHTTP)
+	c, err := p.NewScopedClient(u.Scheme+"://"+u.Host, GeneralHTTP, appUID, vendorUID)
 	if err != nil {
 		return nil, ErrImport
 	}
@@ -60,6 +60,9 @@ func (p *Pool) FetchImport(ctx context.Context, raw string) (*http.Response, err
 	request.Header.Set("Accept-Encoding", "identity")
 	response, err := client.Do(request)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, ErrImport
 	}
 	if response.StatusCode != 200 || response.Uncompressed || (response.Header.Get("Content-Encoding") != "" && !strings.EqualFold(response.Header.Get("Content-Encoding"), "identity")) {

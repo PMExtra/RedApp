@@ -17,6 +17,7 @@ type CleanupSelection struct {
 }
 type CleanupPreview struct {
 	SourceFence
+	Retention            *RetentionGuard
 	ID, AppID            string
 	CreatedAt, ExpiresAt time.Time
 	Selection            []CleanupSelection
@@ -35,6 +36,11 @@ func (s *Store) SaveCleanupPreview(p CleanupPreview) error {
 	defer tx.Rollback()
 	if err = checkCleanupFence(tx, p.AppID, p.SourceFence); err != nil {
 		return err
+	}
+	if p.Retention != nil {
+		if err = checkRetention(tx, p.AppID, p.Retention, p.CreatedAt); err != nil {
+			return err
+		}
 	}
 	seen := map[string]bool{}
 	for _, item := range p.Selection {
@@ -55,7 +61,7 @@ func (s *Store) SaveCleanupPreview(p CleanupPreview) error {
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec("INSERT INTO cleanup_previews(id,app_id,created_at_s,expires_at_s,selection_json,app_revision,vendor_revision) VALUES(?,?,?,?,?,?,?)", p.ID, p.AppID, p.CreatedAt.Unix(), p.ExpiresAt.Unix(), raw, p.AppRevision, p.VendorRevision)
+	_, err = tx.Exec("INSERT INTO cleanup_previews(id,app_id,created_at_s,expires_at_s,selection_json,app_revision,vendor_revision,retention_json) VALUES(?,?,?,?,?,?,?,?)", p.ID, p.AppID, p.CreatedAt.Unix(), p.ExpiresAt.Unix(), raw, p.AppRevision, p.VendorRevision, optionalRetention(p.Retention))
 	if err != nil {
 		return err
 	}
@@ -65,10 +71,15 @@ func scanCleanup(row scanner) (CleanupPreview, error) {
 	var p CleanupPreview
 	var created, expires int64
 	var executed sql.NullInt64
-	var raw, result []byte
-	err := row.Scan(&p.ID, &p.AppID, &created, &expires, &raw, &executed, &result, &p.AppRevision, &p.VendorRevision)
+	var raw, result, retention []byte
+	err := row.Scan(&p.ID, &p.AppID, &created, &expires, &raw, &executed, &result, &p.AppRevision, &p.VendorRevision, &retention)
 	if err != nil {
 		return p, err
+	}
+	if retention != nil {
+		if err = json.Unmarshal(retention, &p.Retention); err != nil {
+			return p, err
+		}
 	}
 	p.Result = json.RawMessage(result)
 	p.CreatedAt = time.Unix(created, 0).UTC()
@@ -81,9 +92,22 @@ func (s *Store) CleanupPreview(app, id string) (CleanupPreview, error) {
 	if err := requireApp(app); err != nil {
 		return CleanupPreview{}, err
 	}
-	return scanCleanup(s.DB.QueryRow("SELECT id,app_id,created_at_s,expires_at_s,selection_json,executed_at_s,result_json,app_revision,vendor_revision FROM cleanup_previews WHERE id=? AND app_id=?", id, app))
+	return scanCleanup(s.DB.QueryRow("SELECT id,app_id,created_at_s,expires_at_s,selection_json,executed_at_s,result_json,app_revision,vendor_revision,retention_json FROM cleanup_previews WHERE id=? AND app_id=?", id, app))
+}
+func optionalRetention(g *RetentionGuard) any {
+	if g == nil {
+		return nil
+	}
+	raw, _ := json.Marshal(g)
+	return raw
 }
 func (s *Store) RetireCleanupPreview(app, id string, at time.Time) (CleanupPreview, error) {
+	return s.retireCleanupPreview(app, id, at, nil, false)
+}
+func (s *Store) RetireRetentionPreview(app, id string, at time.Time, blocked map[string]string) (CleanupPreview, error) {
+	return s.retireCleanupPreview(app, id, at, blocked, true)
+}
+func (s *Store) retireCleanupPreview(app, id string, at time.Time, blocked map[string]string, safe bool) (CleanupPreview, error) {
 	var zero CleanupPreview
 	if err := requireApp(app); err != nil {
 		return zero, err
@@ -93,19 +117,46 @@ func (s *Store) RetireCleanupPreview(app, id string, at time.Time) (CleanupPrevi
 		return zero, err
 	}
 	defer tx.Rollback()
-	p, err := scanCleanup(tx.QueryRow("SELECT id,app_id,created_at_s,expires_at_s,selection_json,executed_at_s,result_json,app_revision,vendor_revision FROM cleanup_previews WHERE id=? AND app_id=?", id, app))
+	p, err := scanCleanup(tx.QueryRow("SELECT id,app_id,created_at_s,expires_at_s,selection_json,executed_at_s,result_json,app_revision,vendor_revision,retention_json FROM cleanup_previews WHERE id=? AND app_id=?", id, app))
 	if err != nil {
 		return p, err
 	}
 	if p.ExecutedAt == nil && !at.Before(p.ExpiresAt) || p.ExecutedAt != nil && !at.Before(p.ExecutedAt.Add(24*time.Hour)) {
 		return p, ErrExpired
 	}
+	if (p.Retention != nil) != safe {
+		return p, ErrConflict
+	}
+	if safe && p.ExecutedAt != nil {
+		return p, nil
+	}
+	if safe {
+		if err = checkRetention(tx, app, p.Retention, at); err != nil {
+			return p, err
+		}
+	}
 	if p.ExecutedAt == nil {
 		if err = checkCleanupFence(tx, app, p.SourceFence); err != nil {
 			return p, err
 		}
 	}
+	if safe {
+		for _, item := range p.Selection {
+			var current bool
+			err := tx.QueryRow("SELECT is_current FROM generations WHERE id=? AND app_id=?", item.GenerationID, app).Scan(&current)
+			if errors.Is(err, sql.ErrNoRows) || err == nil && !current {
+				blocked[item.Version] = "generation_changed"
+			} else if err != nil {
+				return p, err
+			}
+		}
+	}
+	receipt := RetentionReceipt{Selection: []CleanupSelection{}, Skipped: blocked}
+	versions := map[string]bool{}
 	for _, item := range p.Selection {
+		if safe && blocked[item.Version] != "" {
+			continue
+		}
 		var a, v, k string
 		err = tx.QueryRow("SELECT app_id,version,resource_key FROM generations WHERE id=?", item.GenerationID).Scan(&a, &v, &k)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -117,6 +168,11 @@ func (s *Store) RetireCleanupPreview(app, id string, at time.Time) (CleanupPrevi
 		if a != app || v != item.Version || k != item.ResourceKey {
 			return p, errors.New("Cleanup snapshot ownership mismatch")
 		}
+		if safe {
+			receipt.Selection = append(receipt.Selection, item)
+			receipt.LogicalBytes += item.SnapshotBytes
+			versions[item.Version] = true
+		}
 		if _, err = tx.Exec("UPDATE generations SET is_current=0,retired_at_s=COALESCE(retired_at_s,?) WHERE id=? AND app_id=?", at.Unix(), item.GenerationID, app); err != nil {
 			return p, err
 		}
@@ -124,6 +180,10 @@ func (s *Store) RetireCleanupPreview(app, id string, at time.Time) (CleanupPrevi
 	if p.ExecutedAt == nil {
 		p.ExecutedAt = &at
 		p.Result, _ = json.Marshal(map[string]int{"selected_generations": len(p.Selection)})
+		if safe {
+			receipt.RetiredVersions = len(versions)
+			p.Result, _ = json.Marshal(receipt)
+		}
 		if _, err = tx.Exec("UPDATE cleanup_previews SET executed_at_s=?,result_json=? WHERE id=? AND app_id=?", at.Unix(), []byte(p.Result), id, app); err != nil {
 			return p, err
 		}

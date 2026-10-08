@@ -1,5 +1,6 @@
 import { mount, flushPromises } from "@vue/test-utils";
 import { it, expect, vi } from "vitest";
+import {selectValue} from "../testSupport";
 import ProxySettings from "./ProxySettings.vue";
 it("edits the complete saved URL and clears it without credential actions", async () => {
   let server = "http://user:p%40ss@proxy.example:3128",
@@ -9,7 +10,7 @@ it("edits the complete saved URL and clears it without credential actions", asyn
       expect(options.headers).toMatchObject({
         "If-Match": '\"' + revision + '\"',
       });
-      server = JSON.parse(options.body as string).server;
+      const proxy=JSON.parse(options.body as string);server=proxy.mode==="direct"?"":proxy.url;
       revision++;
     }
     return {
@@ -29,9 +30,9 @@ it("edits the complete saved URL and clears it without credential actions", asyn
   await wrapper.get("form").trigger("submit");
   await flushPromises();
   expect(JSON.parse(fetch.mock.calls.at(-1)![1]!.body as string)).toEqual({
-    server: "socks5://next:secret@proxy.example:1080",
+    mode:"url",url: "socks5://next:secret@proxy.example:1080",
   });
-  await wrapper.get("input").setValue("");
+  await selectValue(wrapper.get(".proxy-section"),"direct");
   await wrapper.get("form").trigger("submit");
   await flushPromises();
   expect(server).toBe("");

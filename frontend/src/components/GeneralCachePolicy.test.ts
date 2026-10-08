@@ -2,7 +2,7 @@ import { selectValue } from "../testSupport";
 import { flushPromises, mount } from "@vue/test-utils";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import GeneralCachePolicy from "./GeneralCachePolicy.vue";
-import { resetStores, response } from "../testSupport";
+import { resetStores, response, configurationFixture } from "../testSupport";
 import { signedIn } from "../session";
 import { setLanguage } from "../i18n";
 
@@ -51,10 +51,10 @@ afterEach(() => {
 
 it("preserves rule IDs and order, converts cleanup days to seconds, and saves the stale toggle with the app revision", async () => {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
-    if (init?.method === "PUT")
-      return response({ ...JSON.parse(init.body as string), revision: 8 });
+    if (init?.method === "PATCH")
+      return response(configurationFixture({http_policy:Object.fromEntries(Object.entries(JSON.parse(init.body as string).set).map(([key,value])=>[key.replace("http_policy.",""),value]))},8));
     if (url.endsWith("/status")) return response(status);
-    return response(structuredClone(policy));
+    return response(configurationFixture({http_policy:structuredClone(policy)},policy.revision));
   });
   vi.stubGlobal("fetch", fetch);
   const wrapper = mount(GeneralCachePolicy, {
@@ -120,11 +120,11 @@ it("preserves rule IDs and order, converts cleanup days to seconds, and saves th
   await wrapper.get(".cache-policy form").trigger("submit");
   await flushPromises();
   const request = fetch.mock.calls.find(
-    ([, init]) => init?.method === "PUT",
+    ([, init]) => init?.method === "PATCH",
   )!;
-  expect(request[0]).toBe("/admin/api/apps/acme/files/cache/policy");
-  expect(request[1]!.headers).toMatchObject({ "If-Match": '"7"' });
-  const sent = JSON.parse(request[1]!.body as string);
+  expect(request[0]).toBe("/admin/api/apps/acme/files/configuration");
+  expect(JSON.parse(request[1]!.body as string).revision).toBe(7);
+  const sent = Object.fromEntries(Object.entries(JSON.parse(request[1]!.body as string).set).map(([key,value])=>[key.replace("http_policy.",""),value])) as typeof policy;
   expect(sent.stale_fallback).toBe(false);
   expect(sent.rules.map((item: { id: string }) => item.id)).toEqual([
     "catchall",
@@ -153,7 +153,7 @@ it("preserves a CAS conflict draft during status polling and cancels policy load
   let delayed = false,
     resolveOld: ((value: unknown) => void) | undefined;
   const fetch = vi.fn((url: string, init?: RequestInit) => {
-    if (init?.method === "PUT")
+    if (init?.method === "PATCH")
       return Promise.resolve(
         response({ error: { code: "SETTINGS_REVISION_CONFLICT" } }, 409),
       );
@@ -163,7 +163,7 @@ it("preserves a CAS conflict draft during status polling and cancels policy load
         resolveOld = resolve;
       });
     return Promise.resolve(
-      response(
+      response(configurationFixture({http_policy:
         url.includes("/acme/other/")
           ? {
               revision: 2,
@@ -171,7 +171,7 @@ it("preserves a CAS conflict draft during status polling and cancels policy load
               rules: [],
               auto_cleanup: [],
             }
-          : structuredClone(policy),
+          : structuredClone(policy)},url.includes("/acme/other/")?2:7),
       ),
     );
   });
@@ -210,7 +210,7 @@ it("preserves a CAS conflict draft during status polling and cancels policy load
   await wrapper.setProps({ application: "acme/other" });
   await flushPromises();
   expect(oldRequest.signal?.aborted).toBe(true);
-  resolveOld?.(response(policy));
+  resolveOld?.(response(configurationFixture({http_policy:policy},7)));
   await flushPromises();
   expect(wrapper.find('[name="rule_ttl"]').exists()).toBe(false);
   expect(

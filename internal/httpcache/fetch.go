@@ -52,6 +52,9 @@ func (s *Service) fetch(ctx context.Context, entry application.Entry, path strin
 		}
 	}()
 	attempts, err := s.sourceAttempts(entry)
+	if selected, ok := ctx.Value(warmAttemptsKey{}).([]sourceAttempt); ok {
+		attempts = selected
+	}
 	if err != nil {
 		return fetchResult{}, err
 	}
@@ -185,6 +188,10 @@ func (s *Service) fetchAttempt(ctx context.Context, entry application.Entry, pat
 		}
 		return fetchResult{response: resp, status: resp.StatusCode, blockReason: blockReason}, false, nil
 	}
+	s.checkFetchLength(ctx, resp.ContentLength)
+	if ctx.Err() != nil {
+		return fetchResult{}, false, ctx.Err()
+	}
 	result, err := s.spool(ctx, resp)
 	if err != nil {
 		var readErr *sourceReadError
@@ -302,7 +309,7 @@ func (s *Service) spool(ctx context.Context, resp *http.Response) (fetchResult, 
 		}
 	}()
 	hash := sha256.New()
-	n, err := io.Copy(io.MultiWriter(f, hash, &spoolMeter{s: s, id: ctx.Value(transferContextKey{}).(string)}), io.LimitReader(resp.Body, limit+1))
+	n, err := io.Copy(io.MultiWriter(f, hash, fetchObserver{s: s, ctx: ctx}, &spoolMeter{s: s, id: ctx.Value(transferContextKey{}).(string)}), io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return fetchResult{}, err
 	}
@@ -440,3 +447,13 @@ type leasedBody struct {
 }
 
 func (b *leasedBody) Close() error { err := b.ReadCloser.Close(); b.release(); return err }
+
+type fetchObserver struct {
+	s   *Service
+	ctx context.Context
+}
+
+func (o fetchObserver) Write(p []byte) (int, error) {
+	o.s.observeFetch(o.ctx, int64(len(p)))
+	return len(p), nil
+}

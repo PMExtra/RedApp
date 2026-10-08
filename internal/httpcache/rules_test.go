@@ -28,6 +28,7 @@ func setPolicy(t *testing.T, f *fixture, config cachepolicy.Config) {
 	}
 	f.app = updated
 	f.entry.Revision = updated.Revision
+	f.entry.RuntimeRevision = updated.RuntimeRevision
 }
 func servePath(t *testing.T, f *fixture, path string) (*httptest.ResponseRecorder, error) {
 	t.Helper()
@@ -177,6 +178,7 @@ func TestAutomaticFirstMatchAndAccessRecheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.entry.Revision = changed.Revision
+	f.entry.RuntimeRevision = changed.RuntimeRevision
 	f.entry.Enabled = false
 	if _, err = f.s.execute(context.Background(), f.entry, id); !errors.Is(err, store.ErrSourceInactive) {
 		t.Fatal("disabled source auto cleaned", err)

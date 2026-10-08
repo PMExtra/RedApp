@@ -282,32 +282,32 @@ func TestSiblingSharesProxyUpdatesButKeepsOriginBoundary(t *testing.T) {
 	}
 }
 
-func TestLegacyProxyMigratesOnceToExactEncodedURL(t *testing.T) {
+func TestLegacyServerReadsExactEncodedURLWithoutRewrite(t *testing.T) {
 	c, db, _ := proxyFixture(t)
-	if _, err := db.CompareAndSwapSetting("global", "", "upstream_proxy", 0, map[string]string{"server": "http://proxy.example:3128", "username": "user@name", "password": "p:a/ss"}); err != nil {
+	if _, err := db.CompareAndSwapSetting("global", "", "upstream_proxy", 0, map[string]string{"server": "http://user%40name:p%3Aa%2Fss@proxy.example:3128"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.LoadProxy(db); err != nil {
 		t.Fatal(err)
 	}
 	want := "http://user%40name:p%3Aa%2Fss@proxy.example:3128"
-	if c.Proxy().Server != want || c.Proxy().Revision != 2 {
+	if c.Proxy().Server != want || c.Proxy().Revision != 1 {
 		t.Fatal(c.Proxy())
 	}
 	var stored map[string]any
 	rev, err := db.ReadSetting("global", "", "upstream_proxy", &stored)
-	if err != nil || rev != 2 || len(stored) != 1 || stored["server"] != want {
+	if err != nil || rev != 1 || len(stored) != 2 || stored["mode"] != "url" || stored["url"] != want {
 		t.Fatal("dual credential representation survived", stored, err)
 	}
-	if err = c.LoadProxy(db); err != nil || c.Proxy().Revision != 2 {
+	if err = c.LoadProxy(db); err != nil || c.Proxy().Revision != 1 {
 		t.Fatal("migration repeated", err)
 	}
 	for _, bad := range []string{"http://u:p%0Ass@proxy.example:3128", "http://proxy.example:3128?", "http://proxy.example:3128#"} {
-		if err = c.SetProxy(ProxyUpdate{Server: bad}, 2); err == nil {
+		if err = c.SetProxy(ProxyUpdate{Server: bad}, 1); err == nil {
 			t.Fatal("invalid URL accepted", bad)
 		}
 	}
-	if c.Proxy().Server != want || c.Proxy().Revision != 2 {
+	if c.Proxy().Server != want || c.Proxy().Revision != 1 {
 		t.Fatal("failed update altered transport")
 	}
 }

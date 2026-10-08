@@ -2385,3 +2385,17 @@ form > .form-actions { margin-top:1rem; }
 
 .vendor-card.is-disabled > .directory-heading > .entity-icon--vendor { opacity: .22; }
 .application-table td:nth-child(2) { overflow: hidden; text-overflow: ellipsis; }
+
+.override-control {display:inline-flex;gap:.45rem;align-items:center;margin:.25rem .5rem;}
+.override-control button {font-size:.8rem;padding:.2rem .4rem;}
+.overlay-field-states {display:flex;flex-wrap:wrap;gap:.25rem 1rem;margin-top:1rem;}
+.overlay-field-states label {font-size:.85rem;}
+.proxy-section {margin-top:1rem;}
+
+.taxonomy-tabs button { padding: .8rem 1rem; background: transparent; color: var(--muted); border: 0; border-bottom: 3px solid transparent; border-radius: 0; }
+.taxonomy-tabs button[aria-selected="true"] { color: var(--accent); border-color: var(--accent); font-weight: 650; }
+.directory-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .5rem 0; }
+
+.configuration-exchange { width: min(900px, 92vw); }
+.configuration-diff { display: grid; grid-template-columns: repeat(auto-fit,minmax(240px,1fr)); gap: 1rem; }
+.configuration-diff pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 24rem; overflow: auto; }

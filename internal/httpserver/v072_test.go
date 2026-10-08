@@ -3,7 +3,6 @@ package httpserver
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -224,13 +223,13 @@ func TestV072DisabledBrandIconRemainsAvailableOnlyToAdmin(t *testing.T) {
 
 // This extends the existing schema-5 upgrade/collision case with a real Hosted
 // body and the production HTTP reader, rather than adding another fixture matrix.
-func TestV072UpgradePreservesV5AndReservedAllIsReadOnly(t *testing.T) {
-	ddl, err := os.ReadFile(filepath.Join("..", "store", "schema_v5.sql"))
+func TestV072LegacyV5IncludingReservedVendorIsRejectedReadOnly(t *testing.T) {
+	ddl, err := os.ReadFile("../store/testdata/schema_v5.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, collision := range []bool{false, true} {
-		t.Run(fmt.Sprint(collision), func(t *testing.T) {
+	for _, id := range []string{"acme", "all"} {
+		t.Run(id, func(t *testing.T) {
 			dir := t.TempDir()
 			path := filepath.Join(dir, "state.sqlite")
 			db, err := sql.Open("sqlite3", path)
@@ -240,149 +239,24 @@ func TestV072UpgradePreservesV5AndReservedAllIsReadOnly(t *testing.T) {
 			if _, err = db.Exec(string(ddl)); err != nil {
 				t.Fatal(err)
 			}
-			id := "acme"
-			if collision {
-				id = "all"
-			}
 			if _, err = db.Exec(`INSERT INTO vendors VALUES('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',?,'Keep','保留','Custom description','自定义说明','',1,9,NULL)`, id); err != nil {
 				t.Fatal(err)
 			}
-			if _, err = db.Exec(`INSERT INTO settings VALUES('global','','upstream_proxy',7,'{"server":"http://proxy.example:8080"}')`); err != nil {
-				t.Fatal(err)
-			}
-			if collision {
-				db.Close()
-				before, _ := os.ReadFile(path)
-				opened, err := store.Open(dir)
-				if opened != nil {
-					opened.DB.Close()
-				}
-				if !errors.Is(err, store.ErrReservedVendor) {
-					t.Fatal(err)
-				}
-				after, _ := os.ReadFile(path)
-				if sha256.Sum256(before) != sha256.Sum256(after) {
-					t.Fatal("collision mutated database")
-				}
-				entries, _ := os.ReadDir(dir)
-				if len(entries) != 1 {
-					t.Fatal("collision created sidecars")
-				}
-				return
-			}
-			// No Store.Open here: that is the operation under test and would migrate now.
-			old := &store.Store{DB: db}
-			if _, err = db.Exec(`INSERT INTO applications(uid,vendor_uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,provider,base_url,cache_ttl_seconds,base_urls_json,source_strategy,enabled,revision,source_epoch) VALUES('cccccccccccccccccccccccccccccccc','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','files','My files','我的文件','Keep these','保留这些','','hosted','',0,'[]','',1,1,1)`); err != nil {
-				t.Fatal(err)
-			}
-			app, err := old.Application(id + "/files")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err = old.SaveInstructions(app.Key, 0, store.LocalizedText{En: "Custom instructions", ZhCN: "自定义说明"}); err != nil {
-				t.Fatal(err)
-			}
-			if err = old.AddFor(app.MetricsID(), "artifact_requests", 7); err != nil {
-				t.Fatal(err)
-			}
-			if _, err = db.Exec(`INSERT INTO metric_samples VALUES('app',?,'events.recent_total',100,100,'old-boot',8,NULL,60)`, app.MetricsID()); err != nil {
-				t.Fatal(err)
-			}
-			if _, err = db.Exec(`INSERT INTO events(time_s,app_id,category,code,message) VALUES(100,?,'fixture','KEEP','Keep historical event')`, app.MetricsID()); err != nil {
-				t.Fatal(err)
-			}
-			body := append(bytes.Repeat([]byte("v0.7.1 Hosted fixture\n"), 31), 0, 255)
-			digest := fmt.Sprintf("%x", sha256.Sum256(body))
-			fileID := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-			object := filepath.Join(dir, "objects", "hosted", fileID)
-			if err = os.MkdirAll(filepath.Dir(object), 0700); err != nil {
-				t.Fatal(err)
-			}
-			if err = os.WriteFile(object, body, 0600); err != nil {
-				t.Fatal(err)
-			}
-			if _, err = db.Exec(`INSERT INTO hosted_files VALUES(?,'nested/keep.bin',?,?,?,123)`, app.UID, fileID, digest, len(body)); err != nil {
-				t.Fatal(err)
-			}
-			// The current server requires current DDL; verify the exact legacy fixture on disk,
-			// then exercise its preserved Hosted resource through HTTP after upgrade/restart.
-			var schemaVersion int
-			if err = db.QueryRow(`SELECT version FROM schema_version`).Scan(&schemaVersion); err != nil || schemaVersion != 5 {
-				t.Fatal(schemaVersion, err)
-			}
-			var tables []string
-			rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name<>'schema_version' ORDER BY name`)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for rows.Next() {
-				var name string
-				if err = rows.Scan(&name); err != nil {
-					t.Fatal(err)
-				}
-				tables = append(tables, name)
-			}
-			if err = rows.Err(); err != nil {
-				t.Fatal(err)
-			}
-			rows.Close()
-			snapshot := func(database *sql.DB) map[string][]string {
-				result := map[string][]string{}
-				for _, table := range tables {
-					rows, e := database.Query(`SELECT * FROM "` + table + `" ORDER BY rowid`)
-					if e != nil {
-						t.Fatal(e)
-					}
-					columns, e := rows.Columns()
-					if e != nil {
-						t.Fatal(e)
-					}
-					for rows.Next() {
-						values := make([]any, len(columns))
-						pointers := make([]any, len(values))
-						for i := range values {
-							pointers[i] = &values[i]
-						}
-						if e = rows.Scan(pointers...); e != nil {
-							t.Fatal(e)
-						}
-						if table == "vendors" {
-							values = values[:10]
-						} // Compare every pre-existing vendor field.
-						result[table] = append(result[table], fmt.Sprint(values))
-					}
-					if e = rows.Err(); e != nil {
-						t.Fatal(e)
-					}
-					rows.Close()
-				}
-				return result
-			}
-			before := snapshot(db)
 			db.Close()
-			upgraded, err := store.Open(dir)
+			before, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err = upgraded.DB.QueryRow(`SELECT version FROM schema_version`).Scan(&schemaVersion); err != nil || schemaVersion != store.SchemaVersion {
-				t.Fatal(schemaVersion, err)
+			opened, err := store.Open(dir)
+			if opened != nil {
+				opened.DB.Close()
 			}
-			if after := snapshot(upgraded.DB); !reflect.DeepEqual(before, after) {
-				t.Fatal("schema-5 configuration, identity, Hosted records or history changed during migration", before, after)
+			if !errors.Is(err, store.ErrFreshDirectory) {
+				t.Fatal("accepted old directory", err)
 			}
-			afterBody, err := os.ReadFile(object)
-			if err != nil || !bytes.Equal(afterBody, body) {
-				t.Fatal("migration changed Hosted body", err)
-			}
-			upgraded.DB.Close()
-			h := newDirectoryHarness(t, dir)
-			afterBody, afterHeaders := h.request("GET", "/acme/files/nested/keep.bin", nil, 200, nil)
-			if !bytes.Equal(afterBody, body) || afterHeaders.Get("ETag") != `"sha256-`+digest+`"` || afterHeaders.Get("Content-Length") != fmt.Sprint(len(body)) {
-				t.Fatal("upgrade/restart changed Hosted download")
-			}
-			saved, err := h.server.DB.HostedFile(app.UID, "nested/keep.bin")
-			if err != nil || saved.ID != fileID || saved.SHA256 != digest || saved.SizeBytes != int64(len(body)) {
-				t.Fatal("Hosted identity changed", saved, err)
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatal("legacy data changed", err)
 			}
 		})
 	}

@@ -21,7 +21,7 @@ func (s *Server) hostedError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrConflict):
 		problem(w, 409, "RESOURCE_CONFLICT", "The file or application changed. Select the current resource explicitly before replacing it.")
-	case errors.Is(err, sql.ErrNoRows):
+	case errors.Is(err, sql.ErrNoRows), errors.Is(err, store.ErrSourceInactive), errors.Is(err, store.ErrDirectoryDeleted):
 		fail(w, 404, "File not found")
 	case errors.Is(err, store.ErrInvalidDirectory):
 		fail(w, 400, "Invalid resource path or transfer")
@@ -138,7 +138,7 @@ func (s *Server) hostedAPI(w http.ResponseWriter, r *http.Request, app, endpoint
 		}
 		relative, expected = input.Path, input.ExpectedID
 		open = func(ctx context.Context) (io.ReadCloser, int64, error) {
-			response, err := s.Pool.FetchImport(ctx, input.URL)
+			response, err := s.Pool.FetchImport(ctx, entry.UID, entry.VendorUID, input.URL)
 			if err != nil {
 				return nil, 0, err
 			}

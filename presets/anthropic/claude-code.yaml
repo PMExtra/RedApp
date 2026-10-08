@@ -1,0 +1,130 @@
+schema_version: 1
+kind: "App"
+metadata:
+  id: "claude-code"
+  vendor: "anthropic"
+spec:
+  category: ""
+  tags: []
+  prewarm: {enabled: false, channels: [], platforms: []}
+  retention: {enabled: false, keep_latest: 3}
+  name:
+    en: "Claude Code"
+    "zh-CN": "Claude Code"
+  description:
+    en: "Anthropic’s coding agent for your terminal."
+    "zh-CN": "Anthropic 的终端编程助手。"
+  icon: "assets/anthropic/claude-code/icon.svg"
+  provider: "claude-code"
+  base_url: "https://downloads.claude.ai/claude-code-releases"
+  cache_ttl_seconds: 60
+  source_strategy: ""
+  instructions:
+    en: |-
+      ## Install {{app_name}}
+
+      Run the appropriate command in your terminal.
+
+      On Linux or macOS, run this command in Shell:
+
+      ```bash
+      curl -fsSL '{{base_url}}{{app_path}}/install.sh' | bash
+      ```
+
+      On Windows, run this command in PowerShell:
+
+      ```powershell
+      irm '{{base_url}}{{app_path}}/install.ps1' | iex
+      ```
+
+      Download progress may not be displayed. Please wait 1–2 minutes after running the command.
+
+      ### Getting started
+
+      After installation, open a new terminal and run `claude`. Follow the application’s sign-in instructions.
+
+      ### Update
+
+      Rerun the default installation command above to install the latest version. A command specifying a version installs that version. The managed launcher disables automatic updates; running the native binary directly bypasses this control.
+
+      <details class="installer-options">
+      <summary>Install a specific version</summary>
+
+      ```bash
+      curl -fsSL '{{base_url}}{{app_path}}/install.sh' | bash -s -- '{{latest_version}}'
+      ```
+
+      ```powershell
+      & ([scriptblock]::Create((irm '{{base_url}}{{app_path}}/install.ps1'))) -Target '{{latest_version}}'
+      ```
+
+      Install from the stable channel:
+
+      ```bash
+      curl -fsSL '{{base_url}}{{app_path}}/install.sh' | bash -s -- stable
+      ```
+
+      ```powershell
+      & ([scriptblock]::Create((irm '{{base_url}}{{app_path}}/install.ps1'))) -Target 'stable'
+      ```
+
+      </details>
+    "zh-CN": |-
+      ## 安装 {{app_name}}
+
+      在终端中运行适合当前系统的命令。
+
+      在 Linux 或 macOS 上，在 Shell 中运行：
+
+      ```bash
+      curl -fsSL '{{base_url}}{{app_path}}/install.sh' | bash
+      ```
+
+      在 Windows 上，在 PowerShell 中运行：
+
+      ```powershell
+      irm '{{base_url}}{{app_path}}/install.ps1' | iex
+      ```
+
+      下载过程中可能无进度显示，执行后请等待1~2分钟。
+
+      ### 开始使用
+
+      安装后打开新的终端，运行 `claude`，并按照应用提示登录。
+
+      ### 更新
+
+      重新执行上方默认安装命令即可安装最新版本；指定版本的命令仍安装所指定的版本。受管启动器禁用自动更新，直接运行原生程序会绕过此控制。
+
+      <details class="installer-options">
+      <summary>安装指定版本</summary>
+
+      ```bash
+      curl -fsSL '{{base_url}}{{app_path}}/install.sh' | bash -s -- '{{latest_version}}'
+      ```
+
+      ```powershell
+      & ([scriptblock]::Create((irm '{{base_url}}{{app_path}}/install.ps1'))) -Target '{{latest_version}}'
+      ```
+
+      安装 stable 通道版本：
+
+      ```bash
+      curl -fsSL '{{base_url}}{{app_path}}/install.sh' | bash -s -- stable
+      ```
+
+      ```powershell
+      & ([scriptblock]::Create((irm '{{base_url}}{{app_path}}/install.ps1'))) -Target 'stable'
+      ```
+
+      </details>
+distribution:
+  protocol: "claude-manifest-v1"
+  trust_revision: 1
+  channels: ["latest", "stable"]
+  installer_validator: "claude-code"
+  installers: [{"file": "install.sh", "source": "https://claude.ai/install.sh", "shell": "bash"}, {"file": "install.ps1", "source": "https://claude.ai/install.ps1", "shell": "powershell"}]
+  assets: [{"file": "LICENSE.md", "kind": "license"}, {"file": "claude-code.asc", "kind": "public_key"}]
+  update_policy:
+    en: "The installer verifies the signed manifest and artifact SHA256. The managed launcher disables official automatic updates; rerun this installer to update. Running the native binary directly bypasses the launcher’s update control."
+    "zh-CN": "安装脚本验证签名清单与制品 SHA256。受管启动器禁用官方自动更新；请重新运行本安装脚本更新。直接运行原生程序会绕过启动器的更新控制。"

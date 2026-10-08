@@ -44,9 +44,6 @@ func (s *Server) deleteApplication(ctx context.Context, key string, revision int
 			err = errors.Join(errDeletePending, err)
 		}
 	}()
-	if err = s.ReloadDirectory(); err != nil {
-		return err
-	}
 	wait := s.deleteWait
 	if wait == 0 {
 		wait = 15 * time.Second

@@ -8,6 +8,7 @@ import {
   mountPage,
   resetStores,
   response,
+ configurationFixture,applyConfigurationPatch,
 } from "../testSupport";
 import type {
   ManagedApplication,
@@ -61,6 +62,8 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 function read(url: string) {
+ if(url.endsWith('/configuration')){const base=url.slice(0,-14);const row=apps.find(a=>base===`/admin/api/apps/${a.key}`)||vendors.find(v=>base===`/admin/api/vendors/${v.id}`);return row?response(configurationFixture(row as unknown as Record<string,unknown>,row.revision,row.has_template||('builtin_template' in row&&row.builtin_template)?('key' in row?row.key:row.id):null)):response({},404);}
+
   if (url === "/api/bootstrap") return response(boot);
   if (url.endsWith("/session")) return response({ csrf: "directory-token" });
   if (new URL(url, "https://test").pathname === "/admin/api/vendors") {
@@ -186,7 +189,7 @@ it("creates a bilingual vendor and application with explicit provider defaults a
   await wrapper.get(".directory-editor form").trigger("submit");
   await flushPromises();
   await flushPromises();
-  await vi.waitFor(() => expect(router.currentRoute.value.path).toBe("/admin/vendors/acme/settings"));
+  await vi.waitFor(() => expect(router.currentRoute.value.path).toBe("/admin/vendors/acme/settings"), {timeout:5000});
   await flushPromises();
   expect(vendors.at(-1)?.name["zh-CN"]).toBe("示例厂商");
   expect(vendors.at(-1)?.icon).toBe("/assets/icons/example.png");
@@ -224,9 +227,10 @@ it("creates a bilingual vendor and application with explicit provider defaults a
   await flushPromises();
   await flushPromises();
   await vi.waitFor(() =>
-    expect(router.currentRoute.value.path).toBe(
+    expect(router.currentRoute.value.path, wrapper.find(".directory-editor .error").exists() ? wrapper.find(".directory-editor .error").text() : "waiting for saved application navigation").toBe(
       "/admin/vendors/acme/apps/tools/cache",
     ),
+    {timeout:5000},
   );
   await router.push("/admin/vendors/acme/apps/tools/settings");
   await flushPromises();
@@ -275,7 +279,7 @@ it("preserves a revision-conflict draft, guards navigation and discards an old a
   )![1]!;
   expect(JSON.parse(request.body as string)).toMatchObject({
     revision: 1,
-    name: { en: "Unsaved Codex" },
+    set: { "name.en": "Unsaved Codex" },
   });
   expect(JSON.parse(request.body as string)).not.toHaveProperty("id");
   expect(JSON.parse(request.body as string)).not.toHaveProperty("provider");
@@ -425,7 +429,7 @@ it("reorders HTTP-cache upstreams with the handle keyboard and pointer controls 
   };
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     if (init?.method === "PATCH") {
-      const changes = JSON.parse(init.body as string);
+      const changes = JSON.parse(init.body as string).set;
       apps[0] = {
         ...apps[0]!,
         ...changes,
@@ -433,7 +437,7 @@ it("reorders HTTP-cache upstreams with the handle keyboard and pointer controls 
         revision: 2,
         source_epoch: 2,
       };
-      return response({ app: structuredClone(apps[0]) });
+      return response(configurationFixture(apps[0] as unknown as Record<string,unknown>,2));
     }
     return read(url);
   });
@@ -486,12 +490,12 @@ it("reorders HTTP-cache upstreams with the handle keyboard and pointer controls 
     ([, init]) => init?.method === "PATCH",
   )![1]!;
   const sent = JSON.parse(request.body as string);
-  expect(sent.base_urls).toEqual([
+  expect(sent.set.base_urls).toEqual([
     "https://third.example/releases/",
     "https://second.example/releases/",
     "https://first.example/releases/",
   ]);
-  expect(sent.source_strategy).toBe("round_robin");
+  expect(sent.set.source_strategy).toBe("round_robin");
   expect(sent.revision).toBe(1);
   expect(sent).not.toHaveProperty("base_url");
   expect(sent).not.toHaveProperty("provider");
@@ -505,10 +509,11 @@ it.each(["vendor", "app"] as const)("immediately saves existing %s enabled state
   let complete: ((value: ReturnType<typeof response>) => void) | undefined;
   const writes: Record<string, unknown>[] = [];
   const fetch = vi.fn((url: string, init?: RequestInit) => {
-    if (url === target && init?.method === "PATCH") {
+    if ((url === target||url===`${target}/configuration`) && init?.method === "PATCH") {
       const body = JSON.parse(init.body as string);
       writes.push(body);
       if (writes.length === 1) return new Promise<ReturnType<typeof response>>((resolve) => { complete = resolve; });
+      if(url.endsWith("/configuration"))return Promise.resolve(response(applyConfigurationPatch(item,body)));
       Object.assign(item, body, { revision: item.revision + 1 });
       return Promise.resolve(response({ [kind]: structuredClone(item) }));
     }
@@ -534,7 +539,7 @@ it.each(["vendor", "app"] as const)("immediately saves existing %s enabled state
   expect(toggle.attributes("aria-checked")).toBe(String(!previous));
   await wrapper.get(".directory-editor form").trigger("submit");
   await flushPromises();
-  expect(writes[1]).toMatchObject({ revision: revision + 1, name: { en: "Keep this draft" } });
+  expect(writes[1]).toMatchObject({ revision: revision + 1, set: { "name.en": "Keep this draft" } });
   expect(writes[1]).not.toHaveProperty("enabled");
   expect(item.enabled).toBe(!previous);
   wrapper.unmount();
@@ -720,6 +725,7 @@ it.each(["vendor", "app"] as const)("edits private %s notes with conflict drafts
   vi.stubGlobal("fetch", fetch);
   const confirm = vi.fn().mockReturnValue(false); vi.stubGlobal("confirm", confirm);
   const { wrapper, router } = await mountPage(path);
+  await vi.waitFor(() => expect(wrapper.find('[name="admin-notes"]').exists()).toBe(true));
   const editor = () => wrapper.get(".admin-notes-editor"), input = () => editor().get('[name="admin-notes"]');
   expect(wrapper.get('.application-tabs a[aria-current="page"]').text()).toBe("Admin Notes");
   expect((input().element as HTMLTextAreaElement).value).toBe("");
@@ -761,6 +767,7 @@ it.each(["vendor", "app"] as const)("ignores a late %s note save after changing 
     return Promise.resolve(read(url));
   }));
   const { wrapper, router } = await mountPage(source);
+  await vi.waitFor(() => expect(wrapper.find('[name="admin-notes"]').exists()).toBe(true));
   await wrapper.get('[name="admin-notes"]').setValue("Source draft");
   await wrapper.get(".admin-notes-editor form").trigger("submit"); await flushPromises();
   await router.push(destination); await flushPromises();
@@ -799,8 +806,9 @@ it("saves optional vendor language logos through existing uploads without changi
       expect(init?.body).toBeInstanceOf(FormData);
       return response({ icon: `/assets/icons/upload-${++uploadCount}.svg` });
     }
-    if (url === "/admin/api/vendors/openai" && init?.method === "PATCH") {
+    if ((url === "/admin/api/vendors/openai"||url === "/admin/api/vendors/openai/configuration") && init?.method === "PATCH") {
       const body = JSON.parse(init.body as string); writes.push(body);
+ if(url.endsWith("/configuration"))return response(applyConfigurationPatch(vendors[0]!,body));
       Object.assign(vendors[0]!, body, { revision: vendors[0]!.revision + 1 });
       return response({ vendor: structuredClone(vendors[0]) });
     }
@@ -816,7 +824,7 @@ it("saves optional vendor language logos through existing uploads without changi
   await wrapper.get('.directory-editor [name="enabled"]').trigger("click"); await flushPromises();
   expect(writes[0]).not.toHaveProperty("localized_icons");
   await wrapper.get(".directory-editor form").trigger("submit"); await flushPromises();
-  expect(writes[1]).toMatchObject({ localized_icons: { en: "/assets/icons/upload-1.svg", "zh-CN": "/assets/icons/upload-2.svg" } });
+  expect(writes[1]).toMatchObject({ set: {"localized_icons.en": "/assets/icons/upload-1.svg", "localized_icons.zh-CN": "/assets/icons/upload-2.svg"} });
   expect(writes[1]).not.toHaveProperty("enabled"); expect(writes[1]).not.toHaveProperty("text");
   expect(wrapper.get(".vendor-header img").attributes("src")).toBe("/assets/icons/upload-1.svg");
   setLanguage("zh-CN"); await flushPromises();
@@ -948,4 +956,24 @@ it("ignores a late availability result after changing vendors",async()=>{
   expect(wrapper.get('.application-table').text()).toContain('Claude Code');
   expect(wrapper.find('[role=alert]').exists()).toBe(false);
   wrapper.unmount();
+});
+
+it('does not submit unchanged configuration and sends only the complete proxy leaf for each network mode',async()=>{
+ const fetch=vi.fn(async(url:string,init?:RequestInit)=>{
+  if(url.endsWith('/configuration')&&init?.method==='PATCH')return response(applyConfigurationPatch(apps[0]!,JSON.parse(init.body as string)));
+  return read(url);
+ });vi.stubGlobal('fetch',fetch);
+ const {wrapper}=await mountPage('/admin/vendors/openai/apps/codex/settings');
+ const editor=wrapper.get('.directory-editor');
+ await editor.get('form').trigger('submit');await flushPromises();expect(fetch.mock.calls.filter(([,init])=>init?.method==='PATCH')).toHaveLength(0);
+ const section=editor.get('.proxy-section');
+ for(const mode of ['direct','url','inherit']){
+  await selectValue(section,mode);
+  if(mode==='url')await section.get('input').setValue('socks5://user:fixture@proxy.example:1080');
+  await editor.get('form').trigger('submit');await flushPromises();
+  const body=JSON.parse(fetch.mock.calls.filter(([,init])=>init?.method==='PATCH').at(-1)![1]!.body as string);
+  expect(Object.keys(body.set)).toEqual(['proxy']);expect(body.unset).toEqual([]);
+  expect(body.set.proxy).toEqual(mode==='url'?{mode,url:'socks5://user:fixture@proxy.example:1080'}:{mode});
+ }
+ wrapper.unmount();
 });

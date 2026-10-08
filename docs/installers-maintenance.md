@@ -7,6 +7,7 @@
 企业脚本将初始下载地址限定为 RedApp、关闭公网回退、保留官方正常重定向行为和原始哈希验证，并删除自动更新 marker。CLI 二进制和官方交互确认不改动；无人值守安装显式设置 `CODEX_NON_INTERACTIVE=1`。源码基线、完整许可证和 NOTICE 独立随服务交付，不在脚本头部重复维护记录。
 
 ```sh
+make installer-inventory
 python3 scripts/update-installers.py --application openai/codex --source installers/openai/codex/upstream
 python3 scripts/test-update-installers.py
 python3 scripts/test-installers.py --platform shell
@@ -39,6 +40,7 @@ Claude 原文、来源、长度与 SHA256 独立记录于 `installers/anthropic/
 没有全文件格式化、无关重构或批量删上游注释。大部分新增行实现原来由下载后二进制承担的落盘与启动入口工作。删除的是与替代安装链冲突的引导、二阶段调用和清理。仍保留有用的原始注释；入口注释不作为允许替换的前置条件；维护细节集中在文档和工具中。
 
 ```sh
+make installer-inventory
 python3 scripts/update-installers.py --application anthropic/claude-code --source installers/anthropic/claude-code/upstream
 python3 scripts/test-installers.py --platform shell --application anthropic/claude-code
 python3 scripts/test-update-installers.py
@@ -50,13 +52,13 @@ python3 scripts/test-update-installers.py
 
 规范目录为 `installers/<vendor>/<app>/`，例如 `openai/codex` 和 `anthropic/claude-code`。共享 Go `installers` 包只嵌入 generated 脚本、许可证/NOTICE 和固定公钥；HTTP 根据应用 descriptor 授权文件，包再检查规范 ID、文件名及完整应用根，不暴露 upstream 原始脚本、patch 或 provenance。渲染只替换 `@REDAPP_BASE_URL@` 为安全公共 origin 加规范应用路径，例如 `https://downloads.example/openai/codex`。后台公共 URL 更新不改动这些已审核文件的字节或应用上游。
 
-`installer_validator` 只选择已审核的 `codex` / `claude-code` 协议测试实现，统一由 `scripts/test-installers.py` 以固定 argv 执行；descriptor 不提供命令字符串或可加载代码。新增复用已有协议的应用时，增加 manifest 记录、对应规范目录资产和 provenance 即进入 inventory、每日检查和发布允许集合。新协议需要额外验证行为时必须审查验证器代码；加入应用、修改 patch 或轮换信任根均不属于每日自动更新权限。
+`installer_validator` 只选择已审核的 `codex` / `claude-code` 协议测试实现，统一由 `scripts/test-installers.py` 以固定 argv 执行；descriptor 不提供命令字符串或可加载代码。新增复用已有协议的应用时，增加受审查 App YAML distribution 声明、对应规范目录资产和 provenance 即进入 inventory、每日检查和发布允许集合。新协议需要额外验证行为时必须审查验证器代码；加入应用、修改 patch 或轮换信任根均不属于每日自动更新权限。
 
 ## 每日官方脚本检查与草稿 PR
 
-`.github/workflows/installer-updates.yml` 每日 **06:23 UTC**、手动触发或 main 中维护工作流、工具和 manifest 等声明路径变更时运行，明确检出 main 并固定当次提交。同一维护任务串行运行。工作流的实际运行与结果以 Actions 为准；第三方脚本的许可和来源仍独立保留，不视为已取得额外再分发授权。
+`.github/workflows/installer-updates.yml` 每日 **06:23 UTC**、手动触发或 main 中维护工作流、工具和 presets 等声明路径变更时运行，明确检出 main 并固定当次提交。同一维护任务串行运行。工作流的实际运行与结果以 Actions 为准；第三方脚本的许可和来源仍独立保留，不视为已取得额外再分发授权。
 
-唯一应用及脚本清单为 `internal/apps/builtin/manifest.json`，Go 服务和维护工具读取同一清单。检测源为受审查 descriptor 中的 `installers[].source`：Codex 的 `https://releases.openai.com/codex/install.sh` / `.ps1`，Claude 的 `https://claude.ai/install.sh` / `.ps1`。逐一验证 main 原文字节与 provenance 一致，获取官方当前脚本。维护下载器允许经有效证书验证的 HTTPS→HTTPS 跨域跳转，最多 5 次，不逐个维护目标白名单。拒绝 HTTP 降级、非 HTTPS 协议、URL 凭据/片段、重复 URL 和超限；请求前及每个目标检查 DNS，并在发送 TLS/HTTP 数据前再次检查实际 socket 对端，拒绝回环、私网、链路本地和 metadata 地址。只使用系统 TLS 信任，关闭环境代理继承，不关闭证书校验；DNS 查询结果与实际连接结果均须通过检查。写凭据任务仍不执行下载内容。终端安装器的初始下载地址指向 RedApp，使用官方下载器的正常重定向行为；维护任务的上游获取策略独立。异常状态、编码、HTML、空响应和超限失败，成功后计算当前摘要。这里的新脚本 SHA256 是经 HTTPS 获取后的观测值，不宣称是上游签名；Claude manifest 的二进制签名验证是独立流程。
+唯一默认配置及发布清单为根目录 `presets/` 的逐实体 YAML。Go 服务读取嵌入预置；维护宿主先执行 `make installer-inventory`，由同一 Go 解析器导出 `.generated/installer-inventory.json`，Python 只消费该生成结果。生成文件不提交、不成为手工权威；进入无网络、无凭据、无 Go 的验证容器前生成并以只读仓库挂载提供，离线测试副本只复制该结果。检测源为受审查 descriptor 中的 `installers[].source`：Codex 的 `https://releases.openai.com/codex/install.sh` / `.ps1`，Claude 的 `https://claude.ai/install.sh` / `.ps1`。逐一验证 main 原文字节与 provenance 一致，获取官方当前脚本。维护下载器允许经有效证书验证的 HTTPS→HTTPS 跨域跳转，最多 5 次，不逐个维护目标白名单。拒绝 HTTP 降级、非 HTTPS 协议、URL 凭据/片段、重复 URL 和超限；请求前及每个目标检查 DNS，并在发送 TLS/HTTP 数据前再次检查实际 socket 对端，拒绝回环、私网、链路本地和 metadata 地址。只使用系统 TLS 信任，关闭环境代理继承，不关闭证书校验；DNS 查询结果与实际连接结果均须通过检查。写凭据任务仍不执行下载内容。终端安装器的初始下载地址指向 RedApp，使用官方下载器的正常重定向行为；维护任务的上游获取策略独立。异常状态、编码、HTML、空响应和超限失败，成功后计算当前摘要。这里的新脚本 SHA256 是经 HTTPS 获取后的观测值，不宣称是上游签名；Claude manifest 的二进制签名验证是独立流程。
 
 全部 descriptor 声明的脚本检测结果统一记录在 Actions summary；数量随受审查清单变化，不在工具中固定为四份。全部不变时成功结束。下载或完整性检查失败仍报告其它脚本的结果，然后任务失败，不能记作无变化。有变化时依次：
 
@@ -64,7 +66,7 @@ python3 scripts/test-update-installers.py
 2. 在 Ubuntu 工具容器执行统一入口的 Shell 测试；镜像不包含 PowerShell，也不解析或执行 ps1；容器无网络、无凭据、无 capabilities，源目录只读，限制内存/进程，只有临时空间和验证输出可写。工具镜像在执行原文之前构建。测试输出不能注入 Actions 控制命令。
 3. 回到可信主机重新应用已审查 patch，比对容器生成结果，再封装有限文件和摘要。容器输出不是独立授权来源。
 4. 独立 Windows Server 2022 任务复用 `.github/workflows/windows-installers.yml`，检出相同 baseline 的可信 harness，核对候选 ZIP 的 SHA256、baseline、允许路径和每个文件摘要后，在临时目录以候选字节覆盖基线副本。PS7 与 Windows PowerShell 5.1 对所有声明的 ps1 进行解析及无害 EXE 行为测试。测试读取候选目录，不能回退到 checkout 中的旧文件。此任务只有 contents:read、无持久 checkout 凭据，不接收发布 token；输出禁用 Actions 命令解释。它不是 Linux 容器的网络隔离边界，也不声称 Windows 测试限制了所有潜在网络访问。
-5. 仅在 Linux 和 Windows 两个任务都成功后，新任务使用 main 精确提交中的发布工具，校验任务输出的包 SHA256、内容摘要、大小、路径及文件集合；不执行包中的脚本。允许集合从同一 manifest 派生，只含已注册规范 ID 下声明的 `upstream/` 脚本、对应 `generated/` 文件及 `provenance.json`。公钥、许可证、patch、descriptor、应用代码及 workflow 均不在允许集合中。
+5. 仅在 Linux 和 Windows 两个任务都成功后，新任务使用 main 精确提交中的发布工具，校验任务输出的包 SHA256、内容摘要、大小、路径及文件集合；不执行包中的脚本。允许集合从同一生成 inventory 派生，只含已注册规范 ID 下声明的 `upstream/` 脚本、对应 `generated/` 文件及 `provenance.json`。公钥、许可证、patch、descriptor、应用代码及 workflow 均不在允许集合中。
 6. 使用短期 GITHUB_TOKEN 创建或更新 `automation/installer-updates` 的 **draft PR**。权限只在发布任务授予 contents:write / pull-requests:write，验证任务只有 contents:read。无 PAT、新凭据、安全设置变更、自动合并或 force push。
 
 同一 main / 同一原文不会因检测时间变化反复提交。已有草稿以 PR 标记的精确 head 校验，分支人工提交、非草稿、未知/无 PR 分支、额外代码或 main 变化均停止，避免覆盖人工工作；更新用普通快进提交，保留历史。推送成功而 PR API 失败会留下维护分支，后续检测安全停止，由维护者处理，不偷偷删除或重建。官方源没有变化时不会自动清理旧草稿。
@@ -76,6 +78,7 @@ GITHUB_TOKEN 创建/更新 PR 的普通 CI 可能需要人工批准；本流程�
 本地故障回归（不用外网或真实 GitHub 写操作）：
 
 ```sh
+make installer-inventory
 python3 scripts/test-installer-maintenance.py
 ```
 
@@ -87,6 +90,7 @@ python3 scripts/test-installer-maintenance.py
 
 ```sh
 # Linux：两种协议共用入口、loopback HTTP 服务、无害制品、摘要及维护夹具
+make installer-inventory
 python3 scripts/test-installers.py --platform shell
 python3 scripts/test-update-installers.py
 python3 scripts/test-installer-maintenance.py

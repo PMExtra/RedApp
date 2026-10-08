@@ -13,8 +13,8 @@ for app in applications():
         fixture=Path(tmp)
         for name in ('installers','scripts'):
             shutil.copytree(ROOT/name,fixture/name,ignore=shutil.ignore_patterns('__pycache__'))
-        manifest=fixture/'internal/apps/builtin';manifest.mkdir(parents=True)
-        shutil.copyfile(ROOT/'internal/apps/builtin/manifest.json',manifest/'manifest.json')
+        manifest=fixture/'.generated';manifest.mkdir(parents=True)
+        shutil.copyfile(ROOT/'.generated/installer-inventory.json',manifest/'installer-inventory.json')
         target=fixture/'installers'/app['id']
         before=file_state(target)
         command=['python3',str(fixture/'scripts/update-installers.py'),'--application',app['id']]

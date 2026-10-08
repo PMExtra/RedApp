@@ -34,8 +34,9 @@ var (
 // Store owns a directory handle and must be closed after its users have stopped.
 // The caller must have already validated and locked the RedApp data directory.
 type Store struct {
-	root *os.Root
-	mu   sync.Mutex
+	root     *os.Root
+	mu       sync.Mutex
+	importMu sync.Mutex
 }
 
 func New(dir string) (*Store, error) {
@@ -112,6 +113,11 @@ func (s *Store) Close() error { return s.root.Close() }
 // Put accepts image bytes, never a caller-provided filename. The returned path
 // is immutable and names the normalized content, not the original upload.
 func (s *Store) Put(reader io.Reader) (string, error) {
+	s.importMu.Lock()
+	defer s.importMu.Unlock()
+	return s.put(reader)
+}
+func (s *Store) put(reader io.Reader) (string, error) {
 	input, err := io.ReadAll(io.LimitReader(reader, MaxBytes+1))
 	if err != nil {
 		return "", err
@@ -123,6 +129,11 @@ func (s *Store) Put(reader io.Reader) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return s.putContent(content, extension)
+}
+
+// putContent preserves validated static exchange assets; upload normalization stays in put.
+func (s *Store) putContent(content []byte, extension string) (string, error) {
 	digest := sha256.Sum256(content)
 	name := hex.EncodeToString(digest[:]) + extension
 	publicPath := PublicPrefix + name
@@ -231,6 +242,33 @@ func parsePath(path string) (name, contentType string, ok bool) {
 		return "", "", false
 	}
 	return name, contentType, true
+}
+
+// ValidateStaticImage validates reviewed image bytes without changing their identity.
+// Uploads continue to normalize; embedded assets retain their original bytes.
+func ValidateStaticImage(input []byte, extension string) (string, error) {
+	if len(input) > MaxBytes {
+		return "", ErrTooLarge
+	}
+	_, detected, err := normalize(input)
+	if err != nil {
+		return "", err
+	}
+	if extension == ".jpeg" {
+		extension = ".jpg"
+	}
+	if extension != detected {
+		return "", ErrInvalidIcon
+	}
+	switch detected {
+	case ".svg":
+		return "image/svg+xml", nil
+	case ".png":
+		return "image/png", nil
+	case ".jpg":
+		return "image/jpeg", nil
+	}
+	return "", ErrInvalidIcon
 }
 
 func normalize(input []byte) ([]byte, string, error) {

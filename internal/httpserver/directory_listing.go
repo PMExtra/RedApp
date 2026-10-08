@@ -106,5 +106,9 @@ func (s *Server) instructionsAPI(w http.ResponseWriter, r *http.Request, key str
 		directoryError(w, err)
 		return
 	}
-	revisionReply(w, value.Revision, value)
+	entry, _ := s.Registry.LookupAny(key)
+	revisionReply(w, value.Revision, struct {
+		store.Instructions
+		EntityRevision int64 `json:"entity_revision"`
+	}{value, entry.Revision})
 }

@@ -244,7 +244,7 @@ func TestHTTPCacheCleanupAPIFreezesMatcherAndFencesRevision(t *testing.T) {
 	if legacy.Match != (pathmatch.Spec{Type: "glob", Pattern: "/"}) || legacy.SelectedFiles != 2 {
 		t.Fatal("legacy cleanup did not default to all paths", legacy)
 	}
-	saved := savePolicyAPI(t, h, api+"/cache/policy", app.Revision, map[string]any{"rules": []any{}, "auto_cleanup": []any{}, "stale_fallback": true})
+	saved := savePolicyAPI(t, h, api+"/cache/policy", app.Revision, map[string]any{"rules": []any{}, "auto_cleanup": []any{}, "stale_fallback": false})
 	h.request("POST", api+"/cache/cleanup/"+legacy.ID+"/execute", map[string]any{}, 409, nil)
 	body, _ = h.request("PATCH", api, map[string]any{"base_url": upstream.URL + "/new-source"}, 200, map[string]string{"If-Match": fmt.Sprintf(`"%d"`, saved.Revision)})
 	changed := directoryDecode[store.Application](t, body, "app")
@@ -401,6 +401,13 @@ func TestHTTPCacheMultiSourceAPIValidationAndEpochs(t *testing.T) {
 			t.Fatalf("public bootstrap exposed source policy %s", private)
 		}
 	}
+	h.request("GET", "/admin/api/apps/source-test/unknown/sources", nil, 404, nil)
+	row, err := h.server.DB.Application(app.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.request("DELETE", api, map[string]any{"revision": row.Revision, "confirm_key": row.Key, "confirm_uid": row.UID}, 200, nil)
+	h.request("GET", api+"/sources", nil, 404, nil)
 }
 
 func TestHTTPCacheRefreshAPIPaginatesAndExecutesCompleteFrozenSet(t *testing.T) {

@@ -1,5 +1,13 @@
 # 版本说明
 
+## v0.8.0 — 本地候选，未发布
+
+七阶段完成：可信嵌入 YAML；schema 10/template + 稀疏 overrides/独立 spec 与原子配置协调；overlay UI 与全局→Vendor→App 代理；当前 source 最新 N 缓存版本保留；发布平台/HTTP 目录预热；双语分类标签及公开关联；ZIP/单 YAML 配置交换与 App 复制。详细字段、YAML 路径、保护和限额见 [配置契约](configuration-v0.8.0.md)。显式空值与等值自定义保留，proxy/prewarm/retention 完整替换；enabled/UID/Provider/notes 不随模板重置变化。
+
+**只接受新空目录/卷或精确 schema 10。** 旧 schema 2–9/未知目录在写入前拒绝，不迁移、不自动删除。保存完整旧目录可用对应旧程序切回；不要让旧程序读取候选新库。部署文件 schema_version 仍为 1。配置交换默认排除 notes/自身代理凭据，始终排除 Hosted 二进制、运行数据和旧缓存/历史；copy 新 UID/epoch1/disabled。成功回执与配置同事务，管理员重登录只读终态结果；未执行预览重启或换会话失效。
+
+保留 0.7.16 固定 Go/Debian trixie 原生构建、amd64 ELF baseline/Nehalem 无 AVX、双架构和原生 Windows PS7/5.1 门禁。四项新增 CLI 接入 runtime-test；官方 Claude 联网脚本因本地 CONNECT403 不作为强制离线门禁，生产验签无绕过。Not planned/backlog 未实施。当前版本仅本地候选；实际验证与未运行项见 [验收记录](acceptance.md)，没有对应提交的 CI/发布记录。
+
 ## v0.7.16
 
 修复 0.7.15 amd64 镜像在未暴露 AVX/XSAVE 的 CPU 或虚拟机中启动前退出 132、没有应用日志的问题。0.7.15 原生 CI 编译静态链入 Ubuntu 26.04 的 x86-64-v3 libc；即使 Go 标记 GOAMD64=v1，glibc 初始化仍执行 AVX 指令。

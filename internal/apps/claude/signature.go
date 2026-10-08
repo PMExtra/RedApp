@@ -28,11 +28,15 @@ func Verify(raw, signature []byte) error {
 }
 
 func verifyWithKey(raw, signature, key []byte) error {
+	return verifyPinnedKey(raw, signature, key, SigningFingerprint)
+}
+
+func verifyPinnedKey(raw, signature, key []byte, fingerprint string) error {
 	if len(raw) == 0 || len(raw) > 1<<20 || len(signature) == 0 || len(signature) > 16<<10 {
 		return errors.New("Manifest or signature exceeds limits")
 	}
 	keys, err := openpgp.ReadArmoredKeyRing(bytes.NewReader(key))
-	if err != nil || len(keys) != 1 || hex.EncodeToString(keys[0].PrimaryKey.Fingerprint[:]) != SigningFingerprint {
+	if err != nil || len(keys) != 1 || hex.EncodeToString(keys[0].PrimaryKey.Fingerprint[:]) != fingerprint {
 		return errors.New("Untrusted release signing key")
 	}
 	pub, ok := keys[0].PrimaryKey.PublicKey.(*rsa.PublicKey)

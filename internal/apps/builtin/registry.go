@@ -3,11 +3,9 @@
 package builtin
 
 import (
-	"bytes"
-	_ "embed"
-	"encoding/json"
 	"fmt"
-	"io"
+	"github.com/PMExtra/RedApp/presets"
+	"strings"
 
 	"github.com/PMExtra/RedApp/installers"
 	"github.com/PMExtra/RedApp/internal/application"
@@ -15,15 +13,6 @@ import (
 	"github.com/PMExtra/RedApp/internal/apps/codex"
 	"github.com/PMExtra/RedApp/internal/distributor"
 )
-
-//go:embed manifest.json
-var manifest []byte
-
-//go:embed assets/anthropic.svg
-var claudeIcon []byte
-
-//go:embed assets/anthropic-light.svg
-var anthropicIcon []byte
 
 func New() (*application.Registry, error) {
 	descriptors, err := reviewedDescriptors()
@@ -53,34 +42,64 @@ func New() (*application.Registry, error) {
 }
 
 func reviewedDescriptors() ([]application.Descriptor, error) {
-	var input struct {
-		SchemaVersion int                      `json:"schema_version"`
-		Applications  []application.Descriptor `json:"applications"`
-	}
-	d := json.NewDecoder(bytes.NewReader(manifest))
-	d.DisallowUnknownFields()
-	if err := d.Decode(&input); err != nil {
+	input := presets.Embedded().Descriptors()
+	if err := ValidateDescriptors(input); err != nil {
 		return nil, err
 	}
-	if err := d.Decode(new(any)); err != io.EOF || input.SchemaVersion != 1 || len(input.Applications) == 0 {
-		return nil, fmt.Errorf("Invalid application manifest")
-	}
-	for _, descriptor := range input.Applications {
+	return input, nil
+}
+
+// ValidateDescriptors checks persisted contracts against compiled protocols and resources.
+// The snapshot never supplies executable code or signing keys.
+func ValidateDescriptors(input []presets.Descriptor) error {
+	for _, descriptor := range input {
 		if descriptor.Protocol != "codex-releases-v1" && descriptor.Protocol != "claude-manifest-v1" {
-			return nil, fmt.Errorf("Unregistered protocol %s", descriptor.Protocol)
+			return fmt.Errorf("Unregistered protocol %s", descriptor.Protocol)
+		}
+		validator := "codex"
+		expectedID := "openai/codex"
+		if descriptor.Protocol == "claude-manifest-v1" {
+			validator = "claude-code"
+			expectedID = "anthropic/claude-code"
+		}
+		if descriptor.ID != expectedID || descriptor.TrustRevision != 1 || descriptor.InstallerValidator != validator {
+			return fmt.Errorf("Unsupported compiled trust contract for %s", descriptor.ID)
+		}
+		required := map[string]bool{"install.sh": false, "install.ps1": false}
+		assets := map[string]bool{"licenses/LICENSE": false, "licenses/NOTICE": false}
+		if validator == "claude-code" {
+			assets = map[string]bool{"LICENSE.md": false, "claude-code.asc": false}
 		}
 		for _, asset := range descriptor.Installers {
+			if _, ok := required[asset.File]; !ok {
+				return fmt.Errorf("Unreviewed installer %s", asset.File)
+			}
+			required[asset.File] = true
 			if _, err := installers.Installer(descriptor.ID, asset.File, "https://validation.invalid/"+descriptor.ID); err != nil {
-				return nil, fmt.Errorf("Missing generated installer for %s: %w", descriptor.ID, err)
+				return fmt.Errorf("Missing generated installer for %s: %w", descriptor.ID, err)
 			}
 		}
 		for _, asset := range descriptor.Assets {
+			if _, ok := assets[asset.File]; !ok {
+				return fmt.Errorf("Unreviewed static asset %s", asset.File)
+			}
+			assets[asset.File] = true
 			if _, err := installers.PublicAsset(descriptor.ID, asset.File); err != nil {
-				return nil, fmt.Errorf("Missing public asset for %s: %w", descriptor.ID, err)
+				return fmt.Errorf("Missing public asset for %s: %w", descriptor.ID, err)
+			}
+		}
+		for file, present := range required {
+			if !present {
+				return fmt.Errorf("Missing mandatory installer %s", file)
+			}
+		}
+		for file, present := range assets {
+			if !present {
+				return fmt.Errorf("Missing mandatory asset %s", file)
 			}
 		}
 	}
-	return input.Applications, nil
+	return nil
 }
 
 func releaseEntry(descriptor application.Descriptor, client *distributor.Client) (application.Entry, error) {
@@ -95,13 +114,10 @@ func releaseEntry(descriptor application.Descriptor, client *distributor.Client)
 	default:
 		return application.Entry{}, fmt.Errorf("Unregistered protocol %s", descriptor.Protocol)
 	}
-	// Brand resources are reviewed static files; an icon field never fetches a URL.
-	if descriptor.Icon != "" {
-		asset, ok := BrandAsset("/" + descriptor.ID + "/" + descriptor.Icon)
-		if !ok {
-			return application.Entry{}, fmt.Errorf("Unregistered icon for %s", descriptor.ID)
-		}
-		entry.PublicAssets = map[string]application.Representation{descriptor.Icon: asset}
+	// Legacy protocol assets have their own reviewed registry. Display icons in
+	// presets never name or authorize installer protocol files.
+	if asset, ok := BrandAsset("/" + descriptor.ID + "/icon.svg"); ok {
+		entry.PublicAssets = map[string]application.Representation{"icon.svg": asset}
 	}
 	return entry, nil
 }
@@ -109,14 +125,10 @@ func releaseEntry(descriptor application.Descriptor, client *distributor.Client)
 // BrandAsset serves only reviewed, compiled image bytes, independently of a
 // persisted application's availability. It never fetches the supplied path.
 func BrandAsset(path string) (application.Representation, bool) {
-	if path == "/openai/codex/icon.svg" || path == "/assets/builtin/openai.svg" {
-		return application.Representation{ContentType: "image/svg+xml", Body: []byte(codex.OpenAISymbol())}, true
+	if strings.HasPrefix(path, presets.ImagePrefix) {
+		image, ok := presets.Embedded().Image(path)
+		return application.Representation{ContentType: image.ContentType, Body: image.Body}, ok
 	}
-	switch path {
-	case "/anthropic/claude-code/icon.svg":
-		return application.Representation{ContentType: "image/svg+xml", Body: claudeIcon}, true
-	case "/assets/builtin/anthropic.svg":
-		return application.Representation{ContentType: "image/svg+xml", Body: anthropicIcon}, true
-	}
-	return application.Representation{}, false
+	image, ok := presets.LegacyImage(path)
+	return application.Representation{ContentType: image.ContentType, Body: image.Body}, ok
 }

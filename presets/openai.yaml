@@ -1,0 +1,15 @@
+schema_version: 1
+kind: "Vendor"
+metadata:
+  id: "openai"
+spec:
+  name:
+    en: "OpenAI"
+    "zh-CN": "OpenAI"
+  description:
+    en: ""
+    "zh-CN": ""
+  icon: "assets/builtin/openai.svg"
+  localized_icons:
+    en: ""
+    "zh-CN": ""

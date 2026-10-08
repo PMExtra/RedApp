@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
 	"net/http"
 	"strings"
@@ -20,8 +21,18 @@ func (s *Server) publicCatalogAPI(w http.ResponseWriter, r *http.Request, origin
 		fail(w, 405, "Method not allowed")
 		return true
 	}
-	if !queryAllowed(r, "q", "page", "limit", "vendor") {
+	if !queryAllowed(r, "q", "page", "limit", "vendor", "category") {
 		fail(w, 400, "Invalid catalog query")
+		return true
+	}
+	category := r.URL.Query().Get("category")
+	if category != "" && !identity.ValidSlug(category) {
+		fail(w, 400, "Invalid category")
+		return true
+	}
+	taxonomy, categories, taxErr := s.DB.PublicTaxonomy()
+	if taxErr != nil {
+		fail(w, 503, "Directory unavailable")
 		return true
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
@@ -50,7 +61,7 @@ func (s *Server) publicCatalogAPI(w http.ResponseWriter, r *http.Request, origin
 		ranking := []map[string]any{}
 		for _, key := range pins.Keys {
 			if e, ok := s.Registry.Lookup(key); ok {
-				item, err := s.publicApplication(e, origin)
+				item, err := s.publicApplicationWithTaxonomy(e, origin, taxonomy[e.UID])
 				if err != nil {
 					fail(w, 503, "Homepage unavailable")
 					return true
@@ -69,7 +80,7 @@ func (s *Server) publicCatalogAPI(w http.ResponseWriter, r *http.Request, origin
 		}
 		for _, score := range scores {
 			if e, ok := s.Registry.Lookup(keys[score.UID]); ok {
-				item, err := s.publicApplication(e, origin)
+				item, err := s.publicApplicationWithTaxonomy(e, origin, taxonomy[e.UID])
 				if err != nil {
 					fail(w, 503, "Ranking unavailable")
 					return true
@@ -127,7 +138,7 @@ func (s *Server) publicCatalogAPI(w http.ResponseWriter, r *http.Request, origin
 			return true
 		}
 	}
-	apps, err := s.DB.ApplicationPage(vendor, page, limit, q, "enabled")
+	apps, err := s.DB.ApplicationCategoryPage(vendor, page, limit, q, category)
 	if err != nil {
 		fail(w, 503, "Catalog unavailable")
 		return true
@@ -135,7 +146,7 @@ func (s *Server) publicCatalogAPI(w http.ResponseWriter, r *http.Request, origin
 	result := store.NewPage[map[string]any](apps.Page, apps.Limit, apps.Total)
 	for _, a := range apps.Items {
 		if e, ok := s.Registry.Lookup(a.Key); ok {
-			item, err := s.publicApplication(e, origin)
+			item, err := s.publicApplicationWithTaxonomy(e, origin, taxonomy[e.UID])
 			if err != nil {
 				fail(w, 503, "Catalog unavailable")
 				return true
@@ -143,7 +154,10 @@ func (s *Server) publicCatalogAPI(w http.ResponseWriter, r *http.Request, origin
 			result.Items = append(result.Items, item)
 		}
 	}
-	reply(w, 200, result)
+	reply(w, 200, struct {
+		store.Page[map[string]any]
+		Categories []store.TaxonomyLabel `json:"categories"`
+	}{result, categories})
 	return true
 }
 func (s *Server) homepageAPI(w http.ResponseWriter, r *http.Request) {
@@ -187,7 +201,11 @@ func (s *Server) homepageAPI(w http.ResponseWriter, r *http.Request) {
 	}
 }
 func (s *Server) templateAPI(w http.ResponseWriter, r *http.Request, key string) {
-	template, ok := store.BuiltinApplicationTemplate(key)
+	template, ok, templateErr := s.DB.BoundApplicationTemplate(key)
+	if templateErr != nil {
+		directoryError(w, templateErr)
+		return
+	}
 	if !ok {
 		fail(w, 404, "No entity template matches this application")
 		return
@@ -226,9 +244,6 @@ func (s *Server) templateAPI(w http.ResponseWriter, r *http.Request, key string)
 	s.directoryMu.Lock()
 	defer s.directoryMu.Unlock()
 	a, err := s.DB.ResetApplicationTemplate(key, input)
-	if err == nil {
-		err = s.ReloadDirectory()
-	}
 	if err != nil {
 		directoryError(w, err)
 	} else {
@@ -237,7 +252,11 @@ func (s *Server) templateAPI(w http.ResponseWriter, r *http.Request, key string)
 }
 
 func (s *Server) vendorTemplateAPI(w http.ResponseWriter, r *http.Request, id string) {
-	template, ok := store.BuiltinVendorTemplate(id)
+	template, ok, templateErr := s.DB.BoundVendorTemplate(id)
+	if templateErr != nil {
+		directoryError(w, templateErr)
+		return
+	}
 	if !ok {
 		fail(w, 404, "No entity template matches this vendor")
 		return
@@ -267,9 +286,6 @@ func (s *Server) vendorTemplateAPI(w http.ResponseWriter, r *http.Request, id st
 	s.directoryMu.Lock()
 	defer s.directoryMu.Unlock()
 	v, err := s.DB.ResetVendorTemplate(id, input)
-	if err == nil {
-		err = s.ReloadDirectory()
-	}
 	if err != nil {
 		directoryError(w, err)
 	} else {

@@ -92,44 +92,46 @@ func (s *Store) PrepareApplicationDeletion(key string, revision int64) (string, 
 	if _, ok := BuiltinApplicationTemplate(key); ok {
 		return "", nil, ErrBuiltinTemplate
 	}
+	var uid string
+	err := s.changeConfiguration(func(st *configurationState) error {
+		if _, ok := st.Templates[templateKey("App", key)]; ok {
+			return ErrBuiltinTemplate
+		}
+		for i := range st.Applications {
+			app := &st.Applications[i]
+			if app.Key != key {
+				continue
+			}
+			original, pending := st.Pending[app.UID]
+			if revision != app.Revision && (!pending || revision != original) {
+				return ErrConflict
+			}
+			uid = app.UID
+			if !pending {
+				st.Pending[uid] = revision
+				now := time.Now().UTC()
+				app.DeletedAt = &now
+				app.Enabled = false
+				app.Revision++
+			}
+			return nil
+		}
+		return sql.ErrNoRows
+	})
+	if err != nil {
+		return "", nil, err
+	}
+	// Runtime tombstone is already published, with no DB transaction or downloads
+	// mutex held. The work gate can now cancel/drain pre-existing leases safely.
 	s.work.mu.Lock()
 	defer s.work.mu.Unlock()
-	tx, err := s.DB.Begin()
-	if err != nil {
-		return "", nil, err
-	}
-	defer tx.Rollback()
-	app, err := readApplication(tx, key)
-	if err != nil {
-		return "", nil, err
-	}
-	var original int64
-	err = tx.QueryRow(`SELECT requested_revision FROM pending_application_deletes WHERE app_uid=?`, app.UID).Scan(&original)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return "", nil, err
-	}
-	pending := err == nil
-	if revision != app.Revision && (!pending || revision != original) {
-		return "", nil, ErrConflict
-	}
-	if !pending {
-		if _, err = tx.Exec(`INSERT INTO pending_application_deletes(app_uid,requested_revision) VALUES(?,?)`, app.UID, revision); err != nil {
-			return "", nil, err
-		}
-		if _, err = tx.Exec(`UPDATE applications SET enabled=0,revision=revision+1,deleted_at_s=? WHERE uid=?`, time.Now().UTC().Unix(), app.UID); err != nil {
-			return "", nil, err
-		}
-	}
-	if err = tx.Commit(); err != nil {
-		return "", nil, err
-	}
-	a := s.work.app(app.UID)
+	a := s.work.app(uid)
 	a.blocked = true
 	for _, cancel := range a.tasks {
 		cancel()
 	}
 	a.signal()
-	return app.UID, a.drained, nil
+	return uid, a.drained, nil
 }
 
 func (s *Store) FinishApplicationDeletion(uid string) error {

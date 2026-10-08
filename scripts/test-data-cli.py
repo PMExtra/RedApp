@@ -78,7 +78,7 @@ with tempfile.TemporaryDirectory(prefix="redapp-data-cli-") as temp:
     assert result.returncode == 1 and "Duplicate" in result.stderr and not data.exists()
     # Old and unknown directories must be byte-identical after a refused startup,
     # including absence of a new instance.lock or SQLite sidecar.
-    for kind, old_schema in [("schema-2", 2), ("schema-3", 3), ("unknown", None)]:
+    for kind, old_schema in [(f"schema-{version}", version) for version in range(2, 10)] + [("unknown", None)]:
         data = directory / kind
         data.mkdir()
         if old_schema is not None:
@@ -88,6 +88,8 @@ with tempfile.TemporaryDirectory(prefix="redapp-data-cli-") as temp:
             db.close()
         else:
             (data / "keep-me.txt").write_text("unrelated original data")
+        (data / "state.sqlite-wal").write_bytes(b"preserve existing WAL bytes")
+        (data / "state.sqlite-shm").write_bytes(b"preserve existing SHM bytes")
         before = fingerprint(data)
         # Restored file-free startup must still refuse to modify old data.
         result = invoke([], directory, {"REDAPP_DATA": str(data)})
@@ -99,4 +101,4 @@ with tempfile.TemporaryDirectory(prefix="redapp-data-cli-") as temp:
     result = invoke(["serve", "--config", str(config_path)], directory)
     assert result.returncode == 1 and ("read-only" in result.stderr.lower() or "permission denied" in result.stderr.lower())
     assert not (directory / "new-data").exists()
-print("CLI optional config, explicit JSON/path failures, invalid origin/duplicate keys, unchanged schema-2/schema-3/unknown directories and permission failure passed.")
+print("CLI optional config, explicit JSON/path failures, invalid origin/duplicate keys, unchanged schema-2..9/unknown directories and permission failure passed.")

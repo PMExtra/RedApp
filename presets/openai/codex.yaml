@@ -1,0 +1,106 @@
+schema_version: 1
+kind: "App"
+metadata:
+  id: "codex"
+  vendor: "openai"
+spec:
+  category: ""
+  tags: []
+  prewarm: {enabled: false, channels: [], platforms: []}
+  retention: {enabled: false, keep_latest: 3}
+  name:
+    en: "Codex CLI"
+    "zh-CN": "Codex CLI"
+  description:
+    en: "OpenAI’s coding agent for your terminal."
+    "zh-CN": "OpenAI 的终端编程助手。"
+  icon: "assets/openai/codex/icon.svg"
+  provider: "codex"
+  base_url: "https://releases.openai.com/codex"
+  cache_ttl_seconds: 60
+  source_strategy: ""
+  instructions:
+    en: |-
+      ## Install {{app_name}}
+
+      Run the appropriate command in your terminal.
+
+      On Linux or macOS, run this command in Shell:
+
+      ```sh
+      curl -fsSL '{{base_url}}{{app_path}}/install.sh' | sh
+      ```
+
+      On Windows, run this command in PowerShell:
+
+      ```powershell
+      irm '{{base_url}}{{app_path}}/install.ps1' | iex
+      ```
+
+      ### Getting started
+
+      After installation, open a new terminal and run `codex`. Follow the application’s sign-in instructions.
+
+      ### Update
+
+      Rerun the default installation command above to install the latest version. A command specifying a version installs that version.
+
+      <details class="installer-options">
+      <summary>Install a specific version</summary>
+
+      ```sh
+      curl -fsSL '{{base_url}}{{app_path}}/install.sh' | sh -s -- --release '{{latest_version}}'
+      ```
+
+      ```powershell
+      & ([scriptblock]::Create((irm '{{base_url}}{{app_path}}/install.ps1'))) -Release '{{latest_version}}'
+      ```
+
+      </details>
+    "zh-CN": |-
+      ## 安装 {{app_name}}
+
+      在终端中运行适合当前系统的命令。
+
+      在 Linux 或 macOS 上，在 Shell 中运行：
+
+      ```sh
+      curl -fsSL '{{base_url}}{{app_path}}/install.sh' | sh
+      ```
+
+      在 Windows 上，在 PowerShell 中运行：
+
+      ```powershell
+      irm '{{base_url}}{{app_path}}/install.ps1' | iex
+      ```
+
+      ### 开始使用
+
+      安装后打开新的终端，运行 `codex`，并按照应用提示登录。
+
+      ### 更新
+
+      重新执行上方默认安装命令即可安装最新版本；指定版本的命令仍安装所指定的版本。
+
+      <details class="installer-options">
+      <summary>安装指定版本</summary>
+
+      ```sh
+      curl -fsSL '{{base_url}}{{app_path}}/install.sh' | sh -s -- --release '{{latest_version}}'
+      ```
+
+      ```powershell
+      & ([scriptblock]::Create((irm '{{base_url}}{{app_path}}/install.ps1'))) -Release '{{latest_version}}'
+      ```
+
+      </details>
+distribution:
+  protocol: "codex-releases-v1"
+  trust_revision: 1
+  channels: ["latest"]
+  installer_validator: "codex"
+  installers: [{"file": "install.sh", "source": "https://releases.openai.com/codex/install.sh", "shell": "sh"}, {"file": "install.ps1", "source": "https://releases.openai.com/codex/install.ps1", "shell": "powershell"}]
+  assets: [{"file": "licenses/LICENSE", "kind": "license"}, {"file": "licenses/NOTICE", "kind": "notice"}]
+  update_policy:
+    en: "Installer and self-update downloads use this distribution service."
+    "zh-CN": "安装脚本与自动更新通过此分发服务下载。"

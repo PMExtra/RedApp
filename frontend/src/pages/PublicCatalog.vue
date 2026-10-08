@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SelectMenu from "../components/SelectMenu.vue";
 import Icon from "../components/Icon.vue";
 import VendorLogo from "../components/VendorLogo.vue";
 import { vendorName } from "../vendorName";
@@ -18,6 +19,7 @@ const vendor = computed(() => String(route.params.vendor || ""));
 const query = computed(() =>
   typeof route.query.q === "string" ? route.query.q : "",
 );
+const category = computed(() => typeof route.query.category === "string" ? route.query.category : "");
 const page = computed(() =>
   /^[1-9]\d*$/.test(String(route.query.page)) ? Number(route.query.page) : 1,
 );
@@ -31,16 +33,16 @@ watch(search, (value) => {
   clearTimeout(timer);
   timer = setTimeout(() => {
     if (value.trim() !== query.value)
-      void router.replace({ query: value.trim() ? { q: value.trim() } : {} });
+      void router.replace({ query: { ...(value.trim() ? { q: value.trim() } : {}), ...(category.value ? {category:category.value} : {}) } });
   }, 250);
 });
 onUnmounted(() => clearTimeout(timer));
 const path = computed(
   () =>
-    `/api/catalog?${new URLSearchParams({ q: query.value, vendor: vendor.value, page: String(page.value), limit: "24" })}`,
+    `/api/catalog?${new URLSearchParams({ q: query.value, category: category.value, vendor: vendor.value, page: String(page.value), limit: "24" })}`,
 );
 const { data, error, loading, refresh } = usePublicResource<
-  NumberedPage<Application>
+  NumberedPage<Application> & { categories?: {id:string;name:LocalizedText}[] }
 >(
   path,
   (value) =>
@@ -64,10 +66,13 @@ const vendorData = usePublicResource<{
 const visibleVendor = computed(() => vendorData.data.value?.id === vendor.value ? vendorData.data.value : undefined);
 const vendorReady = computed(() => !vendor.value || !!visibleVendor.value);
 function retry() { void refresh(); if (vendor.value) void vendorData.refresh(); }
+function chooseCategory(value:string) { void router.push({query:{...(query.value ? {q:query.value} : {}), ...(value ? {category:value} : {})}}); }
+const categoryOptions = computed(() => [{value:"",label:t("All categories")}, ...(data.value?.categories || []).map(x=>({value:x.id,label:x.name[language.value]}))]);
 function go(next: number) {
   void router.push({
     query: {
       ...(query.value ? { q: query.value } : {}),
+      ...(category.value ? {category:category.value} : {}),
       ...(next > 1 ? { page: String(next) } : {}),
     },
   });
@@ -102,6 +107,7 @@ function go(next: number) {
       maxlength="128"
       :placeholder="t('Search by ID or name')"
   /></label>
+  <SelectMenu v-if="vendorReady" :model-value="category" :options="categoryOptions" :label="t('Category')" @update:model-value="chooseCategory" />
   <p
     v-if="error || (vendor && vendorData.error.value)"
     class="error"

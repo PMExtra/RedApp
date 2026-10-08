@@ -124,21 +124,22 @@ type View struct {
 	SampledAt    time.Time
 }
 type Manager struct {
-	mu          sync.Mutex
-	dir         string
-	db          *store.Store
-	upstreams   map[string]*distributor.Client
-	current     map[string]*Generation
-	all         map[string]*Generation
-	ctx         context.Context
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
-	closed      bool
-	maxBytes    int64
-	maxReaders  int
-	maxWriters  int
-	jobs        int
-	httpReaders int
+	publicationMu sync.Mutex // Configuration publication and Close only; never acquired while holding mu.
+	mu            sync.Mutex
+	dir           string
+	db            *store.Store
+	upstreams     map[string]*distributor.Client
+	current       map[string]*Generation
+	all           map[string]*Generation
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
+	closed        bool
+	maxBytes      int64
+	maxReaders    int
+	maxWriters    int
+	jobs          int
+	httpReaders   int
 	// Unexported fault barrier used only by package tests; production leaves it nil.
 	testFault func(string, *Generation)
 }
@@ -165,25 +166,56 @@ func NewApplications(dir string, db *store.Store, clients map[string]*distributo
 
 // RegisterUpstreams adds immutable source clients before a new runtime registry
 // snapshot becomes visible. Historical clients remain available for recovery.
-func (m *Manager) RegisterUpstreams(clients map[string]*distributor.Client) error {
+// UpstreamPublication owns the narrow publication gate through the DB commit.
+// Lock order: publicationMu -> short mu prepare -> release mu -> DB transaction
+// -> commit/release DB connection -> mu publish. Transfers never take this gate.
+type UpstreamPublication struct {
+	manager *Manager
+	clients map[string]*distributor.Client
+}
+
+func (m *Manager) PrepareUpstreams(clients map[string]*distributor.Client) (*UpstreamPublication, error) {
+	m.publicationMu.Lock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	fail := func(err error) (*UpstreamPublication, error) { m.publicationMu.Unlock(); return nil, err }
 	if m.closed {
-		return errors.New("Server is shutting down")
+		return fail(errors.New("Server is shutting down"))
 	}
+	copied := make(map[string]*distributor.Client, len(clients))
 	for app, client := range clients {
 		if client == nil || !validApplication(app) {
-			return errors.New("Invalid application upstream registration")
+			return fail(errors.New("Invalid application upstream registration"))
 		}
 		if old := m.upstreams[app]; old != nil && old.Base.String() != client.Base.String() {
-			return errors.New("Source namespace cannot change upstream")
+			return fail(errors.New("Source namespace cannot change upstream"))
 		}
+		copied[app] = client
 	}
-	for app, client := range clients {
+	return &UpstreamPublication{manager: m, clients: copied}, nil
+}
+
+func (p *UpstreamPublication) Abort()   { p.manager.publicationMu.Unlock() }
+func (p *UpstreamPublication) Publish() { p.PublishWith(func() {}) }
+
+func (p *UpstreamPublication) PublishWith(publish func()) {
+	m := p.manager
+	m.mu.Lock()
+	for app, client := range p.clients {
 		if m.upstreams[app] == nil {
 			m.upstreams[app] = client
 		}
 	}
+	m.mu.Unlock()
+	publish()
+	m.publicationMu.Unlock()
+}
+func (m *Manager) RegisterUpstreams(clients map[string]*distributor.Client) error {
+	plan, err := m.PrepareUpstreams(clients)
+	if err != nil {
+		return err
+	}
+	plan.Publish()
 	return nil
 }
 
@@ -308,6 +340,7 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 	}()
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.checkpoint("acquire_before_db_validation", nil)
 	if e := m.validateResource(r); e != nil {
 		return nil, false, e
 	}
@@ -853,9 +886,12 @@ func (m *Manager) SnapshotFor(app, version string) []View {
 	return out
 }
 func (m *Manager) Close() error {
+	m.checkpoint("close_before_publication_gate", nil)
+	m.publicationMu.Lock()
 	m.mu.Lock()
 	m.closed = true
 	m.mu.Unlock()
+	m.publicationMu.Unlock()
 	m.cancel()
 	m.wg.Wait()
 	m.mu.Lock()
@@ -881,5 +917,28 @@ func failureCategory(message string) string {
 func (m *Manager) checkpoint(point string, g *Generation) {
 	if m.testFault != nil {
 		m.testFault(point, g)
+	}
+}
+
+// WaitVerified waits for final size and digest verification without reading bytes.
+func (r *Reader) WaitVerified() error {
+	for {
+		if err := r.ctx.Err(); err != nil {
+			return err
+		}
+		r.m.mu.Lock()
+		done, state, changed := r.g.done, r.g.State, r.g.changed
+		r.m.mu.Unlock()
+		if done {
+			if state == "complete" {
+				return nil
+			}
+			return errors.New("Download verification failed")
+		}
+		select {
+		case <-r.ctx.Done():
+			return r.ctx.Err()
+		case <-changed:
+		}
 	}
 }

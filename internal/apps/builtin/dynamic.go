@@ -49,10 +49,7 @@ func Seeds() ([]store.VendorInput, []store.ApplicationSeed, error) {
 		if descriptor.Protocol == "claude-manifest-v1" {
 			provider = application.ClaudeCode
 		}
-		icon := ""
-		if descriptor.Icon != "" {
-			icon = "/" + descriptor.ID + "/" + descriptor.Icon
-		}
+		icon := descriptor.Icon
 		apps = append(apps, store.ApplicationSeed{VendorID: key.Vendor, ApplicationInput: store.ApplicationInput{
 			ID: key.App, Name: localizedRecord(descriptor.Name), Description: localizedRecord(descriptor.Summary), Icon: icon,
 			Provider: provider, BaseURL: descriptor.Upstream, CacheTTLSeconds: descriptor.DefaultChannelTTLSeconds, Enabled: true,
@@ -61,21 +58,34 @@ func Seeds() ([]store.VendorInput, []store.ApplicationSeed, error) {
 	return vendors, apps, nil
 }
 
-// NewSourceClient is also used for retired source records during recovery.
-// A historical client is never implicitly admitted as an active public app.
+// NewSourceClient is the static-fixture compatibility constructor. Production
+// current and historical dynamic sources use NewScopedSourceClient with owner UIDs.
 func NewSourceClient(provider, baseURL string, pool *distributor.Pool) (*distributor.Client, error) {
+	definition, _ := application.ProviderDefinition(provider)
+	return NewSourceClientWithDefault(provider, baseURL, definition.DefaultBaseURL, pool)
+}
+func NewSourceClientWithDefault(provider, baseURL, defaultBase string, pool *distributor.Pool) (*distributor.Client, error) {
+	return newSourceClient(provider, baseURL, defaultBase, "", "", pool)
+}
+func NewScopedSourceClient(provider, baseURL, defaultBase, appUID, vendorUID string, pool *distributor.Pool) (*distributor.Client, error) {
+	if appUID == "" || vendorUID == "" {
+		return nil, errors.New("Application transport scope required")
+	}
+	return newSourceClient(provider, baseURL, defaultBase, appUID, vendorUID, pool)
+}
+func newSourceClient(provider, baseURL, defaultBase, appUID, vendorUID string, pool *distributor.Pool) (*distributor.Client, error) {
 	if provider == application.Info || provider == application.Hosted {
 		return nil, nil
 	}
 	if pool == nil {
 		return nil, errors.New("A shared upstream transport pool is required")
 	}
-	definition, ok := application.ProviderDefinition(provider)
+	_, ok := application.ProviderDefinition(provider)
 	if !ok {
 		return nil, errors.New("Unknown provider")
 	}
 	if baseURL == "" {
-		baseURL = definition.DefaultBaseURL
+		baseURL = defaultBase
 	}
 	mode := distributor.ConfiguredRelease
 	if provider == application.HttpCache {
@@ -85,8 +95,11 @@ func NewSourceClient(provider, baseURL string, pool *distributor.Pool) (*distrib
 	if err != nil {
 		return nil, err
 	}
-	if definition.DefaultBaseURL != "" && normalized == definition.DefaultBaseURL {
+	if defaultBase != "" && normalized == defaultBase {
 		mode = distributor.PublicRelease
+	}
+	if appUID != "" {
+		return pool.NewScopedClient(normalized, mode, appUID, vendorUID)
 	}
 	return pool.NewClient(normalized, mode)
 }
@@ -106,13 +119,19 @@ func EntriesFromRecords(vendors []store.Vendor, apps []store.Application, pool *
 	if err != nil {
 		return nil, err
 	}
+	return entriesFromConfiguration(store.DirectorySnapshot{Vendors: vendors, Applications: apps, ReviewedDescriptors: descriptors}, pool)
+}
+func EntriesFromConfiguration(snapshot store.DirectorySnapshot, pool *distributor.Pool) ([]application.Entry, error) {
+	if err := ValidateDescriptors(snapshot.ReviewedDescriptors); err != nil {
+		return nil, err
+	}
+	return entriesFromConfiguration(snapshot, pool)
+}
+func entriesFromConfiguration(snapshot store.DirectorySnapshot, pool *distributor.Pool) ([]application.Entry, error) {
+	vendors, apps := snapshot.Vendors, snapshot.Applications
 	templates := map[string]application.Descriptor{}
-	for _, d := range descriptors {
-		provider := application.Codex
-		if d.Protocol == "claude-manifest-v1" {
-			provider = application.ClaudeCode
-		}
-		templates[provider] = d
+	for _, d := range snapshot.ReviewedDescriptors {
+		templates[d.ID] = d
 	}
 	byVendor := make(map[string]store.Vendor, len(vendors))
 	for _, vendor := range vendors {
@@ -131,7 +150,16 @@ func EntriesFromRecords(vendors []store.Vendor, apps []store.Application, pool *
 		if err != nil {
 			return nil, fmt.Errorf("Invalid provider configuration for %s: %w", app.Key, err)
 		}
-		client, err := NewSourceClient(app.Provider, config.BaseURL, pool)
+		defaultBase := snapshot.ProviderDefaults[app.Provider]
+		if defaultBase == "" {
+			definition, _ := application.ProviderDefinition(app.Provider)
+			defaultBase = definition.DefaultBaseURL
+		}
+		scopeUID, scopeVendor := "", ""
+		if snapshot.ProxyScopes != nil {
+			scopeUID, scopeVendor = app.UID, app.VendorUID
+		}
+		client, err := newSourceClient(app.Provider, config.BaseURL, defaultBase, scopeUID, scopeVendor, pool)
 		if err != nil {
 			return nil, err
 		}
@@ -143,14 +171,22 @@ func EntriesFromRecords(vendors []store.Vendor, apps []store.Application, pool *
 			entry.SourceStrategy = config.SourceStrategy
 			entry.Upstreams = make([]*distributor.Client, len(config.BaseURLs))
 			for i, base := range config.BaseURLs {
-				entry.Upstreams[i], err = NewSourceClient(app.Provider, base, pool)
+				entry.Upstreams[i], err = newSourceClient(app.Provider, base, "", scopeUID, scopeVendor, pool)
 				if err != nil {
 					return nil, err
 				}
 			}
 			entry.Upstream = entry.Upstreams[0]
 		} else {
-			template, ok := templates[app.Provider]
+			key := snapshot.TemplateBindings[app.UID]
+			if key == "" {
+				if app.Provider == application.Codex {
+					key = "openai/codex"
+				} else {
+					key = "anthropic/claude-code"
+				}
+			}
+			template, ok := templates[key]
 			if !ok {
 				return nil, errors.New("Provider has no reviewed release template")
 			}
@@ -159,6 +195,8 @@ func EntriesFromRecords(vendors []store.Vendor, apps []store.Application, pool *
 				return nil, err
 			}
 		}
+		entry.VendorUID = vendor.UID
+		entry.RuntimeRevision, entry.VendorRuntimeRevision = app.RuntimeRevision, vendor.RuntimeRevision
 		entry.UID, entry.Revision, entry.VendorRevision, entry.SourceEpoch = app.UID, app.Revision, vendor.Revision, app.SourceEpoch
 		entry.VendorLocalizedIcons = localized(vendor.LocalizedIcons)
 		entry.VendorID, entry.VendorName, entry.VendorDescription, entry.VendorIcon = vendor.ID, localized(vendor.Name), localized(vendor.Description), vendor.Icon

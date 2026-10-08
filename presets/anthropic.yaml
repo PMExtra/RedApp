@@ -1,0 +1,15 @@
+schema_version: 1
+kind: "Vendor"
+metadata:
+  id: "anthropic"
+spec:
+  name:
+    en: "Anthropic"
+    "zh-CN": "Anthropic"
+  description:
+    en: ""
+    "zh-CN": ""
+  icon: "assets/builtin/anthropic.svg"
+  localized_icons:
+    en: ""
+    "zh-CN": ""

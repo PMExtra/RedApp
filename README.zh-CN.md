@@ -4,7 +4,7 @@
 
 RedApp 通过同一服务分发 **HTTP 文件、Codex CLI 和 Claude Code**。管理员维护厂商与应用资料、选择 Provider 和 BaseUrl，并管理缓存、流量与站点设置。
 
-**0.7.2** 使用 SQLite schema **7**。精确匹配已发布 v0.7.1 schema 5、v0.7.0 schema 4 或已审阅本地 schema 6 的目录可原地升级，保留应用身份、配置、源记录、缓存和历史。更早或未知格式仍在写入前拒绝。升级前停止实例并备份完整目录；已有厂商 ID `all` 会明确报冲突并阻止升级。详见 [0.7.2 运行变更](docs/admin-experience-v0.7.2.md)。
+**0.8.0 为本地候选，尚未发布，使用 SQLite schema 10。** 仅接受新空目录/卷或精确 schema 10。旧 schema 2–9 和未知目录只读拒绝，不迁移、不自动删除；保留原目录可切回对应旧程序。部署文件 schema_version 仍为 1。详见 [配置契约](docs/configuration-v0.8.0.md)及[验收状态](docs/acceptance.md)。
 
 ## 快速上手
 
@@ -14,7 +14,7 @@ RedApp 通过同一服务分发 **HTTP 文件、Codex CLI 和 Claude Code**。�
 docker build -t redapp:local .
 docker run -d --name redapp --read-only \
   -p 127.0.0.1:8080:8080 \
-  -v redapp-v07-data:/var/lib/redapp \
+  -v redapp-v08-data:/var/lib/redapp \
   redapp:local
 ```
 
@@ -73,13 +73,21 @@ HTTP Cache 设置提供有序缓存规则、默认开启的 `stale_fallback` 开
 
 手动清理将路径模式、时基和截止时间冻结为预览。自动清理默认规则为空，保存规则后每 15 分钟运行，不在启动时立即删除；仅处理活动 HTTP Cache 应用的当前 source epoch，每应用每轮最多扫描 1000 个文件、退出当前缓存 100 个文件，并通过游标避免后面的文件一直未被扫描。清理按第一条路径命中规则判断年龄，未达到年龄也不继续尝试后面的规则。规则示例、限制和 API 见[运行说明](docs/provider-runtime-v0.7.0.md)。本版不增加源认证、私有 CA 或签名配置；保留基本 TLS 验证以及现有后台和发布校验。
 
+## 配置、维护与交换
+
+可信默认配置嵌入自 `presets/<vendor>.yaml`、`presets/<vendor>/<app>.yaml` 和 `presets/_taxonomy.yaml`。绑定对象保存 template 与稀疏 overrides，独立对象保存完整 spec；等值自定义、显式空字符串/列表仍保持自定义。语言叶独立继承，有序列表及 proxy/prewarm/retention 完整替换。重置取消所选 override，enabled、身份、Provider 和私有 notes 独立。
+
+Codex/Claude 保留当前 source 的最新 N 个完整缓存版本，同时保护有效渠道目标、活动 reader/writer 及无法比较版本，不清理历史 source。发布平台与 HTTP 路径/清单/目录预热复用原校验、授权、下载和缓存链。维护每 15 分钟运行，启动不立即执行。手动预热使用无队列的全局单 worker；默认 10000 文件、深度 16、10 GiB、1 小时，硬上限 100000/32/1 TiB/24 小时。取消仅移除任务的共享等待者，不中断其他公共请求；重启标记 interrupted。双语分类/标签支持公开 category 搜索及最多六项有效关联应用。
+
+后台导出 ZIP，导入 ZIP/单 YAML，可选链接或独立模式。导出所选配置、父 Vendor、引用字典和受控静态图片，排除 Hosted 二进制、运行 UID/状态、缓存/历史/任务；notes 和代理凭据每次默认关闭。预览只展示源码，不执行 HTML/JS；说明变化须明确信任。选择与 UID/revisions/notes 绑定，整包事务提交或回滚。复制创建新 UID/epoch、默认禁用、无旧数据的 App，自身 inherit 在目标 Vendor 下解析。成功回执保留 24 小时，管理员重新登录只读同一已提交结果；未执行预览重启或换会话后失效。[完整字段、限额与 API](docs/configuration-v0.8.0.md)。
+
 ## 公共地址与代理
 
 安装链接使用全局公共地址，优先级为：**后台持久化覆盖 > `REDAPP_PUBLIC_URL` 环境默认 > 经验证的请求 origin**。后台清空覆盖会恢复环境默认（若有）；界面显示有效值和来源。只接受无凭据、子路径、查询或 fragment 的 HTTP(S) origin。非空但非法的环境值会阻止启动。
 
 公共地址只影响生成链接；请求同源校验、Cookie 安全属性和上游授权保持独立。企业访问使用 HTTPS 反向代理，将可信代理 CIDR 写入 `trusted_proxies`，并让代理覆盖转发头、控制允许的域名。RedApp 校验 Host 语法并按可信代理链推导请求 origin；来自不可信 peer 的转发头会被忽略。健康检查使用本地监听地址，不依赖公共地址。
 
-站点文案、回源代理和公共地址属于全局设置；缓存 TTL 和 Provider 配置按应用独立保存。每次保存校验 revision，过期表单不会静默覆盖更新。回源代理只有一个完整 URL 字段，可包含百分号编码的 userinfo；受保护的后台 API 原样返回，公共响应、日志和事件不泄漏凭据。旧的独立用户名/密码仅单向迁移一次。
+站点文案和公共地址为全局设置。回源代理按全局→Vendor→App 解析：`inherit` 使用父级，`direct` 截断继承，`url` 保存完整 HTTP(S)/SOCKS5 URL；Vendor/App proxy 是完整配置叶，父级变化不改写子级 override。全局空 server 表示直连。完整 URL 和百分号编码 userinfo 仅受保护后台 API 可读，公共响应、日志和事件不泄漏凭据。提交经过 revision/CAS 与 transport prepare 后发布，已开始的 reader 使用旧 transport；不执行旧凭据迁移。
 
 ## 客户端安装
 
@@ -101,8 +109,8 @@ irm 'https://downloads.example.internal/anthropic/claude-code/install.ps1' | iex
 
 ## 开发与许可
 
-在 `frontend/` 执行 `npm ci && npm run build` 后，Go 构建会嵌入前端产物。构建前运行 Go 测试和前端类型/DOM 检查；`scripts/test-data-cli.py`、`scripts/test-http-cli.py` 使用 `bin/redapp` 和隔离临时目录验证实际 CLI。
+在 `frontend/` 执行 `npm ci && npm run build` 后，Go 构建会嵌入前端产物。`make check test frontend-test` 覆盖格式/vet/race、离线 Shell/维护及完整 DOM；原生二进制构建一次后，`make runtime-test` 使用临时目录执行 data/HTTP/instructions/retention/prewarm/taxonomy/exchange CLI。官方 Claude 联网与 Windows PS7/5.1 保持独立门禁。
 
-当前变更、Provider ID 和 API 边界见 [0.7.2 运行说明](docs/admin-experience-v0.7.2.md)。[v0.7.0 说明](docs/provider-runtime-v0.7.0.md)保留作为缓存规则的历史参考。带旧版本号的文档描述对应历史版本，不是当前开发架构的配置指南。
+当前变更、Provider ID 和 API 边界见 [0.8.0 配置契约](docs/configuration-v0.8.0.md)。[v0.7.0 说明](docs/provider-runtime-v0.7.0.md)保留作为缓存规则的历史参考。带旧版本号的文档描述对应历史版本，不是当前开发架构的配置指南。
 
 RedApp 原创代码采用 [MIT 许可](LICENSE)。[第三方许可](third_party/README.md)，包括上游安装器 LICENSE/NOTICE，独立保留。

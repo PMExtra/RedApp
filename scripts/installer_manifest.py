@@ -9,13 +9,15 @@ import re
 import urllib.parse
 
 ROOT = Path(__file__).resolve().parents[1]
-MANIFEST = Path('internal/apps/builtin/manifest.json')
+MANIFEST = Path('.generated/installer-inventory.json')
 VALIDATORS = frozenset(('codex', 'claude-code'))
 SCRIPT_NAMES = frozenset(('install.sh', 'install.ps1'))
 APP_ID = re.compile(r'[a-z0-9]+(?:-[a-z0-9]+)*/[a-z0-9]+(?:-[a-z0-9]+)*')
 
 
 def applications(root=ROOT):
+    if not (root / MANIFEST).is_file():
+        raise ValueError('Missing trusted generated inventory; run make installer-inventory before Python or isolated validation')
     manifest = json.loads((root / MANIFEST).read_text(encoding="utf-8"))
     if manifest.get('schema_version') != 1:
         raise ValueError('Unsupported builtin application manifest schema')

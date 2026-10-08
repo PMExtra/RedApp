@@ -14,6 +14,12 @@ import (
 // Preview freezes exact generations owned by one registered application. The
 // client never submits a generation list at execution time.
 func (m *Manager) Preview(app string, ids map[string]bool) (Cleanup, error) {
+	return m.preview(app, ids, nil)
+}
+func (m *Manager) PreviewRetention(app string, ids map[string]bool, guard store.RetentionGuard) (Cleanup, error) {
+	return m.preview(app, ids, &guard)
+}
+func (m *Manager) preview(app string, ids map[string]bool, guard *store.RetentionGuard) (Cleanup, error) {
 	ctx, finish, err := m.db.ApplicationWork(context.Background(), app)
 	if err != nil {
 		return Cleanup{}, err
@@ -66,13 +72,16 @@ func (m *Manager) Preview(app string, ids map[string]bool) (Cleanup, error) {
 			job.ReclaimableBlobBytes += g.Bytes
 		}
 	}
-	row := store.CleanupPreview{ID: job.ID, AppID: app, CreatedAt: now, ExpiresAt: job.Expires, Selection: []store.CleanupSelection{}}
+	row := store.CleanupPreview{Retention: guard, ID: job.ID, AppID: app, CreatedAt: now, ExpiresAt: job.Expires, Selection: []store.CleanupSelection{}}
 	if _, _, dynamic := identity.ParseStorageID(app); dynamic {
 		source, err := m.db.Source(app)
 		if err != nil {
 			return job, err
 		}
 		row.SourceFence = source.Fence()
+		if guard != nil && guard.SourceFence != row.SourceFence {
+			return job, store.ErrConflict
+		}
 	}
 	for _, item := range job.Selected {
 		row.Selection = append(row.Selection, store.CleanupSelection{GenerationID: item.Generation, Version: item.Version, ResourceKey: item.Key, SnapshotBytes: item.Bytes})

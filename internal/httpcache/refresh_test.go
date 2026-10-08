@@ -73,6 +73,7 @@ func TestManualRefreshForcesValidationWithoutRecordingAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.entry.Revision = updated.Revision
+	f.entry.RuntimeRevision = updated.RuntimeRevision
 	item, err = f.s.Refresh(context.Background(), f.entry, "/file")
 	if err == nil || item.Status != "failed" {
 		t.Fatal("disabled failure fallback was ignored", item, err)
@@ -272,11 +273,14 @@ func TestBatchRefreshRejectsStalePolicyAndStopsAfterSourceFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	updated, err := f.db.SaveHTTPPolicy(f.app.Key, f.entry.Revision, cachepolicy.Empty())
+	changedPolicy := cachepolicy.Empty()
+	changedPolicy.StaleFallback = false
+	updated, err := f.db.SaveHTTPPolicy(f.app.Key, f.entry.Revision, changedPolicy)
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.entry.Revision = updated.Revision
+	f.entry.RuntimeRevision = updated.RuntimeRevision
 	if _, err = f.s.ExecuteRefresh(context.Background(), f.entry, preview.ID); !errors.Is(err, store.ErrSourceInactive) {
 		t.Fatal("old policy preview executed", err)
 	}

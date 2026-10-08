@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ConfigurationExchange from "../components/ConfigurationExchange.vue";
 import VendorLogo from "../components/VendorLogo.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
@@ -6,11 +7,13 @@ import { api, isCancellation } from "../api";
 import { applicationNavigation, type Vendor } from "../directory";
 import { errorText, language, t } from "../i18n";
 import IconButton from "../components/IconButton.vue";
+const exporting=ref(false);
 const route = useRoute();
 const id = computed(() => String(route.params.vendor));
 const vendor = ref<Vendor>(), error = ref<unknown>(), loading = ref(false);
 let ticket = 0, controller: AbortController | undefined;
 async function load() {
+  exporting.value=false;
   controller?.abort();
   const attempt = ++ticket, request = new AbortController();
   controller = request;
@@ -46,7 +49,8 @@ onUnmounted(() => { ticket++; controller?.abort(); });
       <div class="application-header-identity">
         <div><h1>{{ vendor.name[language] }}</h1></div>
       </div>
-      <VendorLogo :vendor="vendor" admin />
+      <div class="form-actions"><IconButton v-if="!vendor.deleted_at" icon="download" :label="t('Export configuration')" @click="exporting=true" /><VendorLogo :vendor="vendor" admin /></div>
+      <ConfigurationExchange v-if="exporting" action="export" kind="Vendor" :record-key="vendor.id" @close="exporting=false" />
     </header>
     <nav class="application-tabs" :aria-label="t('Vendor sections')">
       <RouterLink :to="`/admin/vendors/${vendor.id}/settings`">{{ t("Vendor settings") }}</RouterLink>

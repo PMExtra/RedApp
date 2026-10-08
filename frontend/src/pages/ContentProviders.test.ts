@@ -8,6 +8,7 @@ import {
   mountPage,
   resetStores,
   response,
+ configurationFixture,
 } from "../testSupport";
 import { signedIn } from "../session";
 import { setLanguage } from "../i18n";
@@ -34,6 +35,7 @@ const page = (
   total_pages: Math.max(1, Math.ceil(total / limit)),
 });
 function common(url: string, app = info) {
+ if(url.endsWith("/configuration"))return response(configurationFixture({...app,instructions:{en:"Original","zh-CN":"原始"}},2));
   if (url === "/api/bootstrap") return response(boot);
   if (url.endsWith("/session")) return response({ csrf: "token" });
   if (url === "/admin/api/apps/openai/codex") return response({ app });
@@ -65,7 +67,7 @@ afterEach(() => {
 it("keeps Info settings content-only, preserves instruction conflicts and does not poll", async () => {
   vi.useFakeTimers();
   const fetch = vi.fn(async (url: string, init?: RequestInit) =>
-    init?.method === "PUT"
+    init?.method === "PATCH"
       ? response({ error: { code: "DIRECTORY_REVISION_CONFLICT" } }, 409)
       : common(url),
   );
@@ -85,12 +87,12 @@ it("keeps Info settings content-only, preserves instruction conflicts and does n
     .setValue("<script>literal text</script>");
   await wrapper.get(".application-instructions-editor form").trigger("submit");
   await flushPromises();
-  const write = fetch.mock.calls.find(([, init]) => init?.method === "PUT")!;
-  expect(write[0]).toBe("/admin/api/apps/openai/codex/instructions");
+  const write = fetch.mock.calls.find(([, init]) => init?.method === "PATCH")!;
+  expect(write[0]).toBe("/admin/api/apps/openai/codex/configuration");
   expect(write[1]!.headers).toMatchObject({
-    "If-Match": '"2"',
     "X-CSRF-Token": "token",
   });
+  expect(JSON.parse(write[1]!.body as string)).toEqual({revision:2,set:{"instructions.en":"<script>literal text</script>"},unset:[]});
   expect(
     wrapper.get(".application-instructions-editor [role=alert]").text(),
   ).toContain("draft is preserved");

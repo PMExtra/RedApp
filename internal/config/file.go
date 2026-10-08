@@ -12,7 +12,7 @@ import (
 	"strings"
 
 	"github.com/PMExtra/RedApp/internal/jsoncheck"
-	"go.yaml.in/yaml/v3"
+	"github.com/PMExtra/RedApp/internal/yamlconfig"
 )
 
 func readDeployment(path string, optional bool, c *Deployment) error {
@@ -90,65 +90,4 @@ func readDeployment(path string, optional bool, c *Deployment) error {
 	return nil
 }
 
-// Convert a single, bounded YAML document into the same strictly typed JSON
-// schema. Do not let YAML coerce numbers into string fields or merge aliases.
-func yamlJSON(raw []byte) ([]byte, error) {
-	d := yaml.NewDecoder(bytes.NewReader(raw))
-	var document yaml.Node
-	if err := d.Decode(&document); err != nil {
-		return nil, err
-	}
-	var extra yaml.Node
-	if err := d.Decode(&extra); err != io.EOF {
-		return nil, errors.New("expected exactly one YAML document")
-	}
-	if err := validateYAML(&document, 0); err != nil {
-		return nil, err
-	}
-	var value any
-	if err := document.Decode(&value); err != nil {
-		return nil, err
-	}
-	return json.Marshal(value)
-}
-
-func validateYAML(node *yaml.Node, depth int) error {
-	if depth > 32 {
-		return errors.New("configuration nesting exceeds 32 levels")
-	}
-	if node.Kind == yaml.AliasNode || node.Anchor != "" {
-		return errors.New("YAML anchors and aliases are not supported")
-	}
-	if node.Kind == yaml.MappingNode {
-		if node.Tag != "!!map" {
-			return errors.New("custom YAML tags are not supported")
-		}
-		seen := map[string]bool{}
-		for i := 0; i < len(node.Content); i += 2 {
-			key := node.Content[i]
-			if key.Kind != yaml.ScalarNode || key.Tag != "!!str" {
-				return errors.New("YAML mapping keys must be strings; merge keys are not supported")
-			}
-			if seen[key.Value] {
-				return fmt.Errorf("duplicate YAML field %q at line %d", key.Value, key.Line)
-			}
-			seen[key.Value] = true
-		}
-	}
-	if node.Kind == yaml.SequenceNode && node.Tag != "!!seq" {
-		return errors.New("custom YAML tags are not supported")
-	}
-	if node.Kind == yaml.ScalarNode {
-		switch node.Tag {
-		case "!!str", "!!int", "!!bool":
-		default:
-			return fmt.Errorf("unsupported YAML value or null at line %d", node.Line)
-		}
-	}
-	for _, child := range node.Content {
-		if err := validateYAML(child, depth+1); err != nil {
-			return err
-		}
-	}
-	return nil
-}
+func yamlJSON(raw []byte) ([]byte, error) { return yamlconfig.JSON(raw, 64<<10, "deployment") }

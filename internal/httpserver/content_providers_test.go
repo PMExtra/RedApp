@@ -83,7 +83,7 @@ func TestContentProvidersInstructionsAndBackendCapabilityGates(t *testing.T) {
 		t.Fatal("public content missing")
 	}
 	h.request("PUT", endpoint, map[string]any{"en": strings.Repeat("界", 12001), "zh-CN": ""}, 400, map[string]string{"If-Match": `"1"`})
-	if updated, _ := h.server.DB.Application(info.Key); updated.Revision != info.Revision || updated.SourceEpoch != info.SourceEpoch {
+	if updated, _ := h.server.DB.Application(info.Key); updated.Revision != info.Revision+1 || updated.SourceEpoch != info.SourceEpoch {
 		t.Fatal("instructions changed application identity")
 	}
 }

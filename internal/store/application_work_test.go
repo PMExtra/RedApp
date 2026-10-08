@@ -2,9 +2,7 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"path/filepath"
 	"testing"
 )
 
@@ -59,33 +57,4 @@ func TestApplicationDeletionValidationPrecedesCancellation(t *testing.T) {
 		t.Fatal("failed intent closed admission", err)
 	}
 	release()
-}
-
-func TestExactV6UpgradeAddsDeletionIntentWithoutChangingBusinessData(t *testing.T) {
-	dir := t.TempDir()
-	raw, err := sql.Open("sqlite3", filepath.Join(dir, "state.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = raw.Exec(schemaV6); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = raw.Exec(`INSERT INTO settings(scope,app_id,key,revision,payload) VALUES('global','','site',19,'{"preserved":true}')`); err != nil {
-		t.Fatal(err)
-	}
-	raw.Close()
-	s, err := Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.DB.Close()
-	var payload string
-	var revision int
-	if err = s.DB.QueryRow(`SELECT payload,revision FROM settings WHERE key='site'`).Scan(&payload, &revision); err != nil || payload != `{"preserved":true}` || revision != 19 {
-		t.Fatal(payload, revision, err)
-	}
-	var count int
-	if err = s.DB.QueryRow(`SELECT count(*) FROM pending_application_deletes`).Scan(&count); err != nil || count != 0 {
-		t.Fatal(count, err)
-	}
 }

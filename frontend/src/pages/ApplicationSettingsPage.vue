@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ApplicationTaxonomy from "../components/ApplicationTaxonomy.vue";
 import TemplateReset from "../components/TemplateReset.vue";
 import { ref } from "vue";
 import { refreshApplication } from "../directory";
@@ -15,7 +16,7 @@ import { applicationRecord as app, providerHasVersions } from "../directory";
 </script>
 <template>
   <div v-if="app" class="page-stack application-settings">
-    <DirectoryEditor :key="reload" kind="app" /><TemplateReset
+    <DirectoryEditor :key="reload" kind="app" /><ApplicationTaxonomy :key="reload" :application="app.key" :readonly="!!app.deleted_at" /><TemplateReset
       v-if="app.builtin_template && !app.deleted_at"
       :application="app.key"
       @saved="resetSaved"

@@ -83,7 +83,7 @@ func TestVendorLocalizedIconsPrivateWritesPublicProjectionResetAndRestart(t *tes
 	}
 	raw, _ = h.request("POST", "/admin/api/vendors/openai/template", map[string]any{"revision": v.Revision, "groups": []string{"icon"}}, 200, nil)
 	v = directoryDecode[store.Vendor](t, raw, "vendor")
-	if v.Icon != base || v.LocalizedIcons != (store.LocalizedText{}) || v.Enabled {
+	if v.Icon != "/assets/presets/builtin/openai.svg" || v.LocalizedIcons != (store.LocalizedText{}) || v.Enabled {
 		t.Fatal("reset", v)
 	}
 	note, err := h.server.DB.AdminNotes("vendor", "openai")

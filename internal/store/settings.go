@@ -30,6 +30,30 @@ func (s *Store) ReadSetting(scope, app, key string, out any) (int64, error) {
 	return rev, json.Unmarshal(raw, out)
 }
 func (s *Store) CompareAndSwapSetting(scope, app, key string, expected int64, payload any) (int64, error) {
+	if scope == "global" && app == "" && key == "upstream_proxy" {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			return 0, err
+		}
+		c, err := parseGlobalProxy(raw)
+		if err != nil {
+			return 0, err
+		}
+		return s.PatchGlobalProxy(expected, c)
+	}
+	if scope == "app" && key == "channel_ttl" {
+		if owner, err := s.Application(app); err == nil {
+			raw, err := json.Marshal(payload)
+			if err != nil {
+				return 0, err
+			}
+			row, err := s.PatchApplicationFields(owner.Key, expected, map[string]json.RawMessage{"cache_ttl_seconds": raw}, nil)
+			return row.Revision, err
+		} else if err != sql.ErrNoRows {
+			return 0, err
+		}
+	}
+
 	if key == "http_policy" {
 		return 0, errors.New("HTTP policy writes require application revision CAS through SaveHTTPPolicy")
 	}
@@ -70,6 +94,12 @@ func (s *Store) CompareAndSwapSetting(scope, app, key string, expected int64, pa
 	return expected + 1, nil
 }
 func (s *Store) ChannelTTL(app string) (int, int64, error) {
+	if owner, err := s.Application(app); err == nil {
+		return owner.CacheTTLSeconds, owner.Revision, nil
+	} else if err != sql.ErrNoRows {
+		return 0, 0, err
+	}
+
 	var seconds int
 	revision, err := s.ReadSetting("app", app, "channel_ttl", &seconds)
 	return seconds, revision, err

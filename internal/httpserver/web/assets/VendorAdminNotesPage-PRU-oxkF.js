@@ -1,0 +1,1 @@
+import{E as e,H as t,M as n}from"./bootstrap-hXK8P1qH.js";import{t as r}from"./AdminNotesEditor-hj0zVyg0.js";var i=n({__name:`VendorAdminNotesPage`,props:{vendor:{}},setup(n){return(i,a)=>(t(),e(r,{endpoint:`vendors/${n.vendor.id}/admin-notes`,readonly:!!n.vendor.deleted_at},null,8,[`endpoint`,`readonly`]))}});export{i as default};

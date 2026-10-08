@@ -25,6 +25,7 @@ func additionalSource(t *testing.T, f *fixture, strategy string, h http.Handler)
 	}
 	f.app = updated
 	f.entry.Revision = updated.Revision
+	f.entry.RuntimeRevision = updated.RuntimeRevision
 	f.entry.SourceEpoch = updated.SourceEpoch
 	f.entry.SourceStrategy = strategy
 	client, err := distributor.NewPool().NewClient(bases[1], distributor.GeneralHTTP)

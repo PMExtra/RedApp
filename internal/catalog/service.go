@@ -77,7 +77,7 @@ func (s *Service) Release(ctx context.Context, app, target string) (application.
 }
 
 func sourceFence(e application.Entry) store.SourceFence {
-	return store.SourceFence{AppRevision: e.Revision, VendorRevision: e.VendorRevision}
+	return store.SourceFence{AppRevision: e.RuntimeRevision, VendorRevision: e.VendorRuntimeRevision}
 }
 
 // release carries one immutable runtime snapshot through channel resolution,

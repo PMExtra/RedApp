@@ -118,3 +118,9 @@ it("shows popular applications without counts and puts version metadata beside t
   expect(wrapper.get(".application-version time").attributes("title")).toContain(":");
   wrapper.unmount();
 });
+
+it("shows related cards only for nonempty results and clears the prior app during navigation",async()=>{
+ vi.stubGlobal('fetch',vi.fn(async(url:string)=>response(url.endsWith('/related')?{items:url.includes('openai/codex')?[boot.apps[1]]:[]}:{...boot,apps:boot.apps.map(app=>({...app,instructions:{en:'','zh-CN':''}}))})));
+ const {wrapper,router}=await mountPage('/openai/codex');await flushPromises();expect(wrapper.get('.related-applications .application-card').attributes('href')).toBe('/anthropic/claude-code');
+ await router.push('/anthropic/claude-code');await flushPromises();expect(wrapper.find('.related-applications').exists()).toBe(false);wrapper.unmount();
+});
