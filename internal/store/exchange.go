@@ -146,7 +146,7 @@ func (s *Store) ExportConfiguration(options ExportOptions) (configexchange.Packa
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	categoryIDs, tagIDs := map[string]bool{}, map[string]bool{}
+	categoryIDs := map[string]bool{}
 	for _, key := range keys {
 		entry := entries[key]
 		uid, _, _ := st.exchangeEntity(entry.kind, entry.key)
@@ -162,11 +162,8 @@ func (s *Store) ExportConfiguration(options ExportOptions) (configexchange.Packa
 			if err = strict(effective, &app); err != nil {
 				return p, err
 			}
-			if app.Category != "" {
-				categoryIDs[app.Category] = true
-			}
-			for _, id := range app.Tags {
-				tagIDs[id] = true
+			for _, id := range app.Categories {
+				categoryIDs[id] = true
 			}
 		}
 		d := configexchange.Document{SchemaVersion: 1, Kind: entry.kind, Metadata: meta}
@@ -199,18 +196,14 @@ func (s *Store) ExportConfiguration(options ExportOptions) (configexchange.Packa
 		}
 		p.Documents = append(p.Documents, d)
 	}
-	tax := presets.TaxonomySpec{Categories: []presets.TaxonomyEntry{}, Tags: []presets.TaxonomyEntry{}}
+	// Tags travel inside App specs/overrides; only referenced category names need a dictionary document.
+	tax := presets.TaxonomySpec{Categories: []presets.TaxonomyEntry{}}
 	for id := range categoryIDs {
-		item := st.Taxonomy[taxonomyKey("categories", id)]
+		item := st.Taxonomy[categoryKey(id)]
 		tax.Categories = append(tax.Categories, presets.TaxonomyEntry{ID: id, Name: presets.Text{En: item.Name.En, ZhCN: item.Name.ZhCN}})
 	}
-	for id := range tagIDs {
-		item := st.Taxonomy[taxonomyKey("tags", id)]
-		tax.Tags = append(tax.Tags, presets.TaxonomyEntry{ID: id, Name: presets.Text{En: item.Name.En, ZhCN: item.Name.ZhCN}})
-	}
 	sort.Slice(tax.Categories, func(i, j int) bool { return tax.Categories[i].ID < tax.Categories[j].ID })
-	sort.Slice(tax.Tags, func(i, j int) bool { return tax.Tags[i].ID < tax.Tags[j].ID })
-	if len(tax.Categories)+len(tax.Tags) > 0 {
+	if len(tax.Categories) > 0 {
 		p.Documents = append(p.Documents, configexchange.Document{SchemaVersion: 1, Kind: "Taxonomy", Spec: map[string]any(object(tax))})
 	}
 	if len(p.Documents) > configexchange.MaxEntities {
@@ -256,40 +249,39 @@ func makeImportPlan(st configurationState, documents []configexchange.Document, 
 			if strict(Object(d.Spec), &tax) != nil {
 				return plan, ErrInvalidDirectory
 			}
-			for kind, entries := range map[string][]presets.TaxonomyEntry{"categories": tax.Categories, "tags": tax.Tags} {
-				for _, entry := range entries {
-					cKey := choiceKey(kind, entry.ID)
-					choice, chosen := byChoice[cKey]
-					if chosen {
-						usedChoices[cKey] = true
-					}
-					item, exists := candidate.Taxonomy[taxonomyKey(kind, entry.ID)]
-					row := ImportItem{Kind: kind, Key: entry.ID, Target: entry.ID, Action: "create", Differences: []ImportDifference{}, Requirements: []string{}, Omitted: []string{}}
-					incoming := LocalizedText{entry.Name.En, entry.Name.ZhCN}
-					if exists {
-						row.Revision = item.Revision
-						row.Action = "keep"
-						if item.Name != incoming {
-							row.Differences = append(row.Differences, ImportDifference{"name", item.Name, incoming})
-							if choice.DictionaryUpdate {
-								row.Action = "update"
-								item.Revision++
-								if item.Builtin {
-									setLeaf(item.Override, "name.en", incoming.En)
-									setLeaf(item.Override, "name.zh-CN", incoming.ZhCN)
-								}
-								item.Name = incoming
-								item.decorate()
-								candidate.Taxonomy[taxonomyKey(kind, entry.ID)] = item
-							}
-						}
-					} else {
-						item = TaxonomyItem{Kind: kind, ID: entry.ID, Name: incoming, Revision: 1, Present: true, Override: Object{}}
-						item.decorate()
-						candidate.Taxonomy[taxonomyKey(kind, entry.ID)] = item
-					}
-					plan.Items = append(plan.Items, row)
+			kind := categoryKind
+			for _, entry := range tax.Categories {
+				cKey := choiceKey(kind, entry.ID)
+				choice, chosen := byChoice[cKey]
+				if chosen {
+					usedChoices[cKey] = true
 				}
+				item, exists := candidate.Taxonomy[taxonomyKey(kind, entry.ID)]
+				row := ImportItem{Kind: kind, Key: entry.ID, Target: entry.ID, Action: "create", Differences: []ImportDifference{}, Requirements: []string{}, Omitted: []string{}}
+				incoming := LocalizedText{entry.Name.En, entry.Name.ZhCN}
+				if exists {
+					row.Revision = item.Revision
+					row.Action = "keep"
+					if item.Name != incoming {
+						row.Differences = append(row.Differences, ImportDifference{"name", item.Name, incoming})
+						if choice.DictionaryUpdate {
+							row.Action = "update"
+							item.Revision++
+							if item.Builtin {
+								setLeaf(item.Override, "name.en", incoming.En)
+								setLeaf(item.Override, "name.zh-CN", incoming.ZhCN)
+							}
+							item.Name = incoming
+							item.decorate()
+							candidate.Taxonomy[taxonomyKey(kind, entry.ID)] = item
+						}
+					}
+				} else {
+					item = TaxonomyItem{Kind: kind, ID: entry.ID, Name: incoming, Revision: 1, Present: true, Override: Object{}}
+					item.decorate()
+					candidate.Taxonomy[taxonomyKey(kind, entry.ID)] = item
+				}
+				plan.Items = append(plan.Items, row)
 			}
 			continue
 		}
@@ -375,8 +367,9 @@ func makeImportPlan(st configurationState, documents []configexchange.Document, 
 			if strict(proposed, &app) != nil {
 				return plan, ErrInvalidDirectory
 			}
-			tags, e := presets.NormalizeTaxonomy(app.Category, app.Tags)
-			if e != nil || candidate.validateTaxonomy(app.Category, tags) != nil {
+			categories, catErr := presets.NormalizeCategories(app.Categories)
+			_, tagErr := presets.NormalizeTags(app.Tags)
+			if catErr != nil || tagErr != nil || candidate.validateCategories(categories) != nil {
 				return plan, ErrInvalidDirectory
 			}
 		}
@@ -526,6 +519,17 @@ func makeImportPlan(st configurationState, documents []configexchange.Document, 
 			}
 		}
 	}
+	// Package categories that no resulting App or template uses would be pruned on commit; preview them as skipped.
+	referenced, err := candidate.referencedCategories()
+	if err != nil {
+		return plan, err
+	}
+	for i, row := range plan.Items {
+		if row.Kind == categoryKind && row.Action == "create" && !referenced[row.Key] {
+			plan.Items[i].Action = "skip"
+			delete(candidate.Taxonomy, categoryKey(row.Key))
+		}
+	}
 	if len(plan.Items) > configexchange.MaxEntities {
 		return plan, ErrInvalidDirectory
 	}
@@ -580,10 +584,13 @@ func validateExchangeSpec(kind string, value Object) error {
 		if v.Prewarm != nil && v.Prewarm.Validate(v.Provider) != nil || v.Retention != nil && (!presets.VersionsProvider(v.Provider) || v.Retention.Validate() != nil) || v.HTTPPolicy != nil && (v.Provider != "http-cache" || v.HTTPPolicy.Validate() != nil) {
 			return ErrInvalidDirectory
 		}
-		if _, e := presets.NormalizeTaxonomy(v.Category, v.Tags); e != nil {
+		if _, e := presets.NormalizeCategories(v.Categories); e != nil {
 			return ErrInvalidDirectory
 		}
-		required = append(required, "provider", "instructions.en", "instructions.zh-CN", "category", "tags")
+		if _, e := presets.NormalizeTags(v.Tags); e != nil {
+			return ErrInvalidDirectory
+		}
+		required = append(required, "provider", "instructions.en", "instructions.zh-CN", "categories", "tags")
 	}
 	for _, p := range required {
 		if _, ok := leaf(value, p); !ok {
@@ -667,8 +674,8 @@ func (s *Store) ExecuteConfigurationImport(plan ImportPlan, id string, trust boo
 				continue
 			}
 			uid, revision, _ := st.exchangeEntity(row.Kind, row.Target)
-			if row.Kind == "categories" || row.Kind == "tags" {
-				revision = st.Taxonomy[taxonomyKey(row.Kind, row.Key)].Revision
+			if row.Kind == categoryKind {
+				revision = st.Taxonomy[categoryKey(row.Key)].Revision
 			}
 			result.Items = append(result.Items, ImportApplied{Kind: row.Kind, Key: row.Target, UID: uid, Revision: revision})
 		}

@@ -4,7 +4,7 @@ metadata:
   id: "claude-code"
   vendor: "anthropic"
 spec:
-  category: ""
+  categories: []
   tags: []
   prewarm: {enabled: false, channels: [], platforms: []}
   retention: {enabled: false, keep_latest: 3}

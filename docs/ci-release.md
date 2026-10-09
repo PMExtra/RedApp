@@ -18,4 +18,4 @@
 
 发布 runner 必须先安装 qemu-user/binutils，再注册 Docker ARM 的 binfmt 解释器：系统 QEMU 包的安装脚本会重置 binfmt 注册，顺序颠倒会令 ARM 容器在验收时 exec format error。依赖安装和低 ISA 检查均不得跳过候选门禁。
 
-0.8.0 的官方 Claude 联网预热脚本不纳入强制离线门禁。本地出口对 downloads.claude.ai 的 CONNECT 返回 403；离线证据由仅 `_test.go` 的真实 RSA 签名→清单→Catalog→授权→下载组件链提供，生产签名根与验证保持不变。原生 Windows PS7/5.1、amd64/arm64 及无 AVX 门禁不降低。当前本地候选尚无对应提交 CI 或发布记录。
+官方 Claude 联网预热脚本不纳入强制离线门禁。0.8.0 时本地出口对 downloads.claude.ai 的 CONNECT 返回 403；0.8.1 验证时出口可达，但任务在读完二进制后停在 running，0.8.0 源码构建表现相同，属既有问题，待单独排查；离线证据由仅 `_test.go` 的真实 RSA 签名→清单→Catalog→授权→下载组件链提供，生产签名根与验证保持不变。原生 Windows PS7/5.1、amd64/arm64 及无 AVX 门禁不降低。当前本地候选尚无对应提交 CI 或发布记录。

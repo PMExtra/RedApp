@@ -1,6 +1,6 @@
 # RedApp 文档
 
-当前运行与配置说明见 [English quick start](../README.md)、[中文快速开始](../README.zh-CN.md) 与 [运维说明](operations.md)。当前 0.8.0 本地候选的七阶段实现见 [配置契约](configuration-v0.8.0.md)，验证结果见 [验收记录](acceptance.md)。SQLite schema 10 只接受新空目录或精确当前目录，旧 schema 2–9/未知目录不迁移、不自动删除；保留旧目录可切回对应旧程序。带旧版本号的文档只描述历史版本。
+当前运行与配置说明见 [English quick start](../README.md)、[中文快速开始](../README.zh-CN.md) 与 [运维说明](operations.md)。已发布 0.8.0 的七阶段实现见 [配置契约](configuration-v0.8.0.md)；其后的后台改进、多分类与 Tag 见 [管理界面与分类标签](admin-taxonomy-v0.8.1.md)，验证结果见 [验收记录](acceptance.md)。当前 SQLite schema 11 只接受新空目录或精确当前目录，已发布 0.8.0 的 schema 10、旧 schema 2–9 及未知目录不迁移、不自动删除；保留旧目录可切回对应旧程序。带旧版本号的文档只描述历史版本。
 
 - [多应用实施设计](multi-application-architecture-next.md)：规范身份、注册、协议、存储、配置、路由和实施边界。
 - [v0.6.0 发布说明](multi-application-v0.6.0.md)：破坏性升级、部署配置和发布验证边界。

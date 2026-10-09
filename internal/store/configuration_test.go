@@ -279,8 +279,8 @@ func TestConfigurationPrepareCASAndDatabaseFailuresAreAtomic(t *testing.T) {
 	}
 }
 
-func TestSchemaTenFreshRestartAndLegacyDirectoriesReadOnly(t *testing.T) {
-	for _, version := range []string{"4", "5", "6", "7", "8", "9"} {
+func TestSchemaElevenFreshRestartAndLegacyDirectoriesReadOnly(t *testing.T) {
+	for _, version := range []string{"4", "5", "6", "7", "8", "9", "10"} {
 		t.Run(version, func(t *testing.T) {
 			dir := t.TempDir()
 			ddl, err := os.ReadFile("testdata/schema_v" + version + ".sql")
@@ -378,9 +378,6 @@ func TestConfigurationBoundCopiesAreDeletableAndIdentityIsSeparate(t *testing.T)
 	c, _ := s.ApplicationConfiguration(copied.Key)
 	if c.TemplateRef == nil || *c.TemplateRef != ref || copied.BuiltinTemplate {
 		t.Fatal("template binding conflated with public identity", c, copied)
-	}
-	if _, ok, err := s.BoundApplicationTemplate(copied.Key); err != nil || !ok {
-		t.Fatal("legacy template view did not follow binding", err)
 	}
 	if err = s.PermanentlyDeleteApplication(copied.Key, copied.Revision); err != nil {
 		t.Fatal("bound copy protected from deletion", err)

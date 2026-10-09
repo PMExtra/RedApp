@@ -4,7 +4,7 @@ import {api,bytes,isCancellation} from "../api";
 import {appAPI} from "../bootstrap";
 import {useConfiguration} from "../composables/useConfiguration";
 import {errorText,t,messages,type Message} from "../i18n";
-import OverrideControl from "./OverrideControl.vue";
+import FieldReset from "./FieldReset.vue";
 import PageNavigation from "./PageNavigation.vue";
 const props=defineProps<{application:string}>();
 type Limits={max_files:number;max_depth:number;max_download_bytes:number;max_duration_seconds:number};
@@ -12,7 +12,7 @@ type Policy={enabled:boolean;channels:string[];platforms:string[]};
 type Options={release:boolean;platforms:{id:string;name:string}[];channels:string[];limits:Limits};
 type Job={id:string;state:string;completed:number;succeeded:number;bytes:number;reason?:string};
 type Item={key:string;status:string;reason?:string;bytes:number};
-const {draft,configuration,touched,unsets,loading,saving,error,saved,save,mark,restore}=useConfiguration<{prewarm?:Policy}>(computed(()=>`apps/${props.application}/configuration`),"",["prewarm"]);
+const {draft,configuration,unsets,loading,saving,error,saved,save,mark,restore,modified}=useConfiguration<{prewarm?:Policy}>(computed(()=>`apps/${props.application}/configuration`),"",["prewarm"]);
 const options=ref<Options>(),target=ref(""),platforms=ref<string[]>([]),paths=ref(""),indexes=ref(""),match=ref(""),matchKind=ref("glob"),limits=ref<Limits>({max_files:10000,max_depth:16,max_download_bytes:10*1024**3,max_duration_seconds:3600});
 const job=ref<Job>(),items=ref<Item[]>([]),page=ref(1),total=ref(0),totalPages=ref(1),busy=ref(false),requestError=ref<unknown>();
 let ticket=0,controller:AbortController|undefined,timer:ReturnType<typeof setTimeout>|undefined;
@@ -95,7 +95,7 @@ watch(()=>props.application,()=>void load(),{immediate:true});onUnmounted(invali
    <label><input v-model="draft.prewarm.enabled" type="checkbox" @change="mark('prewarm')" />{{t("Enable automatic prewarming")}}</label>
    <fieldset><legend>{{t("Channels")}}</legend><label v-for="channel in options.channels" :key="channel"><input v-model="draft.prewarm.channels" type="checkbox" :value="channel" @change="mark('prewarm')" />{{channel}}</label></fieldset>
    <fieldset><legend>{{t("Platforms")}}</legend><label v-for="platform in options.platforms" :key="platform.id"><input v-model="draft.prewarm.platforms" type="checkbox" :value="platform.id" @change="mark('prewarm')" />{{platform.name}}</label></fieldset>
-   <OverrideControl :configuration="configuration" path="prewarm" :custom="touched.has('prewarm')" :restored="unsets.has('prewarm')" :disabled="loading||saving" @restore="restore('prewarm')" @customize="mark('prewarm')" />
+   <FieldReset :configuration="configuration" path="prewarm" :label="t('Automatic prewarming')" :modified="modified('prewarm')" :restored="unsets.has('prewarm')" :disabled="loading||saving" @reset="restore('prewarm')" />
    <button :disabled="loading||saving||(draft.prewarm.enabled&&(!draft.prewarm.channels.length||!draft.prewarm.platforms.length))">{{t("Save")}}</button>
   </form>
   <div v-if="job" class="cleanup-review" aria-live="polite">

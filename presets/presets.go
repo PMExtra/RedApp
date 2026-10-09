@@ -60,7 +60,7 @@ func VersionsProvider(provider string) bool { return provider == "codex" || prov
 func DefaultRetention() *Retention          { return &Retention{KeepLatest: 3} }
 
 type AppSpec struct {
-	Category        string              `json:"category"`
+	Categories      []string            `json:"categories"`
 	Tags            []string            `json:"tags"`
 	Prewarm         *Prewarm            `json:"prewarm,omitempty"`
 	Retention       *Retention          `json:"retention,omitempty"`
@@ -395,8 +395,10 @@ func LoadFS(input fs.FS) (Set, error) {
 			if !identity.ValidVendor(a.Metadata.Vendor) || !identity.ValidSlug(a.Metadata.ID) || file != a.Key()+".yaml" || apps[a.Key()] {
 				return yamlconfig.ErrorAt(raw, file, "metadata", fmt.Errorf("kind/metadata/path or duplicate identity is invalid"))
 			}
-			a.Spec.Tags, e = NormalizeTaxonomy(a.Spec.Category, a.Spec.Tags)
-			if e != nil {
+			if a.Spec.Categories, e = NormalizeCategories(a.Spec.Categories); e != nil {
+				return fail(e)
+			}
+			if a.Spec.Tags, e = NormalizeTags(a.Spec.Tags); e != nil {
 				return fail(e)
 			}
 			if e = presentation(a.Spec.Name, a.Spec.Description, a.Spec.Icon); e != nil {
@@ -452,10 +454,11 @@ func Embedded() Set {
 			panic(err)
 		}
 	})
-	out := Set{Taxonomy: TaxonomySpec{Categories: slices.Clone(embeddedSet.Taxonomy.Categories), Tags: slices.Clone(embeddedSet.Taxonomy.Tags)}, Vendors: slices.Clone(embeddedSet.Vendors), Apps: slices.Clone(embeddedSet.Apps), images: embeddedSet.images}
+	out := Set{Taxonomy: TaxonomySpec{Categories: slices.Clone(embeddedSet.Taxonomy.Categories)}, Vendors: slices.Clone(embeddedSet.Vendors), Apps: slices.Clone(embeddedSet.Apps), images: embeddedSet.images}
 	for i := range out.Apps {
 		a := &out.Apps[i]
 		a.Spec.BaseURLs = slices.Clone(a.Spec.BaseURLs)
+		a.Spec.Categories = append([]string{}, a.Spec.Categories...)
 		a.Spec.Tags = append([]string{}, a.Spec.Tags...)
 		if a.Spec.HTTPPolicy != nil {
 			policy, _ := cachepolicy.Normalize(*a.Spec.HTTPPolicy)

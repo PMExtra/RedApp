@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DisabledReason from "./DisabledReason.vue";
 import Icon from "./Icon.vue";
 import DeleteConfirmation from "./DeleteConfirmation.vue";
 import { api, ApiError, isCancellation } from "../api";
@@ -85,7 +86,7 @@ const list = reactive(useNumberedCollection<ApplicationRow>(computed(() =>
             <td>{{ app.latest_version || '—' }}</td>
             <td class="table-time"><RelativeTime v-if="app.version_discovered_at" :value="app.version_discovered_at" /><span v-else>—</span></td>
             <td class="numeric">{{ app.successful_downloads == null ? '—' : app.successful_downloads.toLocaleString(language) }}</td>
-            <td class="application-row-actions"><button type="button" class="link-action" :disabled="!!pending || !!app.deleted_at" :aria-busy="pending === app.uid" :title="!vendor.enabled ? t('Disabled by vendor') : undefined" @click="mutate(app)">{{ app.enabled ? t('Enabled') : t('Disabled') }}</button><RouterLink :to="applicationPath(app, 'settings')">{{ t('Edit') }}</RouterLink><button type="button" class="link-action danger-link" :disabled="!!pending || !!app.builtin_template" @click="deleting = app">{{ t('Delete') }}</button></td>
+            <td class="application-row-actions"><button type="button" class="link-action" :disabled="!!pending || !!app.deleted_at" :aria-busy="pending === app.uid" :title="!vendor.enabled ? t('Disabled by vendor') : undefined" @click="mutate(app)">{{ app.enabled ? t('Enabled') : t('Disabled') }}</button><RouterLink :to="applicationPath(app, 'settings')">{{ t('Edit') }}</RouterLink><DisabledReason :reason="app.builtin_template ? t('Preset templates cannot be deleted. You can disable them instead.') : undefined"><button type="button" class="link-action danger-link" :disabled="!!pending || !!app.builtin_template" @click="deleting = app">{{ t('Delete') }}</button></DisabledReason></td>
           </tr>
           <tr v-if="list.loaded && !list.items.length"><td colspan="5">{{ t('No applications found.') }}</td></tr>
         </tbody>

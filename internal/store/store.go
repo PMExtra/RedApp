@@ -20,7 +20,7 @@ import (
 	"github.com/PMExtra/RedApp/presets"
 )
 
-const SchemaVersion = 10
+const SchemaVersion = 11
 
 var ErrFreshDirectory = errors.New("This data directory belongs to an old or unknown database; use a new empty data directory. Configuration, cache and history are not migrated. Keep the old directory unchanged")
 var ErrConflict = errors.New("Setting revision changed; reload before saving")

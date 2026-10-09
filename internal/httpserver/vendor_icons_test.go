@@ -81,8 +81,8 @@ func TestVendorLocalizedIconsPrivateWritesPublicProjectionResetAndRestart(t *tes
 	if v.LocalizedIcons.En != "" || v.LocalizedIcons.ZhCN != zh || v.Icon != base {
 		t.Fatal("clear changed default/other language")
 	}
-	raw, _ = h.request("POST", "/admin/api/vendors/openai/template", map[string]any{"revision": v.Revision, "groups": []string{"icon"}}, 200, nil)
-	v = directoryDecode[store.Vendor](t, raw, "vendor")
+	h.request("PATCH", "/admin/api/vendors/openai/configuration", map[string]any{"revision": v.Revision, "unset": []string{"icon", "localized_icons.en", "localized_icons.zh-CN"}}, 200, nil)
+	v, _ = h.server.DB.Vendor("openai")
 	if v.Icon != "/assets/presets/builtin/openai.svg" || v.LocalizedIcons != (store.LocalizedText{}) || v.Enabled {
 		t.Fatal("reset", v)
 	}

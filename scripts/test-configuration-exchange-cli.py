@@ -76,13 +76,11 @@ with tempfile.TemporaryDirectory(prefix='redapp-exchange-cli-') as temp:
         a.request('/admin/api/vendors',{'id':'portable','name':name,'icon':'/assets/presets/builtin/openai.svg'},status=201)
         vendor=a.request('/admin/api/vendors/portable/configuration')
         a.request('/admin/api/vendors/portable/configuration',{'revision':vendor['revision'],'set':{'proxy':{'mode':'url','url':'http://private-user:private-password@127.0.0.1:3128'}},'unset':[]},method='PATCH')
-        a.request('/admin/api/taxonomy/categories',{'id':'tools','name':{'en':'Tools','zh-CN':'工具'}})
-        a.request('/admin/api/taxonomy/tags',{'id':'cli','name':{'en':'CLI','zh-CN':'命令行'}})
         original=a.request('/admin/api/apps/openai/codex')['app']
         source=a.request('/admin/api/apps/openai/codex/copy',{'source_uid':original['uid'],'source_revision':original['revision'],'target_vendor':'portable','target_id':'source','mode':'linked'},status=201)['app']
         cfg=a.config_of('portable/source')
-        a.request('/admin/api/apps/portable/source/configuration',{'revision':cfg['revision'],'set':{'name.en':cfg['effective']['name']['en'],'description.zh-CN':'','instructions.en':'## Portable\n\n<script>fetch("https://must-not-fetch.invalid")</script>\n','category':'tools','tags':['cli'],'prewarm':{'enabled':False,'channels':[],'platforms':[]},'retention':{'enabled':True,'keep_latest':2},'proxy':{'mode':'inherit'}},'unset':[]},method='PATCH')
-        cfg=a.config_of('portable/source')
+        a.request('/admin/api/apps/portable/source/configuration',{'revision':cfg['revision'],'set':{'name.en':cfg['effective']['name']['en'],'description.zh-CN':'','instructions.en':'## Portable\n\n<script>fetch("https://must-not-fetch.invalid")</script>\n','categories':[],'tags':['CLI','命令行'],'prewarm':{'enabled':False,'channels':[],'platforms':[]},'retention':{'enabled':True,'keep_latest':2},'proxy':{'mode':'inherit'}},'unset':[],'new_categories':['Tools']},method='PATCH')
+        cfg=a.config_of('portable/source');assert cfg['effective']['categories']==['tools']
         a.request('/admin/api/apps/portable/source/admin-notes',{'revision':0,'text':'private-notes-sentinel'},method='PUT')
         def export(mode,**options):return a.request('/admin/api/configuration/export',{'selection':[{'kind':'App','key':'portable/source'}],'mode':mode,'include_notes':False,'include_proxy_credentials':False,**options})
         linked=export('linked'); independent=export('independent'); sensitive=export('linked',include_notes=True,include_proxy_credentials=True)
@@ -103,6 +101,7 @@ with tempfile.TemporaryDirectory(prefix='redapp-exchange-cli-') as temp:
         dest=b.request('/admin/api/apps/portable/source')['app'];assert not dest['enabled'] and dest['uid']!=source['uid'] and dest['source_epoch']==1
         dest_cfg=b.config_of('portable/source');assert dest_cfg['template_ref']=='openai/codex' and dest_cfg['overrides']==cfg['overrides']
         assert dest_cfg['effective']==cfg['effective']
+        assert [(c['id'],c['name']['en']) for c in b.request('/admin/api/categories')['items']]==[('tools','Tools')]
         vendor=b.request('/admin/api/vendors/portable')['vendor'];assert hashlib.sha256(b.request(vendor['icon'])).hexdigest() in vendor['icon']
         independent_preview=b.preview(independent,[{'kind':'App','key':'portable/source','target_id':'independent'}]);assert independent_preview['preview']['ready'];b.execute(independent_preview)
         independent_cfg=b.config_of('portable/independent');assert independent_cfg['template_ref'] is None
@@ -117,6 +116,7 @@ with tempfile.TemporaryDirectory(prefix='redapp-exchange-cli-') as temp:
             assert copied['uid']!=dest['uid'] and not copied['enabled'] and copied['source_epoch']==1
             copied_cfg=b.config_of('target/'+mode);assert copied_cfg['effective']['proxy']=={'mode':'inherit'} and copied_cfg['proxy_effective']['source_id']=='target'
             assert (copied_cfg['template_ref'] is not None)==(mode=='linked')
+            assert copied_cfg['effective']['categories']==['tools'] and copied_cfg['effective']['tags']==['CLI','命令行']
             copied_note=b.request('/admin/api/apps/target/'+mode+'/admin-notes');assert copied_note['text']==('copy-note' if mode=='independent' else '')
             with sqlite3.connect(directory/'b/data/state.sqlite') as db:
                 assert db.execute('SELECT count(*) FROM prewarm_jobs WHERE app_uid=?',(copied['uid'],)).fetchone()[0]==0
@@ -142,7 +142,7 @@ with tempfile.TemporaryDirectory(prefix='redapp-exchange-cli-') as temp:
         with sqlite3.connect(directory/'b/data/state.sqlite') as db:
             assert db.execute('SELECT count(*) FROM configuration_import_receipts WHERE id=?',(preview['id'],)).fetchone()[0]==1
         public=b.request('/api/bootstrap');assert 'private-password' not in json.dumps(public) and 'copy-note' not in json.dumps(public)
-        print('PASS native A→B linked/independent ZIP, static assets, taxonomy, sensitive filters, explicit proxy/trust, replay, cross-vendor copy and receipt restart/session isolation')
+        print('PASS native A→B linked/independent ZIP, static assets, categories/tags, sensitive filters, explicit proxy/trust, replay, cross-vendor copy and receipt restart/session isolation')
     finally:
         a.stop()
         if b is not None:b.stop()

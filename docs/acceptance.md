@@ -1,5 +1,27 @@
 # RedApp 实现与验收记录
 
+## v0.8.1：后台改进、多分类与 Tag（2026-10-09）
+
+基线为已发布 0.8.0 提交 `c76fa299f14c655a2e4b07ef488bb19d1eddf781`（`v0.8.0`），实现见 [v0.8.1 管理界面与分类标签](admin-taxonomy-v0.8.1.md)。下列本地结果在提交前的工作区取得（二进制 revision 显示基线 SHA）；发布以准确 main 提交的 CI 和发布工作流为准。SQLite schema=11。开始前在同一基线重跑全部本地门禁并通过，作为回归对照。
+
+环境：Windows 11 主机；Go/race/安装器/runtime 在 WSL2 Docker 的 `golang:1.27.0`（Debian trixie，另装 Node 24.19.0、jq、patch）容器内运行，CI 使用 Go 1.27.1；前端在本机 pnpm 管理的 Node 24.21.0 上经 `pnpm dlx npm@11 ci` 按 lockfile 安装。本机与 Linux 容器分别构建的嵌入前端逐字节一致。
+
+| 本地门禁 | 结果 |
+| --- | --- |
+| `make check`（gofmt/vet） | PASS |
+| `make test`（`go test -race ./...`、ci-release、Shell 安装器/更新/维护） | PASS |
+| 前端 typecheck、49 文件/150 测试、生产构建与嵌入资源一致性 | PASS |
+| 原生静态二进制与 `make runtime-test` 七项 CLI | PASS。taxonomy CLI：编辑器式新分类/重名复用、改名不动 App 修订、禁用 App 引用保护、空自建分类清理、自由 Tag 规范化、公开计数/隐私、`#tag` 搜索、两个管理会话 CAS 409、字段重置后重启仍继承；exchange CLI：A→B 往返与跨厂商复制保留分类/Tag；data CLI：schema 2–10 及含数据的完整 0.8.0 DDL 拒绝且字节不变 |
+| amd64 runtime 镜像（`.github/runtime/Dockerfile` + `scripts/test-docker-local.sh`） | PASS，新库 schema 11 经重启/重建保持 |
+| CPU 基线（`scripts/test-cpu-baseline.py`，QEMU Nehalem 无 AVX） | PASS |
+| Windows PowerShell 7.6.6 / 5.1 安装器候选契约（`scripts/test-installer-candidates.py`） | PASS，Windows 11 原生 |
+| 变异抽查 | 关闭分类清理、关闭 Tag 匹配、去掉保存前提交 Tag 时，对应测试均失败 |
+| 官方 Claude 联网预热（`scripts/test-prewarm-claude-cli.py`） | FAIL（既有问题）：出口可达（约 7.5 MB/s），任务读取 206,993,888 字节后一直 running、条目 pending，超出五分钟上限；同一脚本对已发布 0.8.0 源码构建结果相同，非本轮回归，未处理 |
+| 原生/模拟 arm64 | NOT RUN：本机 Docker 未注册 arm64 binfmt，未修改系统配置 |
+| 浏览器/GUI | NOT RUN：界面验证为 HappyDOM 与 CSS 声明检查，不代表像素布局、悬停与深色模式实际渲染 |
+
+本轮顺带修正：`scripts/test-docker-local.sh` 的 schema 断言更新为 11；SPA 深链接白名单加入 `/admin/categories`（0.8.0 的 `/admin/taxonomy` 不在白名单，直接打开返回 404）。
+
 ## 0.8.0 本地候选统一验收（2026-10-08，未发布）
 
 VERSION=0.8.0，SQLite schema=10；基线 HEAD 为 `2cbef7e34e95fff597ce8231e15a88892326f307`。七阶段全部实现，字段与限制见 [配置契约](configuration-v0.8.0.md)。只接受新空目录或精确 schema10；旧schema2–9/未知目录不迁移、不自动删除，拒绝后数据库及sidecars原字节保持。保留完整旧目录可使用对应旧程序切回。以下历史版本记录不代表本候选 CI/发布证据。

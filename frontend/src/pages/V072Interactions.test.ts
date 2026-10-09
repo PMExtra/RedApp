@@ -2,7 +2,6 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createMemoryHistory, createRouter } from "vue-router";
 import PublicSearch from "../components/PublicSearch.vue";
-import TemplateReset from "../components/TemplateReset.vue";
 import HomepageSettings from "../components/HomepageSettings.vue";
 import {
   boot,
@@ -226,77 +225,15 @@ it("cancels stale suggestions, supports IME and keyboard selection, and keeps En
   expect((input.element as HTMLInputElement).value).toBe("中文");
   wrapper.unmount();
 });
-it("starts template reset unselected, reviews selected differences and preserves selection on a CAS conflict", async () => {
-  const current = {
-    ...adminApplications[0]!,
-    name: { en: "Custom name", "zh-CN": "自定义" },
-    revision: 9,
-  };
-  const preview = {
-    current,
-    instructions: { en: "Custom text", "zh-CN": "自定义说明", revision: 4 },
-    template: {
-      application: {
-        ...current,
-        name: { en: "Template name", "zh-CN": "模板" },
-        enabled: false,
-      },
-      instructions: { en: "Template text", "zh-CN": "模板说明" },
-    },
-    groups: ["metadata", "instructions_en", "enabled"],
-  };
-  const fetch = vi.fn(async (_url: string, init?: RequestInit) =>
-    init?.method === "PATCH"
-      ? response({ error: { code: "DIRECTORY_REVISION_CONFLICT" } }, 409)
-      : response(_url.endsWith("/configuration")?configurationFixture(current as unknown as Record<string,unknown>,9,current.key):preview),
-  );
-  vi.stubGlobal("fetch", fetch);
-  const wrapper = mount(TemplateReset, {
-    props: { application: current.key },
-  });
-  await flushPromises();
-  expect(wrapper.element.tagName).toBe("DETAILS");
-  expect(wrapper.attributes("open")).toBeUndefined();
-  await wrapper.get("summary").trigger("click");
-  // A stale server preview must not restore the removed enabled control.
-  expect(wrapper.find('[aria-label="Enabled"]').exists()).toBe(false);
-  expect(wrapper.findAll("[role=switch][aria-checked=true]")).toHaveLength(0);
-  expect(
-    wrapper.find("button:not([role=switch])").attributes("disabled"),
-  ).toBeDefined();
-  await wrapper.get('[aria-label="Name and description"]').trigger("click");
-  await wrapper
-    .findAll("button")
-    .find((b) => b.text() === "Review differences")!
-    .trigger("click");
-  expect(wrapper.get(".template-diff").text()).toContain("Custom name");
-  expect(wrapper.get(".template-diff").text()).toContain("Template name");
-  expect(wrapper.get(".template-diff").text()).not.toContain("Custom text");
-  await wrapper
-    .findAll("button")
-    .find((b) => b.text() === "Save selected fields")!
-    .trigger("click");
-  await flushPromises();
-  const write = fetch.mock.calls.find(([, init]) => init?.method === "PATCH")!;
-  expect(JSON.parse(write[1]!.body as string)).toEqual({
-    revision: 9,
-    unset:["name.en","name.zh-CN","description.en","description.zh-CN"],
-  });
-  expect(wrapper.get("[role=alert]").text()).toContain("draft is preserved");
-  expect(
-    wrapper
-      .get('[aria-label="Name and description"]')
-      .attributes("aria-checked"),
-  ).toBe("true");
-  wrapper.unmount();
-});
-
 it("saves pinned applications in the handle-selected order only after explicit save", async () => {
-  const fetch = vi.fn(async (_url: string, init?: RequestInit) =>
+  const found = (key: string) => ({ ...adminApplications[0]!, uid: key, key, name: { en: `Name ${key}`, "zh-CN": `名称 ${key}` } });
+  const fetch = vi.fn(async (url: string, init?: RequestInit) =>
     response(
       init?.method === "PUT"
         ? { ...JSON.parse(init.body as string), revision: 5 }
-        : { keys: ["a/one", "b/two", "c/three"], revision: 4 },
+        : url.includes("/admin/api/apps?")
+          ? { items: [found("a/one"), found("d/four")], page: 1, limit: 8, total: 2, total_pages: 1 }
+          : { keys: ["a/one", "b/two", "c/three"], revision: 4 },
     ),
   );
   vi.stubGlobal("fetch", fetch);
@@ -317,8 +254,17 @@ it("saves pinned applications in the handle-selected order only after explicit s
     fetch.mock.calls.filter(([, init]) => init?.method === "PUT"),
   ).toHaveLength(0);
   await wrapper.get('[aria-label="Remove: b/two"]').trigger("click");
-  await wrapper.get('[aria-label="Application key"]').setValue("d/four");
-  await wrapper.get('[aria-label="Add application"]').trigger("click");
+  // Applications are searched and chosen; already pinned results cannot be added twice.
+  const search = wrapper.get('[role="combobox"]');
+  await search.setValue("o");
+  await vi.advanceTimersByTimeAsync(210);
+  await flushPromises();
+  expect(fetch.mock.calls.some(([url]) => String(url) === "/admin/api/apps?q=o&limit=8")).toBe(true);
+  expect(wrapper.get('[role="option"][aria-disabled="true"]').text()).toContain("a/one");
+  await search.trigger("keydown", { key: "Enter", isComposing: true });
+  expect(wrapper.findAll(".pinned-order code")).toHaveLength(2);
+  await search.trigger("keydown", { key: "Enter" });
+  expect(wrapper.find('[role="listbox"]').isVisible()).toBe(false);
   await wrapper.get("form").trigger("submit");
   await flushPromises();
   const write = fetch.mock.calls.find(([, init]) => init?.method === "PUT")!;

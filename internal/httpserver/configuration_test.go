@@ -53,8 +53,7 @@ func TestConfigurationAPIAndLegacyWritersShareAuthority(t *testing.T) {
 	if c.Revision != app.Revision+1 || c.Fields["instructions.en"].Source != "custom" {
 		t.Fatal("instructions owner not updated", c)
 	}
-	currentIns, _ := h.server.DB.Instructions(app.UID)
-	h.request("POST", "/admin/api/apps/openai/codex/template", map[string]any{"revision": c.Revision, "instructions_revision": currentIns.Revision, "groups": []string{"metadata", "instructions_en"}}, 200, nil)
+	h.request("PATCH", endpoint, map[string]any{"revision": c.Revision, "unset": []string{"name.en", "name.zh-CN", "description.en", "description.zh-CN", "instructions.en"}}, 200, nil)
 	raw, _ = h.request("GET", endpoint, nil, 200, nil)
 	c = configurationValue(t, raw)
 	if c.Fields["name.en"].Source != "inherited" || c.Fields["instructions.en"].Source != "inherited" || c.Fields["instructions.zh-CN"].Source != "custom" {

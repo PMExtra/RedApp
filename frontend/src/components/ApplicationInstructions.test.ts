@@ -47,7 +47,10 @@ it("does not write an unchanged document and retains equal-value custom and per-
   expect(
     fetch.mock.calls.filter(([, init]) => init?.method === "PATCH"),
   ).toHaveLength(0);
-  await wrapper.findAll(".override-control button")[0]!.trigger("click");
+  expect(wrapper.find(".field-reset").exists()).toBe(false);
+  // Typing the inherited text again is still an explicit custom value.
+  await wrapper.get("[name=instructions-en]").setValue("Same text");
+  expect(wrapper.findAll(".field-reset")).toHaveLength(1);
   await wrapper.get("form").trigger("submit");
   await flushPromises();
   const first = JSON.parse(
@@ -59,8 +62,9 @@ it("does not write an unchanged document and retains equal-value custom and per-
     set: { "instructions.en": "Same text" },
     unset: [],
   });
-  expect(wrapper.findAll(".override-control")[0]!.text()).toContain("Custom");
-  await wrapper.findAll(".override-control button")[0]!.trigger("click");
+  expect(wrapper.findAll(".field-reset")).toHaveLength(1);
+  await wrapper.get(".field-reset").trigger("click");
+  expect(wrapper.find(".field-reset").exists()).toBe(false);
   await wrapper.get("[name=instructions-zh-CN]").setValue("新说明");
   await wrapper.get("form").trigger("submit");
   await flushPromises();

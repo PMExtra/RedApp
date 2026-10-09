@@ -43,16 +43,25 @@ export function useConfiguration<T extends object>(
     unsets.value.delete(leaf);
     saved.value = false;
   }
+  const original = computed(() =>
+    baseline.value ? (JSON.parse(baseline.value) as T) : undefined,
+  );
+  function modified(leaf: string) {
+    return (
+      touched.value.has(leaf) ||
+      (!!draft.value &&
+        JSON.stringify(getLeaf(draft.value, leaf)) !==
+          JSON.stringify(getLeaf(original.value, leaf)))
+    );
+  }
   function restore(leaf: string) {
     const config = configuration.value;
     if (!draft.value || !config?.template_ref || !config.defaults) return;
-    setLeaf(
-      draft.value,
-      leaf,
-      getLeaf(config.defaults, prefix ? `${prefix}.${leaf}` : leaf),
-    );
+    const path = prefix ? `${prefix}.${leaf}` : leaf;
+    setLeaf(draft.value, leaf, getLeaf(config.defaults, path));
     touched.value.delete(leaf);
-    unsets.value.add(leaf);
+    // Only a stored override needs an unset; an inherited field is simply reverted.
+    if (config.fields[path]?.source === "custom") unsets.value.add(leaf);
     saved.value = false;
   }
   async function load(confirm = true) {
@@ -85,18 +94,18 @@ export function useConfiguration<T extends object>(
       }
     }
   }
-  async function save() {
+  // Templates bind save directly to submit events, so request-only fields use saveWith.
+  function save() {
+    return saveWith({});
+  }
+  // extra carries request-only fields such as new_categories alongside the field patch.
+  async function saveWith(extra: Record<string, unknown>) {
     if (!draft.value || !configuration.value || loading.value || saving.value)
       return;
-    const original = JSON.parse(baseline.value) as T;
     const set: Record<string, unknown> = {};
     for (const leaf of leaves) {
       if (unsets.value.has(leaf)) continue;
-      if (
-        touched.value.has(leaf) ||
-        JSON.stringify(getLeaf(draft.value, leaf)) !==
-          JSON.stringify(getLeaf(original, leaf))
-      )
+      if (modified(leaf))
         set[prefix ? `${prefix}.${leaf}` : leaf] = getLeaf(draft.value, leaf);
     }
     const unset = [...unsets.value].map((leaf) =>
@@ -112,7 +121,7 @@ export function useConfiguration<T extends object>(
     try {
       const value = await api<Configuration>(
         path.value,
-        { revision: configuration.value.revision, set, unset },
+        { revision: configuration.value.revision, set, unset, ...extra },
         request.signal,
         {},
         "PATCH",
@@ -148,7 +157,9 @@ export function useConfiguration<T extends object>(
     dirty,
     load,
     save,
+    saveWith,
     mark,
     restore,
+    modified,
   };
 }

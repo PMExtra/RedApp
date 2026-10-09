@@ -1,6 +1,6 @@
 # RedApp 运维说明
 
-当前 **0.8.0 本地候选尚未发布**，SQLite schema=10，仅接受新空目录/卷或精确当前 schema 10。旧 schema 2–9 与未知目录在任何写入前只读拒绝；不迁移、不自动删除，也不导入旧缓存/历史。先停止旧实例并保留其完整目录（包括 WAL/SHM、对象、图标），使用新卷启动候选。切回时使用对应旧程序与保留的旧目录，不能让旧程序打开 schema 10。部署配置 schema_version 仍为 1。七项配置、API、限额和交换契约见 [0.8.0 配置契约](configuration-v0.8.0.md)。
+当前 **v0.8.1** 使用 SQLite schema=11，仅接受新空目录/卷或精确当前 schema 11。已发布 0.8.0 的 schema 10、旧 schema 2–9 与未知目录在任何写入前只读拒绝；不迁移、不自动删除，也不导入旧缓存/历史。先停止旧实例并保留其完整目录（包括 WAL/SHM、对象、图标），使用新卷启动候选。切回时使用对应旧程序与保留的旧目录，不能让旧程序打开 schema 11。部署配置 schema_version 仍为 1。七项配置、API、限额和交换契约见 [0.8.0 配置契约](configuration-v0.8.0.md)，多分类、Tag 与逐字段重置见 [管理界面与分类标签](admin-taxonomy-v0.8.1.md)。
 
 ## 启动配置
 
@@ -79,7 +79,7 @@ location / {
 
 ## Vendor/App 与可变 HTTP 缓存
 
-`/admin/vendors` 管理全小写厂商 ID、中英文名称/描述和图标，再在厂商下创建应用并选择 Provider。启动补齐缺失内置模板且默认禁用；绑定对象未覆盖字段继承新模板，独立完整键对象不自动绑定。ID、隶属和 Provider 固定；内置完整键应用不可删除。自定义应用确认后永久删除并释放公开 ID，重新创建使用新内部 UID；仍有任何应用的厂商不可删除。模板重置先选字段、预览差异，再通过 CAS 保存，不删除文件或历史。
+`/admin/vendors` 管理全小写厂商 ID、中英文名称/描述和图标，再在厂商下创建应用并选择 Provider。启动补齐缺失内置模板且默认禁用；绑定对象未覆盖字段继承新模板，独立完整键对象不自动绑定。ID、隶属和 Provider 固定；内置完整键应用不可删除。自定义应用确认后永久删除并释放公开 ID，重新创建使用新内部 UID；仍有任何应用的厂商不可删除。字段旁的“重置”仅在有覆盖或草稿修改时出现，保存时以 unset 删除该字段覆盖并通过 CAS 提交，不删除文件或历史。
 
 启用状态同时受厂商与应用控制。禁用厂商不会覆盖应用自身开关；禁用停止新的公开请求并保留数据；永久删除清除该应用拥有的缓存、文件和历史，全局共享图标独立保留。删除按稳定 UID 阻止新任务、中止目标应用全部 epoch 的传输并等待句柄释放，不要求其他应用空闲。15 秒等待超时返回可重试的待删状态，应用保持阻止新任务；再次删除或重启继续，既有普通软删除记录不会被自动永久清除。物理清理回执持久化，可在重启时继续。HTTP Cache 支持 1–16 个有序 `base_urls`，以及 `ordered`、`round_robin`、`random` 策略；列表内容、顺序和策略改变都会创建新 source epoch，不搬运旧缓存。发布 Provider 仍为单 BaseUrl。已进入的请求可结束，但旧 revision 的写入不能成为新缓存头；历史 source 可显式选择并清理。
 
@@ -96,13 +96,13 @@ GET 支持完整响应、条件请求和单段 Range，多段 Range 忽略后返
 ## 数据目录、清理与恢复
 
 - `instance.lock` 是保留的内核锁文件；进程退出或崩溃后内核释放锁，禁止人为删除锁 inode。获取写锁前先以只读方式检查已有目录，拒绝旧 schema 或未知内容，不创建锁来污染被拒绝的旧目录。
-- SQLite schema=10，包含模板/稀疏覆盖、分类标签、私有备注、预热任务/保留及交换回执，以及既有 Hosted、source、发布/HTTP 缓存、指标和认证表。不存在旧 schema 迁移命令；schema 2–9/未知目录在写入前拒绝，main DB 与已有 sidecars 保持原字节。
+- SQLite schema=11，包含模板/稀疏覆盖、多分类与自由 Tag、私有备注、预热任务/保留及交换回执，以及既有 Hosted、source、发布/HTTP 缓存、指标和认证表。不存在旧 schema 迁移命令；schema 2–10/未知目录在写入前拒绝，main DB 与已有 sidecars 保持原字节。
 - 应用有稳定内部 UID；BaseUrl 变更创建新的 source epoch。发布逻辑资源身份为 `(app_uid,source_epoch,version,resource_key)`，完整 blob 仅在同一 source namespace 内按摘要复用，不跨应用/epoch 复用。每次下载拥有独立随机 generation。未完成文件位于 `objects/parts/<generation>.part`，完整文件位于 `objects/blobs/<app摘要>/<内容摘要>.blob`，URL 不直接映射磁盘路径。
 - 活动下载仅按精确逻辑资源合流。完整校验、fsync 和文件发布后才能标记 complete；重启核对磁盘和数据库，损坏/缺失文件不能作为已验证缓存返回。续传使用强 ETag/If-Range 并验证范围、编码、长度和最终摘要。
 - 清理预览冻结指定应用/source epoch 的精确 generation 集合及 App/Vendor revision，有效 10 分钟；执行不能跨应用、不能扩大到新 epoch，配置改变需要重新预览。成功回执支持重试。旧代退出当前状态后等待已有读写租约排空；应用内共享 blob 只在最后引用结束后回收。版本发现、可信 metadata 和累计指标不随缓存清理删除。
 - 一个本地目录只由一个实例使用，不支持 NFS/SMB。Docker 可采用只读根文件系统加可写持久卷；镜像内 `/var/lib/redapp` 为 UID/GID 65532、模式 0700。已有宿主 bind mount 的权限需管理员预先设置，不递归自动 chown。
 
-备份先正常停止服务，再复制整个新格式数据目录，包括可能存在的 WAL/SHM。恢复到同格式目录前确认没有服务持锁，不在线单独复制 state.sqlite。候选只接受精确 schema 10，不原地升级旧库。旧目录保留完整原样；切回对应旧程序和旧目录，不从候选库逆向迁移。
+备份先正常停止服务，再复制整个新格式数据目录，包括可能存在的 WAL/SHM。恢复到同格式目录前确认没有服务持锁，不在线单独复制 state.sqlite。候选只接受精确 schema 11，不原地升级旧库。旧目录保留完整原样；切回对应旧程序和旧目录，不从候选库逆向迁移。
 
 ## 路由、管理 API 与指标
 
@@ -119,7 +119,6 @@ GET 支持完整响应、条件请求和单段 Range，多段 Range 忽略后返
 | `GET/POST /admin/api/vendors`、`GET/PATCH/DELETE /admin/api/vendors/<vendor>` | 厂商列表、创建、资料与启用状态、删除 |
 | `POST /admin/api/vendors/<vendor>/apps`、`GET /admin/api/apps`、`GET/PATCH/DELETE /admin/api/apps/<vendor>/<app>` | 动态应用管理；列表服务端分页；ID、隶属、Provider 固定 |
 | `GET/PUT /admin/api/settings/homepage` | 有序置顶完整键列表与 revision CAS |
-| `GET/POST /admin/api/apps/<vendor>/<app>/template`、`/admin/api/vendors/<vendor>/template` | 兼容字段分组、当前值/模板值与选择性 CAS 重置 |
 | `GET /api/home`、`/api/catalog`、`/api/search`、`/api/vendors/<vendor>` | 有效启用目录、排行、分页搜索与建议 |
 | `GET /api/apps/<vendor>/<app>/instructions/document?lang=en` | 独立策略的受信任 HTML 说明文档 |
 | `POST /admin/api/assets/icons` | 单个 multipart JPG/PNG/静态 SVG 图标 |
@@ -155,12 +154,12 @@ Codex/ClaudeCode 适配器继续校验版本、渠道、metadata、原有签名�
 
 ## 0.8.0 维护、分类与配置交换
 
-七阶段及路径/字段详见 [配置契约](configuration-v0.8.0.md)。可信内嵌 YAML 为唯一模板权威，普通用户交换类型拒绝 distribution/信任/可执行字段；template + overrides 与独立 spec 分离。双语叶独立、有序列表整体覆盖，proxy/prewarm/retention 是完整叶；enabled/身份/Provider/notes 不继承模板重置。内置绑定副本使用新 key，允许删除。
+七阶段及路径/字段详见 [配置契约](configuration-v0.8.0.md)。可信内嵌 YAML 为唯一模板权威，普通用户交换类型拒绝 distribution/信任/可执行字段；template + overrides 与独立 spec 分离。双语叶独立、有序列表整体覆盖，proxy/prewarm/retention 是完整叶；enabled/身份/Provider/notes 不受字段重置影响。内置绑定副本使用新 key，允许删除。
 
 版本 retention 默认 `{enabled:false,keep_latest:3}`；仅 Codex/Claude 当前 source 的完整缓存版本计数，保留最新 N，加有效渠道目标、reader/writer、无法比较版本。渠道验证失败整轮不删；不下载补齐，不删 metadata-only/历史 source。15 分钟维护循环，每应用每轮最多退役 100 版；手动预览 10 分钟、回执 24 小时，TTL/版本保护与容量清理口径不同。
 
 发布 prewarm 默认为 `{enabled:false,channels:[],platforms:[]}`，平台白名单与签名/摘要链保持。HTTP 路径/清单/目录支持固定镜像的 HTML/nginx JSON/Caddy JSON 发现，glob/RE2 只过滤发现或已缓存路径。HEAD 验证器绑定实际镜像；跨镜像验证器未知，TTL 有效不强制 GET；同 ETag+长度优先于冲突 Last-Modified。单全局 worker，无排队，忙时 409。默认 10000 文件/深度16/10 GiB/3600秒；硬上限100000/32/1 TiB/86400秒。索引≤2 MiB，计入实际读取；完全缓存命中不重复读、不增加公共请求/访问统计，实际回源仍记账。取消只撤销自身共享等待者；公共 fetch 可继续，不把其已有共享传输计作独立任务硬截止。重启 interrupted，不恢复执行；终态24小时有限清理。自动15分钟检查成功指纹，启动不立即预热。
 
-`/admin/taxonomy` 管理双语字典；App category/tags 支持 overlay。公开 `/all?category=...&q=...&page=...` 先过滤后分页，关联最多六项、至少一共同标签，以共享标签数/七日热门/key 排序，排除禁用/删除对象。公开 DTO 仅有 ID 与名称，无 notes/proxy/raw override。
+App 的 `categories`（ID 集合）与自由 Tag 支持 overlay；新分类随 App 保存在同一事务创建，无应用（含禁用）或模板使用的自建分类自动清理。`/admin/categories` 仅用于分类改名。公开 `/all?category=...&q=...&page=...` 先过滤后分页，分类计数为全站公开应用数；搜索匹配 Tag，但公开 DTO 只有分类 ID 与名称，无 Tag、notes、proxy 或 raw override。关联推荐已移除。详见 [管理界面与分类标签](admin-taxonomy-v0.8.1.md)。
 
 配置 export 为 ZIP 附件，import 为 ZIP/单 YAML multipart 预览+确认执行，copy 为 App 管理操作。默认排除 notes/代理凭据，全部排除 Hosted 二进制和缓存/任务/运行 UID/状态。包限32 MiB/展开64 MiB/1000逻辑实体/YAML1 MiB/图2 MiB，拒绝 traversal/重复/symlink/未知/多文档/alias。图片保持原字节/hash，失败只回收本次新建且无引用文件。预览源码不执行 HTML/JS，说明变化要求信任；选项更改重新预览，UID/CAS/notes/字典绑定，配置与成功回执同事务。未执行预览换会话/重启失效；成功回执正常管理员auth/CSRF后可在24小时内重新读取，绝不重新导入。复制 fresh UID/epoch1/disabled，自身 inherit 跟随目标 Vendor，不复制旧数据。Not planned/backlog 全部未实施。

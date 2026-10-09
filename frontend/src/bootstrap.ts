@@ -6,8 +6,7 @@ import {
   type SiteSettings,
 } from "./site";
 export interface Application {
- category?: {id:string;name:LocalizedText}|null;
- tags?: {id:string;name:LocalizedText}[];
+  categories?: { id: string; name: LocalizedText }[];
   id: string;
   name: LocalizedText;
   publisher: string;

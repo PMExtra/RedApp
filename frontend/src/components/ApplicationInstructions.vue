@@ -2,7 +2,7 @@
 import IconButton from "./IconButton.vue";
 import { computed } from "vue";
 import { useConfiguration } from "../composables/useConfiguration";
-import OverrideControl from "./OverrideControl.vue";
+import FieldReset from "./FieldReset.vue";
 import { invalidateBootstrap, loadBootstrap } from "../bootstrap";
 import { errorText, t } from "../i18n";
 import type { LocalizedText } from "../site";
@@ -15,7 +15,6 @@ const props = defineProps<{ application: string; readonly?: boolean }>();
 const {
   draft,
   configuration,
-  touched,
   unsets,
   loading,
   saving,
@@ -25,6 +24,7 @@ const {
   save,
   mark,
   restore,
+  modified,
 } = useConfiguration<LocalizedText>(
   computed(() => `apps/${props.application}/configuration`),
   "instructions",
@@ -55,38 +55,30 @@ const {
     <form @submit.prevent="save">
       <fieldset :disabled="readonly || loading || saving">
         <div v-if="draft" class="two-columns">
-          <label
-            >English<textarea
-              v-model="draft.en"
-              @input="mark('en')"
-              name="instructions-en"
-              lang="en"
-              maxlength="12000"
-              rows="9" /><OverrideControl
+          <div
+            v-for="locale in ['en', 'zh-CN'] as const"
+            :key="locale"
+            class="resettable-field"
+          >
+            <label
+              >{{ locale === "en" ? "English" : "简体中文"
+              }}<textarea
+                v-model="draft[locale]"
+                @input="mark(locale)"
+                :name="`instructions-${locale}`"
+                :lang="locale"
+                maxlength="12000"
+                rows="9"
+            /></label>
+            <FieldReset
               :configuration="configuration"
-              path="instructions.en"
-              :custom="touched.has('en')"
-              :restored="unsets.has('en')"
-              @restore="restore('en')"
-              @customize="mark('en')" /></label
-          ><label
-            >简体中文<textarea
-              v-model="draft['zh-CN']"
-              @input="mark('zh-CN')"
-              name="instructions-zh-CN"
-              lang="zh-CN"
-              maxlength="12000"
-              rows="9"
+              :path="`instructions.${locale}`"
+              :label="locale === 'en' ? 'English' : '简体中文'"
+              :modified="modified(locale)"
+              :restored="unsets.has(locale)"
+              @reset="restore(locale)"
             />
-            <OverrideControl
-              :configuration="configuration"
-              path="instructions.zh-CN"
-              :custom="touched.has('zh-CN')"
-              :restored="unsets.has('zh-CN')"
-              @restore="restore('zh-CN')"
-              @customize="mark('zh-CN')"
-            />
-          </label>
+          </div>
         </div>
         <div class="form-actions">
           <button :disabled="!draft">

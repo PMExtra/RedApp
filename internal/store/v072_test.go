@@ -47,24 +47,11 @@ func TestV072TemplateInsertionProtectionAndSelectiveCAS(t *testing.T) {
 	if err = s.PermanentlyDeleteVendor(v.ID, v.Revision); !errors.Is(err, ErrVendorHasApplications) {
 		t.Fatal("vendor bypassed protection", err)
 	}
-	if _, err = s.ResetApplicationTemplate(a.Key, TemplateReset{Revision: a.Revision, Groups: []string{"source"}}); !errors.Is(err, ErrInvalidDirectory) {
-		t.Fatal("incompatible source reset", err)
-	}
-	if _, err = s.ResetApplicationTemplate(a.Key, TemplateReset{Revision: a.Revision}); !errors.Is(err, ErrInvalidDirectory) {
-		t.Fatal("empty selection mutated configuration", err)
-	}
-	if _, err = s.ResetApplicationTemplate(a.Key, TemplateReset{Revision: a.Revision, InstructionsRevision: 99, Groups: []string{"metadata", "instructions_en"}}); !errors.Is(err, ErrConflict) {
-		t.Fatal("instruction CAS missing", err)
-	}
-	after, _ := s.Application(a.Key)
-	if after.Name != a.Name || after.Revision != a.Revision {
-		t.Fatal("partial reset escaped rollback")
-	}
-	after, err = s.ResetApplicationTemplate(a.Key, TemplateReset{Revision: a.Revision, Groups: []string{"metadata"}})
-	if !errors.Is(err, ErrInvalidDirectory) {
+	// Field-level reset is a configuration unset; an independent entity has nothing to inherit.
+	if _, err = s.PatchApplicationConfiguration(a.Key, ConfigurationPatch{Revision: a.Revision, Unset: []string{"name.en", "instructions.en"}}); !errors.Is(err, ErrInvalidDirectory) {
 		t.Fatal("independent entity must not acquire inheritance through reset", err)
 	}
-	after, _ = s.Application(a.Key)
+	after, _ := s.Application(a.Key)
 	if after.Provider != a.Provider || after.SourceEpoch != a.SourceEpoch || after.Enabled != a.Enabled || after.UID != a.UID {
 		t.Fatal("unselected fields changed", after)
 	}
@@ -216,13 +203,13 @@ func TestV072CompatibleResetPreservesOtherLanguageAndOwnedData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.ResetVendorTemplate(v.ID, TemplateReset{Revision: v.Revision - 1, Groups: []string{"metadata"}}); !errors.Is(err, ErrConflict) {
+	if _, err = s.PatchVendorConfiguration(v.ID, ConfigurationPatch{Revision: v.Revision - 1, Unset: []string{"name.en"}}); !errors.Is(err, ErrConflict) {
 		t.Fatal(err)
 	}
-	resetVendor, err := s.ResetVendorTemplate(v.ID, TemplateReset{Revision: v.Revision, Groups: []string{"metadata"}})
-	if err != nil {
+	if _, err = s.PatchVendorConfiguration(v.ID, ConfigurationPatch{Revision: v.Revision, Unset: []string{"name.en", "name.zh-CN"}}); err != nil {
 		t.Fatal(err)
 	}
+	resetVendor, _ := s.Vendor(v.ID)
 	if !resetVendor.Enabled || resetVendor.UID != v.UID || resetVendor.ID != v.ID || resetVendor.Name == v.Name {
 		t.Fatal("vendor reset changed unselected state", resetVendor)
 	}
@@ -241,10 +228,10 @@ func TestV072CompatibleResetPreservesOtherLanguageAndOwnedData(t *testing.T) {
 	}
 	resource := releaseFixture(t, s, a.StorageID(), "1.0.0")
 	a, _ = s.Application(a.Key)
-	reset, err := s.ResetApplicationTemplate(a.Key, TemplateReset{Revision: a.Revision, InstructionsRevision: instructions.Revision, Groups: []string{"cache", "instructions_en"}})
-	if err != nil {
+	if _, err = s.PatchApplicationConfiguration(a.Key, ConfigurationPatch{Revision: a.Revision, Unset: []string{"cache_ttl_seconds", "instructions.en"}}); err != nil {
 		t.Fatal(err)
 	}
+	reset, _ := s.Application(a.Key)
 	if reset.CacheTTLSeconds != 60 || reset.BaseURL != a.BaseURL || reset.SourceEpoch != a.SourceEpoch || reset.Enabled != a.Enabled || reset.UID != a.UID {
 		t.Fatal("reset changed unselected configuration", reset)
 	}

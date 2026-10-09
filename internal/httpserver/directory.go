@@ -68,7 +68,7 @@ func (s *Server) setDirectoryTTL(key string, expected int64, seconds int) (int64
 }
 
 type directoryInput struct {
-	Category        *string   `json:"category"`
+	Categories      *[]string `json:"categories"`
 	Tags            *[]string `json:"tags"`
 	explicit        map[string]json.RawMessage
 	ConfirmUID      string               `json:"confirm_uid"`
@@ -117,8 +117,8 @@ func (in directoryInput) applicationInput() (store.ApplicationInput, error) {
 	}
 	v := in.vendorInput()
 	a := store.ApplicationInput{ID: v.ID, Name: v.Name, Description: v.Description, Icon: v.Icon, Enabled: v.Enabled, Provider: in.Provider, CacheTTLSeconds: d.DefaultCacheTTLSeconds}
-	if in.Category != nil {
-		a.Category = *in.Category
+	if in.Categories != nil {
+		a.Categories = append([]string{}, (*in.Categories)...)
 	}
 	if in.Tags != nil {
 		a.Tags = append([]string{}, (*in.Tags)...)
@@ -172,6 +172,8 @@ func directoryError(w http.ResponseWriter, err error) {
 		problem(w, 409, "DIRECTORY_DELETE_PENDING", "Deletion is not complete. This application is blocked while its tasks stop. Retry deletion; restarting also resumes it.")
 	case errors.Is(err, store.ErrConflict), errors.Is(err, store.ErrRevisionConflict):
 		problem(w, 409, "DIRECTORY_REVISION_CONFLICT", "Configuration changed; reload before saving")
+	case errors.Is(err, store.ErrCategoryAmbiguous):
+		problem(w, 409, "CATEGORY_AMBIGUOUS", err.Error())
 	case errors.Is(err, sql.ErrNoRows):
 		problem(w, 404, "DIRECTORY_NOT_FOUND", "Vendor or application not found")
 	case errors.Is(err, store.ErrBuiltinTemplate), errors.Is(err, store.ErrDirectoryExists), errors.Is(err, store.ErrDirectoryDeleted), errors.Is(err, store.ErrVendorHasApplications):
@@ -211,16 +213,8 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 		w.Write(asset.Body)
 		return true
 	}
-	if len(parts) == 3 && parts[0] == "vendors" && parts[2] == "template" {
-		s.vendorTemplateAPI(w, r, parts[1])
-		return true
-	}
 	if endpoint == "settings/homepage" {
 		s.homepageAPI(w, r)
-		return true
-	}
-	if len(parts) == 4 && parts[0] == "apps" && parts[3] == "template" {
-		s.templateAPI(w, r, parts[1]+"/"+parts[2])
 		return true
 	}
 	if len(parts) == 3 && parts[0] == "vendors" && parts[2] == "admin-notes" {
@@ -339,7 +333,7 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 	status := 200
 	switch {
 	case create && endpoint == "vendors":
-		if in.Category != nil || in.Tags != nil || in.Provider != "" || in.BaseURL != nil || in.BaseURLs != nil || in.SourceStrategy != nil || in.CacheTTLSeconds != nil {
+		if in.Categories != nil || in.Tags != nil || in.Provider != "" || in.BaseURL != nil || in.BaseURLs != nil || in.SourceStrategy != nil || in.CacheTTLSeconds != nil {
 			fail(w, 400, "Unexpected vendor fields")
 			return true
 		}
@@ -357,7 +351,7 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 			status = 201
 		}
 	case isVendor && len(parts) == 2:
-		if in.Category != nil || in.Tags != nil || in.BaseURL != nil || in.BaseURLs != nil || in.SourceStrategy != nil || in.CacheTTLSeconds != nil {
+		if in.Categories != nil || in.Tags != nil || in.BaseURL != nil || in.BaseURLs != nil || in.SourceStrategy != nil || in.CacheTTLSeconds != nil {
 			fail(w, 400, "Unexpected vendor fields")
 			return true
 		}

@@ -3,7 +3,7 @@ import { computed, onUnmounted, ref, watch } from "vue";
 import { api, bytes, isCancellation } from "../api";
 import { appAPI } from "../bootstrap";
 import { useConfiguration } from "../composables/useConfiguration";
-import OverrideControl from "./OverrideControl.vue";
+import FieldReset from "./FieldReset.vue";
 import PageNavigation from "./PageNavigation.vue";
 import { errorText, t, type Message } from "../i18n";
 function translate(value: string) {
@@ -22,6 +22,7 @@ const {
   save,
   mark,
   restore,
+  modified,
 } = useConfiguration<{ retention: { enabled: boolean; keep_latest: number } }>(
   computed(() => `apps/${props.application}/configuration`),
   "",
@@ -263,14 +264,14 @@ onUnmounted(() => {
             mark('retention'))
           "
       /></label>
-      <OverrideControl
+      <FieldReset
         :configuration="configuration"
         path="retention"
-        :custom="touched.has('retention')"
+        :label="t('Keep latest cached versions')"
+        :modified="modified('retention')"
         :restored="unsets.has('retention')"
         :disabled="loading || saving"
-        @restore="restore('retention')"
-        @customize="mark('retention')"
+        @reset="restore('retention')"
       />
       <button :disabled="loading || saving">{{ t("Save") }}</button>
     </form>

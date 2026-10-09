@@ -28,7 +28,7 @@ Vue Router is pinned to 4.6.4, compatible with Vue 3.5.43. Its history/router AP
 | UI route | Owner |
 | --- | --- |
 | `/` | Ordered pins and rolling download-client ranking |
-| `/all` | Shareable application search and numbered pagination |
+| `/all` | Shareable application search, category links with public counts and numbered pagination |
 | `/<vendor>` | Vendor details and enabled application pages |
 | `/<vendor>/<app>` | Descriptor-driven application instructions |
 | `/admin/login` | Administrator sign-in |
@@ -36,8 +36,9 @@ Vue Router is pinned to 4.6.4, compatible with Vue 3.5.43. Its history/router AP
 | `/admin/events` | Structured failure details |
 | `/admin/settings/site` | Independent site appearance, public URL and homepage pin forms |
 | `/admin/settings/proxy` | Global upstream proxy form |
+| `/admin/categories` | Category renaming; categories are created from the application editor |
 | `/admin/vendors/<vendor>/apps/<app>/versions` | Application metrics/history, versions and resources |
-| `/admin/vendors/<vendor>/apps/<app>/settings` | Application settings, bilingual instructions and selective template reset |
+| `/admin/vendors/<vendor>/apps/<app>/settings` | Application settings, bilingual instructions and per-field template reset |
 
 The server serves the SPA only for recognized UI routes, including direct deep links. `/<vendor>/<app>/<file_path>` is a distribution route, not an SPA fallback. Application identity always includes both vendor and app; neither UI state nor API calls infer Codex from a missing identity.
 
@@ -77,7 +78,7 @@ Metrics retain stable IDs and backend-defined scope. Application charts request 
 
 `InstructionsDocument` uses a normal, unsandboxed same-origin iframe served from `/api/apps/<key>/instructions/document`. The server renders Markdown plus raw HTML with a dedicated document CSP; scripts execute through document parsing. This is trusted administrator content, not a security isolation boundary. Public document data excludes private settings. The existing admin SPA CSP is unchanged. A separate no-GUI integration (`node scripts/test-instructions-document.mjs`, from repository root after building) uses only local fixture scripts to check inline/external execution against the real server. Happy DOM does not prove real-browser CSP enforcement.
 
-Template reset defaults to no selection and renders current/template diffs before a revision-checked save. IDs and provider are immutable. `SwitchControl`, `AutoRefresh`, and `SelectMenu` provide common size, focus and disabled states while preserving the existing menu/listbox distinction. See [the 0.7.2 guide](../docs/admin-experience-v0.7.2.md) for data and deletion semantics.
+Template-bound fields show Reset only when overridden or edited in the draft. Reset reverts the draft to the template default and records an unset; saves submit only edited or reset fields with the configuration revision. IDs and provider are immutable. `SwitchControl`, `AutoRefresh`, and `SelectMenu` provide common size, focus and disabled states while preserving the existing menu/listbox distinction. See [the 0.7.2 guide](../docs/admin-experience-v0.7.2.md) for data and deletion semantics.
 
 ## Shared interaction controls
 

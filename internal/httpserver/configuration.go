@@ -174,7 +174,7 @@ func (in *directoryInput) UnmarshalJSON(raw []byte) error {
 }
 func (in directoryInput) configurationFields(kind string) (map[string]json.RawMessage, error) {
 	out := map[string]json.RawMessage{}
-	allowed := map[string]bool{"name": true, "description": true, "icon": true, "category": kind == "App", "tags": kind == "App", "base_url": kind == "App", "base_urls": kind == "App", "source_strategy": kind == "App", "cache_ttl_seconds": kind == "App", "localized_icons": kind == "Vendor"}
+	allowed := map[string]bool{"name": true, "description": true, "icon": true, "categories": kind == "App", "tags": kind == "App", "base_url": kind == "App", "base_urls": kind == "App", "source_strategy": kind == "App", "cache_ttl_seconds": kind == "App", "localized_icons": kind == "Vendor"}
 	for key, raw := range in.explicit {
 		if key == "revision" || key == "enabled" {
 			continue

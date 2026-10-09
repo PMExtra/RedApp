@@ -15,7 +15,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -64,11 +63,9 @@ func TestV072PublicDirectoryPinsTemplatesAndInstructionDocuments(t *testing.T) {
 		}
 	}
 	h.request("GET", "/acme/tool-6", nil, 404, nil)
-	template, _ := h.server.DB.Application("openai/codex")
-	h.request("POST", "/admin/api/apps/openai/codex/template", map[string]any{"revision": template.Revision, "groups": []string{}}, 400, nil)
-	data, _ = h.request("GET", "/admin/api/apps/openai/codex/template", nil, 200, nil)
-	if !bytes.Contains(data, []byte("instructions_en")) {
-		t.Fatal(string(data))
+	// Grouped template reset was replaced by field-level configuration unsets.
+	for _, path := range []string{"/admin/api/apps/openai/codex/template", "/admin/api/vendors/openai/template"} {
+		h.request("GET", path, nil, 404, nil)
 	}
 	_, headers := h.request("GET", "/api/apps/openai/codex/instructions/document?lang=en", nil, 200, nil)
 	if strings.Contains(headers.Get("Content-Security-Policy"), "sandbox") {
@@ -262,7 +259,7 @@ func TestV072LegacyV5IncludingReservedVendorIsRejectedReadOnly(t *testing.T) {
 	}
 }
 
-func TestTemplateResetNeverChangesEnabled(t *testing.T) {
+func TestFieldResetNeverChangesEnabled(t *testing.T) {
 	h := newDirectoryHarness(t, t.TempDir())
 	h.login(h.password)
 	for _, enabled := range []bool{true, false} {
@@ -275,27 +272,17 @@ func TestTemplateResetNeverChangesEnabled(t *testing.T) {
 			current := directoryDecode[store.Application](t, data, kind)
 			data, _ = h.request("PATCH", path, map[string]any{"revision": current.Revision, "enabled": enabled}, 200, nil)
 			current = directoryDecode[store.Application](t, data, kind)
-			preview, _ := h.request("GET", path+"/template", nil, 200, nil)
-			var body struct {
-				Groups []string `json:"groups"`
+			data, _ = h.request("PATCH", path+"/configuration", map[string]any{"revision": current.Revision, "set": map[string]any{"icon": ""}}, 200, nil)
+			current.Revision = configurationValue(t, data).Revision
+			for _, unset := range [][]string{{"enabled"}, {"icon", "enabled"}} {
+				h.request("PATCH", path+"/configuration", map[string]any{"revision": current.Revision, "unset": unset}, 400, nil)
 			}
-			if err := json.Unmarshal(preview, &body); err != nil {
-				t.Fatal(err)
+			h.request("PATCH", path+"/configuration", map[string]any{"revision": current.Revision, "set": map[string]any{"enabled": !enabled}}, 400, nil)
+			data, _ = h.request("PATCH", path+"/configuration", map[string]any{"revision": current.Revision, "unset": []string{"icon"}}, 200, nil)
+			if configurationValue(t, data).Revision != current.Revision+1 {
+				t.Fatal("field reset did not advance revision once", kind)
 			}
-			for _, group := range body.Groups {
-				if group == "enabled" {
-					t.Fatal("enabled still offered", kind)
-				}
-			}
-			for _, groups := range [][]string{{"enabled"}, {"metadata", "enabled"}} {
-				h.request("POST", path+"/template", map[string]any{"revision": current.Revision, "groups": groups}, 400, nil)
-			}
-			h.request("POST", path+"/template", map[string]any{"revision": current.Revision, "groups": []string{"icon"}, "enabled": !enabled}, 400, nil)
 			data, _ = h.request("GET", path, nil, 200, nil)
-			if unchanged := directoryDecode[store.Application](t, data, kind); !reflect.DeepEqual(current, unchanged) {
-				t.Fatal("rejected reset mutated record", kind)
-			}
-			data, _ = h.request("POST", path+"/template", map[string]any{"revision": current.Revision, "groups": []string{"icon"}}, 200, nil)
 			after := directoryDecode[store.Application](t, data, kind)
 			if after.Enabled != enabled || after.Name != current.Name || after.Description != current.Description || after.Revision != current.Revision+1 {
 				t.Fatal("icon reset changed unselected fields", kind, after)

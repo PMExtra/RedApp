@@ -4,7 +4,7 @@
 
 RedApp 通过同一服务分发 **HTTP 文件、Codex CLI 和 Claude Code**。管理员维护厂商与应用资料、选择 Provider 和 BaseUrl，并管理缓存、流量与站点设置。
 
-**0.8.0 为本地候选，尚未发布，使用 SQLite schema 10。** 仅接受新空目录/卷或精确 schema 10。旧 schema 2–9 和未知目录只读拒绝，不迁移、不自动删除；保留原目录可切回对应旧程序。部署文件 schema_version 仍为 1。详见 [配置契约](docs/configuration-v0.8.0.md)及[验收状态](docs/acceptance.md)。
+**0.8.1 使用 SQLite schema 11。** 仅接受新空目录/卷或精确 schema 11。已发布 0.8.0（schema 10）、更旧 schema 和未知目录只读拒绝，不迁移、不改写、不自动删除；保留原目录可切回对应旧程序。部署文件 schema_version 仍为 1。详见 [配置契约](docs/configuration-v0.8.0.md)、[管理界面与分类标签](docs/admin-taxonomy-v0.8.1.md)及[验收状态](docs/acceptance.md)。
 
 ## 快速上手
 
@@ -59,7 +59,7 @@ writer 使用 `REDAPP_MAX_WRITERS`、`download_limits.max_writers`、`--max-writ
 | Codex（`codex`） | 默认 `https://releases.openai.com/codex`，可覆盖 | 保留发布元数据和制品校验；渠道 TTL 默认 60 秒；按版本清理 |
 | Claude Code（`claude-code`） | 默认 `https://downloads.claude.ai/claude-code-releases`，可覆盖 | 保留现有签名和摘要校验；渠道 TTL 默认 60 秒；按版本清理 |
 
-启动时补齐缺失的内置厂商/应用模板，新增条目默认禁用；已有完整键记录和显式空白说明不覆盖。厂商与应用都启用后才公开。完整身份为 `vendor_id/app_id`，`all` 保留给公共目录。匹配内置模板的应用完整键不可删除，即使 Provider 不同；自定义应用可确认永久删除，包括其文件、缓存和历史，仅中止该应用的下载、上传和后台任务，待句柄释放后删除，不影响其他应用且不可撤销。超时会保留待删状态，可重试或重启继续。全局共享上传图标独立保留。换源仍创建独立 source epoch 并保留旧缓存供管理。模板重置默认不选字段，预览差异后按 revision 保存，不删除文件或历史。
+启动时补齐缺失的内置厂商/应用模板，新增条目默认禁用；已有完整键记录和显式空白说明不覆盖。厂商与应用都启用后才公开。完整身份为 `vendor_id/app_id`，`all` 保留给公共目录。匹配内置模板的应用完整键不可删除，即使 Provider 不同；自定义应用可确认永久删除，包括其文件、缓存和历史，仅中止该应用的下载、上传和后台任务，待句柄释放后删除，不影响其他应用且不可撤销。超时会保留待删状态，可重试或重启继续。全局共享上传图标独立保留。换源仍创建独立 source epoch 并保留旧缓存供管理。绑定模板的字段仅在已自定义或草稿已修改时显示“重置”；重置在下次按 revision 保存时删除该字段覆盖，不删除文件或历史。
 
 首页展示后台排序的置顶项与近七日下载客户端近似去重排行。`/all` 支持可分享的搜索和分页；`/<vendor>` 展示厂商资料与有效启用应用。导航栏提供有上限的异步厂商/应用建议。使用说明以受信任 HTML 文档运行，支持管理员编写的 JavaScript 和外部资源，使用独立文档策略；信任边界见运行说明。
 
@@ -75,11 +75,11 @@ HTTP Cache 设置提供有序缓存规则、默认开启的 `stale_fallback` 开
 
 ## 配置、维护与交换
 
-可信默认配置嵌入自 `presets/<vendor>.yaml`、`presets/<vendor>/<app>.yaml` 和 `presets/_taxonomy.yaml`。绑定对象保存 template 与稀疏 overrides，独立对象保存完整 spec；等值自定义、显式空字符串/列表仍保持自定义。语言叶独立继承，有序列表及 proxy/prewarm/retention 完整替换。重置取消所选 override，enabled、身份、Provider 和私有 notes 独立。
+可信默认配置嵌入自 `presets/<vendor>.yaml`、`presets/<vendor>/<app>.yaml` 和 `presets/_taxonomy.yaml`。绑定对象保存 template 与稀疏 overrides，独立对象保存完整 spec；等值自定义、显式空字符串/列表仍保持自定义。语言叶独立继承，有序列表及 proxy/prewarm/retention 完整替换。字段“重置”只取消该字段 override，enabled、身份、Provider 和私有 notes 独立。
 
-Codex/Claude 保留当前 source 的最新 N 个完整缓存版本，同时保护有效渠道目标、活动 reader/writer 及无法比较版本，不清理历史 source。发布平台与 HTTP 路径/清单/目录预热复用原校验、授权、下载和缓存链。维护每 15 分钟运行，启动不立即执行。手动预热使用无队列的全局单 worker；默认 10000 文件、深度 16、10 GiB、1 小时，硬上限 100000/32/1 TiB/24 小时。取消仅移除任务的共享等待者，不中断其他公共请求；重启标记 interrupted。双语分类/标签支持公开 category 搜索及最多六项有效关联应用。
+Codex/Claude 保留当前 source 的最新 N 个完整缓存版本，同时保护有效渠道目标、活动 reader/writer 及无法比较版本，不清理历史 source。发布平台与 HTTP 路径/清单/目录预热复用原校验、授权、下载和缓存链。维护每 15 分钟运行，启动不立即执行。手动预热使用无队列的全局单 worker；默认 10000 文件、深度 16、10 GiB、1 小时，硬上限 100000/32/1 TiB/24 小时。取消仅移除任务的共享等待者，不中断其他公共请求；重启标记 interrupted。应用可属于多个双语分类，新分类在编辑器中输入并随保存创建，无应用使用的自建分类自动移除；Tag 是只用于搜索的私有自由文本，公开页面不展示。`/all` 平铺分类及全站公开计数。
 
-后台导出 ZIP，导入 ZIP/单 YAML，可选链接或独立模式。导出所选配置、父 Vendor、引用字典和受控静态图片，排除 Hosted 二进制、运行 UID/状态、缓存/历史/任务；notes 和代理凭据每次默认关闭。预览只展示源码，不执行 HTML/JS；说明变化须明确信任。选择与 UID/revisions/notes 绑定，整包事务提交或回滚。复制创建新 UID/epoch、默认禁用、无旧数据的 App，自身 inherit 在目标 Vendor 下解析。成功回执保留 24 小时，管理员重新登录只读同一已提交结果；未执行预览重启或换会话后失效。[完整字段、限额与 API](docs/configuration-v0.8.0.md)。
+后台导出 ZIP，导入 ZIP/单 YAML，可选链接或独立模式。导出所选配置、父 Vendor、引用分类名称和受控静态图片，排除 Hosted 二进制、运行 UID/状态、缓存/历史/任务；notes 和代理凭据每次默认关闭。预览只展示源码，不执行 HTML/JS；说明变化须明确信任。选择与 UID/revisions/notes 绑定，整包事务提交或回滚。复制创建新 UID/epoch、默认禁用、无旧数据的 App，自身 inherit 在目标 Vendor 下解析。成功回执保留 24 小时，管理员重新登录只读同一已提交结果；未执行预览重启或换会话后失效。[完整字段、限额与 API](docs/configuration-v0.8.0.md)。
 
 ## 公共地址与代理
 

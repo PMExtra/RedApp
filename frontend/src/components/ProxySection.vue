@@ -20,19 +20,26 @@ function mode(value: string) {
 </script>
 <template>
   <section class="proxy-section">
-    <h3 v-if="!global">{{ t("Upstream proxy") }}</h3>
+    <div v-if="!global" class="field-heading">
+      <h3>{{ t("Upstream proxy") }}</h3>
+      <slot name="reset" />
+    </div>
+    <div class="proxy-controls">
     <SelectMenu
+      class="proxy-mode"
       :model-value="modelValue.mode"
       :disabled="disabled"
       :label="t('Proxy mode')"
       :options="[
-        ...(global ? [] : [{ value: 'inherit', label: t('Use parent proxy') }]),
+        ...(global ? [] : [{ value: 'inherit', label: t('Use parent setting') }]),
         { value: 'direct', label: t('Direct connection') },
         { value: 'url', label: t('Proxy URL') },
       ]"
       @update:model-value="mode"
     /><input
       v-if="modelValue.mode === 'url'"
+      class="proxy-url"
+      type="text"
       :value="modelValue.url"
       :disabled="disabled"
       :aria-label="t('Proxy URL')"
@@ -46,10 +53,11 @@ function mode(value: string) {
         })
       "
     />
+    </div>
     <p v-if="!global" class="muted small-text">
       {{
         t(
-          "Use parent proxy follows the vendor or global network setting; Restore template restores the template field.",
+          "Use parent setting follows the vendor or global network setting, including direct connection; Reset restores the template field.",
         )
       }}
     </p>

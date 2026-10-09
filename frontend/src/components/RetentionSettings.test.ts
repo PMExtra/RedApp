@@ -195,7 +195,7 @@ it("restores the whole template policy and invalidates a preview when N changes"
   expect(w.find("table").exists()).toBe(true);
   await w.get("input[type=number]").setValue("2");
   expect(w.find("table").exists()).toBe(false);
-  await w.get(".override-control button").trigger("click");
+  await w.get(".field-reset").trigger("click");
   expect((w.get("input[type=number]").element as HTMLInputElement).value).toBe(
     "3",
   );

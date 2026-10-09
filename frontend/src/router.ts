@@ -41,7 +41,7 @@ export function makeRouter(history: RouterHistory = createWebHistory()) {
         component: () => import("./layouts/AdminLayout.vue"),
         children: [
           { path: "", redirect: "/admin/overview" },
-          {path:"taxonomy",component:()=>import("./pages/TaxonomyPage.vue")},
+          {path:"categories",component:()=>import("./pages/CategoriesPage.vue")},
           { path: "login", component: () => import("./pages/LoginPage.vue") },
           {
             path: "overview",

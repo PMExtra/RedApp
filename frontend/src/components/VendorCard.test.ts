@@ -194,6 +194,10 @@ it("keeps a count-independent strip, aligned title rows and always-visible add c
     expect(feedback.style.boxShadow).toBe('var(--app-tile-shadow)');
     expect(feedback.style.transform).toBe('');
     expect(rules.some(rule=>rule.cssText.includes('prefers-reduced-motion') && rule.cssText.includes('transition: none'))).toBe(true);
+    // Light cards show app icons without a separate backdrop; only dark schemes add one.
+    const root=rules.find(rule=>rule instanceof CSSStyleRule&&rule.selectorText===':root'&&rule.style.getPropertyValue('--app-icon-background')) as CSSStyleRule;
+    expect(root.style.getPropertyValue('--app-icon-background').trim()).toBe('transparent');
+    expect(rules.some(rule=>rule.cssText.includes('prefers-color-scheme: dark') && rule.cssText.includes('--app-icon-background: #f8faf9'))).toBe(true);
     expect(rules.some(rule=>rule.cssText.includes('pointer: coarse') && rule.cssText.includes('display: none'))).toBe(true);
   } finally {host.remove();style.remove();}
 });

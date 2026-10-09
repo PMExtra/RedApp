@@ -66,7 +66,7 @@ type Vendor struct {
 }
 
 type ApplicationInput struct {
-	Category        string        `json:"category"`
+	Categories      []string      `json:"categories"`
 	Tags            []string      `json:"tags"`
 	ID              string        `json:"id"`
 	Name            LocalizedText `json:"name"`
@@ -92,7 +92,7 @@ type ApplicationChanges struct {
 }
 
 type Application struct {
-	Category        string        `json:"category"`
+	Categories      []string      `json:"categories"`
 	Tags            []string      `json:"tags"`
 	BuiltinTemplate bool          `json:"builtin_template"`
 	UID             string        `json:"uid"`
@@ -281,7 +281,7 @@ type directoryQuerier interface{ QueryRow(string, ...any) *sql.Row }
 type directoryScanner interface{ Scan(...any) error }
 
 const vendorColumns = `uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,enabled,revision,deleted_at_s,icon_en,icon_zh_cn,runtime_revision`
-const applicationColumns = `a.uid,a.id,v.id||'/'||a.id,a.vendor_uid,v.id,a.name_en,a.name_zh_cn,a.description_en,a.description_zh_cn,a.icon,a.provider,a.base_url,a.base_urls_json,a.source_strategy,a.cache_ttl_seconds,a.enabled,a.revision,a.source_epoch,a.deleted_at_s,a.runtime_revision,EXISTS(SELECT 1 FROM template_snapshots t WHERE t.kind='App' AND t.canonical_key=v.id||'/'||a.id),COALESCE((SELECT category_id FROM application_categories WHERE app_uid=a.uid),''),COALESCE((SELECT json_group_array(tag_id) FROM (SELECT tag_id FROM application_tags WHERE app_uid=a.uid ORDER BY tag_id)),'[]')`
+const applicationColumns = `a.uid,a.id,v.id||'/'||a.id,a.vendor_uid,v.id,a.name_en,a.name_zh_cn,a.description_en,a.description_zh_cn,a.icon,a.provider,a.base_url,a.base_urls_json,a.source_strategy,a.cache_ttl_seconds,a.enabled,a.revision,a.source_epoch,a.deleted_at_s,a.runtime_revision,EXISTS(SELECT 1 FROM template_snapshots t WHERE t.kind='App' AND t.canonical_key=v.id||'/'||a.id),COALESCE((SELECT json_group_array(category_id) FROM (SELECT category_id FROM application_categories WHERE app_uid=a.uid ORDER BY category_id)),'[]'),COALESCE((SELECT json_group_array(tag) FROM (SELECT tag FROM application_tags WHERE app_uid=a.uid ORDER BY ordinal)),'[]')`
 
 func scanVendor(row directoryScanner) (Vendor, error) {
 	var v Vendor
@@ -294,10 +294,13 @@ func scanVendor(row directoryScanner) (Vendor, error) {
 func scanApplication(row directoryScanner) (Application, error) {
 	var a Application
 	var deleted sql.NullInt64
-	var bases, tags []byte
-	err := row.Scan(&a.UID, &a.ID, &a.Key, &a.VendorUID, &a.VendorID, &a.Name.En, &a.Name.ZhCN, &a.Description.En, &a.Description.ZhCN, &a.Icon, &a.Provider, &a.BaseURL, &bases, &a.SourceStrategy, &a.CacheTTLSeconds, &a.Enabled, &a.Revision, &a.SourceEpoch, &deleted, &a.RuntimeRevision, &a.BuiltinTemplate, &a.Category, &tags)
+	var bases, categories, tags []byte
+	err := row.Scan(&a.UID, &a.ID, &a.Key, &a.VendorUID, &a.VendorID, &a.Name.En, &a.Name.ZhCN, &a.Description.En, &a.Description.ZhCN, &a.Icon, &a.Provider, &a.BaseURL, &bases, &a.SourceStrategy, &a.CacheTTLSeconds, &a.Enabled, &a.Revision, &a.SourceEpoch, &deleted, &a.RuntimeRevision, &a.BuiltinTemplate, &categories, &tags)
 	if err == nil {
 		err = json.Unmarshal(bases, &a.BaseURLs)
+		if err == nil {
+			err = json.Unmarshal(categories, &a.Categories)
+		}
 		if err == nil {
 			err = json.Unmarshal(tags, &a.Tags)
 		}

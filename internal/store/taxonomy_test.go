@@ -6,26 +6,57 @@ import (
 	"fmt"
 	"github.com/PMExtra/RedApp/presets"
 	"reflect"
+	"strings"
 	"testing"
-	"time"
 )
 
 func taxonomySet() presets.Set {
 	s := presets.Embedded()
-	s.Taxonomy = presets.TaxonomySpec{Categories: []presets.TaxonomyEntry{{ID: "tools", Name: presets.Text{En: "Tools", ZhCN: "工具"}}}, Tags: []presets.TaxonomyEntry{{ID: "cli", Name: presets.Text{En: "CLI", ZhCN: "命令行"}}, {ID: "ai", Name: presets.Text{En: "AI", ZhCN: "人工智能"}}}}
+	s.Taxonomy = presets.TaxonomySpec{Categories: []presets.TaxonomyEntry{{ID: "tools", Name: presets.Text{En: "Tools", ZhCN: "工具"}}}}
 	return s
 }
+func mapRaw(path string, value any) map[string]json.RawMessage {
+	return map[string]json.RawMessage{path: encode(value)}
+}
+func categoryItem(t *testing.T, s *Store, id string) (TaxonomyItem, bool) {
+	t.Helper()
+	item, err := scanTaxonomy(s.DB.QueryRow(`SELECT `+taxonomyColumns+` FROM categories WHERE id=?`, id))
+	if err != nil {
+		return item, false
+	}
+	return item, true
+}
+func categoryIDs(t *testing.T, s *Store) []string {
+	t.Helper()
+	page, err := s.TaxonomyPage("", 1, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := []string{}
+	for _, item := range page.Items {
+		out = append(out, item.ID)
+	}
+	return out
+}
+func patchCategories(s *Store, key string, ids []string, names ...string) (Configuration, error) {
+	c, err := s.ApplicationConfiguration(key)
+	if err != nil {
+		return c, err
+	}
+	return s.PatchApplicationConfiguration(key, ConfigurationPatch{Revision: c.Revision, Set: mapRaw("categories", ids), NewCategories: names})
+}
+
 func TestTaxonomyLanguageOverlayMissingAndRuntimeIsolation(t *testing.T) {
 	s := openTest(t)
 	set := taxonomySet()
 	if err := s.ReconcileTemplates(set); err != nil {
 		t.Fatal(err)
 	}
-	item, _ := s.TaxonomyItem("categories", "tools")
+	item, _ := categoryItem(t, s, "tools")
 	before, _ := s.Application("openai/codex")
 	public, _ := s.TaxonomyPublicRevision()
 	var err error
-	item, err = s.PatchTaxonomy("categories", "tools", ConfigurationPatch{Revision: item.Revision, Set: mapRaw("name.en", "Tools")})
+	item, err = s.PatchTaxonomy("tools", ConfigurationPatch{Revision: item.Revision, Set: mapRaw("name.en", "Tools")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +75,7 @@ func TestTaxonomyLanguageOverlayMissingAndRuntimeIsolation(t *testing.T) {
 	if err = s.ReconcileTemplates(set); err != nil {
 		t.Fatal(err)
 	}
-	item, _ = s.TaxonomyItem("categories", "tools")
+	item, _ = categoryItem(t, s, "tools")
 	if item.Name.En != "Tools" || item.Name.ZhCN != "新工具" {
 		t.Fatal(item)
 	}
@@ -52,165 +83,235 @@ func TestTaxonomyLanguageOverlayMissingAndRuntimeIsolation(t *testing.T) {
 	if err = s.ReconcileTemplates(set); err != nil {
 		t.Fatal(err)
 	}
-	item, _ = s.TaxonomyItem("categories", "tools")
+	item, _ = categoryItem(t, s, "tools")
 	if item.Revision != revision {
 		t.Fatal("unchanged preset incremented revision")
 	}
-	item, err = s.PatchTaxonomy("categories", "tools", ConfigurationPatch{Revision: item.Revision, Unset: []string{"name.en"}})
+	item, err = s.PatchTaxonomy("tools", ConfigurationPatch{Revision: item.Revision, Unset: []string{"name.en"}})
 	if err != nil || item.Name.En != "New tools" || item.Fields["name.en"].Source != "inherited" {
 		t.Fatal(item, err)
+	}
+	if _, err = s.PatchTaxonomy("tools", ConfigurationPatch{Revision: item.Revision, Set: mapRaw("name.en", "x"), NewCategories: []string{"y"}}); !errors.Is(err, ErrInvalidDirectory) {
+		t.Fatal("rename accepted category creation", err)
 	}
 	set.Taxonomy.Categories = nil
 	if err = s.ReconcileTemplates(set); err != nil {
 		t.Fatal(err)
 	}
-	item, _ = s.TaxonomyItem("categories", "tools")
-	if !item.TemplateMissing || item.Name.En != "New tools" {
-		t.Fatal("missing default lost", item)
-	}
-	if !errors.Is(s.DeleteTaxonomy(item.Kind, item.ID, item.Revision), ErrBuiltinTemplate) {
-		t.Fatal("built-in deleted")
+	item, ok := categoryItem(t, s, "tools")
+	if !ok || !item.TemplateMissing || item.Name.En != "New tools" {
+		t.Fatal("missing built-in default lost or pruned", item)
 	}
 }
-func mapRaw(path string, value any) map[string]json.RawMessage {
-	return map[string]json.RawMessage{path: encode(value)}
-}
-func TestTaxonomyAppLeavesAndReferenceDeletion(t *testing.T) {
+
+func TestCategoriesCreateReuseRollbackAndCleanupInOneTransaction(t *testing.T) {
 	s := openTest(t)
 	set := taxonomySet()
-	set.Apps[0].Spec.Category = "tools"
-	set.Apps[0].Spec.Tags = []string{"cli"}
+	set.Apps[0].Spec.Categories = []string{"tools"}
 	if err := s.ReconcileTemplates(set); err != nil {
 		t.Fatal(err)
 	}
-	key := set.Apps[0].Key()
-	before, _ := s.Application(key)
-	public, _ := s.TaxonomyPublicRevision()
-	c := patch(t, s, key, map[string]any{"category": "", "tags": []string{}})
-	a, _ := s.Application(key)
-	if a.Category != "" || len(a.Tags) != 0 || a.Revision <= before.Revision || a.SourceEpoch != before.SourceEpoch || a.RuntimeRevision != before.RuntimeRevision || c.Fields["tags"].Source != "custom" {
-		t.Fatal(a, c)
+	bound := set.Apps[0].Key()
+	if _, err := s.CreateVendor(VendorInput{ID: "acme", Name: LocalizedText{"Acme", "Acme"}, Enabled: true}); err != nil {
+		t.Fatal(err)
 	}
-	now, _ := s.TaxonomyPublicRevision()
-	if now <= public {
-		t.Fatal("public revision unchanged")
+	other, err := s.CreateApplication("acme", ApplicationInput{ID: "other", Provider: "info", Name: LocalizedText{"Other", "其他"}, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
 	}
-	c = patch(t, s, key, nil, "category")
-	if c.Effective["category"] != "tools" || c.Fields["tags"].Source != "custom" {
-		t.Fatal("leaf restore affected sibling", c)
+	before, _ := s.Application(bound)
+	c, err := patchCategories(s, bound, []string{"tools", "tools"}, "效率工具", "AI Tools", "ai tools")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, v := range []any{[]string{"cli", "cli"}, []string{"unknown"}, nil} {
-		cfg, _ := s.ApplicationConfiguration(key)
-		_, err := s.PatchApplicationConfiguration(key, ConfigurationPatch{Revision: cfg.Revision, Set: mapRaw("tags", v)})
-		if err == nil {
-			t.Fatal("invalid tags accepted", v)
+	ids := c.Effective["categories"]
+	after, _ := s.Application(bound)
+	if after.Revision != before.Revision+1 || after.RuntimeRevision != before.RuntimeRevision || after.SourceEpoch != before.SourceEpoch {
+		t.Fatal("category save changed runtime identity", before, after)
+	}
+	if len(after.Categories) != 3 || !strings.Contains(strings.Join(after.Categories, ","), "ai-tools") || c.Fields["categories"].Source != "custom" {
+		t.Fatal("new categories not bound once", ids, after.Categories)
+	}
+	var chinese string
+	for _, id := range after.Categories {
+		if strings.HasPrefix(id, "category-") {
+			chinese = id
 		}
 	}
-	custom, err := s.CreateTaxonomy("tags", "custom", LocalizedText{En: "Custom", ZhCN: "自定义"})
-	if err != nil {
+	if item, ok := categoryItem(t, s, chinese); !ok || item.Name.ZhCN != "效率工具" || item.Name.En != "效率工具" || item.Builtin {
+		t.Fatal("typed category not created with stable random ID", chinese, item)
+	}
+	// Same name in another language or case reuses the existing ID.
+	if _, err = patchCategories(s, other.Key, []string{}, "AI TOOLS", "效率工具"); err != nil {
 		t.Fatal(err)
 	}
-	patch(t, s, key, map[string]any{"tags": []string{"custom"}})
-	err = s.DeleteTaxonomy("tags", "custom", custom.Revision)
-	var used *TaxonomyInUse
-	if !errors.As(err, &used) || used.References != 1 {
-		t.Fatal("disabled app reference ignored", err)
+	other, _ = s.Application(other.Key)
+	if !reflect.DeepEqual(other.Categories, []string{"ai-tools", chinese}) {
+		t.Fatal("existing names not reused", other.Categories)
 	}
-	patch(t, s, key, map[string]any{"tags": []string{}})
-	if err = s.DeleteTaxonomy("tags", "custom", custom.Revision); err != nil {
+	known := categoryIDs(t, s)
+	// Ambiguity, stale revision and invalid sibling fields all roll back the whole save.
+	first, _ := categoryItem(t, s, "ai-tools")
+	if _, err = s.PatchTaxonomy("ai-tools", ConfigurationPatch{Revision: first.Revision, Set: mapRaw("name.zh-CN", "Shared")}); err != nil {
 		t.Fatal(err)
 	}
-	// A user-created dictionary entry that is used only by a valid template must also block deletion.
-	custom, err = s.CreateTaxonomy("tags", "template-only", LocalizedText{En: "Template", ZhCN: "模板"})
-	if err != nil {
+	second, _ := categoryItem(t, s, chinese)
+	if _, err = s.PatchTaxonomy(chinese, ConfigurationPatch{Revision: second.Revision, Set: mapRaw("name.en", "shared")}); err != nil {
 		t.Fatal(err)
 	}
-	tx, _ := s.DB.Begin()
-	snap := templateSnapshot{Key: "App:fixture", Present: true, Spec: func() Object {
-		spec := set.Apps[0].Spec
-		spec.Tags = []string{custom.ID}
-		spec.Category = ""
-		return object(spec)
-	}()}
-	if err = projectTemplateTaxonomy(tx, snap); err != nil {
+	if _, err = patchCategories(s, bound, []string{}, "SHARED"); !errors.Is(err, ErrCategoryAmbiguous) {
+		t.Fatal("ambiguous name bound", err)
+	}
+	cfg, _ := s.ApplicationConfiguration(bound)
+	invalid := ConfigurationPatch{Revision: cfg.Revision, Set: map[string]json.RawMessage{"categories": encode([]string{}), "cache_ttl_seconds": encode(-1)}, NewCategories: []string{"Rolled back"}}
+	if _, err = s.PatchApplicationConfiguration(bound, invalid); !errors.Is(err, ErrInvalidDirectory) {
+		t.Fatal("invalid save accepted", err)
+	}
+	if _, err = s.PatchApplicationConfiguration(bound, ConfigurationPatch{Revision: cfg.Revision - 1, Set: mapRaw("categories", []string{}), NewCategories: []string{"Rolled back"}}); !errors.Is(err, ErrConflict) {
+		t.Fatal("stale save accepted", err)
+	}
+	if _, err = s.PatchApplicationConfiguration(bound, ConfigurationPatch{Revision: cfg.Revision, Set: mapRaw("name.en", "x"), NewCategories: []string{"Rolled back"}}); !errors.Is(err, ErrInvalidDirectory) {
+		t.Fatal("new category without categories field accepted", err)
+	}
+	if got := categoryIDs(t, s); !reflect.DeepEqual(got, known) {
+		t.Fatal("failed save left categories", got, known)
+	}
+	if again, _ := s.ApplicationConfiguration(bound); again.Revision != cfg.Revision {
+		t.Fatal("failed save advanced revision")
+	}
+	// A disabled App still owns its categories; the last live reference removes a custom one.
+	if _, err = s.PatchApplicationFields(other.Key, other.Revision, nil, new(bool)); err != nil {
 		t.Fatal(err)
 	}
-	if err = tx.Commit(); err != nil {
+	public, _ := s.TaxonomyPublicRevision()
+	patch(t, s, bound, map[string]any{"categories": []string{"tools"}})
+	if _, ok := categoryItem(t, s, "ai-tools"); !ok {
+		t.Fatal("category of disabled app pruned")
+	}
+	patch(t, s, other.Key, map[string]any{"categories": []string{"ai-tools"}})
+	if _, ok := categoryItem(t, s, chinese); ok {
+		t.Fatal("unused custom category kept")
+	}
+	if next, _ := s.TaxonomyPublicRevision(); next <= public {
+		t.Fatal("cleanup did not advance public revision")
+	}
+	// Deleting the last App using a category prunes it in the same transaction.
+	other, _ = s.Application(other.Key)
+	if err = s.DeleteApplication(other.Key, other.Revision); err != nil {
 		t.Fatal(err)
 	}
-	err = s.DeleteTaxonomy("tags", custom.ID, custom.Revision)
-	if !errors.As(err, &used) || used.References != 1 {
-		t.Fatal("template reference ignored", err)
+	if _, ok := categoryItem(t, s, "ai-tools"); ok {
+		t.Fatal("deleted app category kept")
 	}
-	_, err = s.PatchTaxonomy("tags", custom.ID, ConfigurationPatch{Revision: custom.Revision + 1, Set: mapRaw("name.en", "Changed")})
-	if !errors.Is(err, ErrConflict) {
-		t.Fatal("CAS", err)
+	// Template-referenced built-in categories survive both override and reset.
+	patch(t, s, bound, map[string]any{"categories": []string{}})
+	if _, ok := categoryItem(t, s, "tools"); !ok {
+		t.Fatal("template category pruned")
+	}
+	c = patch(t, s, bound, nil, "categories")
+	if !reflect.DeepEqual(c.Effective["categories"], []string{"tools"}) || c.Fields["categories"].Source != "inherited" {
+		t.Fatal("reset did not restore template categories", c.Effective["categories"])
 	}
 }
-func TestTaxonomyPublicFilteringAndRelatedOrder(t *testing.T) {
+
+func TestTagsNormalizeSearchLiterallyAndStayIndependentOfCategories(t *testing.T) {
 	s := openTest(t)
 	if err := s.ReconcileTemplates(taxonomySet()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateVendor(VendorInput{ID: "test", Name: LocalizedText{En: "Test", ZhCN: "测试"}, Enabled: true}); err != nil {
+	if _, err := s.CreateVendor(VendorInput{ID: "search", Name: LocalizedText{"Search", "搜索"}, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	create := func(id string, tags []string, enabled bool) Application {
-		a, e := s.CreateApplication("test", ApplicationInput{ID: id, Provider: "info", Name: LocalizedText{En: "Search " + id, ZhCN: "应用"}, Category: "tools", Tags: tags, Enabled: enabled})
-		if e != nil {
-			t.Fatal(e)
-		}
-		return a
-	}
-	own := create("own", []string{"cli", "ai"}, true)
-	two := create("two", []string{"ai", "cli"}, true)
-	popular := create("popular", []string{"cli"}, true)
-	for i := 0; i < 3; i++ {
-		if err := s.RecordDownload(popular.UID, fmt.Sprintf("192.0.2.%d", i), time.Now()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, id := range []string{"a", "b", "c", "d", "e", "f", "g"} {
-		create(id, []string{"cli"}, true)
-	}
-	create("disabled", []string{"cli", "ai"}, false)
-	create("no-tag", nil, true)
-	deleted := create("deleted", []string{"cli", "ai"}, true)
-	if err := s.DeleteApplication(deleted.Key, deleted.Revision); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.CreateVendor(VendorInput{ID: "hidden", Name: LocalizedText{En: "Hidden", ZhCN: "隐藏"}, Enabled: false}); err != nil {
-		t.Fatal(err)
-	}
-	hidden, err := s.CreateApplication("hidden", ApplicationInput{ID: "peer", Provider: "info", Name: LocalizedText{En: "Search hidden", ZhCN: "隐藏"}, Category: "tools", Tags: []string{"cli", "ai"}, Enabled: true})
+	a, err := s.CreateApplication("search", ApplicationInput{ID: "tagged", Provider: "info", Name: LocalizedText{"Tagged", "标签"}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	related, err := s.RelatedApplications(own.UID, time.Now())
-	if err != nil || !reflect.DeepEqual(related, []string{two.Key, popular.Key, "test/a", "test/b", "test/c", "test/d"}) {
-		t.Fatal(related, err)
+	c := patch(t, s, a.Key, map[string]any{"tags": []string{" #Command Line ", "command line", "Café", "a.b*"}})
+	if !reflect.DeepEqual(c.Effective["tags"], []string{"Command Line", "Café", "a.b*"}) {
+		t.Fatal("tags not normalized in order", c.Effective["tags"])
 	}
-	page, err := s.ApplicationCategoryPage("", 1, 2, "Search", "tools")
-	if err != nil || page.Total != 11 || len(page.Items) != 2 {
-		t.Fatal(page, err)
+	for _, bad := range [][]string{{""}, {strings.Repeat("x", presets.MaxTagRunes+1)}, make([]string, presets.MaxTags+1)} {
+		for i := range bad {
+			if bad[i] == "" && len(bad) > 1 {
+				bad[i] = fmt.Sprintf("tag-%d", i)
+			}
+		}
+		cfg, _ := s.ApplicationConfiguration(a.Key)
+		if _, err = s.PatchApplicationConfiguration(a.Key, ConfigurationPatch{Revision: cfg.Revision, Set: mapRaw("tags", bad)}); !errors.Is(err, ErrInvalidDirectory) {
+			t.Fatal("invalid tags accepted", len(bad), err)
+		}
 	}
-	projections, categories, err := s.PublicTaxonomy()
-	if err != nil || len(categories) != 1 || categories[0].Name.ZhCN != "工具" {
-		t.Fatal(categories, err)
+	for _, q := range []string{"line", "#command", "COMMAND LINE", "café", "a.b*"} {
+		page, err := s.ApplicationPage("", 1, 10, q, "current")
+		if err != nil || page.Total != 1 || page.Items[0].Key != a.Key {
+			t.Fatal("tag search missed", q, page.Total, err)
+		}
 	}
-	if _, ok := projections[hidden.UID]; ok {
-		t.Fatal("disabled vendor projection")
+	for _, q := range []string{"a.b+", "c.mmand", "#"} {
+		page, _ := s.ApplicationPage("", 1, 10, q, "current")
+		if page.Total != 0 {
+			t.Fatal("search treated tag text as a pattern", q)
+		}
 	}
-	if _, ok := projections[deleted.UID]; ok {
-		t.Fatal("deleted app projection")
+	if got := categoryIDs(t, s); !reflect.DeepEqual(got, []string{"tools"}) {
+		t.Fatal("tags created dictionary entries", got)
 	}
-	if _, ok := projections[own.UID]; !ok {
-		t.Fatal("missing public projection")
+}
+
+func TestPublicCategoryCountsFilteringAndPagingWithoutDuplicates(t *testing.T) {
+	s := openTest(t)
+	if err := s.ReconcileTemplates(taxonomySet()); err != nil {
+		t.Fatal(err)
 	}
-	none := create("empty", nil, true)
-	related, err = s.RelatedApplications(none.UID, time.Now())
-	if err != nil || len(related) != 0 {
-		t.Fatal(related, err)
+	for _, v := range []string{"public", "hidden"} {
+		if _, err := s.CreateVendor(VendorInput{ID: v, Name: LocalizedText{v, v}, Enabled: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	create := func(vendor, id string, enabled bool, categories ...string) Application {
+		a, err := s.CreateApplication(vendor, ApplicationInput{ID: id, Provider: "info", Name: LocalizedText{"Search " + id, "应用"}, Enabled: enabled, Categories: categories, Tags: []string{"shared", "search"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	if _, err := patchCategories(s, create("public", "seed", true).Key, []string{"tools"}, "Network"); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 5 {
+		create("public", fmt.Sprintf("app-%d", i), true, "tools", "network")
+	}
+	create("public", "disabled", false, "tools", "network")
+	hiddenApp := create("hidden", "app", true, "tools")
+	hidden, _ := s.Vendor("hidden")
+	if _, err := s.PatchVendorFields(hidden.ID, hidden.Revision, nil, new(bool)); err != nil {
+		t.Fatal(err)
+	}
+	labels, counts, err := s.PublicTaxonomy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(counts) != 2 || counts[0].ID != "network" || counts[0].Count != 6 || counts[1].ID != "tools" || counts[1].Count != 6 {
+		t.Fatal("public counts include hidden apps", counts)
+	}
+	if _, leaked := labels[hiddenApp.UID]; leaked {
+		t.Fatal("hidden vendor app labelled")
+	}
+	seen := map[string]bool{}
+	for page := 1; page <= 3; page++ {
+		result, err := s.ApplicationCategoryPage("", page, 2, "search", "tools")
+		if err != nil || result.Total != 6 || result.TotalPages != 3 {
+			t.Fatal("multi-category join changed totals", result.Total, err)
+		}
+		for _, a := range result.Items {
+			if seen[a.Key] || !a.Enabled {
+				t.Fatal("duplicate or hidden app across pages", a.Key)
+			}
+			seen[a.Key] = true
+		}
+	}
+	if len(seen) != 6 {
+		t.Fatal("pages skipped apps", seen)
 	}
 }
 
@@ -220,22 +321,26 @@ func TestTaxonomyCustomIdentityDoesNotBecomeTemplate(t *testing.T) {
 	if err := s.ReconcileTemplates(set); err != nil {
 		t.Fatal(err)
 	}
-	item, err := s.CreateTaxonomy("tags", "custom", LocalizedText{En: "My name", ZhCN: "我的名称"})
-	if err != nil {
+	if _, err := patchCategories(s, set.Apps[0].Key(), []string{}, "custom"); err != nil {
 		t.Fatal(err)
 	}
-	set.Taxonomy.Tags = append(set.Taxonomy.Tags, presets.TaxonomyEntry{ID: "custom", Name: presets.Text{En: "Default name", ZhCN: "默认名称"}})
-	set.Apps[0].Spec.Tags = []string{"custom"}
-	if err = s.ReconcileTemplates(set); err != nil {
+	item, _ := categoryItem(t, s, "custom")
+	if _, err := s.PatchTaxonomy("custom", ConfigurationPatch{Revision: item.Revision, Set: mapRaw("name.zh-CN", "我的名称")}); err != nil {
 		t.Fatal(err)
 	}
-	current, _ := s.TaxonomyItem("tags", "custom")
-	if current.Builtin || current.TemplateRef != nil || current.Defaults != nil || current.Revision != item.Revision || current.Name != item.Name {
-		t.Fatal("custom identity rebound", current)
+	set.Taxonomy.Categories = append(set.Taxonomy.Categories, presets.TaxonomyEntry{ID: "custom", Name: presets.Text{En: "Default name", ZhCN: "默认名称"}})
+	set.Apps[1].Spec.Categories = []string{"custom"}
+	if err := s.ReconcileTemplates(set); err != nil {
+		t.Fatal(err)
 	}
-	patch(t, s, set.Apps[0].Key(), map[string]any{"tags": []string{}})
-	var used *TaxonomyInUse
-	if err = s.DeleteTaxonomy(current.Kind, current.ID, current.Revision); !errors.As(err, &used) || used.References != 1 {
-		t.Fatal("valid preset-only reference lost", err)
+	current, _ := categoryItem(t, s, "custom")
+	if current.Builtin || current.Name.ZhCN != "我的名称" {
+		t.Fatal("preset took administrator ownership", current)
+	}
+	// The template reference now protects the administrator-owned category from cleanup.
+	patch(t, s, set.Apps[0].Key(), map[string]any{"categories": []string{}})
+	patch(t, s, set.Apps[1].Key(), map[string]any{"categories": []string{}})
+	if _, ok := categoryItem(t, s, "custom"); !ok {
+		t.Fatal("template-referenced category pruned")
 	}
 }

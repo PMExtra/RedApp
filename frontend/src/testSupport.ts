@@ -180,9 +180,9 @@ export async function selectValue(
 }
 
 export function configurationFixture(effective:Record<string,unknown>,revision=1,templateRef:string|null=null) {
- const spec={name:{en:'Test','zh-CN':'测试'},description:{en:'','zh-CN':''},icon:'',localized_icons:{en:'','zh-CN':''},instructions:{en:'','zh-CN':''},http_policy:{rules:[],auto_cleanup:[],stale_fallback:true},proxy:{mode:'inherit'},prewarm:{enabled:false,channels:[],platforms:[]},retention:{enabled:false,keep_latest:3},category:'',tags:[],...effective};
+ const spec={name:{en:'Test','zh-CN':'测试'},description:{en:'','zh-CN':''},icon:'',localized_icons:{en:'','zh-CN':''},instructions:{en:'','zh-CN':''},http_policy:{rules:[],auto_cleanup:[],stale_fallback:true},proxy:{mode:'inherit'},prewarm:{enabled:false,channels:[],platforms:[]},retention:{enabled:false,keep_latest:3},categories:[],tags:[],...effective};
  const fields:Record<string,{source:string;differs_from_template:boolean|null}>={};
- for(const path of ['name.en','name.zh-CN','description.en','description.zh-CN','icon','localized_icons.en','localized_icons.zh-CN','instructions.en','instructions.zh-CN','base_url','base_urls','source_strategy','cache_ttl_seconds','http_policy.rules','http_policy.auto_cleanup','http_policy.stale_fallback','proxy','prewarm','retention','category','tags'])fields[path]={source:templateRef?'inherited':'custom',differs_from_template:templateRef?false:null};
+ for(const path of ['name.en','name.zh-CN','description.en','description.zh-CN','icon','localized_icons.en','localized_icons.zh-CN','instructions.en','instructions.zh-CN','base_url','base_urls','source_strategy','cache_ttl_seconds','http_policy.rules','http_policy.auto_cleanup','http_policy.stale_fallback','proxy','prewarm','retention','categories','tags'])fields[path]={source:templateRef?'inherited':'custom',differs_from_template:templateRef?false:null};
  return {revision,instructions_revision:0,template_ref:templateRef,template_hash:templateRef?'a'.repeat(64):null,template_missing:false,defaults:templateRef?structuredClone(spec):null,overrides:{},effective:structuredClone(spec),fields,proxy_effective:{mode:'direct',source_scope:'global',source_id:'',dns:'local'}};
 }
 

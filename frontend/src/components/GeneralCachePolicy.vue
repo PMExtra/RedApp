@@ -6,7 +6,7 @@ import SwitchControl from "./SwitchControl.vue";
 import { computed } from "vue";
 import type { CachePolicy } from "../cachePolicy";
 import { useConfiguration } from "../composables/useConfiguration";
-import OverrideControl from "./OverrideControl.vue";
+import FieldReset from "./FieldReset.vue";
 import { errorText, t } from "../i18n";
 import MatcherInput from "./MatcherInput.vue";
 import DurationInput from "./DurationInput.vue";
@@ -14,7 +14,6 @@ const props = defineProps<{ application: string }>();
 const {
   draft,
   configuration,
-  touched,
   unsets,
   loading,
   saving,
@@ -24,6 +23,7 @@ const {
   save,
   mark,
   restore,
+  modified,
 } = useConfiguration<CachePolicy>(
   computed(() => `apps/${props.application}/configuration`),
   "http_policy",
@@ -59,6 +59,7 @@ function add(kind: RuleList) {
     </p>
     <form @submit.prevent="save">
       <fieldset v-if="draft" :disabled="busy">
+        <div class="field-heading">
         <SwitchControl
           v-model="draft.stale_fallback"
           @update:model-value="mark('stale_fallback')"
@@ -66,6 +67,15 @@ function add(kind: RuleList) {
           :label="t('Use stale cache on origin failure')"
           :disabled="busy"
         />
+        <FieldReset
+          :configuration="configuration"
+          path="http_policy.stale_fallback"
+          :label="t('Use stale cache on origin failure')"
+          :modified="modified('stale_fallback')"
+          :restored="unsets.has('stale_fallback')"
+          @reset="restore('stale_fallback')"
+        />
+        </div>
         <p class="muted small-text">
           {{
             t(
@@ -73,24 +83,18 @@ function add(kind: RuleList) {
             )
           }}
         </p>
-        <OverrideControl
-          :configuration="configuration"
-          path="http_policy.stale_fallback"
-          :custom="touched.has('stale_fallback')"
-          :restored="unsets.has('stale_fallback')"
-          @restore="restore('stale_fallback')"
-          @customize="mark('stale_fallback')"
-        />
         <section class="ttl-rules" @input="mark('rules')">
-          <h3>{{ t("Path TTL rules") }}</h3>
-          <OverrideControl
-            :configuration="configuration"
-            path="http_policy.rules"
-            :custom="touched.has('rules')"
-            :restored="unsets.has('rules')"
-            @restore="restore('rules')"
-            @customize="mark('rules')"
-          />
+          <div class="field-heading">
+            <h3>{{ t("Path TTL rules") }}</h3>
+            <FieldReset
+              :configuration="configuration"
+              path="http_policy.rules"
+              :label="t('Path TTL rules')"
+              :modified="modified('rules')"
+              :restored="unsets.has('rules')"
+              @reset="restore('rules')"
+            />
+          </div>
           <p class="muted">
             {{
               t(
@@ -164,15 +168,17 @@ function add(kind: RuleList) {
           />
         </section>
         <section class="auto-cleanup-rules" @input="mark('auto_cleanup')">
-          <h3>{{ t("Automatic cleanup rules") }}</h3>
-          <OverrideControl
-            :configuration="configuration"
-            path="http_policy.auto_cleanup"
-            :custom="touched.has('auto_cleanup')"
-            :restored="unsets.has('auto_cleanup')"
-            @restore="restore('auto_cleanup')"
-            @customize="mark('auto_cleanup')"
-          />
+          <div class="field-heading">
+            <h3>{{ t("Automatic cleanup rules") }}</h3>
+            <FieldReset
+              :configuration="configuration"
+              path="http_policy.auto_cleanup"
+              :label="t('Automatic cleanup rules')"
+              :modified="modified('auto_cleanup')"
+              :restored="unsets.has('auto_cleanup')"
+              @reset="restore('auto_cleanup')"
+            />
+          </div>
           <p class="muted">
             {{
               t(

@@ -156,7 +156,7 @@ func (s *Server) publicCatalogAPI(w http.ResponseWriter, r *http.Request, origin
 	}
 	reply(w, 200, struct {
 		store.Page[map[string]any]
-		Categories []store.TaxonomyLabel `json:"categories"`
+		Categories []store.CategoryCount `json:"categories"`
 	}{result, categories})
 	return true
 }
@@ -198,97 +198,5 @@ func (s *Server) homepageAPI(w http.ResponseWriter, r *http.Request) {
 		directoryError(w, err)
 	} else {
 		revisionReply(w, saved.Revision, saved)
-	}
-}
-func (s *Server) templateAPI(w http.ResponseWriter, r *http.Request, key string) {
-	template, ok, templateErr := s.DB.BoundApplicationTemplate(key)
-	if templateErr != nil {
-		directoryError(w, templateErr)
-		return
-	}
-	if !ok {
-		fail(w, 404, "No entity template matches this application")
-		return
-	}
-	if !queryAllowed(r) {
-		fail(w, 400, "Unexpected query")
-		return
-	}
-	if r.Method == http.MethodGet {
-		a, err := s.DB.Application(key)
-		if err != nil {
-			directoryError(w, err)
-			return
-		}
-		instructions, err := s.DB.Instructions(a.UID)
-		if err != nil {
-			directoryError(w, err)
-			return
-		}
-		groups := []string{"metadata", "icon", "instructions_en", "instructions_zh"}
-		if a.Provider == template.Application.Provider {
-			groups = append(groups, "source", "cache")
-		}
-		reply(w, 200, map[string]any{"template": template, "current": a, "instructions": instructions, "groups": groups})
-		return
-	}
-	if r.Method != http.MethodPost {
-		fail(w, 405, "Method not allowed")
-		return
-	}
-	var input store.TemplateReset
-	if err := decode(w, r, &input); err != nil {
-		fail(w, 400, "Invalid template reset")
-		return
-	}
-	s.directoryMu.Lock()
-	defer s.directoryMu.Unlock()
-	a, err := s.DB.ResetApplicationTemplate(key, input)
-	if err != nil {
-		directoryError(w, err)
-	} else {
-		reply(w, 200, map[string]any{"app": a})
-	}
-}
-
-func (s *Server) vendorTemplateAPI(w http.ResponseWriter, r *http.Request, id string) {
-	template, ok, templateErr := s.DB.BoundVendorTemplate(id)
-	if templateErr != nil {
-		directoryError(w, templateErr)
-		return
-	}
-	if !ok {
-		fail(w, 404, "No entity template matches this vendor")
-		return
-	}
-	if !queryAllowed(r) {
-		fail(w, 400, "Unexpected query")
-		return
-	}
-	if r.Method == http.MethodGet {
-		v, err := s.DB.Vendor(id)
-		if err != nil {
-			directoryError(w, err)
-		} else {
-			reply(w, 200, map[string]any{"template": map[string]any{"application": template}, "current": v, "instructions": store.Instructions{}, "groups": []string{"metadata", "icon"}})
-		}
-		return
-	}
-	if r.Method != http.MethodPost {
-		fail(w, 405, "Method not allowed")
-		return
-	}
-	var input store.TemplateReset
-	if err := decode(w, r, &input); err != nil {
-		fail(w, 400, "Invalid template reset")
-		return
-	}
-	s.directoryMu.Lock()
-	defer s.directoryMu.Unlock()
-	v, err := s.DB.ResetVendorTemplate(id, input)
-	if err != nil {
-		directoryError(w, err)
-	} else {
-		reply(w, 200, map[string]any{"vendor": v})
 	}
 }

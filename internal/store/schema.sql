@@ -1,6 +1,6 @@
 PRAGMA foreign_keys=ON;
 
-CREATE TABLE schema_version(version INTEGER NOT NULL CHECK(version=10));
+CREATE TABLE schema_version(version INTEGER NOT NULL CHECK(version=11));
 
 CREATE TABLE directory_state(
   id INTEGER PRIMARY KEY CHECK(id=1), seeded INTEGER NOT NULL CHECK(seeded IN (0,1))
@@ -151,7 +151,7 @@ CREATE TABLE admin(
   id INTEGER PRIMARY KEY CHECK(id=1), hash BLOB NOT NULL, revision INTEGER NOT NULL
 );
 
-INSERT INTO schema_version VALUES(10);
+INSERT INTO schema_version VALUES(11);
 INSERT INTO directory_state VALUES(1,0);
 INSERT INTO metric_history_state VALUES(1,0);
 CREATE INDEX metric_samples_time ON metric_samples(t_s);
@@ -299,24 +299,22 @@ CREATE TABLE prewarm_items(job_id TEXT NOT NULL REFERENCES prewarm_jobs(id) ON D
 CREATE TABLE prewarm_success(app_uid TEXT NOT NULL REFERENCES applications(uid) ON DELETE CASCADE,
  channel TEXT NOT NULL,fingerprint TEXT NOT NULL,PRIMARY KEY(app_uid,channel));
 
-CREATE TABLE taxonomy(
- kind TEXT NOT NULL CHECK(kind IN ('categories','tags')),id TEXT NOT NULL,
+CREATE TABLE categories(
+ id TEXT PRIMARY KEY,
  name_en TEXT NOT NULL,name_zh_cn TEXT NOT NULL,revision INTEGER NOT NULL,
  builtin INTEGER NOT NULL,present INTEGER NOT NULL,
- default_en TEXT,default_zh_cn TEXT,override_en TEXT,override_zh_cn TEXT,
- PRIMARY KEY(kind,id)
+ default_en TEXT,default_zh_cn TEXT,override_en TEXT,override_zh_cn TEXT
 );
-CREATE TABLE taxonomy_state(id INTEGER PRIMARY KEY CHECK(id=1),public_revision INTEGER NOT NULL);
-INSERT INTO taxonomy_state VALUES(1,1);
-CREATE TABLE application_categories(app_uid TEXT PRIMARY KEY REFERENCES applications(uid) ON DELETE CASCADE,
- kind TEXT NOT NULL DEFAULT 'categories' CHECK(kind='categories'),category_id TEXT NOT NULL,
- FOREIGN KEY(kind,category_id) REFERENCES taxonomy(kind,id));
+CREATE TABLE category_state(id INTEGER PRIMARY KEY CHECK(id=1),public_revision INTEGER NOT NULL);
+INSERT INTO category_state VALUES(1,1);
+CREATE TABLE application_categories(app_uid TEXT NOT NULL REFERENCES applications(uid) ON DELETE CASCADE,
+ category_id TEXT NOT NULL REFERENCES categories(id),
+ PRIMARY KEY(app_uid,category_id));
 CREATE INDEX application_category_filter ON application_categories(category_id,app_uid);
 CREATE TABLE application_tags(app_uid TEXT NOT NULL REFERENCES applications(uid) ON DELETE CASCADE,
- kind TEXT NOT NULL DEFAULT 'tags' CHECK(kind='tags'),tag_id TEXT NOT NULL,
- PRIMARY KEY(app_uid,tag_id),FOREIGN KEY(kind,tag_id) REFERENCES taxonomy(kind,id));
-CREATE INDEX application_tag_related ON application_tags(tag_id,app_uid);
-CREATE TABLE template_taxonomy_refs(template_key TEXT NOT NULL,kind TEXT NOT NULL,id TEXT NOT NULL,
- PRIMARY KEY(template_key,kind,id),FOREIGN KEY(kind,id) REFERENCES taxonomy(kind,id));
-CREATE INDEX template_taxonomy_usage ON template_taxonomy_refs(kind,id,template_key);
+ ordinal INTEGER NOT NULL,tag TEXT NOT NULL,folded TEXT NOT NULL,
+ PRIMARY KEY(app_uid,folded),UNIQUE(app_uid,ordinal));
+CREATE TABLE template_category_refs(template_key TEXT NOT NULL,category_id TEXT NOT NULL REFERENCES categories(id),
+ PRIMARY KEY(template_key,category_id));
+CREATE INDEX template_category_usage ON template_category_refs(category_id,template_key);
 CREATE TABLE configuration_import_receipts(id TEXT PRIMARY KEY,result_json BLOB NOT NULL,created_s INTEGER NOT NULL);

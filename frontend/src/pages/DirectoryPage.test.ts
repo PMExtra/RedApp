@@ -815,7 +815,9 @@ it("saves optional vendor language logos through existing uploads without changi
     return read(url);
   }));
   const { wrapper, router } = await mountPage("/admin/vendors/openai/settings");
-  expect(wrapper.get(".vendor-language-icons").attributes("open")).toBeUndefined();
+  // Default and language logos are visible side by side; empty language logos fall back.
+  expect(wrapper.findAll(".logo-slot").map((slot) => slot.attributes("aria-label"))).toEqual(["Default logo", "English logo", "Chinese logo"]);
+  expect(wrapper.findAll(".logo-slot")[1]!.text()).toContain("Uses the default logo");
   for (const name of ["icon-en", "icon-zh-CN"]) {
     const upload = wrapper.get(`input[name="${name}"]`);
     Object.defineProperty(upload.element, "files", { value: [new File(["safe svg fixture"], "logo.svg", { type: "image/svg+xml" })] });
@@ -834,7 +836,7 @@ it("saves optional vendor language logos through existing uploads without changi
   await wrapper.get(".directory-editor form").trigger("submit"); await flushPromises();
   expect(vendors[0]!.localized_icons?.en).toBe("");
   await router.push("/admin/vendors/openai/apps/codex/settings"); await flushPromises();
-  expect(wrapper.find(".vendor-language-icons").exists()).toBe(false);
+  expect(wrapper.findAll(".logo-slot").map((slot) => slot.attributes("aria-label"))).toEqual(["Icon"]);
   wrapper.unmount();
 });
 
@@ -915,6 +917,14 @@ it("mutates table availability with CAS, refreshes filtered last pages, and conf
   const {wrapper,router}=await mountPage('/admin/vendors/openai/apps?state=enabled');
   const rows=()=>wrapper.findAll('.application-table tbody tr');
   expect(rows()[0]!.get('.danger-link').attributes('disabled')).toBeDefined();
+  // The disabled button cannot receive hover, so its focusable wrapper carries the reason.
+  const reason = rows()[0]!.get('.disabled-reason');
+  expect(reason.attributes('tabindex')).toBe('0');
+  expect(reason.get('[role=tooltip]').text()).toBe('Preset templates cannot be deleted. You can disable them instead.');
+  expect(reason.attributes('aria-describedby')).toBe(reason.get('[role=tooltip]').attributes('id'));
+  setLanguage('zh-CN'); await flushPromises();
+  expect(rows()[0]!.get('.disabled-reason [role=tooltip]').text()).toBe('预置模板不可删除，可以禁用');
+  setLanguage('en'); await flushPromises();
   expect(rows()[0]!.get('.application-row-actions a').attributes('href')).toContain('/settings');
   expect(wrapper.find('.vendor-applications h2').exists()).toBe(false);
   expect(wrapper.get('.table-help button').attributes('aria-describedby')).toBe(wrapper.get('.table-help [role=tooltip]').attributes('id'));
@@ -967,13 +977,65 @@ it('does not submit unchanged configuration and sends only the complete proxy le
  const editor=wrapper.get('.directory-editor');
  await editor.get('form').trigger('submit');await flushPromises();expect(fetch.mock.calls.filter(([,init])=>init?.method==='PATCH')).toHaveLength(0);
  const section=editor.get('.proxy-section');
+ expect(section.text()).toContain('Use parent setting');expect(section.text()).not.toContain('parent proxy');
  for(const mode of ['direct','url','inherit']){
   await selectValue(section,mode);
-  if(mode==='url')await section.get('input').setValue('socks5://user:fixture@proxy.example:1080');
+  if(mode==='url'){
+   // Mode and URL share one wrapping row; the URL input is never inside the menu.
+   expect(section.find('.proxy-controls > .proxy-mode').exists()).toBe(true);
+   expect(section.find('.proxy-controls > input.proxy-url').exists()).toBe(true);
+   await section.get('input').setValue('socks5://user:fixture@proxy.example:1080');
+  }
   await editor.get('form').trigger('submit');await flushPromises();
   const body=JSON.parse(fetch.mock.calls.filter(([,init])=>init?.method==='PATCH').at(-1)![1]!.body as string);
   expect(Object.keys(body.set)).toEqual(['proxy']);expect(body.unset).toEqual([]);
   expect(body.set.proxy).toEqual(mode==='url'?{mode,url:'socks5://user:fixture@proxy.example:1080'}:{mode});
  }
  wrapper.unmount();
+});
+
+it("shows field resets only for overrides or edits and submits only edited and reset fields", async () => {
+  apps[0]!.revision = 9;
+  const bound = () => {
+    const config = configurationFixture({ ...(apps[0] as unknown as Record<string, unknown>), name: { en: "Custom Codex", "zh-CN": apps[0]!.name["zh-CN"] } }, 9, "openai/codex");
+    (config.defaults as { name: { en: string } }).name.en = "Codex";
+    config.fields["name.en"] = { source: "custom", differs_from_template: true };
+    return config;
+  };
+  let conflict = true;
+  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/configuration") && init?.method === "PATCH") {
+      if (conflict) return response({ error: { code: "DIRECTORY_REVISION_CONFLICT" } }, 409);
+      return response(applyConfigurationPatch(apps[0]!, JSON.parse(init.body as string)));
+    }
+    if (url === "/admin/api/apps/openai/codex/configuration") return response(bound());
+    return read(url);
+  });
+  vi.stubGlobal("fetch", fetch);
+  const { wrapper } = await mountPage("/admin/vendors/openai/apps/codex/settings");
+  const editor = wrapper.get(".directory-editor");
+  const resets = () => editor.findAll(".field-reset").map((button) => button.attributes("aria-label"));
+  // Only the stored override offers a reset; there is no bulk template/custom list.
+  expect(resets()).toEqual(["Reset: Name · English"]);
+  expect(editor.find(".overlay-field-states").exists()).toBe(false);
+  await editor.get('[name="description-en"]').setValue("Draft only");
+  expect(resets()).toEqual(["Reset: Name · English", "Reset: Description · English"]);
+  await editor.get('[aria-label="Reset: Description · English"]').trigger("click");
+  expect((editor.get('[name="description-en"]').element as HTMLTextAreaElement).value).toBe(apps[0]!.description.en);
+  await editor.get('[aria-label="Reset: Name · English"]').trigger("click");
+  expect((editor.get('[name="name-en"]').element as HTMLInputElement).value).toBe("Codex");
+  expect(resets()).toEqual([]);
+  // The same visible value is still a distinct explicit override.
+  await editor.get('[name="name-zh-CN"]').setValue(apps[0]!.name["zh-CN"]);
+  await editor.get("form").trigger("submit");
+  await flushPromises();
+  const patches = () => fetch.mock.calls.filter(([, init]) => init?.method === "PATCH").map(([, init]) => JSON.parse(init!.body as string));
+  expect(patches()[0]).toEqual({ revision: 9, set: { "name.zh-CN": apps[0]!.name["zh-CN"] }, unset: ["name.en"] });
+  expect(wrapper.get("[role=alert]").text()).toContain("draft is preserved");
+  expect((editor.get('[name="name-en"]').element as HTMLInputElement).value).toBe("Codex");
+  conflict = false;
+  await editor.get("form").trigger("submit");
+  await flushPromises();
+  expect(patches()[1]).toEqual(patches()[0]);
+  wrapper.unmount();
 });

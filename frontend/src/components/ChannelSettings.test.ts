@@ -40,7 +40,8 @@ it("does not write an unchanged TTL and submits only the TTL leaf with template 
         .body as string,
     ),
   ).toEqual({ revision: 3, set: { cache_ttl_seconds: 120 }, unset: [] });
-  await wrapper.get(".override-control button").trigger("click");
+  await wrapper.get(".field-reset").trigger("click");
+  expect(wrapper.find(".field-reset").exists()).toBe(false);
   await wrapper.get("form").trigger("submit");
   await flushPromises();
   expect(

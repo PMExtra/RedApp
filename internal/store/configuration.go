@@ -60,6 +60,8 @@ type ConfigurationPatch struct {
 	Revision int64                      `json:"revision"`
 	Set      map[string]json.RawMessage `json:"set"`
 	Unset    []string                   `json:"unset"`
+	// NewCategories are typed names added to the categories set in the same transaction.
+	NewCategories []string `json:"new_categories,omitempty"`
 }
 
 // File/API format has no nullable field. Operation keys are validated separately.
@@ -145,7 +147,7 @@ func paths(kind string) []string {
 	if kind == "Vendor" {
 		return append(out, "localized_icons.en", "localized_icons.zh-CN")
 	}
-	return append(out, "instructions.en", "instructions.zh-CN", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "retention", "prewarm", "category", "tags")
+	return append(out, "instructions.en", "instructions.zh-CN", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "retention", "prewarm", "categories", "tags")
 }
 func leaf(in Object, path string) (any, bool) {
 	parts := strings.Split(path, ".")
@@ -289,10 +291,13 @@ func (st *configurationState) effective(kind, uid string) (Object, error) {
 		if err := strict(effective, &spec); err != nil {
 			return nil, err
 		}
+		if spec.Categories == nil {
+			spec.Categories = []string{}
+		}
 		if spec.Tags == nil {
 			spec.Tags = []string{}
 		}
-		effective["category"] = spec.Category
+		effective["categories"] = spec.Categories
 		effective["tags"] = spec.Tags
 		if spec.Prewarm != nil {
 			if err := spec.Prewarm.Validate(spec.Provider); err != nil {
@@ -646,7 +651,7 @@ func vendorSpec(v Vendor) Object {
 type appConfigurationSpec = presets.AppSpec
 
 func appSpec(a Application, instructions LocalizedText, policy cachepolicy.Config) Object {
-	spec := appConfigurationSpec{Category: a.Category, Tags: append([]string{}, a.Tags...), Proxy: networkproxy.Inherit(), Name: presets.Text{En: a.Name.En, ZhCN: a.Name.ZhCN}, Description: presets.Text{En: a.Description.En, ZhCN: a.Description.ZhCN}, Icon: a.Icon, Provider: a.Provider, BaseURL: a.BaseURL, BaseURLs: a.BaseURLs, SourceStrategy: a.SourceStrategy, CacheTTLSeconds: a.CacheTTLSeconds, Instructions: presets.Text{En: instructions.En, ZhCN: instructions.ZhCN}}
+	spec := appConfigurationSpec{Categories: append([]string{}, a.Categories...), Tags: append([]string{}, a.Tags...), Proxy: networkproxy.Inherit(), Name: presets.Text{En: a.Name.En, ZhCN: a.Name.ZhCN}, Description: presets.Text{En: a.Description.En, ZhCN: a.Description.ZhCN}, Icon: a.Icon, Provider: a.Provider, BaseURL: a.BaseURL, BaseURLs: a.BaseURLs, SourceStrategy: a.SourceStrategy, CacheTTLSeconds: a.CacheTTLSeconds, Instructions: presets.Text{En: instructions.En, ZhCN: instructions.ZhCN}}
 	if presets.VersionsProvider(a.Provider) {
 		spec.Retention = presets.DefaultRetention()
 		spec.Prewarm = presets.DefaultPrewarm()
@@ -722,17 +727,18 @@ func materialize(st *configurationState, before configurationState) error {
 		if err = strict(spec, &typed); err != nil {
 			return err
 		}
-		tags, taxErr := presets.NormalizeTaxonomy(typed.Category, typed.Tags)
-		if taxErr != nil {
+		categories, catErr := presets.NormalizeCategories(typed.Categories)
+		tags, tagErr := presets.NormalizeTags(typed.Tags)
+		if catErr != nil || tagErr != nil {
 			return ErrInvalidDirectory
 		}
 		if a.DeletedAt == nil {
-			if err = st.validateTaxonomy(typed.Category, tags); err != nil {
+			if err = st.validateCategories(categories); err != nil {
 				return err
 			}
-			a.Category, a.Tags = typed.Category, tags
+			a.Categories, a.Tags = categories, tags
 		} else {
-			a.Category, a.Tags = "", []string{}
+			a.Categories, a.Tags = []string{}, []string{}
 		}
 		if typed.Provider != a.Provider {
 			return fmt.Errorf("%w: Provider is immutable", ErrInvalidDirectory)
@@ -1053,11 +1059,11 @@ func writeConfigurationState(tx *sql.Tx, old, next configurationState) error {
 				return err
 			}
 		}
-		if !exists || prev.Category != a.Category || !reflect.DeepEqual(prev.Tags, a.Tags) {
+		if !exists || !reflect.DeepEqual(prev.Categories, a.Categories) || !reflect.DeepEqual(prev.Tags, a.Tags) {
 			taxonomyChanged = true
 		}
 		before, after := old.Configs[configKey("App", a.UID)], next.Configs[configKey("App", a.UID)]
-		for _, path := range []string{"category", "tags"} {
+		for _, path := range []string{"categories", "tags"} {
 			x, xok := leaf(before.Overrides, path)
 			y, yok := leaf(after.Overrides, path)
 			if xok != yok || !reflect.DeepEqual(x, y) {
@@ -1065,8 +1071,13 @@ func writeConfigurationState(tx *sql.Tx, old, next configurationState) error {
 			}
 		}
 	}
-	if taxonomyChanged {
-		if _, err := tx.Exec(`UPDATE taxonomy_state SET public_revision=public_revision+1 WHERE id=1`); err != nil {
+	// Every association change in this transaction, including deletes, copies and imports, prunes unused categories.
+	removed, err := cleanupCategories(tx)
+	if err != nil {
+		return err
+	}
+	if taxonomyChanged || removed > 0 {
+		if err := bumpCategoryRevision(tx); err != nil {
 			return err
 		}
 	}
@@ -1137,20 +1148,18 @@ func applyPatch(c *ownedConfig, kind string, patch ConfigurationPatch) error {
 	}
 	used := map[string]bool{}
 	for p := range patch.Set {
-		if p == "category" {
-			var value string
-			if json.Unmarshal(patch.Set[p], &value) != nil || bytes.Equal(bytes.TrimSpace(patch.Set[p]), []byte("null")) {
+		if p == "categories" || p == "tags" {
+			var values []string
+			if json.Unmarshal(patch.Set[p], &values) != nil || bytes.Equal(bytes.TrimSpace(patch.Set[p]), []byte("null")) {
 				return ErrInvalidDirectory
 			}
-		}
-		if p == "tags" {
-			var tags []string
-			if json.Unmarshal(patch.Set[p], &tags) != nil || bytes.Equal(bytes.TrimSpace(patch.Set[p]), []byte("null")) {
-				return ErrInvalidDirectory
+			normalize := presets.NormalizeTags
+			if p == "categories" {
+				normalize = presets.NormalizeCategories
 			}
-			normalized, err := presets.NormalizeTaxonomy("", tags)
+			normalized, err := normalize(values)
 			if err != nil {
-				return ErrInvalidDirectory
+				return fmt.Errorf("%w: %s", ErrInvalidDirectory, err)
 			}
 			patch.Set[p] = encode(normalized)
 		}
@@ -1241,6 +1250,24 @@ func (s *Store) patchConfiguration(kind, key string, patch ConfigurationPatch, e
 		}
 		if instructionRevision != nil && st.Instructions[uid].Revision != *instructionRevision {
 			return ErrConflict
+		}
+		if len(patch.NewCategories) > 0 {
+			raw, ok := patch.Set["categories"]
+			var ids []string
+			if kind != "App" || !ok || json.Unmarshal(raw, &ids) != nil {
+				return fmt.Errorf("%w: new categories require the categories field", ErrInvalidDirectory)
+			}
+			created, err := st.resolveNewCategories(patch.NewCategories)
+			if err != nil {
+				return err
+			}
+			// Copy before adding resolved IDs so the caller's patch is never changed.
+			set := make(map[string]json.RawMessage, len(patch.Set))
+			for key, value := range patch.Set {
+				set[key] = value
+			}
+			set["categories"] = encode(append(ids, created...))
+			patch.Set = set
 		}
 		if len(patch.Set) == 0 && len(patch.Unset) == 0 && enabled == nil {
 			return nil
@@ -1338,7 +1365,8 @@ func snapshots(set presets.Set) ([]templateSnapshot, error) {
 	}
 	for _, a := range set.Apps {
 		normalized := a.Spec
-		normalized.Tags, _ = presets.NormalizeTaxonomy(normalized.Category, normalized.Tags)
+		normalized.Categories, _ = presets.NormalizeCategories(normalized.Categories)
+		normalized.Tags, _ = presets.NormalizeTags(normalized.Tags)
 		normalized.Proxy = normalizedProxy(normalized.Proxy)
 		input := ApplicationInput{ID: a.Metadata.ID, Name: LocalizedText{a.Spec.Name.En, a.Spec.Name.ZhCN}, Description: LocalizedText{a.Spec.Description.En, a.Spec.Description.ZhCN}, Provider: a.Spec.Provider, BaseURL: a.Spec.BaseURL, BaseURLs: a.Spec.BaseURLs, SourceStrategy: a.Spec.SourceStrategy, CacheTTLSeconds: a.Spec.CacheTTLSeconds}
 		if err := validateApplication(&input); err != nil {
@@ -1564,11 +1592,12 @@ func (s *Store) CreateConfiguredVendor(in VendorInput, ref *string) (Vendor, err
 	return s.Vendor(in.ID)
 }
 func (s *Store) CreateConfiguredApplication(vendor string, in ApplicationInput, ref *string) (Application, error) {
-	tags, taxErr := presets.NormalizeTaxonomy(in.Category, in.Tags)
-	if taxErr != nil {
+	categories, catErr := presets.NormalizeCategories(in.Categories)
+	tags, tagErr := presets.NormalizeTags(in.Tags)
+	if catErr != nil || tagErr != nil {
 		return Application{}, ErrInvalidDirectory
 	}
-	in.Tags = tags
+	in.Categories, in.Tags = categories, tags
 	err := s.changeConfiguration(func(st *configurationState) error {
 		for _, a := range st.Applications {
 			if a.Key == vendor+"/"+in.ID {
@@ -1594,7 +1623,7 @@ func (s *Store) CreateConfiguredApplication(vendor string, in ApplicationInput, 
 		if err != nil {
 			return err
 		}
-		a := Application{Category: in.Category, Tags: in.Tags, UID: uid, ID: in.ID, Key: vendor + "/" + in.ID, VendorID: vendor, VendorUID: parent.UID, Name: in.Name, Description: in.Description, Icon: in.Icon, Provider: in.Provider, BaseURL: in.BaseURL, BaseURLs: in.BaseURLs, SourceStrategy: in.SourceStrategy, CacheTTLSeconds: in.CacheTTLSeconds, Enabled: in.Enabled, Revision: 1, SourceEpoch: 1}
+		a := Application{Categories: in.Categories, Tags: in.Tags, UID: uid, ID: in.ID, Key: vendor + "/" + in.ID, VendorID: vendor, VendorUID: parent.UID, Name: in.Name, Description: in.Description, Icon: in.Icon, Provider: in.Provider, BaseURL: in.BaseURL, BaseURLs: in.BaseURLs, SourceStrategy: in.SourceStrategy, CacheTTLSeconds: in.CacheTTLSeconds, Enabled: in.Enabled, Revision: 1, SourceEpoch: 1}
 		c := ownedConfig{Overrides: Object{}, Spec: appSpec(a, LocalizedText{}, cachepolicy.Empty())}
 		if ref != nil {
 			t, ok := st.Templates[templateKey("App", *ref)]
@@ -1626,53 +1655,6 @@ func (s *Store) PatchApplicationFields(key string, revision int64, set map[strin
 	return s.Application(key)
 }
 
-// Template views follow the stored binding, independently of public identity.
-func (s *Store) BoundApplicationTemplate(key string) (EntityTemplate, bool, error) {
-	st, err := s.configurationState()
-	if err != nil {
-		return EntityTemplate{}, false, err
-	}
-	var owner Application
-	for _, a := range st.Applications {
-		if a.Key == key {
-			owner = a
-		}
-	}
-	if owner.UID == "" {
-		return EntityTemplate{}, false, sql.ErrNoRows
-	}
-	c := st.Configs[configKey("App", owner.UID)]
-	if c.Ref == nil {
-		return EntityTemplate{}, false, nil
-	}
-	t := st.Templates[templateKey("App", *c.Ref)]
-	var spec presets.AppSpec
-	if err = strict(t.Spec, &spec); err != nil {
-		return EntityTemplate{}, false, err
-	}
-	vendor, id, _ := strings.Cut(*c.Ref, "/")
-	var vs presets.VendorSpec
-	if parent, ok := st.Templates[templateKey("Vendor", vendor)]; ok {
-		if err = strict(parent.Spec, &vs); err != nil {
-			return EntityTemplate{}, false, err
-		}
-	}
-	return EntityTemplate{Vendor: VendorInput{ID: vendor, Name: LocalizedText{vs.Name.En, vs.Name.ZhCN}, Description: LocalizedText{vs.Description.En, vs.Description.ZhCN}, Icon: vs.Icon, LocalizedIcons: LocalizedText{vs.LocalizedIcons.En, vs.LocalizedIcons.ZhCN}}, Application: ApplicationInput{ID: id, Name: LocalizedText{spec.Name.En, spec.Name.ZhCN}, Description: LocalizedText{spec.Description.En, spec.Description.ZhCN}, Icon: spec.Icon, Provider: spec.Provider, BaseURL: spec.BaseURL, BaseURLs: spec.BaseURLs, SourceStrategy: spec.SourceStrategy, CacheTTLSeconds: spec.CacheTTLSeconds}, Instructions: LocalizedText{spec.Instructions.En, spec.Instructions.ZhCN}}, true, nil
-}
-func (s *Store) BoundVendorTemplate(id string) (VendorInput, bool, error) {
-	c, err := s.VendorConfiguration(id)
-	if err != nil {
-		return VendorInput{}, false, err
-	}
-	if c.TemplateRef == nil {
-		return VendorInput{}, false, nil
-	}
-	var spec presets.VendorSpec
-	if err = strict(c.Defaults, &spec); err != nil {
-		return VendorInput{}, false, err
-	}
-	return VendorInput{ID: *c.TemplateRef, Name: LocalizedText{spec.Name.En, spec.Name.ZhCN}, Description: LocalizedText{spec.Description.En, spec.Description.ZhCN}, Icon: spec.Icon, LocalizedIcons: LocalizedText{spec.LocalizedIcons.En, spec.LocalizedIcons.ZhCN}}, true, nil
-}
 func (s *Store) canonicalApplicationProtected(key string) (bool, error) {
 	if _, ok := BuiltinApplicationTemplate(key); ok {
 		return true, nil

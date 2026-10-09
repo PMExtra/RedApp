@@ -52,12 +52,20 @@ it("withholds vendor identity until loaded, clears it on navigation, ignores lat
   wrapper.unmount();
 });
 
-it("composes category with search and page URLs and restores it on back navigation", async()=>{
- const fetch=vi.fn(async(url:string)=>response(url.startsWith('/api/catalog')?{items:[],page:Number(new URL(url,'http://local').searchParams.get('page')||1),total:50,total_pages:3,categories:[{id:'tools',name:{en:'Tools','zh-CN':'工具'}}]}:boot));vi.stubGlobal('fetch',fetch);
- const {wrapper,router}=await mountPage('/all?category=tools&q=cli&page=2');
- expect(fetch.mock.calls.some(([url])=>url.includes('category=tools')&&url.includes('q=cli')&&url.includes('page=2'))).toBe(true);
- setLanguage('zh-CN');await flushPromises();expect(wrapper.get('[role="combobox"][aria-label="分类"]').text()).toContain('工具');setLanguage('en');await flushPromises();
- await wrapper.get('[aria-label="Next page"]').trigger('click');await flushPromises();expect(router.currentRoute.value.query).toEqual({category:'tools',q:'cli',page:'3'});
- await wrapper.get('[role="combobox"][aria-label="Category"]').trigger('click');await wrapper.get('[role="option"][data-value=""]').trigger('click');await flushPromises();expect(router.currentRoute.value.query).toEqual({q:'cli'});
- router.back();await flushPromises();await flushPromises();expect(router.currentRoute.value.query.category).toBe('tools');expect(wrapper.get('[role="combobox"][aria-label="Category"]').text()).toContain('Tools');wrapper.unmount();
+it("lists categories with site-wide counts, composes them with search and pages, and restores them on back navigation", async()=>{
+ const categories=[{id:'efficiency',name:{en:'Efficiency','zh-CN':'效率工具'},count:5},{id:'network',name:{en:'Network','zh-CN':'网络工具'},count:2}];
+ const fetch=vi.fn(async(url:string)=>response(url.startsWith('/api/catalog')?{items:[],page:Number(new URL(url,'http://local').searchParams.get('page')||1),total:50,total_pages:3,categories}:boot));vi.stubGlobal('fetch',fetch);
+ const {wrapper,router}=await mountPage('/all?category=network&q=cli&page=2');
+ expect(fetch.mock.calls.some(([url])=>url.includes('category=network')&&url.includes('q=cli')&&url.includes('page=2'))).toBe(true);
+ const chips=()=>wrapper.findAll('.category-filter .category-chip');
+ expect(chips().map(chip=>chip.text())).toEqual(['All categories','Efficiency(5)','Network(2)']);
+ expect(chips()[2]!.attributes('aria-current')).toBe('page');expect(chips()[0]!.attributes('aria-current')).toBeUndefined();
+ setLanguage('zh-CN');await flushPromises();expect(wrapper.get('.category-filter').text()).toBe('分类：全部分类效率工具(5)网络工具(2)');setLanguage('en');await flushPromises();
+ await wrapper.get('[aria-label="Next page"]').trigger('click');await flushPromises();expect(router.currentRoute.value.query).toEqual({category:'network',q:'cli',page:'3'});
+ // Switching category keeps the search text and restarts paging.
+ await chips()[1]!.trigger('click');await flushPromises();expect(router.currentRoute.value.query).toEqual({category:'efficiency',q:'cli'});
+ await chips()[0]!.trigger('click');await flushPromises();expect(router.currentRoute.value.query).toEqual({q:'cli'});
+ expect(chips()[0]!.attributes('aria-current')).toBe('page');
+ router.back();await flushPromises();await flushPromises();expect(router.currentRoute.value.query.category).toBe('efficiency');expect(chips()[1]!.attributes('aria-current')).toBe('page');
+ await router.push('/openai');await flushPromises();expect(wrapper.find('.category-filter').exists()).toBe(false);wrapper.unmount();
 });

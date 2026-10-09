@@ -85,7 +85,7 @@ onUnmounted(() => clearTimeout(debounce));
     </div>
     <ConfigurationExchange v-if="importing" action="import" @close="importing=false" @applied="list.reload" />
     <div class="directory-toolbar"><IconButton icon="upload" :label="t('Import configuration')" @click="importing=true" />
-      <RouterLink to="/admin/taxonomy" class="icon-button" :title="t('Manage categories and tags')" :aria-label="t('Manage categories and tags')"><Icon name="tags" /></RouterLink>
+      <RouterLink to="/admin/categories" class="icon-button" :title="t('Manage categories')" :aria-label="t('Manage categories')"><Icon name="tags" /></RouterLink>
       <label class="directory-search search-field"
         ><span class="sr-only">{{ t("Search vendors and applications") }}</span
         ><Icon name="search" class="search-input-icon" /><input

@@ -3,7 +3,6 @@ package store
 import (
 	"errors"
 	"github.com/PMExtra/RedApp/presets"
-	"strings"
 )
 
 type EntityTemplate struct {
@@ -45,46 +44,6 @@ var ErrBuiltinTemplate = errors.New("Applications matching a built-in template c
 
 func (s *Store) EnsureEntityTemplates() error { return s.ReconcileTemplates(presets.Embedded()) }
 
-type TemplateReset struct {
-	Revision             int64    `json:"revision"`
-	InstructionsRevision int64    `json:"instructions_revision"`
-	Groups               []string `json:"groups"`
-}
-
-func (s *Store) ResetApplicationTemplate(key string, in TemplateReset) (Application, error) {
-	fields := map[string][]string{"metadata": {"name.en", "name.zh-CN", "description.en", "description.zh-CN"}, "icon": {"icon"}, "instructions_en": {"instructions.en"}, "instructions_zh": {"instructions.zh-CN"}, "source": {"base_url", "base_urls", "source_strategy"}, "cache": {"cache_ttl_seconds"}}
-	unset, err := resetFields(in.Groups, fields)
-	if err != nil {
-		return Application{}, err
-	}
-	var expected *int64
-	for _, p := range unset {
-		if strings.HasPrefix(p, "instructions.") {
-			expected = &in.InstructionsRevision
-		}
-	}
-	if err = s.patchConfiguration("App", key, ConfigurationPatch{Revision: in.Revision, Unset: unset}, nil, expected); err != nil {
-		return Application{}, err
-	}
-	return s.Application(key)
-}
-func resetFields(groups []string, fields map[string][]string) ([]string, error) {
-	if len(groups) == 0 {
-		return nil, ErrInvalidDirectory
-	}
-	seen := map[string]bool{}
-	var out []string
-	for _, g := range groups {
-		p, ok := fields[g]
-		if !ok || seen[g] {
-			return nil, ErrInvalidDirectory
-		}
-		seen[g] = true
-		out = append(out, p...)
-	}
-	return out, nil
-}
-
 func BuiltinVendorTemplate(id string) (VendorInput, bool) {
 	for _, value := range presets.Embedded().Vendors {
 		if value.Metadata.ID == id {
@@ -92,14 +51,4 @@ func BuiltinVendorTemplate(id string) (VendorInput, bool) {
 		}
 	}
 	return VendorInput{}, false
-}
-func (s *Store) ResetVendorTemplate(id string, in TemplateReset) (Vendor, error) {
-	unset, err := resetFields(in.Groups, map[string][]string{"metadata": {"name.en", "name.zh-CN", "description.en", "description.zh-CN"}, "icon": {"icon", "localized_icons.en", "localized_icons.zh-CN"}})
-	if err != nil {
-		return Vendor{}, err
-	}
-	if err = s.patchConfiguration("Vendor", id, ConfigurationPatch{Revision: in.Revision, Unset: unset}, nil, nil); err != nil {
-		return Vendor{}, err
-	}
-	return s.Vendor(id)
 }

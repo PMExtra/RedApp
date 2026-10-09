@@ -47,7 +47,7 @@ func TestAdminNotesPrivateCASIsolationAndRestart(t *testing.T) {
 		}
 	}
 	// The ordinary entity DTOs and templates never acquire notes fields or content.
-	for _, path := range []string{"/admin/api/vendors/openai", "/admin/api/apps/openai/codex", "/admin/api/vendors/openai/template", "/admin/api/apps/openai/codex/template", "/api/bootstrap", "/api/catalog", "/api/home", "/api/search?q=PRIVATE-NOTES-SENTINEL", "/api/vendors/openai", "/api/apps/openai/codex/instructions/document?lang=en", "/openai", "/openai/codex"} {
+	for _, path := range []string{"/admin/api/vendors/openai", "/admin/api/apps/openai/codex", "/admin/api/vendors/openai/configuration", "/admin/api/apps/openai/codex/configuration", "/api/bootstrap", "/api/catalog", "/api/home", "/api/search?q=PRIVATE-NOTES-SENTINEL", "/api/vendors/openai", "/api/apps/openai/codex/instructions/document?lang=en", "/openai", "/openai/codex"} {
 		raw, _ := h.request("GET", path, nil, 200, nil)
 		if bytes.Contains(raw, []byte("PRIVATE-NOTES-SENTINEL")) || bytes.Contains(raw, []byte(`"admin_notes"`)) {
 			t.Fatal("notes leaked", path)
@@ -58,8 +58,8 @@ func TestAdminNotesPrivateCASIsolationAndRestart(t *testing.T) {
 	}
 	v, _ := h.server.DB.Vendor("openai")
 	app, _ := h.server.DB.Application("openai/codex")
-	h.request("POST", "/admin/api/vendors/openai/template", map[string]any{"revision": v.Revision, "groups": []string{"icon"}}, 200, nil)
-	h.request("POST", "/admin/api/apps/openai/codex/template", map[string]any{"revision": app.Revision, "groups": []string{"icon"}}, 200, nil)
+	h.request("PATCH", "/admin/api/vendors/openai/configuration", map[string]any{"revision": v.Revision, "unset": []string{"icon"}}, 200, nil)
+	h.request("PATCH", "/admin/api/apps/openai/codex/configuration", map[string]any{"revision": app.Revision, "unset": []string{"icon"}}, 200, nil)
 	h.close()
 	h = newDirectoryHarness(t, dir)
 	h.login(password)

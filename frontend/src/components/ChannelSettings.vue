@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import IconButton from "./IconButton.vue";
 import { computed } from "vue";
-import OverrideControl from "./OverrideControl.vue";
+import FieldReset from "./FieldReset.vue";
 import { useConfiguration } from "../composables/useConfiguration";
 import { errorText, t } from "../i18n";
 const props = defineProps<{ application: string }>();
 const {
   draft,
   configuration,
-  touched,
   unsets,
   loading,
   saving,
@@ -18,6 +17,7 @@ const {
   saved,
   mark,
   restore,
+  modified,
 } = useConfiguration<{ cache_ttl_seconds: number }>(
   computed(() => `apps/${props.application}/configuration`),
   "",
@@ -36,6 +36,7 @@ const {
       {{ t("Template unavailable; the last accepted defaults remain in use.") }}
     </p>
     <form class="ttl-form" @submit.prevent="save">
+      <div class="resettable-field">
       <label
         >{{ t("Channel TTL (seconds)")
         }}<input
@@ -53,15 +54,16 @@ const {
             mark('cache_ttl_seconds'))
           "
       /></label>
-      <OverrideControl
+      <FieldReset
         :configuration="configuration"
         path="cache_ttl_seconds"
-        :custom="touched.has('cache_ttl_seconds')"
+        :label="t('Channel TTL (seconds)')"
+        :modified="modified('cache_ttl_seconds')"
         :restored="unsets.has('cache_ttl_seconds')"
         :disabled="loading || saving"
-        @restore="restore('cache_ttl_seconds')"
-        @customize="mark('cache_ttl_seconds')"
+        @reset="restore('cache_ttl_seconds')"
       />
+      </div>
       <div class="form-actions">
         <button :disabled="saving || loading || !draft">
           {{ saving ? t("Saving…") : t("Save TTL") }}</button

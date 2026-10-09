@@ -22,7 +22,7 @@ func TestExchangeLinkedIndependentSensitiveRoundtripAndCopy(t *testing.T) {
 	}
 	key := "openai/codex"
 	a, _ := s.Application(key)
-	patch(t, s, key, map[string]any{"name.en": a.Name.En, "instructions.zh-CN": "", "tags": []string{"cli"}, "category": "tools", "prewarm": presets.DefaultPrewarm(), "retention": presets.DefaultRetention(), "proxy": networkproxy.Config{Mode: "url", URL: "http://secret:password@127.0.0.1:3128"}})
+	patch(t, s, key, map[string]any{"name.en": a.Name.En, "instructions.zh-CN": "", "tags": []string{"cli"}, "categories": []string{"tools"}, "prewarm": presets.DefaultPrewarm(), "retention": presets.DefaultRetention(), "proxy": networkproxy.Config{Mode: "url", URL: "http://secret:password@127.0.0.1:3128"}})
 	if _, e := s.SaveAdminNotes("app", key, 0, "private notes sentinel"); e != nil {
 		t.Fatal(e)
 	}
@@ -69,7 +69,7 @@ func TestExchangeLinkedIndependentSensitiveRoundtripAndCopy(t *testing.T) {
 		t.Fatal(result, e)
 	}
 	c, _ := dest.ApplicationConfiguration(key)
-	if c.Fields["name.en"].Source != "custom" || *c.Fields["name.en"].Differs || c.Effective["category"] != "tools" || !reflect.DeepEqual(c.Effective["tags"], []string{"cli"}) {
+	if c.Fields["name.en"].Source != "custom" || *c.Fields["name.en"].Differs || !reflect.DeepEqual(c.Effective["categories"], []string{"tools"}) || !reflect.DeepEqual(c.Effective["tags"], []string{"cli"}) {
 		t.Fatal(c)
 	}
 	again, e := dest.ExecuteConfigurationImport(plan, "roundtrip", true)
@@ -285,12 +285,12 @@ func TestExchangeWholeBatchDatabaseRollbackAndDictionaryOwnership(t *testing.T) 
 			d.Metadata.ID = "batch"
 		} else if d.Kind == "App" {
 			d.Metadata = &presets.Metadata{Vendor: "batch", ID: "app"}
-			d.Spec["tags"] = []string{"new-tag"}
+			d.Spec["categories"] = []string{"new-category"}
 			text := "batch-private-note"
 			d.AdminNotes = &text
 		}
 	}
-	p.Documents = append(p.Documents, configexchange.Document{SchemaVersion: 1, Kind: "Taxonomy", Spec: map[string]any(object(presets.TaxonomySpec{Tags: []presets.TaxonomyEntry{{ID: "new-tag", Name: presets.Text{En: "New", ZhCN: "新"}}}}))})
+	p.Documents = append(p.Documents, configexchange.Document{SchemaVersion: 1, Kind: "Taxonomy", Spec: map[string]any(object(presets.TaxonomySpec{Categories: []presets.TaxonomyEntry{{ID: "new-category", Name: presets.Text{En: "New", ZhCN: "新"}}}}))})
 	plan, e := s.PreviewConfigurationImport(p.Documents, nil)
 	if e != nil {
 		t.Fatal(e)
@@ -306,7 +306,7 @@ func TestExchangeWholeBatchDatabaseRollbackAndDictionaryOwnership(t *testing.T) 
 	if _, e = s.Vendor("batch"); e == nil {
 		t.Fatal("partial vendor")
 	}
-	if _, e = s.TaxonomyItem("tags", "new-tag"); e == nil {
+	if _, found := categoryItem(t, s, "new-category"); found {
 		t.Fatal("partial dictionary")
 	}
 	var count int
@@ -315,21 +315,25 @@ func TestExchangeWholeBatchDatabaseRollbackAndDictionaryOwnership(t *testing.T) 
 		t.Fatal("partial notes/publication", count, published, aborted)
 	}
 	s.configurationFault = nil
-	tax := configexchange.Document{SchemaVersion: 1, Kind: "Taxonomy", Spec: map[string]any(object(presets.TaxonomySpec{Tags: []presets.TaxonomyEntry{{ID: "cli", Name: presets.Text{En: "Imported CLI", ZhCN: "导入 CLI"}}}}))}
+	tax := configexchange.Document{SchemaVersion: 1, Kind: "Taxonomy", Spec: map[string]any(object(presets.TaxonomySpec{Categories: []presets.TaxonomyEntry{{ID: "tools", Name: presets.Text{En: "Imported tools", ZhCN: "导入工具"}}, {ID: "orphan", Name: presets.Text{En: "Orphan", ZhCN: "孤立"}}}}))}
 	plan, e = s.PreviewConfigurationImport([]configexchange.Document{tax}, nil)
-	if e != nil || plan.Items[0].Action != "keep" {
+	// A package category no resulting App uses would be pruned, so it is previewed as skipped.
+	if e != nil || plan.Items[0].Key != "orphan" || plan.Items[0].Action != "skip" || plan.Items[1].Action != "keep" {
 		t.Fatal(plan, e)
 	}
-	plan, e = s.PreviewConfigurationImport([]configexchange.Document{tax}, []ImportChoice{{Kind: "tags", Key: "cli", DictionaryUpdate: true}})
+	plan, e = s.PreviewConfigurationImport([]configexchange.Document{tax}, []ImportChoice{{Kind: "categories", Key: "tools", DictionaryUpdate: true}})
 	if e != nil {
 		t.Fatal(e)
 	}
 	if _, e = s.ExecuteConfigurationImport(plan, "dictionary", false); e != nil {
 		t.Fatal(e)
 	}
-	item, _ := s.TaxonomyItem("tags", "cli")
-	if !item.Builtin || item.Fields["name.en"].Source != "custom" {
+	item, _ := categoryItem(t, s, "tools")
+	if !item.Builtin || item.Fields["name.en"].Source != "custom" || item.Name.En != "Imported tools" {
 		t.Fatal("dictionary ownership replaced", item)
+	}
+	if _, found := categoryItem(t, s, "orphan"); found {
+		t.Fatal("unused imported category kept")
 	}
 }
 func TestExchangeOmittedProxyRebindRequiresResolutionAndKeepsNotes(t *testing.T) {

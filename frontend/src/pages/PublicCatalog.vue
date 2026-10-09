@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import SelectMenu from "../components/SelectMenu.vue";
 import Icon from "../components/Icon.vue";
 import VendorLogo from "../components/VendorLogo.vue";
 import { vendorName } from "../vendorName";
@@ -42,7 +41,7 @@ const path = computed(
     `/api/catalog?${new URLSearchParams({ q: query.value, category: category.value, vendor: vendor.value, page: String(page.value), limit: "24" })}`,
 );
 const { data, error, loading, refresh } = usePublicResource<
-  NumberedPage<Application> & { categories?: {id:string;name:LocalizedText}[] }
+  NumberedPage<Application> & { categories?: { id: string; name: LocalizedText; count: number }[] }
 >(
   path,
   (value) =>
@@ -66,8 +65,10 @@ const vendorData = usePublicResource<{
 const visibleVendor = computed(() => vendorData.data.value?.id === vendor.value ? vendorData.data.value : undefined);
 const vendorReady = computed(() => !vendor.value || !!visibleVendor.value);
 function retry() { void refresh(); if (vendor.value) void vendorData.refresh(); }
-function chooseCategory(value:string) { void router.push({query:{...(query.value ? {q:query.value} : {}), ...(value ? {category:value} : {})}}); }
-const categoryOptions = computed(() => [{value:"",label:t("All categories")}, ...(data.value?.categories || []).map(x=>({value:x.id,label:x.name[language.value]}))]);
+// Category links keep the search text and restart paging; counts are site-wide public totals.
+function categoryLink(value: string) {
+  return { path: "/all", query: { ...(query.value ? { q: query.value } : {}), ...(value ? { category: value } : {}) } };
+}
 function go(next: number) {
   void router.push({
     query: {
@@ -107,7 +108,22 @@ function go(next: number) {
       maxlength="128"
       :placeholder="t('Search by ID or name')"
   /></label>
-  <SelectMenu v-if="vendorReady" :model-value="category" :options="categoryOptions" :label="t('Category')" @update:model-value="chooseCategory" />
+  <nav v-if="!vendor && data && (data.categories?.length || category)" class="category-filter" :aria-label="t('Categories')">
+    <span class="category-filter-label">{{ t("Categories:") }}</span>
+    <RouterLink
+      :to="categoryLink('')"
+      class="category-chip"
+      :aria-current="category ? undefined : 'page'"
+      >{{ t("All categories") }}</RouterLink
+    ><RouterLink
+      v-for="item in data.categories"
+      :key="item.id"
+      :to="categoryLink(item.id)"
+      class="category-chip"
+      :aria-current="category === item.id ? 'page' : undefined"
+      >{{ item.name[language] }}({{ item.count }})</RouterLink
+    >
+  </nav>
   <p
     v-if="error || (vendor && vendorData.error.value)"
     class="error"

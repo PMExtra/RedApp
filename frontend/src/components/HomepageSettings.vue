@@ -1,25 +1,22 @@
 <script setup lang="ts">
+import ApplicationPicker from "./ApplicationPicker.vue";
 import IconButton from "./IconButton.vue";
 import SortableList from "./SortableList.vue";
 import { ref, computed } from "vue";
 import { useSetting } from "../composables/useSetting";
 import { t, errorText } from "../i18n";
+import type { ManagedApplication } from "../directory";
 const { draft, loading, saving, error, saved, load, save } = useSetting<{
   keys: string[];
 }>(ref("settings/homepage"));
-const input = ref("");
 const busy = computed(() => loading.value || saving.value);
-function add() {
-  const key = input.value.trim();
+function add(app: ManagedApplication) {
   if (
     draft.value &&
-    /^[a-z0-9-]+\/[a-z0-9-]+$/.test(key) &&
-    !draft.value.keys.includes(key) &&
+    !draft.value.keys.includes(app.key) &&
     draft.value.keys.length < 100
-  ) {
-    draft.value.keys.push(key);
-    input.value = "";
-  }
+  )
+    draft.value.keys.push(app.key);
 }
 </script>
 <template>
@@ -28,7 +25,7 @@ function add() {
     <p class="muted">
       {{
         t(
-          "Choose application keys in display order. Disabled applications remain saved here and are hidden publicly.",
+          "Search and add applications, then arrange them in display order. Disabled applications remain saved here and are hidden publicly.",
         )
       }}
     </p>
@@ -55,22 +52,11 @@ function add() {
             </div>
           </template>
         </SortableList>
-        <div class="form-actions">
-          <input
-            v-model="input"
-            :aria-label="t('Application key')"
-            placeholder="vendor/application"
-            spellcheck="false"
-            @keydown.enter.prevent="add"
-          /><IconButton
-            type="button"
-            class="secondary"
-            :disabled="!input.trim() || draft.keys.length >= 100"
-            @click="add"
-            icon="plus"
-            :label="t('Add application')"
-          />
-        </div>
+        <ApplicationPicker
+          :exclude="draft.keys"
+          :disabled="busy || draft.keys.length >= 100"
+          @select="add"
+        />
       </fieldset>
       <div class="form-actions">
         <button :disabled="busy">

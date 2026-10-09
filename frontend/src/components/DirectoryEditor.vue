@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import OverrideControl from "./OverrideControl.vue";
+import FieldReset from "./FieldReset.vue";
 import ProxySection from "./ProxySection.vue";
 import {
   getLeaf,
@@ -13,7 +13,6 @@ import EntityIcon from "./EntityIcon.vue";
 import Icon from "./Icon.vue";
 import IconButton from "./IconButton.vue";
 import SortableList from "./SortableList.vue";
-import TemplateReset from "./TemplateReset.vue";
 import SwitchControl from "./SwitchControl.vue";
 import { computed, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -222,6 +221,16 @@ function mark(field: string) {
   unsets.value.delete(field);
   saved.value = false;
 }
+function modified(field: string) {
+  return (
+    touched.value.has(field) ||
+    (!!draft.value &&
+      !!baseline.value &&
+      JSON.stringify(getLeaf(draft.value, field)) !==
+        JSON.stringify(getLeaf(JSON.parse(baseline.value), field)))
+  );
+}
+// Reset follows the template again: a stored override becomes an unset, a draft-only edit is reverted.
 function restore(field: string) {
   if (
     !draft.value ||
@@ -231,7 +240,42 @@ function restore(field: string) {
     return;
   setLeaf(draft.value, field, getLeaf(configuration.value.defaults, field));
   touched.value.delete(field);
-  unsets.value.add(field);
+  if (configuration.value.fields[field]?.source === "custom")
+    unsets.value.add(field);
+  saved.value = false;
+}
+// Vendor language logos fall back to the default logo; applications have one icon.
+type LogoSlot = "icon" | "localized_icons.en" | "localized_icons.zh-CN";
+const logoSlots = computed<LogoSlot[]>(() =>
+  props.kind === "vendor"
+    ? ["icon", "localized_icons.en", "localized_icons.zh-CN"]
+    : ["icon"],
+);
+function logoValue(slot: LogoSlot) {
+  return draft.value ? (getLeaf(draft.value, slot) as string) : "";
+}
+function logoLocale(slot: LogoSlot) {
+  return slot === "icon" ? undefined : slot === "localized_icons.en" ? "en" : "zh-CN";
+}
+function removeLogo(slot: LogoSlot) {
+  if (!draft.value) return;
+  setLeaf(draft.value, slot, "");
+  mark(slot);
+}
+function removeLogoLabel(slot: LogoSlot) {
+  if (slot === "localized_icons.en") return t("Remove English logo");
+  if (slot === "localized_icons.zh-CN") return t("Remove Chinese logo");
+  return props.kind === "vendor" ? t("Remove default logo") : t("Remove icon");
+}
+function resetProps(field: string) {
+  return {
+    configuration: configuration.value,
+    path: field,
+    label: fieldLabel(field),
+    modified: modified(field),
+    restored: unsets.value.has(field),
+    disabled: busy.value || readOnly.value,
+  };
 }
 const editable = computed(() =>
   props.kind === "vendor"
@@ -267,7 +311,7 @@ function fieldLabel(field: string) {
   return (
     (
       {
-        icon: t("Icon"),
+        icon: props.kind === "vendor" ? t("Default logo") : t("Icon"),
         "localized_icons.en": t("English logo"),
         "localized_icons.zh-CN": t("Chinese logo"),
         proxy: t("Upstream proxy"),
@@ -279,18 +323,13 @@ function fieldLabel(field: string) {
     )[field] || field
   );
 }
+// Only edited or reset fields are submitted; untouched fields keep their inheritance.
 function changedPatch() {
   const set: Record<string, unknown> = {};
   if (!draft.value) return { set, unset: [] as string[] };
-  const original = JSON.parse(baseline.value);
   for (const field of editable.value) {
     if (unsets.value.has(field)) continue;
-    if (
-      touched.value.has(field) ||
-      JSON.stringify(getLeaf(draft.value, field)) !==
-        JSON.stringify(getLeaf(original, field))
-    )
-      set[field] = getLeaf(draft.value, field);
+    if (modified(field)) set[field] = getLeaf(draft.value, field);
   }
   return { set, unset: [...unsets.value] };
 }
@@ -654,112 +693,103 @@ onUnmounted(() => {
               ]
             }}
           </p>
-          <div class="icon-field" role="group" :aria-label="t('Icon')">
-            <EntityIcon
-              :src="directoryIcon(draft.icon)"
-              size="detail"
-              :vendor="kind === 'vendor'"
-            />
-            <FilePicker
-              name="icon"
-              :label="draft.icon ? t('Replace icon') : t('Choose icon')"
-              accept="image/jpeg,image/png,image/svg+xml,.jpg,.jpeg,.png,.svg"
-              :disabled="busy || readOnly"
-              @change="upload"
-            />
-            <IconButton
-              v-if="draft.icon"
-              type="button"
-              class="secondary"
-              :disabled="busy || readOnly"
-              @click="
-                draft.icon = '';
-                mark('icon');
-              "
-              icon="close"
-              :label="t('Remove icon')"
-            />
-            <p v-if="uploading" role="status">{{ t("Uploading…") }}</p>
-          </div>
-          <details v-if="kind === 'vendor'" class="vendor-language-icons">
-            <summary>{{ t("Language-specific logos (optional)") }}</summary>
-            <p class="muted small-text">
-              {{
-                t(
-                  "Use the current language logo when set; otherwise use the default logo.",
-                )
-              }}
-            </p>
-            <div
-              v-for="locale in languages"
-              :key="locale"
-              class="icon-field"
-              role="group"
-              :aria-label="
-                locale === 'en' ? t('English logo') : t('Chinese logo')
-              "
-            >
-              <span>{{
-                locale === "en" ? t("English logo") : t("Chinese logo")
-              }}</span>
-              <EntityIcon
-                :src="directoryIcon(draft.localized_icons[locale])"
-                vendor
-              />
-              <FilePicker
-                :name="`icon-${locale}`"
-                :label="
-                  draft.localized_icons[locale]
-                    ? t('Replace icon')
-                    : t('Choose icon')
-                "
-                accept="image/jpeg,image/png,image/svg+xml,.jpg,.jpeg,.png,.svg"
-                :disabled="busy || readOnly"
-                @change="upload($event, locale)"
-              />
-              <IconButton
-                v-if="draft.localized_icons[locale]"
-                type="button"
-                class="secondary"
-                :disabled="busy || readOnly"
-                @click="
-                  draft.localized_icons[locale] = '';
-                  mark(`localized_icons.${locale}`);
-                "
-                icon="close"
-                :label="
-                  locale === 'en'
-                    ? t('Remove English logo')
-                    : t('Remove Chinese logo')
-                "
-              />
-            </div>
-          </details>
         </div>
+        <fieldset class="logo-fields">
+          <legend>{{ kind === "vendor" ? t("Logos") : t("Icon") }}</legend>
+          <div class="logo-grid">
+            <div
+              v-for="slot in logoSlots"
+              :key="slot"
+              class="logo-slot"
+              role="group"
+              :aria-label="fieldLabel(slot)"
+            >
+              <div class="field-heading">
+                <span class="logo-slot-label">{{ fieldLabel(slot) }}</span>
+                <FieldReset
+                  v-if="!creating"
+                  v-bind="resetProps(slot)"
+                  @reset="restore(slot)"
+                />
+              </div>
+              <div class="logo-preview">
+                <EntityIcon
+                  v-if="logoValue(slot)"
+                  :src="directoryIcon(logoValue(slot))"
+                  size="detail"
+                  :vendor="kind === 'vendor'"
+                />
+                <small v-else class="muted">{{
+                  slot === "icon" ? t("No logo") : t("Uses the default logo")
+                }}</small>
+              </div>
+              <div class="logo-actions">
+                <FilePicker
+                  :name="logoLocale(slot) ? `icon-${logoLocale(slot)}` : 'icon'"
+                  :label="logoValue(slot) ? t('Replace icon') : t('Choose icon')"
+                  accept="image/jpeg,image/png,image/svg+xml,.jpg,.jpeg,.png,.svg"
+                  :disabled="busy || readOnly"
+                  @change="upload($event, logoLocale(slot))"
+                />
+                <IconButton
+                  v-if="logoValue(slot)"
+                  type="button"
+                  class="secondary"
+                  :disabled="busy || readOnly"
+                  @click="removeLogo(slot)"
+                  icon="close"
+                  :label="removeLogoLabel(slot)"
+                />
+              </div>
+            </div>
+          </div>
+          <p v-if="kind === 'vendor'" class="muted small-text">
+            {{
+              t(
+                "Use the current language logo when set; otherwise use the default logo.",
+              )
+            }}
+          </p>
+          <p v-if="uploading" role="status">{{ t("Uploading…") }}</p>
+        </fieldset>
         <div class="two-columns">
           <fieldset v-for="lang in languages" :key="lang" class="site-locale">
             <legend>{{ lang === "en" ? "English" : "简体中文" }}</legend>
-            <label
-              >{{ t("Name")
-              }}<input
-                v-model="draft.name[lang]"
-                @input="mark(`name.${lang}`)"
-                :name="`name-${lang}`"
-                :lang="lang"
-                maxlength="64"
-                required
-            /></label>
-            <label
-              >{{ t("Description")
-              }}<textarea
-                v-model="draft.description[lang]"
-                @input="mark(`description.${lang}`)"
-                :name="`description-${lang}`"
-                :lang="lang"
-                maxlength="2000"
-                rows="2"
+            <div class="resettable-field">
+              <label
+                >{{ t("Name")
+                }}<input
+                  v-model="draft.name[lang]"
+                  @input="mark(`name.${lang}`)"
+                  :name="`name-${lang}`"
+                  :lang="lang"
+                  maxlength="64"
+                  required
+              /></label>
+              <FieldReset
+                v-if="!creating"
+                v-bind="resetProps(`name.${lang}`)"
+                @reset="restore(`name.${lang}`)"
               />
-            </label>
+            </div>
+            <div class="resettable-field">
+              <label
+                >{{ t("Description")
+                }}<textarea
+                  v-model="draft.description[lang]"
+                  @input="mark(`description.${lang}`)"
+                  :name="`description-${lang}`"
+                  :lang="lang"
+                  maxlength="2000"
+                  rows="2"
+                />
+              </label>
+              <FieldReset
+                v-if="!creating"
+                v-bind="resetProps(`description.${lang}`)"
+                @reset="restore(`description.${lang}`)"
+              />
+            </div>
           </fieldset>
         </div>
         <template v-if="kind === 'app'">
@@ -771,7 +801,14 @@ onUnmounted(() => {
           </h3>
           <template v-if="draft.provider === 'http-cache'">
             <div class="upstream-sources">
-              <h3>{{ t("Upstream sources") }}</h3>
+              <div class="field-heading">
+                <h3>{{ t("Upstream sources") }}</h3>
+                <FieldReset
+                  v-if="!creating"
+                  v-bind="resetProps('base_urls')"
+                  @reset="restore('base_urls')"
+                />
+              </div>
               <p class="muted small-text">
                 {{
                   t(
@@ -830,31 +867,45 @@ onUnmounted(() => {
                 :label="t('Add source')"
               />
             </div>
-            <label
-              >{{ t("Source selection")
-              }}<SelectMenu
-                v-model="draft.source_strategy"
-                @update:model-value="mark('source_strategy')"
-                name="source_strategy"
-                :label="t('Source selection')"
-                :options="[
-                  { value: 'ordered', label: t('In order') },
-                  { value: 'round_robin', label: t('Round robin') },
-                  { value: 'random', label: t('Random') },
-                ]"
-            /></label>
-            <label
-              >{{ t("Default TTL without Cache-Control (seconds)")
-              }}<input
-                v-model.number="draft.cache_ttl_seconds"
-                @input="mark('cache_ttl_seconds')"
-                name="cache_ttl_seconds"
-                type="number"
-                min="0"
-                max="86400"
-                step="1"
-                required
-            /></label>
+            <div class="resettable-field">
+              <label
+                >{{ t("Source selection")
+                }}<SelectMenu
+                  v-model="draft.source_strategy"
+                  @update:model-value="mark('source_strategy')"
+                  name="source_strategy"
+                  :label="t('Source selection')"
+                  :options="[
+                    { value: 'ordered', label: t('In order') },
+                    { value: 'round_robin', label: t('Round robin') },
+                    { value: 'random', label: t('Random') },
+                  ]"
+              /></label>
+              <FieldReset
+                v-if="!creating"
+                v-bind="resetProps('source_strategy')"
+                @reset="restore('source_strategy')"
+              />
+            </div>
+            <div class="resettable-field">
+              <label
+                >{{ t("Default TTL without Cache-Control (seconds)")
+                }}<input
+                  v-model.number="draft.cache_ttl_seconds"
+                  @input="mark('cache_ttl_seconds')"
+                  name="cache_ttl_seconds"
+                  type="number"
+                  min="0"
+                  max="86400"
+                  step="1"
+                  required
+              /></label>
+              <FieldReset
+                v-if="!creating"
+                v-bind="resetProps('cache_ttl_seconds')"
+                @reset="restore('cache_ttl_seconds')"
+              />
+            </div>
             <p class="muted small-text">
               {{
                 t(
@@ -864,7 +915,7 @@ onUnmounted(() => {
             </p>
           </template>
           <template v-else-if="!['info', 'hosted'].includes(draft.provider)"
-            ><label
+            ><div class="resettable-field"><label
               >{{ t("Base URL")
               }}<input
                 v-model="draft.base_url"
@@ -874,6 +925,12 @@ onUnmounted(() => {
                 required
                 spellcheck="false"
             /></label>
+            <FieldReset
+              v-if="!creating"
+              v-bind="resetProps('base_url')"
+              @reset="restore('base_url')"
+            />
+            </div>
             <p class="muted small-text">
               {{
                 t(
@@ -889,20 +946,13 @@ onUnmounted(() => {
             :effective="configuration?.proxy_effective"
             :disabled="busy || readOnly"
             @update:model-value="mark('proxy')"
-          />
-          <div class="overlay-field-states">
-            <label v-for="field in editable" :key="field"
-              >{{ fieldLabel(field) }}
-              <OverrideControl
-                :configuration="configuration"
-                :path="field"
-                :custom="touched.has(field)"
-                :restored="unsets.has(field)"
-                :disabled="busy || readOnly"
-                @restore="restore(field)"
-                @customize="mark(field)"
-            /></label>
-          </div>
+          >
+            <template #reset
+              ><FieldReset
+                v-bind="resetProps('proxy')"
+                @reset="restore('proxy')"
+            /></template>
+          </ProxySection>
         </template>
       </fieldset>
       <div class="form-actions entity-save-actions">
@@ -940,12 +990,6 @@ onUnmounted(() => {
       :busy="busy"
       @confirm="save(true)"
       @cancel="deleteReview = false"
-    />
-    <TemplateReset
-      v-if="kind === 'vendor' && record?.has_template && !readOnly"
-      kind="vendor"
-      :application="record.id"
-      @saved="load(false)"
     />
   </section>
 </template>

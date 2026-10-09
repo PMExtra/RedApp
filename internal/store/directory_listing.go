@@ -3,6 +3,8 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"github.com/PMExtra/RedApp/presets"
+	"strings"
 )
 
 type Page[T any] struct {
@@ -31,7 +33,17 @@ type VendorCard struct {
 }
 
 const vendorMatch = `(instr(lower(v.id),lower(?))>0 OR instr(lower(v.name_en),lower(?))>0 OR instr(lower(v.name_zh_cn),lower(?))>0)`
-const appMatch = `(instr(lower(a.id),lower(?))>0 OR instr(lower(v.id||'/'||a.id),lower(?))>0 OR instr(lower(a.name_en),lower(?))>0 OR instr(lower(a.name_zh_cn),lower(?))>0)`
+
+// Tags match any one tag by literal substring of the folded (NFC, case-folded) form.
+const appMatch = `(instr(lower(a.id),lower(?))>0 OR instr(lower(v.id||'/'||a.id),lower(?))>0 OR instr(lower(a.name_en),lower(?))>0 OR instr(lower(a.name_zh_cn),lower(?))>0 OR EXISTS(SELECT 1 FROM application_tags t WHERE t.app_uid=a.uid AND ?<>'' AND instr(t.folded,?)>0))`
+
+func vendorMatchArgs(q string) []any { return []any{q, q, q} }
+
+// appMatchArgs accepts "#tag" input: the display prefix is ignored for tag matching only.
+func appMatchArgs(q string) []any {
+	tag := presets.FoldText(strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(q), "#")))
+	return []any{q, q, q, q, tag, tag}
+}
 
 func appState(state string) string {
 	switch state {
@@ -70,7 +82,7 @@ func (s *Store) DirectoryPage(page, limit int, q, state string) (Page[VendorCard
 	args := []any{}
 	if q != "" {
 		condition += ` AND (` + vendorMatch + ` OR EXISTS(SELECT 1 FROM applications a WHERE a.vendor_uid=v.uid AND ` + appState(state) + ` AND ` + appMatch + `))`
-		args = append(args, q, q, q, q, q, q, q)
+		args = append(append(args, vendorMatchArgs(q)...), appMatchArgs(q)...)
 	}
 	var total int64
 	if err = tx.QueryRow(`SELECT COUNT(*) FROM vendors v WHERE `+condition, args...).Scan(&total); err != nil {
@@ -140,7 +152,7 @@ func applicationCategoryPage(tx *sql.Tx, vendor string, page, limit int, q, stat
 	order := `v.id,a.id`
 	if q != "" {
 		where += ` AND (` + vendorMatch + ` OR ` + appMatch + `)`
-		args = append(args, q, q, q, q, q, q, q)
+		args = append(append(args, vendorMatchArgs(q)...), appMatchArgs(q)...)
 		// Matching applications precede the ordinary preview when the vendor also matches.
 		order = fmt.Sprintf(`CASE WHEN %s THEN 0 ELSE 1 END,v.id,a.id`, appMatch)
 	}
@@ -151,7 +163,7 @@ func applicationCategoryPage(tx *sql.Tx, vendor string, page, limit int, q, stat
 	}
 	result := NewPage[Application](page, limit, total)
 	if q != "" {
-		args = append(args, q, q, q, q)
+		args = append(args, appMatchArgs(q)...)
 	}
 	args = append(args, limit, (result.Page-1)*limit)
 	rows, err := tx.Query(`SELECT `+applicationColumns+join+` ORDER BY `+order+` LIMIT ? OFFSET ?`, args...)

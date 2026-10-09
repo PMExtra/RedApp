@@ -71,7 +71,7 @@ func (d Document) Validate() error {
 			return ErrPackage
 		}
 		var spec presets.TaxonomySpec
-		if strict(d.Spec, &spec) != nil || spec.Validate() != nil || len(spec.Categories)+len(spec.Tags) > MaxEntities {
+		if strict(d.Spec, &spec) != nil || spec.Validate() != nil || len(spec.Categories) > MaxEntities {
 			return ErrPackage
 		}
 		return nil
@@ -329,7 +329,7 @@ func entityBound(documents []Document) bool {
 			if strict(d.Spec, &spec) != nil {
 				return false
 			}
-			n += len(spec.Categories) + len(spec.Tags)
+			n += len(spec.Categories)
 		} else {
 			n++
 		}

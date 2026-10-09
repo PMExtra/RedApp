@@ -369,7 +369,7 @@ func (s *Server) catalogError(w http.ResponseWriter, err error) {
 }
 func (s *Server) validUI(path string) bool {
 	switch path {
-	case "/all", "/", "/admin/login", "/admin/overview", "/admin/events", "/admin/settings/site", "/admin/settings/proxy", "/admin/vendors", "/admin/vendors/new":
+	case "/all", "/", "/admin/login", "/admin/overview", "/admin/events", "/admin/settings/site", "/admin/settings/proxy", "/admin/vendors", "/admin/vendors/new", "/admin/categories":
 		return true
 	}
 	if strings.HasPrefix(path, "/admin/vendors/") {
@@ -558,7 +558,7 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 	if s.exchangeAPI(w, r, session) {
 		return
 	}
-	if s.taxonomyAPI(w, r) {
+	if s.categoriesAPI(w, r) {
 		return
 	}
 	if s.directoryAPI(w, r) {
