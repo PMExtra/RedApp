@@ -144,9 +144,17 @@ def prepare(destination,root=ROOT,fetch=download):
         with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write(f'changed={str(changed).lower()}\nbaseline={baseline}\n')
     return changed
 
+# Generated scripts are modified, so an upstream Authenticode block would only claim an
+# invalid signature. Removing the exact trailing block also keeps patches stable when
+# upstream re-signs unchanged code.
+SIGNATURE_BLOCK=re.compile(rb'\r?\n# SIG # Begin signature block\r?\n(?:# [A-Za-z0-9+/=]+\r?\n)+# SIG # End signature block\r?\n\Z')
+
+def unsigned(original):
+    return SIGNATURE_BLOCK.sub(b'',original)
+
 def strict_patch(original,patch):
     with tempfile.TemporaryDirectory(prefix='redapp-patch-') as tmp:
-        file=Path(tmp)/'installer';file.write_bytes(original)
+        file=Path(tmp)/'installer';file.write_bytes(unsigned(original))
         result=run(['patch','--batch','--forward','--fuzz=0',str(file),str(patch.resolve())])
         if re.search(r'offset|fuzz|FAILED|Reversed',result,re.I): raise ValueError('Patch context moved; maintainer review is required')
         return file.read_bytes()

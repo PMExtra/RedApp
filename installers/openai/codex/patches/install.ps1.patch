@@ -82,7 +82,7 @@
      }
      $packageMetadata = Find-ReleaseAssetMetadata -AssetName $packageAsset -ReleaseMetadata $releaseMetadata -Url $packageUrl -FallbackUrl $packageFallbackUrl
      if ($null -eq $packageMetadata) {
-@@ -329,31 +304,7 @@
+@@ -343,31 +318,7 @@
      param(
          [string]$NormalizedVersion
      )
@@ -115,7 +115,7 @@
  }
  
  function Resolve-ReleaseFromReleases {
-@@ -388,16 +339,9 @@
+@@ -402,16 +353,9 @@
  function Resolve-Release {
      $normalizedVersion = Normalize-Version -RawVersion $Release
      Assert-ValidReleaseVersion -Version $normalizedVersion
@@ -135,7 +135,7 @@
  }
  
  function Get-VersionFromBinary {
-@@ -1106,14 +1050,8 @@
+@@ -1120,14 +1064,8 @@
              }
          }
          Ensure-Junction -LinkPath $currentDir -TargetPath $releaseDir -InstallerOwnedTargetPrefix $releasesDir

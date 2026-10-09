@@ -16,7 +16,7 @@
 | CPU 基线（`scripts/test-cpu-baseline.py`，QEMU Nehalem 无 AVX） | PASS |
 | Windows PowerShell 7.6.6 / 5.1 安装器候选契约（`scripts/test-installer-candidates.py`） | PASS，Windows 11 原生 |
 | 变异抽查 | 关闭分类清理、关闭 Tag 匹配、去掉保存前提交 Tag 时，对应测试均失败 |
-| 官方 Claude 联网预热（`scripts/test-prewarm-claude-cli.py`） | FAIL（既有问题）：出口可达（约 7.5 MB/s），任务读取 206,993,888 字节后一直 running、条目 pending，超出五分钟上限；同一脚本对已发布 0.8.0 源码构建结果相同，非本轮回归，未处理 |
+| 官方 Claude 联网预热（`scripts/test-prewarm-claude-cli.py`） | PASS（发布后复查更正）：首次运行超出脚本固定的五分钟上限，曾被误判为下载卡住；复查时四次带进度记录的运行以 1.3–3.2 MB/s 持续推进，均完成 223,821,616 字节下载、最终摘要校验和零读取缓存命中；原脚本一次通过、一次超时，原因是带宽波动而非代码缺陷。脚本已改为两分钟无进展才失败、总上限 30 分钟 |
 | 原生/模拟 arm64 | NOT RUN：本机 Docker 未注册 arm64 binfmt，未修改系统配置 |
 | 浏览器/GUI | NOT RUN：界面验证为 HappyDOM 与 CSS 声明检查，不代表像素布局、悬停与深色模式实际渲染 |
 

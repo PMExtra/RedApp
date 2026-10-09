@@ -2,7 +2,7 @@
 
 面向终端分发的 generated 脚本仅保留简短修改声明、原有代码注释及必要的用户行为说明。项目的源码身份、patch 流程及验证过程放在本文和维护工具中，避免把维护说明混入安装制品。
 
-官方原始基线位于 `installers/openai/codex/upstream/`，固定 0.159.2 commit `ff6aec96948b70d94983af2641a6b67c94faeff5`；字节摘要与许可证来源记录在 `provenance.json`。禁止直接修改 upstream 原文。企业变换由 `patches/` 保存，`generated/` 必须逐字节等于原文加严格 patch 的结果。
+官方原始基线位于 `installers/openai/codex/upstream/`，固定 0.159.2 commit `ff6aec96948b70d94983af2641a6b67c94faeff5`；字节摘要与许可证来源记录在 `provenance.json`。禁止直接修改 upstream 原文。企业变换由 `patches/` 保存，`generated/` 必须逐字节等于原文（移除末尾 Authenticode 签名块后）加严格 patch 的结果。
 
 企业脚本将初始下载地址限定为 RedApp、关闭公网回退、保留官方正常重定向行为和原始哈希验证，并删除自动更新 marker。CLI 二进制和官方交互确认不改动；无人值守安装显式设置 `CODEX_NON_INTERACTIVE=1`。源码基线、完整许可证和 NOTICE 独立随服务交付，不在脚本头部重复维护记录。
 
@@ -25,6 +25,8 @@ python3 scripts/test-installers.py --platform shell
 | --- | ---: | ---: | --- |
 | install.sh | 31 | 128 | 简短修改声明；企业 URL；下载地址约束；移除 GitHub fallback 与重新获取摘要；保留清单/包校验；抑制更新 marker |
 | install.ps1 | 18 | 80 | 简短修改声明；企业 URL；请求地址约束；移除 GitHub fallback 与重新获取摘要；保留清单/包校验；抑制更新 marker |
+
+2026-10-09 起官方线上 `install.ps1` 改为 CRLF，加入不依赖模块加载的 SHA256 计算，并在末尾附带 Authenticode 签名块（证书有效期仅数天，会频繁重签）。企业修改必然使原签名失效，保留只会得到 HashMismatch 的签名声明，因此维护工具在严格 patch 前确定性地移除**文件末尾、标记与 base64 行完全匹配**的签名块；其它位置或内容不符的块不处理，仍须审查。upstream 保存官方原始字节（含签名），generated 为未签名脚本。补丁按新原文重建，变更统计不变；仅重签时补丁仍可严格应用，每日检查生成草稿 PR 即可。
 
 删除行主要是公网回退及其 digest 重新解析分支，不是对平台识别、安装/迁移确认或解包流程的改写。本次治理恢复了两处 PowerShell 原始多行参数声明格式；没有改写 upstream，没有删除上游原有注释。每次变更均须重新确认 generated 与 patch 一致、正常安装成功、篡改/截断失败、失败关闭及交互语义保持。
 

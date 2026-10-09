@@ -60,13 +60,17 @@ try:
             platform=min(manifest['platforms'],key=lambda k:manifest['platforms'][k]['size'])
             request('/admin/api/vendors',{'id':'signed','name':{'en':'Signed fixture','zh-CN':'签名夹具'},'enabled':True})
             request('/admin/api/vendors/signed/apps',{'id':'claude','provider':'claude-code','name':{'en':'Claude fixture','zh-CN':'Claude 夹具'},'base_url':'https://downloads.claude.ai/claude-code-releases','cache_ttl_seconds':60,'enabled':True})
+            # The binary is over 200 MB, so slow egress is not a failure; only a stalled read is.
             def wait(job):
-                deadline=time.monotonic()+300
+                deadline=time.monotonic()+1800
+                progress,last=-1,time.monotonic()
                 while time.monotonic()<deadline:
                     result=request('/admin/api/apps/signed/claude/prewarm/'+job['id'])
                     if result['state']!='running':return result
+                    if result['bytes']!=progress:progress,last=result['bytes'],time.monotonic()
+                    elif time.monotonic()-last>120:raise RuntimeError(f'Official Claude download made no progress for two minutes at {progress} bytes')
                     time.sleep(.2)
-                raise RuntimeError('Official Claude download exceeded five-minute integration bound')
+                raise RuntimeError('Official Claude download exceeded the 30-minute integration bound')
             job=request('/admin/api/apps/signed/claude/prewarm/start',{'request_id':'a'*32,'target':manifest['version'],'platforms':[platform]})
             result=wait(job)
             assert result['state']=='completed' and result['succeeded']==1,result

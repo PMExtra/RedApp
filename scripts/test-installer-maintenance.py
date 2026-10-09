@@ -135,6 +135,17 @@ class CheckTests(unittest.TestCase):
             self.assertEqual(result,(root/'generated'/name).read_bytes())
             with self.assertRaises((ValueError,subprocess.SubprocessError)):
                 m.strict_patch(b'\n'+raw,root/'patches'/(name+'.patch'))
+    def test_trailing_authenticode_block_is_removed_before_strict_patch(self):
+        root=m.ROOT/'installers/openai/codex';patch=root/'patches/install.ps1.patch'
+        raw=(root/'upstream/install.ps1').read_bytes();body=m.unsigned(raw)
+        self.assertNotIn(b'# SIG #',body);self.assertEqual(m.unsigned(body),body)
+        resigned=body+b'\r\n# SIG # Begin signature block\r\n# QUJD\r\n# REVG+/=\r\n# SIG # End signature block\r\n'
+        self.assertEqual(m.strict_patch(resigned,patch),(root/'generated/install.ps1').read_bytes())
+        # Only an exact trailing block is removed; code after it or inside it is kept for review.
+        for altered in (resigned+b'Write-Host injected\r\n',resigned.replace(b'# QUJD',b'Invoke-Expression x')):
+            self.assertEqual(m.unsigned(altered),altered)
+        shell=(m.ROOT/'installers/openai/codex/upstream/install.sh').read_bytes()
+        self.assertEqual(m.unsigned(shell),shell)
     def test_isolated_test_failure_does_not_output(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp=Path(tmp);prepared=tmp/'prepared';m.prepare(prepared,fetch=self.original)

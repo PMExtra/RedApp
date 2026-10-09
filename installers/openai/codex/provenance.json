@@ -1,7 +1,7 @@
 {
   "version": "0.159.2",
   "commit": "ff6aec96948b70d94983af2641a6b67c94faeff5",
-  "retrieved_at": "2026-09-30",
+  "retrieved_at": "2026-10-09T03:28:16.395760+00:00",
   "source": "https://github.com/openai/codex",
   "auto_update_policy": "suppress_installer_marker_unmodified_cli",
   "files": {
@@ -11,11 +11,13 @@
     },
     "install.sh": {
       "bytes": 34564,
-      "sha256": "150e3cf675682efeaac115aa3747add3f27887896d04ce6d0b56478d8b428bf6"
+      "sha256": "150e3cf675682efeaac115aa3747add3f27887896d04ce6d0b56478d8b428bf6",
+      "source": "https://releases.openai.com/codex/install.sh"
     },
     "install.ps1": {
-      "bytes": 43798,
-      "sha256": "3522b77d4485eac014e70fa946787c95fad3874a4e9047557c1e044eb268d13e"
+      "bytes": 66625,
+      "sha256": "dd43e75238486415d48af0421a747aad6012c5d62fd8844dc080b4f9643b3736",
+      "source": "https://releases.openai.com/codex/install.ps1"
     },
     "NOTICE": {
       "bytes": 242,
