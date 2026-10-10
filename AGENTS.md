@@ -20,9 +20,9 @@
 | `make frontend` | 构建前端到 `internal/httpserver/web` |
 | `cd frontend && npm run codegen` | 由 `api/openapi.yaml` 重新生成前端 API 类型 |
 | `cd frontend && npm run format` | Prettier 格式化前端代码 |
-| `cd frontend && npm run e2e` | 对运行中的服务跑 Playwright 冒烟测试（环境变量见 [frontend.md](docs/dev/frontend.md#测试)） |
 | `make build` / `make binary` | 前端 + 二进制 / 只编译二进制 |
 | `make runtime-test` | 用现有 `bin/redapp`（不重新编译）跑真实进程的 CLI/HTTP 集成测试；缺二进制时直接失败 |
+| `make e2e` | 用现有 `bin/redapp` 和全新数据目录跑 Playwright 浏览器测试；需要先安装 Chromium（见 [frontend.md](docs/dev/frontend.md#测试)） |
 | `make network-test` | 手动联网测试：官方 Claude 签名清单与一个真实二进制，不在门禁中 |
 | `make docs-check` | 双语文档结构与 Markdown 链接 |
 

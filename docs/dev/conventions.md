@@ -138,7 +138,7 @@ frontend/src/
 
 - 组件测试用 Testing Library 按角色和可见文本查询，不依赖组件内部状态或 CSS 类名。
 - 网络用 MSW 模拟（`mockApi`、`apiError`），响应形状来自生成的 API 类型，夹具来自 `src/test/factories`。
-- Playwright 冒烟测试覆盖登录、主要导航和一次完整的保存流程，在嵌入了前端的真实 Go 服务上运行。
+- Playwright 测试覆盖公开浏览、登录、主要导航和一次完整的保存流程，由 `make e2e` 在嵌入了前端的真实 Go 服务上运行，CI 的 `e2e` 任务执行。
 
 ## 测试
 

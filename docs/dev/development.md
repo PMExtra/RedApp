@@ -57,12 +57,12 @@ npm test                # Vitest
 npm run build           # 输出到 internal/httpserver/web
 ```
 
-- Vite 以 `/` 为 asset base，输出到 `internal/httpserver/web`（`index.html`、`admin.html`、扁平的 `assets/`）。**该目录是提交到仓库的产物**：前端改动必须同时重新构建并提交它（见 [ADR 0007](adr/0007-committed-frontend-bundle.md)）。CI 会重新构建并要求 `git diff --exit-code -- internal/httpserver/web` 为空。
+- Vite 以 `/` 为 asset base，输出到 `internal/httpserver/web`（`index.html`、`admin.html`、扁平的 `assets/`）。**该目录是提交到仓库的产物**：前端改动必须同时重新构建并提交它（见 [ADR 0007](adr/0007-committed-frontend-bundle.md)）。CI 会重新构建并要求该目录与提交完全一致（`git diff --exit-code` 与 `git status --porcelain` 都为空，新增未提交的文件同样失败）。
 - 服务端必须为公开路由返回 `index.html`、为 `/admin/...` 返回 `admin.html`，规则见 [frontend.md](frontend.md#两个入口与-spa-服务契约) 和规范的 `x-spa-routes`。
 - 改了 `api/openapi.yaml` 要运行 `npm run codegen` 并提交生成的 `src/shared/api/*.gen.ts`。
 - `npm run build` 还检查两件事：公开入口不包含后台模块；打包进产物的每个 npm 包都记录在 [third_party/README.md](../../third_party/README.md)。
 - `npm run dev` 只是本机 loopback 预览；设置 `REDAPP_DEV_BACKEND` 可把 API 代理到本机 Go 服务。真实 HTTP 行为（CSP、Cookie、深链）要用嵌入了前端的 Go 构建来测。
-- 测试：Vitest + happy-dom 的 DOM 测试（Testing Library、MSW），覆盖 API 客户端、会话与 CSRF、冲突处理、翻译完整性、路由白名单与组件的可访问行为。它不证明浏览器布局、屏幕阅读器、触屏或真实 CSP 行为；这些由 Playwright 冒烟测试（`npm run e2e`，需要运行中的服务）补充。
+- 测试：Vitest + happy-dom 的 DOM 测试（Testing Library、MSW），覆盖 API 客户端、会话与 CSRF、冲突处理、翻译完整性、路由白名单与组件的可访问行为。它不证明浏览器布局、屏幕阅读器、触屏或真实 CSP 行为；这些由 Playwright 浏览器测试（`make e2e`）补充。
 - 新增前端路由时，必须同步规范的 `x-spa-routes` 与服务端 `adminSPARoutes`（见 [AGENTS.md](../../AGENTS.md)）。
 
 ## 测试门禁
@@ -73,7 +73,7 @@ npm run build           # 输出到 internal/httpserver/web
 | `make test` | 发布脚本单测、文档检查与工具链检查单测、`go test -race ./...`、Shell 安装器契约、安装器更新与每日维护的离线回归 | Go、Python、`patch` |
 | `make frontend-test` | 生成物检查、ESLint、Prettier、`vue-tsc` 类型检查与 Vitest DOM 测试 | Node |
 | `make runtime-test` | 用**当前** `bin/redapp`（不重新编译，缺失时直接失败）跑真实进程：数据目录与配置、HTTP 路由与重启、使用说明文档执行、retention、prewarm、分类/Tag、配置导入导出 | 已构建的二进制、Node（自动 `npm ci`，供 Happy DOM 使用） |
-| `cd frontend && npm run e2e` | Playwright 冒烟测试：公开首页、后台 404 文档、登录—导航—退出（`REDAPP_E2E_URL`、`REDAPP_E2E_PASSWORD`） | 运行中的服务、Playwright 浏览器 |
+| `make e2e` | 用**当前** `bin/redapp` 和全新数据目录启动服务，从首次启动日志读取管理员密码，发布一个 `info` 应用作为公开内容，再跑 Playwright（Chromium）：公开首页、目录搜索与应用页、公开与后台 404 文档、登录—导航—退出、站点文本保存、不带标签的应用深链；控制台不能有错误（含 CSP 违规） | 已构建的二进制、Node、Playwright Chromium（`cd frontend && npx playwright install --with-deps chromium`） |
 | `make docs-check` | 双语用户文档结构一致、仓库内 Markdown 相对链接有效 | Python |
 | `sh scripts/test-docker-local.sh` | 镜像配置发现、默认 serve、健康检查、数据卷；未设 `REDAPP_TEST_IMAGE` 时用根 Dockerfile 的 `prebuilt` 方式打包当前 `bin/redapp` | Docker（BuildKit）、Linux 二进制或镜像 |
 | `python3 scripts/test-cpu-baseline.py` | 从实际镜像取出 amd64 二进制，检查只声明 x86-64 baseline，并在无 AVX 的 QEMU CPU 上启动 | `qemu-user`、`binutils` |
@@ -104,7 +104,8 @@ python3 scripts/check-docs.py --base main     # 另外要求成对文档同时�
 | --- | --- |
 | `frontend` | `make frontend-test`，重新构建并比对已提交的 `internal/httpserver/web`，上传 `frontend-<SHA>` 产物（含 SHA256SUMS） |
 | `test`（amd64、arm64） | `make check test`；PR 上另跑 `check-docs.py --base HEAD^1`；amd64 在无网络、只读的容器里再跑一次 Shell 安装器测试 |
-| `runtime`（amd64、arm64） | 校验并解包本次 `frontend` 产物，用原生容器编译，`make runtime-test`，用根 Dockerfile（`--target runtime`、`RUNTIME_FILES=prebuilt`）打包 scratch 运行镜像并跑 Docker 测试；amd64 另跑 CPU 基线测试 |
+| `runtime`（amd64、arm64） | 校验并解包本次 `frontend` 产物，用原生容器编译，`make runtime-test`，用根 Dockerfile（`--target runtime`、`RUNTIME_FILES=prebuilt`）打包 scratch 运行镜像并跑 Docker 测试；amd64 另跑 CPU 基线测试，并把编译出的二进制上传为 `redapp-<SHA>-linux-amd64`（保留 1 天） |
+| `e2e`（amd64） | 下载 `runtime` 的 amd64 二进制并核对版本，按 `package-lock.json` 锁定的 Playwright 安装 Chromium，`make e2e`；失败时上传 `frontend/test-results/` 中的 trace |
 | `source-image`（amd64） | 用根 Dockerfile 从源码（前端 + Go 阶段）构建镜像，检查版本并跑 Docker 测试；只验证，不产生产物 |
 | `windows-installers` | 复用 `windows-installers.yml`，PS7 与 5.1 安装器门禁 |
 

@@ -294,15 +294,15 @@ Reka UI 的 `SelectViewport`/`ComboboxViewport`/`ScrollAreaViewport` 会插入�
 - `src/test/uplot.ts`：uPlot 替身，见“指标与历史图表”。
 - 需要状态的组件测试写一个 fixture SFC 放在 `src/test/components/`（运行时不含模板编译器）。
 - 按角色和可见文本查询（Testing Library），断言可观察行为；不依赖组件内部状态或 CSS 类名。
-- Playwright：`e2e/*.spec.ts`，在嵌入新前端的真实 Go 服务上运行：
+- Playwright：`e2e/*.spec.ts`，在嵌入前端的真实 Go 服务上运行。`make e2e`（`scripts/test-e2e.py`）用现有 `bin/redapp` 和全新数据目录启动服务，从首次启动日志读取初始管理员密码，经管理 API 发布一个 `info` 应用（`e2e/guide`，不访问任何上游），再以 `REDAPP_E2E_URL`、`REDAPP_E2E_PASSWORD`、`REDAPP_E2E_INFO_APP` 运行 `npm run e2e`；额外参数传给 Playwright。失败时打印服务日志（密码已遮盖）。
 
 ```sh
-make build && bin/redapp &                  # 首次启动日志里有管理员密码
-cd frontend && npx playwright install chromium
-REDAPP_E2E_URL=http://127.0.0.1:8080 REDAPP_E2E_PASSWORD=... npm run e2e
+make build
+(cd frontend && npx playwright install --with-deps chromium)   # 一次即可
+make e2e                                                       # 或 python3 scripts/test-e2e.py e2e/smoke.spec.ts
 ```
 
-  `smoke.spec.ts` 覆盖公开首页、后台 404 文档、登录—导航—退出，以及一次完整的保存流程（修改站点副标题、刷新后确认、再恢复原值）；`public.spec.ts` 覆盖首页—目录搜索—应用页与公开 404 文档（需要至少一个已发布应用，全新安装的预置应用即可）。都用 `e2e/console.ts` 的 `collectConsoleErrors` 要求控制台无错误（含 CSP 违规）。
+  `smoke.spec.ts` 覆盖公开首页、后台 404 文档、登录—导航—退出、一次完整的保存流程（修改站点副标题、刷新后确认、再恢复原值）以及不带标签的应用深链（登录后进入默认标签）；`public.spec.ts` 覆盖首页—目录搜索—应用页与公开 404 文档（需要至少一个已发布应用）。都用 `e2e/console.ts` 的 `collectConsoleErrors` 要求控制台无错误（含 CSP 违规）；未登录时会话探测按契约返回的 401 不算错误。也可以对任意运行中的服务直接运行 `npm run e2e`，自己设置上述环境变量。
 
 ## 命令
 
@@ -314,4 +314,4 @@ REDAPP_E2E_URL=http://127.0.0.1:8080 REDAPP_E2E_PASSWORD=... npm run e2e
 | `npm run typecheck` | `vue-tsc` |
 | `npm test` | Vitest |
 | `npm run build` | 构建到 `internal/httpserver/web`（含公开包与第三方许可检查） |
-| `npm run e2e` | Playwright 冒烟测试 |
+| `npm run e2e` | Playwright 测试（对 `REDAPP_E2E_URL` 的服务；完整流程用仓库根目录的 `make e2e`） |
