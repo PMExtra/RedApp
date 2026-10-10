@@ -118,9 +118,7 @@ jobs:
           sh scripts/build-native-container.sh "$(cat VERSION)" "$GITHUB_SHA"
           test "$(bin/redapp version)" = "RedApp $(cat VERSION) (commit $GITHUB_SHA)"
       - name: Real HTTP, data, instruction and configuration maintenance CLI
-        run: |
-          cd frontend && npm ci --no-audit --no-fund && cd ..
-          make runtime-test
+        run: make runtime-test
       - name: Package and test exact native runtime image
         env:
           ARCH: ${{ matrix.arch }}

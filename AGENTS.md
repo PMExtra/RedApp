@@ -19,7 +19,8 @@
 | `make frontend-test` | 前端类型检查与 Vitest |
 | `make frontend` | 构建前端到 `internal/httpserver/web` |
 | `make build` / `make binary` | 前端 + 二进制 / 只编译二进制 |
-| `make runtime-test` | 用现有 `bin/redapp` 跑真实进程的 CLI/HTTP 集成测试 |
+| `make runtime-test` | 用现有 `bin/redapp`（不重新编译）跑真实进程的 CLI/HTTP 集成测试；缺二进制时直接失败 |
+| `make network-test` | 手动联网测试：官方 Claude 签名清单与一个真实二进制，不在门禁中 |
 | `make docs-check` | 双语文档结构与 Markdown 链接 |
 
 提交前至少运行与改动相关的门禁；改 Go 代码必须通过 `make check test`，改前端必须通过 `make frontend-test` 并重新构建。

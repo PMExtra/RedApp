@@ -50,12 +50,21 @@ npm run build
 | `make check` | 文档检查（`docs-check`）、`gofmt`（`cmd internal installers presets`）、`go vet` | Go、Python |
 | `make test` | 发布脚本单测、文档检查单测、`go test -race ./...`、Shell 安装器契约、安装器更新与每日维护的离线回归 | Go、Python、`patch` |
 | `make frontend-test` | `vue-tsc` 类型检查与 Vitest DOM 测试 | Node |
-| `make runtime-test` | 用**当前** `bin/redapp`（不重新编译）跑真实进程：数据目录与配置、HTTP 路由与重启、使用说明文档执行、retention、prewarm、分类/Tag、配置导入导出 | 已构建的二进制、Node |
+| `make runtime-test` | 用**当前** `bin/redapp`（不重新编译，缺失时直接失败）跑真实进程：数据目录与配置、HTTP 路由与重启、使用说明文档执行、retention、prewarm、分类/Tag、配置导入导出 | 已构建的二进制、Node（自动 `npm ci`，供 Happy DOM 使用） |
 | `make docs-check` | 双语用户文档结构一致、仓库内 Markdown 相对链接有效 | Python |
 | `sh scripts/test-docker-local.sh` | 镜像配置发现、默认 serve、健康检查、数据卷 | Docker、镜像 |
 | `python3 scripts/test-cpu-baseline.py` | 从实际镜像取出 amd64 二进制，检查只声明 x86-64 baseline，并在无 AVX 的 QEMU CPU 上启动 | `qemu-user`、`binutils` |
 | `python scripts/test-installers.py --platform windows` | PS7 与 5.1 解析并执行全部 PowerShell 安装器 | Windows |
-| `python3 scripts/test-prewarm-claude-cli.py` | 联网：官方 Claude 签名清单与一个真实二进制 | 外网；不在强制门禁中 |
+| `make network-test` | 联网：官方 Claude 签名清单与一个真实二进制（超过 200 MB，最长 30 分钟，2 分钟无进度即失败） | 已构建的二进制、外网；不在强制门禁中 |
+
+### 真实进程测试
+
+`scripts/test-*-cli.py` 都基于 `scripts/cli_test_support.py`（标准库 `unittest`），每个文件可单独运行，例如 `python3 scripts/test-http-cli.py`，也可以加 `TestClass.test_name` 只跑一个用例。
+
+- `ServerTestCase` 为每个用例提供私有临时目录；`start_server()` 启动的服务和 `start_fixture()` 启动的本地上游在用例结束时一定被停止和清理。
+- `RedAppServer` 每次启动都探测新的回环端口；探测与服务绑定之间被其他进程抢占时，服务以 `address already in use` 退出，harness 换端口重试。重启后 `base_url` 会变化。
+- `Session` 模拟浏览器：Cookie、`Origin`、CSRF。`fetch()`/`request()` 默认断言 HTTP 200，其他状态用 `expect=` 显式声明，失败消息包含方法、路径、状态和响应体摘要。
+- 用例失败时打印该用例所有服务的日志，初始管理员密码会被遮盖。
 
 `docs-check` 与 `--base`：
 
