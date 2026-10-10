@@ -23,7 +23,8 @@ func publicationDone(t *testing.T, done <-chan error) {
 }
 func TestPublicationTransactionInterleavesAcquireWithoutDeadlock(t *testing.T) {
 	client, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("fixture")) }))
-	m, db, _ := setup(t, client)
+	hook := &faultHook{}
+	m, db, _ := setup(t, client, withTrace(hook.trace))
 	r := authorizedResource(t, m, client, []byte("fixture"))
 	plan, err := m.PrepareUpstreams(map[string]*distributor.Client{testApp: client})
 	if err != nil {
@@ -36,12 +37,12 @@ func TestPublicationTransactionInterleavesAcquireWithoutDeadlock(t *testing.T) {
 	}
 	entered := make(chan struct{})
 	continueAcquire := make(chan struct{})
-	m.testFault = func(point string, _ *Generation) {
+	hook.set(func(point string, _ *Generation) {
 		if point == "acquire_before_db_validation" {
 			close(entered)
 			<-continueAcquire
 		}
-	}
+	})
 	acquired := make(chan error, 1)
 	go func() {
 		rd, _, err := m.Acquire(context.Background(), r)
@@ -65,7 +66,8 @@ func TestPublicationTransactionInterleavesAcquireWithoutDeadlock(t *testing.T) {
 }
 func TestCloseWaitsForPreparedPublicationAndAbortDoesNotRegister(t *testing.T) {
 	client, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) }))
-	m, _, _ := setup(t, client)
+	hook := &faultHook{}
+	m, _, _ := setup(t, client, withTrace(hook.trace))
 	plan, err := m.PrepareUpstreams(map[string]*distributor.Client{"acme/new": client})
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +84,7 @@ func TestCloseWaitsForPreparedPublicationAndAbortDoesNotRegister(t *testing.T) {
 		t.Fatal(err)
 	}
 	closing := make(chan struct{})
-	m.testFault = func(point string, _ *Generation) {
+	hook.set(func(point string, _ *Generation) {
 		if point == "close_before_publication_gate" {
 			select {
 			case <-closing:
@@ -90,7 +92,7 @@ func TestCloseWaitsForPreparedPublicationAndAbortDoesNotRegister(t *testing.T) {
 				close(closing)
 			}
 		}
-	}
+	})
 	closed := make(chan error, 1)
 	go func() { closed <- m.Close() }()
 	<-closing

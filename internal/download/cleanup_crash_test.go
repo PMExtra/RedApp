@@ -34,7 +34,8 @@ func TestCleanupCrashHelper(t *testing.T) {
 	}
 	u, _ := url.Parse(os.Getenv("REDAPP_CLEANUP_SOURCE"))
 	c := &distributor.Client{Base: u, HTTP: &http.Client{Timeout: 10 * time.Second}}
-	m, e := newTestManager(guard.Directory, db, c)
+	hook := &faultHook{}
+	m, e := newTestManager(guard.Directory, db, c, withTrace(hook.trace))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -57,7 +58,7 @@ func TestCleanupCrashHelper(t *testing.T) {
 		rd.Close()
 	}
 	point := os.Getenv("REDAPP_CLEANUP_POINT")
-	m.testFault = func(p string, g *Generation) {
+	hook.set(func(p string, g *Generation) {
 		if p != point || (g != nil && g.ID != ev.Old) {
 			return
 		}
@@ -66,7 +67,7 @@ func TestCleanupCrashHelper(t *testing.T) {
 		}
 		json.NewEncoder(os.Stdout).Encode(ev)
 		os.Exit(91)
-	}
+	})
 	job, e := m.Preview(testApp, map[string]bool{r.ID: true})
 	if e != nil {
 		t.Fatal(e)
@@ -98,7 +99,7 @@ func TestCleanupProcessCrashWindows(t *testing.T) {
 		{"cleanup.after_pointer_delete", "idle"}, {"cleanup.after_detach", "idle"},
 		{"delete.before_files", "idle"}, {"delete.after_blob_unlink", "idle"},
 		{"delete.after_files", "idle"}, {"delete.after_generation_delete", "idle"},
-		{"cleanup.after_job_delete", "lease"},
+		{"cleanup.after_receipt", "lease"},
 		{"delete.before_files", "new"}, {"delete.after_files", "new"},
 		{"delete.after_generation_delete", "new"},
 	}

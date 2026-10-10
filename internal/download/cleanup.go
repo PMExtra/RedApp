@@ -147,6 +147,6 @@ func (m *Manager) Cleanup(app, jobID string) error {
 			return e
 		}
 	}
-	m.checkpoint("cleanup.after_job_delete", nil) // Kept fault barrier name; the row is now a 24-hour receipt.
+	m.checkpoint("cleanup.after_receipt", nil)
 	return nil
 }

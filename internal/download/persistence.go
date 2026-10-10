@@ -211,13 +211,13 @@ func (m *Manager) recover() error {
 			openErr = errors.New("Recovered blob failed verification")
 		}
 		if g.State == "complete" || !errors.Is(openErr, fs.ErrNotExist) {
-			g.Error = "Completed cache file is missing or invalid"
+			g.Error = errBlobInvalid.Error()
 			g.Retired = true
 			if e = m.db.RetireGeneration(g.Resource.Application, g.ID, time.Now()); e != nil {
 				return e
 			}
 			delete(m.current, g.Resource.ID)
-			m.recordFailure(g, nil)
+			m.recordFailure(g, errBlobInvalid)
 			continue
 		}
 		// The retained part resumes in place, so it is opened for writing.
@@ -410,5 +410,5 @@ func (m *Manager) recordFailure(g *Generation, err error) {
 		v := g.upstreamStatus
 		status = &v
 	}
-	_ = m.db.RecordEvent(store.Event{UpstreamStatus: status, AppID: g.Resource.MetricScope(), Version: g.Resource.Version, ResourceKey: g.Resource.Key, GenerationID: g.ID, Category: failureCategory(err, g.Error), Code: "download_failed", Message: g.Error})
+	_ = m.db.RecordEvent(store.Event{UpstreamStatus: status, AppID: g.Resource.MetricScope(), Version: g.Resource.Version, ResourceKey: g.Resource.Key, GenerationID: g.ID, Category: failureCategory(err), Code: "download_failed", Message: g.Error})
 }

@@ -22,14 +22,14 @@ import (
 )
 
 func digest(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
-func setup(t *testing.T, c *distributor.Client) (*Manager, *store.Store, string) {
+func setup(t *testing.T, c *distributor.Client, options ...Option) (*Manager, *store.Store, string) {
 	t.Helper()
 	dir := t.TempDir()
 	db, e := store.Open(dir)
 	if e != nil {
 		t.Fatal(e)
 	}
-	m, e := newTestManager(dir, db, c)
+	m, e := newTestManager(dir, db, c, options...)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -44,8 +44,21 @@ func resource(c *distributor.Client, b []byte) Resource {
 
 const testApp = "openai/codex"
 
-func newTestManager(dir string, db *store.Store, c *distributor.Client) (*Manager, error) {
-	m, err := NewApplications(dir, db, map[string]*distributor.Client{testApp: c})
+// faultHook lets a test arm a lifecycle hook after the manager has been built
+// and recovered; until armed, every trace point passes through.
+type faultHook struct {
+	fn atomic.Pointer[func(string, *Generation)]
+}
+
+func (h *faultHook) set(f func(string, *Generation)) { h.fn.Store(&f) }
+func (h *faultHook) trace(point string, g *Generation) {
+	if f := h.fn.Load(); f != nil {
+		(*f)(point, g)
+	}
+}
+
+func newTestManager(dir string, db *store.Store, c *distributor.Client, options ...Option) (*Manager, error) {
+	m, err := NewApplications(dir, db, map[string]*distributor.Client{testApp: c}, options...)
 	if err == nil {
 		// Package tests keep the production retry count with short backoff.
 		m.retryBase, m.retryMax = time.Millisecond, 10*time.Millisecond

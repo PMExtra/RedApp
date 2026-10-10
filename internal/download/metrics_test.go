@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/testutil"
 	"io"
 	"math"
@@ -76,23 +77,24 @@ func TestHangingUpstreamHasBoundedFailure(t *testing.T) {
 	}
 }
 
-func TestEnglishFailureCategories(t *testing.T) {
-	for message, want := range map[string]string{
-		"Complete file SHA256 does not match":                  "hash",
-		"Unsafe upstream resume; a new generation is required": "range",
-		"Unsafe upstream Content-Encoding":                     "encoding",
-		"Disk write failed":                                    "disk",
-		"File fsync failed":                                    "disk",
-		"Artifact length does not match":                       "length",
-		"Artifact truncated":                                   "length",
-		"Upstream HTTP 503":                                    "http",
-		"DNS returned no addresses":                            "dns",
-		"TLS handshake failed":                                 "tls",
-		"request timeout":                                      "timeout",
-		"Cache state commit failed":                            "database",
+func TestFailureCategoriesFollowErrorTypes(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{errHashMismatch, "hash"},
+		{unsafeResume, "range"},
+		{distributor.ErrUnsafeEncoding, "encoding"},
+		{&failure{message: "Disk write failed", category: "disk", cause: os.ErrPermission}, "disk"},
+		{errLength, "length"},
+		{errTruncated, "length"},
+		{errBlobInvalid, "disk"},
+		{upstreamHTTPError(503), "http"},
+		{&failure{message: "Cache state commit failed", category: "database"}, "database"},
+		{&net.DNSError{Err: "no such host", Name: "upstream.example"}, "dns"},
 	} {
-		if got := failureCategory(nil, message); got != want {
-			t.Errorf("%q: got %s want %s", message, got, want)
+		if got := failureCategory(tc.err); got != tc.want {
+			t.Errorf("%v: got %s want %s", tc.err, got, tc.want)
 		}
 	}
 }
@@ -120,17 +122,14 @@ func TestTransportFailureCategories(t *testing.T) {
 			if err == nil || err.Error() != "Upstream connection failed" {
 				t.Fatal("transport failure message changed", err)
 			}
-			if got := failureCategory(err, err.Error()); got != tc.want {
+			if got := failureCategory(err); got != tc.want {
 				t.Fatalf("got %s want %s", got, tc.want)
 			}
 		})
 	}
 	// Body read failures keep their stable message and their transport class.
-	interrupted := &causeError{"Upstream download interrupted", &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}, true}
-	if got := failureCategory(interrupted, interrupted.Error()); got != "timeout" {
+	interrupted := &failure{message: "Upstream download interrupted", category: "upstream", cause: &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}, transient: true}
+	if got := failureCategory(interrupted); got != "timeout" {
 		t.Fatal("interrupted read timeout category", got)
-	}
-	if got := failureCategory(errHashMismatch, "Upstream connection failed"); got != "hash" {
-		t.Fatal("typed hash mismatch category", got)
 	}
 }

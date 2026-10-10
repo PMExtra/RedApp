@@ -330,18 +330,19 @@ func TestPermanentDeletionCancelsReleaseAcrossOldEpochAndVerification(t *testing
 			}
 			defer db.DB.Close()
 			app := dynamicApplication(t, db, client)
-			m, err := NewApplications(dir, db, map[string]*distributor.Client{app.StorageID(): client})
+			hook := &faultHook{}
+			m, err := NewApplications(dir, db, map[string]*distributor.Client{app.StorageID(): client}, withTrace(hook.trace))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer m.Close()
 			if stage == "verify" {
-				m.testFault = func(point string, g *Generation) {
+				hook.set(func(point string, g *Generation) {
 					if point == "download.before_verify" {
 						close(started)
 						<-g.ctx.Done()
 					}
-				}
+				})
 			}
 			r := dynamicResource(t, db, app, client, payload)
 			authorize(t, m, r)
