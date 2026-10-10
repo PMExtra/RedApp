@@ -84,7 +84,7 @@ func TestCleanupSeparatesNewReaderFromRetiredGenerationFlight(t *testing.T) {
 	if len(rows) != 1 || rows[0].GenerationID == oldID {
 		t.Fatal("old flight resurrected its retired generation", rows)
 	}
-	if f.budget.readers.Load() != 0 || f.budget.writers.Load() != 0 {
+	if !f.budget.drained() {
 		t.Fatal("generation-separated flights leaked capacity")
 	}
 }

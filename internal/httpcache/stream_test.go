@@ -162,7 +162,7 @@ func TestConcurrentColdReadersStreamBeforeTheUpstreamCompletes(t *testing.T) {
 	if w, err := f.serve(t, "GET", http.Header{}); err != nil || w.Body.String() != string(data) || calls.Load() != 1 {
 		t.Fatal("published stream not served from the cache", err, calls.Load())
 	}
-	if f.budget.readers.Load() != 0 || f.budget.writers.Load() != 0 {
+	if !f.budget.drained() {
 		t.Fatal("streaming leaked capacity")
 	}
 }
@@ -296,7 +296,7 @@ func TestFailedStreamsLeaveNoEntry(t *testing.T) {
 				t.Fatal("failed stream left an entry")
 			}
 			f.noPartialFiles(t)
-			if f.budget.readers.Load() != 0 || f.budget.writers.Load() != 0 {
+			if !f.budget.drained() {
 				t.Fatal("failed stream leaked capacity")
 			}
 		})
