@@ -3,7 +3,6 @@ package store
 import (
 	"database/sql"
 	"errors"
-	"fmt"
 	"time"
 )
 
@@ -218,24 +217,11 @@ func (s *Store) VersionsFor(app string) (map[string]string, error) {
 	}
 	return out, rows.Err()
 }
-func (s *Store) AddVersion(app, version string, requests, downstreamBytes int64) error {
-	if requireApp(app) != nil || requests < 0 || downstreamBytes < 0 {
-		return errors.New("Invalid version counter")
-	}
-	result, err := s.DB.Exec("UPDATE app_versions SET artifact_requests=artifact_requests+?,downstream_bytes=downstream_bytes+? WHERE app_id=? AND version=?", requests, downstreamBytes, app, version)
-	if err != nil {
-		return err
-	}
-	n, err := result.RowsAffected()
-	if err == nil && n != 1 {
-		return fmt.Errorf("Unknown application version: %w", sql.ErrNoRows)
-	}
-	return err
-}
 func (s *Store) VersionStats(app string) (map[string]VersionStats, error) {
 	if err := requireApp(app); err != nil {
 		return nil, err
 	}
+	s.SettleCounters()
 	rows, err := s.DB.Query("SELECT version,first_seen_s,artifact_requests,downstream_bytes FROM app_versions WHERE app_id=?", app)
 	if err != nil {
 		return nil, err

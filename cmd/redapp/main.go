@@ -149,7 +149,8 @@ func serve(c config.Deployment) error {
 	if err != nil {
 		return err
 	}
-	defer db.DB.Close()
+	defer db.Close() // Runs after all transfer services stop, flushing their final counters.
+	defer db.StartCounterFlush(store.CounterFlushInterval, func(err error) { log.Printf("Counter flush failed; increments retained for retry: %v", err) })()
 	db.SetDistributionValidation(builtin.ValidateDescriptors)
 	// Validate/reconcile all authoritative configurations before recovery mutates data.
 	if err = db.EnsureEntityTemplates(); err != nil {

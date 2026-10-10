@@ -435,6 +435,7 @@ func (s *Server) serveResource(w http.ResponseWriter, r *http.Request, resource 
 		return
 	}
 	defer finish()
+	defer s.DB.SettleCounters() // Persist this transfer's counters promptly; failures are reported, never fatal.
 	app := resource.Application
 	metricApp := resource.MetricScope()
 	if err := s.DB.AddFor(metricApp, "artifact_requests", 1); err != nil {
@@ -466,12 +467,9 @@ func (s *Server) serveResource(w http.ResponseWriter, r *http.Request, resource 
 		n, re := rd.Read(buf)
 		if n > 0 {
 			written, we := w.Write(buf[:n])
-			if e := s.DB.AddFor(metricApp, "downstream_bytes", int64(written)); e != nil {
-				panic(http.ErrAbortHandler)
-			}
-			if e := s.DB.AddVersion(app, resource.Version, 0, int64(written)); e != nil {
-				panic(http.ErrAbortHandler)
-			}
+			// Counters are buffered in memory; accounting never aborts a client transfer.
+			_ = s.DB.AddFor(metricApp, "downstream_bytes", int64(written))
+			_ = s.DB.AddVersion(app, resource.Version, 0, int64(written))
 			if we != nil {
 				s.DB.AddFor(metricApp, "download_errors", 1)
 				return
