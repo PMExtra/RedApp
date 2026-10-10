@@ -34,10 +34,33 @@ var (
 
 // Store owns the icon directory below the caller's already validated and
 // locked RedApp data directory.
+//
+// Files are content addressed, so concurrent writers of the same name write
+// identical bytes and need no lock. The only conflict is a failed import
+// removing a file it created while another caller is writing or has just
+// been handed the same name; mu coordinates that without being held during
+// any file operation.
 type Store struct {
-	dir      string
-	mu       sync.Mutex
-	importMu sync.Mutex
+	dir     string
+	mu      sync.Mutex
+	settled *sync.Cond // signalled when a removal finishes
+	// writes holds the sequence number of the latest write of each name
+	// while an import is in flight, writing counts the writes in progress and
+	// removing marks a name a failed import is deleting.
+	seq      uint64
+	imports  int
+	writes   map[string]uint64
+	writing  map[string]int
+	removing map[string]bool
+}
+
+// claim records one write of name. Its fields tell a failed import whether
+// anyone else may hold the name: another write started or was in progress.
+type claim struct {
+	name    string
+	seq     uint64
+	shared  bool
+	created bool
 }
 
 func New(dir string) (*Store, error) {
@@ -54,7 +77,9 @@ func New(dir string) (*Store, error) {
 			return nil, err
 		}
 	}
-	return &Store{dir: icons}, nil
+	s := &Store{dir: icons, writes: map[string]uint64{}, writing: map[string]int{}, removing: map[string]bool{}}
+	s.settled = sync.NewCond(&s.mu)
+	return s, nil
 }
 
 // Close exists for symmetry with the other storage services; the store keeps
@@ -64,8 +89,6 @@ func (s *Store) Close() error { return nil }
 // Put accepts image bytes, never a caller-provided filename. The returned path
 // is immutable and names the normalized content, not the original upload.
 func (s *Store) Put(reader io.Reader) (string, error) {
-	s.importMu.Lock()
-	defer s.importMu.Unlock()
 	return s.put(reader)
 }
 func (s *Store) put(reader io.Reader) (string, error) {
@@ -80,43 +103,92 @@ func (s *Store) put(reader io.Reader) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return s.putContent(content, extension)
+	path, _, err := s.putContent(content, extension)
+	return path, err
 }
 
 // putContent preserves validated static exchange assets; upload normalization stays in put.
-func (s *Store) putContent(content []byte, extension string) (string, error) {
+func (s *Store) putContent(content []byte, extension string) (string, claim, error) {
 	digest := sha256.Sum256(content)
 	name := hex.EncodeToString(digest[:]) + extension
-	publicPath := PublicPrefix + name
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	for s.removing[name] {
+		s.settled.Wait()
+	}
+	s.seq++
+	if s.imports > 0 {
+		s.writes[name] = s.seq
+	}
+	c := claim{name: name, seq: s.seq, shared: s.writing[name] > 0}
+	s.writing[name]++
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.writing[name]--
+		if s.writing[name] == 0 {
+			delete(s.writing, name)
+		}
+		s.mu.Unlock()
+	}()
+	created, err := s.writeContent(name, content)
+	c.created = created
+	return PublicPrefix + name, c, err
+}
+
+// writeContent stores content as name unless an identical file exists and
+// reports whether it wrote the file.
+func (s *Store) writeContent(name string, content []byte) (bool, error) {
+	publicPath := PublicPrefix + name
 	if _, err := os.Lstat(filepath.Join(s.dir, name)); err == nil {
 		f, _, err := s.Open(publicPath)
 		if err != nil {
-			return "", err
+			return false, err
 		}
 		existing, readErr := io.ReadAll(io.LimitReader(f, MaxStoredBytes+1))
 		closeErr := f.Close()
 		if readErr != nil {
-			return "", readErr
+			return false, readErr
 		}
 		if closeErr != nil {
-			return "", closeErr
+			return false, closeErr
 		}
 		if !bytes.Equal(existing, content) {
-			return "", errors.New("stored icon does not match its content address")
+			return false, errors.New("stored icon does not match its content address")
 		}
-		return publicPath, nil
+		return false, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", err
+		return false, err
 	}
 	// A subsequent database reference must not become durable before the file's
 	// directory entry does; WriteFile syncs the directory after the rename.
 	// Failed uploads never remove a previously stored icon.
 	if err := fsutil.WriteFile(filepath.Join(s.dir, name), content); err != nil {
-		return "", err
+		return false, err
 	}
-	return publicPath, nil
+	return true, nil
+}
+
+// release removes a file that c created when nobody else may hold its name:
+// no other write of it started since c, none was in progress when c began or
+// is in progress now, and referenced (checked first, without mu) is false.
+func (s *Store) release(c claim, referenced bool) {
+	if !c.created || c.shared || referenced {
+		return
+	}
+	s.mu.Lock()
+	if s.writes[c.name] != c.seq || s.writing[c.name] > 0 {
+		s.mu.Unlock()
+		return
+	}
+	s.removing[c.name] = true
+	s.mu.Unlock()
+	if removed, err := fsutil.Remove(filepath.Join(s.dir, c.name)); err == nil && removed {
+		fsutil.SyncDir(s.dir)
+	}
+	s.mu.Lock()
+	delete(s.removing, c.name)
+	s.settled.Broadcast()
+	s.mu.Unlock()
 }
 
 // Open accepts only a canonical path returned by Put. Its file supports Seek
