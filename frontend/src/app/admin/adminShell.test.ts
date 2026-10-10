@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { api, unwrap } from "@/shared/api";
 import { bootstrap, session } from "@/test/factories";
+import { globalStatus } from "@/test/factories/metrics";
 import { apiError, mockApi, noContent, useHandlers } from "@/test/msw";
 import { renderEntry } from "@/test/render";
 
@@ -13,6 +14,9 @@ function signedOutServer() {
   const csrf: (string | null)[] = [];
   useHandlers(
     mockApi("get", "/api/bootstrap", () => bootstrap()),
+    // Data of the pages the shell tests visit.
+    mockApi("get", "/admin/api/status", () => globalStatus()),
+    mockApi("get", "/admin/api/events", () => ({ items: [], next_cursor: null })),
     mockApi("get", "/admin/api/session", () => (signedIn ? session() : apiError("AUTH_REQUIRED"))),
     mockApi("post", "/admin/api/session", async ({ request }) => {
       const { password } = (await request.json()) as { password: string };

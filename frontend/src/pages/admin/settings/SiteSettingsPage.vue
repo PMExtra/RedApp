@@ -1,11 +1,19 @@
 <script setup lang="ts">
-// Package D: site texts, public URL and homepage pins (`getSiteSettings`, `getPublicUrlSettings`, `getHomepageSettings` and their PUTs).
 import { useI18n } from "vue-i18n";
-import { PagePlaceholder } from "@/shared/ui";
+import { HomepagePinsForm, PublicUrlForm, SiteTextsForm } from "@/features/settings";
+import { PageHeader } from "@/shared/ui";
 
 const { t } = useI18n();
 </script>
 
 <template>
-  <PagePlaceholder :title="t('adminShell.titles.site')" />
+  <div class="flex flex-col gap-6">
+    <PageHeader
+      :title="t('adminShell.titles.site')"
+      :description="t('siteSettingsPage.description')"
+    />
+    <SiteTextsForm />
+    <PublicUrlForm />
+    <HomepagePinsForm />
+  </div>
 </template>

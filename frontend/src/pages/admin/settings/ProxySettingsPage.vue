@@ -1,11 +1,17 @@
 <script setup lang="ts">
-// Package D: global upstream proxy (`getGlobalProxySettings`, `replaceGlobalProxySettings`) with ProxyFields.
 import { useI18n } from "vue-i18n";
-import { PagePlaceholder } from "@/shared/ui";
+import { GlobalProxyForm } from "@/features/settings";
+import { PageHeader } from "@/shared/ui";
 
 const { t } = useI18n();
 </script>
 
 <template>
-  <PagePlaceholder :title="t('adminShell.titles.proxy')" />
+  <div class="flex flex-col gap-6">
+    <PageHeader
+      :title="t('adminShell.titles.proxy')"
+      :description="t('proxySettingsPage.description')"
+    />
+    <GlobalProxyForm />
+  </div>
 </template>

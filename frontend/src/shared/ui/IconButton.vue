@@ -3,6 +3,9 @@ import Button from "./Button.vue";
 import type { ButtonSize, ButtonVariant } from "./types";
 import Tooltip from "./Tooltip.vue";
 
+// Listeners and attributes go to the button itself: with the tooltip, the
+// root is Reka's renderless TooltipRoot, which drops fallthrough attributes.
+defineOptions({ inheritAttrs: false });
 withDefaults(
   defineProps<{
     /** Accessible name; also shown as a tooltip. */
@@ -29,6 +32,7 @@ withDefaults(
     :loading="loading"
     :type="type"
     :aria-label="label"
+    v-bind="$attrs"
   >
     <slot v-if="!loading" />
   </Button>
@@ -41,6 +45,7 @@ withDefaults(
       :loading="loading"
       :type="type"
       :aria-label="label"
+      v-bind="$attrs"
     >
       <slot v-if="!loading" />
     </Button>
