@@ -51,6 +51,8 @@ const running = computed(() => current.value?.state === "running");
 const busy = computed(() => actions.cancel.isPending.value || actions.retry.isPending.value);
 
 function show(next: PrewarmJob | null) {
+  // A new job answers an earlier "another task is running" retry error.
+  if (next) actions.retry.reset();
   jobId.value = next?.id ?? null;
   storeJobId(props.vendor, props.app, jobId.value);
 }
