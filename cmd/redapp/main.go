@@ -48,7 +48,7 @@ func command(args []string) error {
 	}
 	if len(args) == 1 && (args[0] == "--help" || args[0] == "help") {
 		fmt.Println("Usage: redapp [serve] [options] | config validate [options] | healthcheck [options] | version")
-		fmt.Println("Config path: --config FILE > REDAPP_CONFIG > optional /etc/redapp/config.yaml (YAML; explicit JSON supported)")
+		fmt.Println("Config path: --config FILE > REDAPP_CONFIG > optional /etc/redapp/config.yaml (YAML)")
 		fmt.Println("Deployment fields: CLI > environment > selected file > defaults")
 		fmt.Println("Options: --data, --listen, --trusted-proxies, --max-writers, --max-readers, --max-artifact-bytes")
 		return nil
@@ -68,7 +68,7 @@ func command(args []string) error {
 	}
 	flags := flag.NewFlagSet(mode, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	path := flags.String("config", "", "deployment YAML or JSON configuration file")
+	path := flags.String("config", "", "deployment YAML configuration file")
 	for _, name := range []string{"data", "listen", "trusted-proxies", "max-writers", "max-readers", "max-artifact-bytes"} {
 		flags.String(name, "", "override deployment setting")
 	}

@@ -21,16 +21,16 @@ RedApp 最多读取一个文件，按以下顺序取第一个：
 
 默认文件可以不存在。通过 `--config` 或 `REDAPP_CONFIG` 指定的文件必须存在。所选文件缺失、不可读或不合法时，启动失败。
 
-RedApp 不搜索工作目录，也不会自动查找 `config.json`。
+RedApp 不会在工作目录中查找其他文件。
 
 ### 文件格式
 
-- 以 `.json` 结尾的文件按 JSON 解析，其他文件按 YAML 解析。
+- 文件一律按 YAML 解析，与扩展名无关。
 - 文件必须是单个映射，最大 64 KiB。
 - 拒绝未知字段、重复键、`null` 值、多个 YAML 文档、锚点、别名、合并键和自定义标签。
 - 整数必须是普通数字。只有 `max_artifact_bytes` 额外接受容量字符串。
 
-示例：[config/example.yaml](../../config/example.yaml) 和 [config/example.json](../../config/example.json)。
+示例：[config/example.yaml](../../config/example.yaml)。
 
 ```yaml
 schema_version: 1
@@ -97,7 +97,7 @@ download_limits:
 ```sh
 redapp config validate
 redapp config validate --config ./config.yaml
-REDAPP_CONFIG=/etc/redapp/config.json redapp serve
+REDAPP_CONFIG=/srv/redapp/config.yaml redapp serve
 redapp serve --config ./custom.yaml --listen 127.0.0.1:8081
 ```
 

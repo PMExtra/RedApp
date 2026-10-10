@@ -21,16 +21,16 @@ RedApp reads at most one file. The first match wins:
 
 The default file may be absent. A file selected with `--config` or `REDAPP_CONFIG` must exist. A selected file that is missing, unreadable or invalid stops startup.
 
-RedApp does not search the working directory and does not look for `config.json` automatically.
+RedApp does not search the working directory for other files.
 
 ### File format
 
-- Files ending in `.json` are parsed as JSON. All other files are parsed as YAML.
+- The file is YAML, whatever its extension.
 - The file must be a single mapping of at most 64 KiB.
 - Unknown fields, duplicate keys, `null` values, multiple YAML documents, anchors, aliases, merge keys and custom tags are rejected.
 - Integers must be plain numbers. Only `max_artifact_bytes` also accepts a size string.
 
-Examples: [config/example.yaml](../../config/example.yaml) and [config/example.json](../../config/example.json).
+Example: [config/example.yaml](../../config/example.yaml).
 
 ```yaml
 schema_version: 1
@@ -97,7 +97,7 @@ Use explicit binary units such as `GiB` to avoid confusion. Do not use thousands
 ```sh
 redapp config validate
 redapp config validate --config ./config.yaml
-REDAPP_CONFIG=/etc/redapp/config.json redapp serve
+REDAPP_CONFIG=/srv/redapp/config.yaml redapp serve
 redapp serve --config ./custom.yaml --listen 127.0.0.1:8081
 ```
 
