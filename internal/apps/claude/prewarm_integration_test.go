@@ -95,15 +95,8 @@ func TestSignedClaudePrewarmRealComponentPipeline(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer db.Close()
-			vendor, err := db.CreateVendor(store.VendorInput{ID: "signed", Name: store.LocalizedText{En: "Signed", ZhCN: "签名"}, Enabled: true})
-			if err != nil {
-				t.Fatal(err)
-			}
-			app, err := db.CreateApplication(vendor.ID, store.ApplicationInput{ID: "claude", Name: store.LocalizedText{En: "Claude", ZhCN: "Claude"}, Provider: application.ClaudeCode, BaseURL: origin.URL, CacheTTLSeconds: 60, Enabled: true})
-			if err != nil {
-				t.Fatal(err)
-			}
-			entry := application.Entry{Descriptor: application.Descriptor{ID: app.Key, TrustRevision: 1, Channels: []string{"latest", "stable"}, DefaultChannelTTLSeconds: 60}, Protocol: newProtocol(upstream, verify), Upstream: upstream, Provider: application.ClaudeCode, UID: app.UID, VendorUID: vendor.UID, SourceEpoch: app.SourceEpoch, Revision: app.Revision, VendorRevision: vendor.Revision, RuntimeRevision: app.RuntimeRevision, VendorRuntimeRevision: vendor.RuntimeRevision, Enabled: true}
+			app := testutil.App(t, db, "signed/claude", store.ApplicationInput{Provider: application.ClaudeCode, BaseURL: origin.URL, CacheTTLSeconds: 60})
+			entry := testutil.Entry(t, db, app.Key, application.Entry{Descriptor: application.Descriptor{TrustRevision: 1, Channels: []string{"latest", "stable"}, DefaultChannelTTLSeconds: 60}, Protocol: newProtocol(upstream, verify), Upstream: upstream})
 			registry, err := application.NewRegistry([]application.Entry{entry})
 			if err != nil {
 				t.Fatal(err)

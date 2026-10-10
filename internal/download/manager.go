@@ -37,14 +37,13 @@ type Resource struct {
 	Labels      map[string]string
 }
 
+// MetricScope is the metrics namespace of the application owning the storage
+// namespace r.Application.
 func (r Resource) MetricScope() string {
 	if uid, _, ok := identity.ParseStorageID(r.Application); ok {
 		return identity.MetricsID(uid)
 	}
-	if r.MetricsID != "" {
-		return r.MetricsID
-	}
-	return r.Application
+	return r.MetricsID
 }
 
 func cloneResource(r Resource) Resource {

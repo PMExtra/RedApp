@@ -273,13 +273,14 @@ func (s *Store) ProcessPendingDeletes(dir string) error {
 	return nil
 }
 
-// Late background observations must not recreate the private history of a deleted
-// UID. Legacy static fixtures do not use this private namespace.
+// applicationNamespaceExists reports whether the application owning a metrics
+// or storage namespace (app/<uid> or app/<uid>-e<epoch>) still exists, so late
+// background observations cannot recreate the history of a deleted UID.
 func applicationNamespaceExists(q directoryQuerier, app string) (bool, error) {
-	if !strings.HasPrefix(app, "app/") {
-		return true, nil
+	uid, ok := strings.CutPrefix(app, "app/")
+	if !ok {
+		return false, ErrInvalidDirectory
 	}
-	uid := strings.TrimPrefix(app, "app/")
 	if i := strings.Index(uid, "-e"); i >= 0 {
 		uid = uid[:i]
 	}

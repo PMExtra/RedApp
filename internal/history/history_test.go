@@ -8,6 +8,7 @@ import (
 
 	"github.com/PMExtra/RedApp/internal/store"
 	"github.com/PMExtra/RedApp/internal/store/storetest"
+	"github.com/PMExtra/RedApp/internal/testutil"
 )
 
 // setup returns a history over a new store and a separate SQL connection to
@@ -322,14 +323,16 @@ func TestCounterDoesNotBridgeMissingUTCMinute(t *testing.T) {
 }
 
 func TestScopedHistoryAggregationAndUnknownRetention(t *testing.T) {
-	h, _, sqlDB := setup(t)
+	h, db, sqlDB := setup(t)
+	codex := testutil.App(t, db, "openai/codex", store.ApplicationInput{Provider: "info"}).MetricsID()
+	claude := testutil.App(t, db, "anthropic/claude-code", store.ApplicationInput{Provider: "info"}).MetricsID()
 	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	key := "counters.upstream_bytes"
 	for i := 0; i < 2; i++ {
 		err := h.RecordScoped(base.Add(time.Duration(i)*time.Minute), []Observation{
 			{Scope: "global", Metrics: []Metric{observation(key, float64(30+i*12))}},
-			{Scope: "app", AppID: "openai/codex", Metrics: []Metric{observation(key, float64(10+i*5))}},
-			{Scope: "app", AppID: "anthropic/claude-code", Metrics: []Metric{observation(key, float64(20+i*7))}},
+			{Scope: "app", AppID: codex, Metrics: []Metric{observation(key, float64(10+i*5))}},
+			{Scope: "app", AppID: claude, Metrics: []Metric{observation(key, float64(20+i*7))}},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -346,7 +349,7 @@ func TestScopedHistoryAggregationAndUnknownRetention(t *testing.T) {
 	if err := h.Maintain(now); err != nil {
 		t.Fatal(err)
 	}
-	for app, want := range map[string]float64{"openai/codex": 5, "anthropic/claude-code": 7} {
+	for app, want := range map[string]float64{codex: 5, claude: 7} {
 		series, err := h.QueryFor(app, key, "7d", now)
 		if err != nil {
 			t.Fatal(err)
@@ -376,7 +379,7 @@ func TestScopedHistoryAggregationAndUnknownRetention(t *testing.T) {
 	if err := sqlDB.QueryRow("SELECT COUNT(*) FROM metric_samples WHERE metric IN ('retired.unknown','counters.reuse_requests')").Scan(&n); err != nil || n != 2 {
 		t.Fatal("unknown history eagerly removed", n, err)
 	}
-	if _, err := h.QueryFor("openai/codex", "runtime.memory_bytes", "24h", now); err == nil {
+	if _, err := h.QueryFor(codex, "runtime.memory_bytes", "24h", now); err == nil {
 		t.Fatal("process metric fabricated as app metric")
 	}
 	if err := h.Maintain(base.Add(25 * time.Hour)); err != nil {

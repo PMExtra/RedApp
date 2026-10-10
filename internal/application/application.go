@@ -162,23 +162,12 @@ type Entry struct {
 }
 
 // StorageID isolates cache data whenever an application's source changes.
-// Legacy in-memory fixtures have no UID and retain their descriptor identity.
-func (e Entry) StorageID() string {
-	if e.UID == "" {
-		return e.Descriptor.ID
-	}
-	return identity.StorageID(e.UID, e.SourceEpoch)
-}
+func (e Entry) StorageID() string { return identity.StorageID(e.UID, e.SourceEpoch) }
 
 // MetricsID is stable across source changes and display metadata edits.
-func (e Entry) MetricsID() string {
-	if e.UID == "" {
-		return e.Descriptor.ID
-	}
-	return identity.MetricsID(e.UID)
-}
+func (e Entry) MetricsID() string { return identity.MetricsID(e.UID) }
 
-func (e Entry) Active() bool { return e.DeletedAt == nil && (e.UID == "" || e.Enabled) }
+func (e Entry) Active() bool { return e.DeletedAt == nil && e.Enabled }
 
 type registrySnapshot struct {
 	entries []Entry
@@ -225,17 +214,14 @@ func PrepareRegistry(entries []Entry) (*PreparedRegistry, error) {
 		if _, found := snapshot.byID[d.ID]; found {
 			return nil, fmt.Errorf("Duplicate application %s", d.ID)
 		}
-		if e.Provider != "" {
-			if _, known := ProviderDefinition(e.Provider); !known {
-				return nil, fmt.Errorf("Unknown provider for %s", d.ID)
-			}
+		if _, known := ProviderDefinition(e.Provider); !known {
+			return nil, fmt.Errorf("Unknown provider for %s", d.ID)
 		}
-		if e.UID != "" {
-			if !identity.ValidUID(e.UID) || e.Revision < 1 || e.VendorRevision < 1 || e.SourceEpoch < 1 || uids[e.UID] {
-				return nil, fmt.Errorf("Invalid runtime identity for %s", d.ID)
-			}
-			uids[e.UID] = true
+		// Every entry comes from a persisted directory application.
+		if !identity.ValidUID(e.UID) || e.Revision < 1 || e.VendorRevision < 1 || e.SourceEpoch < 1 || uids[e.UID] {
+			return nil, fmt.Errorf("Invalid runtime identity for %s", d.ID)
 		}
+		uids[e.UID] = true
 		if e.Upstream == nil && e.Provider != Info && e.Provider != Hosted || d.DefaultChannelTTLSeconds < 0 || d.DefaultChannelTTLSeconds > 86400 {
 			return nil, fmt.Errorf("Incomplete application %s", d.ID)
 		}

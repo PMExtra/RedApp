@@ -270,21 +270,15 @@ func (s *Service) CandidatesForSource(app, storageID, minimum string, views []do
 	if !ok || e.Protocol == nil {
 		return nil, nil, application.ErrNotFound
 	}
-	if e.UID == "" {
-		if storageID != e.StorageID() {
-			return nil, nil, application.ErrNotFound
+	uid, _, ok := identity.ParseStorageID(storageID)
+	if !ok || uid != e.UID {
+		return nil, nil, application.ErrNotFound
+	}
+	if _, err := s.db.Source(storageID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			err = application.ErrNotFound
 		}
-	} else {
-		uid, _, ok := identity.ParseStorageID(storageID)
-		if !ok || uid != e.UID {
-			return nil, nil, application.ErrNotFound
-		}
-		if _, err := s.db.Source(storageID); err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				err = application.ErrNotFound
-			}
-			return nil, nil, err
-		}
+		return nil, nil, err
 	}
 	return candidates(e, storageID, minimum, views)
 }

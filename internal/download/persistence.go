@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/fsutil"
-	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -140,9 +139,6 @@ func (m *Manager) recover() error {
 			return e
 		}
 		r := Resource{Application: row.AppID, SourceFence: row.SourceFence, Version: row.Version, Key: row.ResourceKey, Source: bound.SourceURL, Hash: bound.SHA256, Size: bound.ExpectedSize}
-		if uid, _, ok := identity.ParseStorageID(r.Application); ok {
-			r.MetricsID = identity.MetricsID(uid)
-		}
 		r.ID = LogicalIdentity(r.Application, r.Version, r.Key)
 		if e = m.validateResource(r); e != nil {
 			return e

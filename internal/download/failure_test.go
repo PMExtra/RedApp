@@ -54,10 +54,7 @@ func TestDatabaseBusyIsBoundedAndVerifiedCacheSurvives(t *testing.T) {
 	data := []byte("database-busy")
 	c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(data) }))
 	dir := t.TempDir()
-	db, e := store.Open(dir, store.WithBusyTimeout(30*time.Millisecond))
-	if e != nil {
-		t.Fatal(e)
-	}
+	db := openStore(t, dir, store.WithBusyTimeout(30*time.Millisecond))
 	m, e := newTestManager(dir, db, c)
 	if e != nil {
 		t.Fatal(e)

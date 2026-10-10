@@ -89,7 +89,7 @@ func (s *Server) listSources(w http.ResponseWriter, r *http.Request) {
 	}
 	out := sourceListDTO{Items: []sourceEpochDTO{}}
 	for _, row := range rows {
-		if entry.UID == "" || row.AppUID != entry.UID {
+		if row.AppUID != entry.UID {
 			continue
 		}
 		item := sourceEpochDTO{Epoch: row.Epoch, Current: row.Epoch == entry.SourceEpoch, Active: row.Active, CreatedAt: row.CreatedAt.UTC()}

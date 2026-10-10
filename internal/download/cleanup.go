@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/fsutil"
-	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -79,15 +78,13 @@ func (m *Manager) preview(app string, ids map[string]bool, unknown []string, gua
 		}
 	}
 	row := store.CleanupPreview{Retention: guard, ID: job.ID, AppID: app, CreatedAt: now, ExpiresAt: job.Expires, Selection: []store.CleanupSelection{}, ReclaimableBytes: job.ReclaimableBlobBytes, ActiveGenerations: job.ActiveGenerations, UnknownVersions: unknown}
-	if _, _, dynamic := identity.ParseStorageID(app); dynamic {
-		source, err := m.db.Source(app)
-		if err != nil {
-			return job, err
-		}
-		row.SourceFence = source.Fence()
-		if guard != nil && guard.SourceFence != row.SourceFence {
-			return job, store.ErrConflict
-		}
+	source, err := m.db.Source(app)
+	if err != nil {
+		return job, err
+	}
+	row.SourceFence = source.Fence()
+	if guard != nil && guard.SourceFence != row.SourceFence {
+		return job, store.ErrConflict
 	}
 	for _, item := range job.Selected {
 		row.Selection = append(row.Selection, store.CleanupSelection{GenerationID: item.Generation, Version: item.Version, ResourceKey: item.Key, SnapshotBytes: item.Bytes})

@@ -40,6 +40,46 @@ func snapshotFiles(t *testing.T, dir string) map[string][]byte {
 	}
 	return out
 }
+
+// testApplication returns the application key of s, creating it and its
+// vendor on first use: storage and metrics namespaces in store tests always
+// belong to a real directory application.
+func testApplication(t *testing.T, s *Store, key string) Application {
+	t.Helper()
+	if a, err := s.Application(key); err == nil {
+		return a
+	} else if !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+	vendor, id, _ := strings.Cut(key, "/")
+	name := LocalizedText{En: key, ZhCN: key}
+	if _, err := s.Vendor(vendor); errors.Is(err, ErrNotFound) {
+		if _, err = s.CreateVendor(VendorInput{ID: vendor, Name: name, Enabled: true}); err != nil {
+			t.Fatal(err)
+		}
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.CreateApplication(vendor, ApplicationInput{ID: id, Name: name, Provider: "codex", BaseURL: "https://codex.example.test", CacheTTLSeconds: 60, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+func fenceOf(t *testing.T, s *Store, storageID string) SourceFence {
+	t.Helper()
+	source, err := s.Source(storageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return source.Fence()
+}
+func storageOf(t *testing.T, s *Store, key string) string {
+	return testApplication(t, s, key).StorageID()
+}
+func metricsOf(t *testing.T, s *Store, key string) string {
+	return testApplication(t, s, key).MetricsID()
+}
 func releaseFixture(t *testing.T, s *Store, app, version string) Resource {
 	t.Helper()
 	r := Resource{AppID: app, Version: version, Key: "linux/binary", SourceURL: "https://example.test/file", SHA256: strings.Repeat("a", 64)}
@@ -53,7 +93,7 @@ func TestMetadataAtomicityImmutabilityAndApplicationIsolation(t *testing.T) {
 	if _, err := s.db.Exec(`CREATE TRIGGER reject_resources BEFORE INSERT ON resources BEGIN SELECT RAISE(FAIL,'injected failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	m := ReleaseMetadata{AppID: "openai/codex", Version: "1.0.0", Raw: []byte(`{}`), TrustRevision: 1, FetchedAt: time.Now()}
+	m := ReleaseMetadata{AppID: storageOf(t, s, "openai/codex"), Version: "1.0.0", Raw: []byte(`{}`), TrustRevision: 1, FetchedAt: time.Now()}
 	r := Resource{AppID: m.AppID, Version: m.Version, Key: "file", SourceURL: "https://example.test/file", SHA256: strings.Repeat("a", 64)}
 	if err := s.PutRelease(m, []Resource{r}); err == nil {
 		t.Fatal("injected fault ignored")
@@ -67,7 +107,7 @@ func TestMetadataAtomicityImmutabilityAndApplicationIsolation(t *testing.T) {
 	}
 	s.db.Exec("DROP TRIGGER reject_resources")
 	r = releaseFixture(t, s, m.AppID, m.Version)
-	releaseFixture(t, s, "anthropic/claude-code", m.Version)
+	releaseFixture(t, s, storageOf(t, s, "anthropic/claude-code"), m.Version)
 	r.SHA256 = strings.Repeat("b", 64)
 	if err := s.PutRelease(m, []Resource{r}); !errors.Is(err, ErrImmutableRelease) {
 		t.Fatal("mutable resource authorized", err)
@@ -76,7 +116,7 @@ func TestMetadataAtomicityImmutabilityAndApplicationIsolation(t *testing.T) {
 	if string(before.Raw) != `{"release":1}` {
 		t.Fatal("failed update changed envelope")
 	}
-	got, _ := s.VersionsFor("anthropic/claude-code")
+	got, _ := s.VersionsFor(storageOf(t, s, "anthropic/claude-code"))
 	if len(got) != 1 {
 		t.Fatal("application history not isolated")
 	}
@@ -113,14 +153,14 @@ func TestGlobalSettingCASRejectsStaleAndMalformedWrites(t *testing.T) {
 }
 func TestGenerationCleanupScopeAndCurrentCannotBeResurrected(t *testing.T) {
 	s := openTest(t)
-	r := releaseFixture(t, s, "openai/codex", "1.0.0")
-	releaseFixture(t, s, "anthropic/claude-code", "1.0.0")
+	r := releaseFixture(t, s, storageOf(t, s, "openai/codex"), "1.0.0")
+	releaseFixture(t, s, storageOf(t, s, "anthropic/claude-code"), "1.0.0")
 	now := time.Now().UTC().Truncate(time.Second)
-	g := Generation{ID: "first", AppID: r.AppID, Version: r.Version, ResourceKey: r.Key, ExpectedSHA256: r.SHA256, Phase: "incomplete", IsCurrent: true, StartedAt: now}
+	g := Generation{ID: "first", AppID: r.AppID, Version: r.Version, ResourceKey: r.Key, ExpectedSHA256: r.SHA256, Phase: "incomplete", IsCurrent: true, StartedAt: now, SourceFence: fenceOf(t, s, r.AppID)}
 	if err := s.CreateGeneration(g); err != nil {
 		t.Fatal(err)
 	}
-	p := CleanupPreview{ID: "preview", AppID: r.AppID, CreatedAt: now, ExpiresAt: now.Add(10 * time.Minute), Selection: []CleanupSelection{{GenerationID: g.ID, Version: r.Version, ResourceKey: r.Key}}}
+	p := CleanupPreview{ID: "preview", AppID: r.AppID, CreatedAt: now, ExpiresAt: now.Add(10 * time.Minute), Selection: []CleanupSelection{{GenerationID: g.ID, Version: r.Version, ResourceKey: r.Key}}, SourceFence: g.SourceFence}
 	if err := s.SaveCleanupPreview(p); err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +173,7 @@ func TestGenerationCleanupScopeAndCurrentCannotBeResurrected(t *testing.T) {
 	if err := s.SaveGeneration(g); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RetireCleanupPreview("anthropic/claude-code", p.ID, now); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := s.RetireCleanupPreview(storageOf(t, s, "anthropic/claude-code"), p.ID, now); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatal("cross app cleanup accepted", err)
 	}
 	if _, err := s.RetireCleanupPreview(r.AppID, p.ID, now); err != nil {
@@ -155,7 +195,7 @@ func TestGenerationCleanupScopeAndCurrentCannotBeResurrected(t *testing.T) {
 	if deleted, err := s.DeleteUnreferencedBlob(r.AppID, r.SHA256); err != nil || deleted {
 		t.Fatal("referenced blob deleted", err)
 	}
-	if _, err := s.Blob("anthropic/claude-code", r.SHA256); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := s.Blob(storageOf(t, s, "anthropic/claude-code"), r.SHA256); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatal("blob ownership shared", err)
 	}
 }
@@ -170,7 +210,7 @@ func TestWALDataSurvivesAbruptProcessExit(t *testing.T) {
 		if _, err = s.SaveSiteSettings(1, map[string]string{"title": "kept"}); err != nil {
 			t.Fatal(err)
 		}
-		if err = s.AddFor("openai/codex", "upstream_bytes", 13); err != nil {
+		if err = s.AddFor(metricsOf(t, s, "openai/codex"), "upstream_bytes", 13); err != nil {
 			t.Fatal(err)
 		}
 		if err = s.FlushCounters(); err != nil {
@@ -207,7 +247,7 @@ func TestWALDataSurvivesAbruptProcessExit(t *testing.T) {
 	if rev, err := s.ReadSiteSettings(&site); err != nil || rev != 2 || site["title"] != "kept" {
 		t.Fatal("committed WAL setting lost", site, rev, err)
 	}
-	counts, err := s.CountersFor("openai/codex")
+	counts, err := s.CountersFor(metricsOf(t, s, "openai/codex"))
 	if err != nil || counts["upstream_bytes"] != 13 {
 		t.Fatal("committed WAL counter lost", counts, err)
 	}

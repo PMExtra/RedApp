@@ -22,7 +22,7 @@ func (s *Server) maintainedApp(w http.ResponseWriter, r *http.Request, supported
 		return application.Entry{}, false
 	}
 	e, ok := s.registry.LookupAny(key)
-	if !ok || e.UID == "" {
+	if !ok {
 		s.fail(w, r, codeApplicationNotFound, nil, "Application not found")
 		return application.Entry{}, false
 	}

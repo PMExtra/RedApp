@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"github.com/PMExtra/RedApp/internal/distributor"
-	"github.com/PMExtra/RedApp/internal/store"
 	"github.com/PMExtra/RedApp/internal/testutil"
 	"io"
 	"net/http"
@@ -18,16 +17,13 @@ import (
 func TestTwoApplicationsShareLimitsAndKeepCleanupSeparate(t *testing.T) {
 	payload := bytes.Repeat([]byte("same version and asset, separate origins"), 1000)
 	var counts [2]atomic.Int32
+	dir := t.TempDir()
+	db := openStore(t, dir)
 	clients := map[string]*distributor.Client{}
-	for i, id := range []string{"openai/codex", "anthropic/claude-code"} {
+	for i, id := range []string{testApp, otherApp} {
 		idx := i
 		client, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { counts[idx].Add(1); w.Write(payload) }))
 		clients[id] = client
-	}
-	dir := t.TempDir()
-	db, e := store.Open(dir)
-	if e != nil {
-		t.Fatal(e)
 	}
 	defer db.Close()
 	m, e := NewApplications(dir, db, clients)
@@ -37,9 +33,7 @@ func TestTwoApplicationsShareLimitsAndKeepCleanupSeparate(t *testing.T) {
 	defer m.Close()
 	resources := map[string]Resource{}
 	for id, c := range clients {
-		r := resource(c, payload)
-		r.Application = id
-		r.ID = LogicalIdentity(id, r.Version, r.Key)
+		r := onApp(resource(c, payload), id)
 		authorize(t, m, r)
 		resources[id] = r
 	}
@@ -66,36 +60,36 @@ func TestTwoApplicationsShareLimitsAndKeepCleanupSeparate(t *testing.T) {
 	if counts[0].Load() != 1 || counts[1].Load() != 1 {
 		t.Fatal("per-application shared download failed")
 	}
-	if resources["openai/codex"].ID == resources["anthropic/claude-code"].ID {
+	if resources[testApp].ID == resources[otherApp].ID {
 		t.Fatal("identities collided")
 	}
-	wrong := resources["anthropic/claude-code"]
-	wrong.Application = "openai/codex"
+	wrong := resources[otherApp]
+	wrong.Application, wrong.SourceFence = testApp, sourceFences[testApp]
 	if r, _, e := m.Acquire(context.Background(), wrong); e == nil {
 		r.Close()
 		t.Fatal("foreign upstream was served from cache")
 	}
-	wrong.Application = "unknown/app"
+	wrong.Application = "app/00000000000000000000000000000000-e1"
 	if r, _, e := m.Acquire(context.Background(), wrong); e == nil {
 		r.Close()
 		t.Fatal("unknown app")
 	}
-	old, _, e := m.Acquire(context.Background(), resources["openai/codex"])
+	old, _, e := m.Acquire(context.Background(), resources[testApp])
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer old.Close()
-	job, e := m.Preview(testApp, map[string]bool{resources["openai/codex"].ID: true}, nil)
+	job, e := m.Preview(testApp, map[string]bool{resources[testApp].ID: true}, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
 	if e = m.Cleanup(testApp, job.ID); e != nil {
 		t.Fatal(e)
 	}
-	if !bytes.Equal(collect(t, m, resources["anthropic/claude-code"]), payload) || counts[1].Load() != 1 {
+	if !bytes.Equal(collect(t, m, resources[otherApp]), payload) || counts[1].Load() != 1 {
 		t.Fatal("cleanup affected other app")
 	}
-	if !bytes.Equal(collect(t, m, resources["openai/codex"]), payload) || counts[0].Load() != 1 {
+	if !bytes.Equal(collect(t, m, resources[testApp]), payload) || counts[0].Load() != 1 {
 		t.Fatal("new generation not independent")
 	}
 	if b, e := io.ReadAll(old); e != nil || !bytes.Equal(b, payload) {
@@ -105,7 +99,7 @@ func TestTwoApplicationsShareLimitsAndKeepCleanupSeparate(t *testing.T) {
 	m.mu.Lock()
 	m.maxReaders = 1
 	m.mu.Unlock()
-	if r, _, e := m.Acquire(context.Background(), resources["anthropic/claude-code"]); e == nil {
+	if r, _, e := m.Acquire(context.Background(), resources[otherApp]); e == nil {
 		r.Close()
 		t.Fatal("application bypassed global reader limit")
 	}
@@ -136,11 +130,8 @@ func TestLogicalBindingsReuseWithinApplicationAndSurviveMove(t *testing.T) {
 	var requests atomic.Int32
 	c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); w.Write(payload) }))
 	dir := t.TempDir()
-	db, e := store.Open(dir)
-	if e != nil {
-		t.Fatal(e)
-	}
-	clients := map[string]*distributor.Client{testApp: c, "anthropic/claude-code": c}
+	db := openStore(t, dir)
+	clients := map[string]*distributor.Client{testApp: c, otherApp: c}
 	m, e := NewApplications(dir, db, clients)
 	if e != nil {
 		t.Fatal(e)
@@ -162,9 +153,7 @@ func TestLogicalBindingsReuseWithinApplicationAndSurviveMove(t *testing.T) {
 	}
 	io.Copy(io.Discard, rd)
 	rd.Close()
-	foreign := first
-	foreign.Application = "anthropic/claude-code"
-	foreign.ID = LogicalIdentity(foreign.Application, foreign.Version, foreign.Key)
+	foreign := onApp(first, otherApp)
 	authorize(t, m, foreign)
 	collect(t, m, foreign)
 	if requests.Load() != 2 {
@@ -225,8 +214,8 @@ func TestLogicalBindingsReuseWithinApplicationAndSurviveMove(t *testing.T) {
 		t.Fatal("cleanup removed another logical resource")
 	}
 	global, _ := db.Counters()
-	app, _ := db.CountersFor(testApp)
-	other, _ := db.CountersFor(foreign.Application)
+	app, _ := db.CountersFor(metricsIDs[testApp])
+	other, _ := db.CountersFor(metricsIDs[otherApp])
 	if global["upstream_bytes"] != 3*int64(len(payload)) || app["upstream_bytes"] != 2*int64(len(payload)) || other["upstream_bytes"] != int64(len(payload)) {
 		t.Fatal("global/application traffic counters diverged", global, app, other)
 	}
@@ -240,10 +229,7 @@ func TestLogicalBindingsReuseWithinApplicationAndSurviveMove(t *testing.T) {
 	if e = os.Rename(dir, moved); e != nil {
 		t.Fatal(e)
 	}
-	db, e = store.Open(moved)
-	if e != nil {
-		t.Fatal(e)
-	}
+	db = openStore(t, moved)
 	m, e = NewApplications(moved, db, clients)
 	if e != nil {
 		t.Fatal(e)

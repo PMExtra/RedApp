@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/distributor"
-	"github.com/PMExtra/RedApp/internal/store"
 	"github.com/PMExtra/RedApp/internal/testutil"
 )
 
@@ -47,10 +46,7 @@ func dormantFixture(t *testing.T, payload []byte, requests *atomic.Int32, fault 
 	t.Helper()
 	client, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { requests.Add(1); w.Write(payload) }))
 	dir := t.TempDir()
-	db, err := store.Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := openStore(t, dir)
 	t.Cleanup(func() { db.Close() })
 	app := dynamicApplication(t, db, client)
 	clients := map[string]*distributor.Client{app.StorageID(): client}

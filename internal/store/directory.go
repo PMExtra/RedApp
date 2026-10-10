@@ -513,12 +513,6 @@ func (s *Store) Sources() ([]SourceRecord, error) {
 }
 func checkSourceActive(q directoryQuerier, storageID string, expected []SourceFence) error {
 	uid, epoch, ok := identity.ParseStorageID(storageID)
-	// Static provider fixtures and their typed storage APIs remain usable without
-	// a dynamic directory. Runtime-created applications always use app/<uid>-eN;
-	// never treat a malformed private namespace as a legacy public key.
-	if !ok && !strings.HasPrefix(storageID, "app/") && identity.ValidKey(storageID) {
-		return nil
-	}
 	if !ok || len(expected) > 1 {
 		return ErrInvalidDirectory
 	}

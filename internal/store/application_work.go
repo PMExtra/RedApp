@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strings"
 	"sync"
 	"time"
 
@@ -44,17 +43,13 @@ func (a *appWork) signal() {
 	}
 }
 
-// ApplicationWork accepts a stable UID or a source storage ID. Static provider
-// fixtures have no dynamic directory identity and retain their existing lifetime.
+// ApplicationWork accepts a stable UID or a source storage ID.
 func (s *Store) ApplicationWork(ctx context.Context, app string) (context.Context, func(), error) {
 	uid := app
 	if parsed, _, ok := identity.ParseStorageID(app); ok {
 		uid = parsed
 	}
 	if !identity.ValidUID(uid) {
-		if !strings.HasPrefix(app, "app/") && identity.ValidKey(app) {
-			return ctx, func() {}, nil
-		}
 		return nil, nil, ErrInvalidDirectory
 	}
 	s.work.mu.Lock()

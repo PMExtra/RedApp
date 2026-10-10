@@ -14,7 +14,6 @@ import (
 
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/instance"
-	"github.com/PMExtra/RedApp/internal/store"
 	"github.com/PMExtra/RedApp/internal/store/storetest"
 	"github.com/PMExtra/RedApp/internal/testutil"
 )
@@ -29,10 +28,7 @@ func TestCleanupCrashHelper(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	db, e := store.Open(guard.Directory)
-	if e != nil {
-		t.Fatal(e)
-	}
+	db := openStore(t, guard.Directory)
 	u, _ := url.Parse(os.Getenv("REDAPP_CLEANUP_SOURCE"))
 	c := &distributor.Client{Base: u, HTTP: &http.Client{Timeout: 10 * time.Second}}
 	hook := &faultHook{}
@@ -40,8 +36,7 @@ func TestCleanupCrashHelper(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	r := Resource{Application: testApp, Version: "0.1.0", Key: "asset", Source: testutil.SourceURL(c, "asset"), Hash: os.Getenv("REDAPP_CLEANUP_HASH")}
-	r.ID = LogicalIdentity(r.Application, r.Version, r.Key)
+	r := onApp(Resource{Version: "0.1.0", Key: "asset", Source: testutil.SourceURL(c, "asset"), Hash: os.Getenv("REDAPP_CLEANUP_HASH")}, testApp)
 	authorize(t, m, r)
 	versions, _ := db.VersionsFor(testApp)
 	ev := crashEvidence{FirstSeen: versions["0.1.0"]}
@@ -126,10 +121,8 @@ func TestCleanupProcessCrashWindows(t *testing.T) {
 				if e != nil {
 					t.Fatal(e)
 				}
-				db, e := store.Open(dir)
-				if e != nil {
-					t.Fatal(e)
-				}
+				db := openStore(t, dir)
+				r = onApp(r, testApp)
 				m, e := newTestManager(dir, db, c)
 				if e != nil {
 					t.Fatal(e)

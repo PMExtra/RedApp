@@ -165,12 +165,12 @@ func TestPreflightReportsLiveOwner(t *testing.T) {
 // version must remove the rows that reference it.
 func TestReleaseRowsCascadeFromVersion(t *testing.T) {
 	s := openTest(t)
-	r := releaseFixture(t, s, "openai/codex", "1.0.0")
+	r := releaseFixture(t, s, storageOf(t, s, "openai/codex"), "1.0.0")
 	now := time.Now().UTC()
 	if err := s.PutChannel(Channel{AppID: r.AppID, Name: "latest", Version: r.Version, FetchedAt: now, ExpiresAt: now.Add(time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
-	g := Generation{ID: "generation", AppID: r.AppID, Version: r.Version, ResourceKey: r.Key, ExpectedSHA256: r.SHA256, Phase: "incomplete", IsCurrent: true, StartedAt: now}
+	g := Generation{ID: "generation", AppID: r.AppID, Version: r.Version, ResourceKey: r.Key, ExpectedSHA256: r.SHA256, Phase: "incomplete", IsCurrent: true, StartedAt: now, SourceFence: fenceOf(t, s, r.AppID)}
 	if err := s.CreateGeneration(g); err != nil {
 		t.Fatal(err)
 	}

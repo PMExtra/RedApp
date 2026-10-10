@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/PMExtra/RedApp/internal/identity"
-	"strings"
 	"time"
 )
 
@@ -239,12 +238,9 @@ func (s *Store) DeleteExpiredCleanupPreviews(at time.Time) error {
 // sources may be selected. A later revision requires a fresh preview; unlike
 // publication it never requires the source to be enabled.
 func checkCleanupFence(tx *sql.Tx, storageID string, fence SourceFence) error {
-	uid, epoch, dynamic := identity.ParseStorageID(storageID)
-	if !dynamic {
-		if strings.HasPrefix(storageID, "app/") || !identity.ValidKey(storageID) {
-			return ErrInvalidDirectory
-		}
-		return nil
+	uid, epoch, ok := identity.ParseStorageID(storageID)
+	if !ok {
+		return ErrInvalidDirectory
 	}
 	source, err := scanSource(tx.QueryRow(`SELECT `+sourceColumns+sourceJoin+` WHERE src.app_uid=? AND src.epoch=?`, uid, epoch))
 	if err != nil {
