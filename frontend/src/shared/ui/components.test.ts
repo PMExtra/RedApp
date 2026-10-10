@@ -6,6 +6,7 @@ import { toast } from "@/shared/lib";
 import Harness from "@/test/components/UiHarness.vue";
 import { renderWithApp } from "@/test/render";
 import CodeBlock from "./CodeBlock.vue";
+import IconButton from "./IconButton.vue";
 
 const rows = [
   { id: "codex", name: "Codex CLI" },
@@ -166,5 +167,14 @@ describe("Toaster", () => {
     const region = await screen.findByRole("region", { name: /Notifications/ });
     expect(await within(region).findByText("Saving failed")).toBeInTheDocument();
     expect(within(region).getByText("abcdefabcdef0123")).toBeInTheDocument();
+  });
+});
+
+describe("IconButton", () => {
+  it.each([false, true])("handles clicks (noTooltip: %s)", async (noTooltip) => {
+    const onClick = vi.fn();
+    await renderWithApp(IconButton, { props: { label: "Remove", noTooltip, onClick } });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Remove" }));
+    expect(onClick).toHaveBeenCalledTimes(1);
   });
 });
