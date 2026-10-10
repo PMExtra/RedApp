@@ -395,31 +395,32 @@ func (s *Store) UpdateVendor(id string, revision int64, in VendorChanges) (Vendo
 }
 
 func (s *Store) DeleteVendor(id string, revision int64) error {
-	return s.changeConfiguration(func(st *configurationState) error {
-		for i := range st.Vendors {
-			v := &st.Vendors[i]
-			if v.ID != id {
-				continue
-			}
-			if v.Revision != revision {
-				return ErrConflict
-			}
-			if v.DeletedAt != nil {
-				return ErrDirectoryDeleted
-			}
-			for _, a := range st.Applications {
-				if a.VendorUID == v.UID && a.DeletedAt == nil {
-					return ErrVendorHasApplications
-				}
-			}
-			now := time.Now().UTC()
-			v.Enabled = false
-			v.DeletedAt = &now
-			v.Revision++
-			return nil
+	return s.changeConfiguration(func(st *configurationState) error { return st.softDeleteVendor(id, revision) })
+}
+func (st *configurationState) softDeleteVendor(id string, revision int64) error {
+	for i := range st.Vendors {
+		v := &st.Vendors[i]
+		if v.ID != id {
+			continue
 		}
-		return sql.ErrNoRows
-	})
+		if v.Revision != revision {
+			return ErrConflict
+		}
+		if v.DeletedAt != nil {
+			return ErrDirectoryDeleted
+		}
+		for _, a := range st.Applications {
+			if a.VendorUID == v.UID && a.DeletedAt == nil {
+				return ErrVendorHasApplications
+			}
+		}
+		now := time.Now().UTC()
+		v.Enabled = false
+		v.DeletedAt = &now
+		v.Revision++
+		return nil
+	}
+	return sql.ErrNoRows
 }
 
 func createApplication(tx *sql.Tx, vendorID string, in ApplicationInput) (Application, error) {
@@ -499,29 +500,30 @@ func (s *Store) DeleteApplication(key string, revision int64) error {
 	if _, ok := BuiltinApplicationTemplate(key); ok {
 		return ErrBuiltinTemplate
 	}
-	return s.changeConfiguration(func(st *configurationState) error {
-		if _, ok := st.Templates[templateKey("App", key)]; ok {
-			return ErrBuiltinTemplate
+	return s.changeConfiguration(func(st *configurationState) error { return st.softDeleteApplication(key, revision) })
+}
+func (st *configurationState) softDeleteApplication(key string, revision int64) error {
+	if _, ok := st.Templates[templateKey("App", key)]; ok {
+		return ErrBuiltinTemplate
+	}
+	for i := range st.Applications {
+		a := &st.Applications[i]
+		if a.Key != key {
+			continue
 		}
-		for i := range st.Applications {
-			a := &st.Applications[i]
-			if a.Key != key {
-				continue
-			}
-			if a.Revision != revision {
-				return ErrConflict
-			}
-			if a.DeletedAt != nil {
-				return ErrDirectoryDeleted
-			}
-			now := time.Now().UTC()
-			a.Enabled = false
-			a.DeletedAt = &now
-			a.Revision++
-			return nil
+		if a.Revision != revision {
+			return ErrConflict
 		}
-		return sql.ErrNoRows
-	})
+		if a.DeletedAt != nil {
+			return ErrDirectoryDeleted
+		}
+		now := time.Now().UTC()
+		a.Enabled = false
+		a.DeletedAt = &now
+		a.Revision++
+		return nil
+	}
+	return sql.ErrNoRows
 }
 
 // SeedDirectory runs exactly once, atomically with its completion marker. Empty

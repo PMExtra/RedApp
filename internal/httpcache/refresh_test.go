@@ -398,7 +398,7 @@ func TestPermanentDeletionCancelsWholeRefreshAndSharedFollowers(t *testing.T) {
 	if calls.Load() != 1 || f.budget.readers.Load() != 0 || f.budget.writers.Load() != 0 {
 		t.Fatal("next batch restarted or leases leaked", calls.Load())
 	}
-	if err = f.db.FinishApplicationDeletion(uid); err != nil {
+	if err = f.db.FinishApplicationDeletion(uid, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = f.s.ExecuteRefresh(context.Background(), f.entry, preview.ID); err == nil {

@@ -373,7 +373,7 @@ func TestPermanentDeletionCancelsReleaseAcrossOldEpochAndVerification(t *testing
 			if err = <-done; err == nil {
 				t.Fatal("canceled release succeeded")
 			}
-			if err = m.PurgeApplication(uid, func() error { return db.FinishApplicationDeletion(uid) }); err != nil {
+			if err = db.FinishApplicationDeletion(uid, func(remove func() error) error { return m.PurgeApplication(uid, remove) }); err != nil {
 				t.Fatal(err)
 			}
 			if err = db.ProcessPendingDeletes(dir); err != nil {

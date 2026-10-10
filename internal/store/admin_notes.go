@@ -54,6 +54,9 @@ func (s *Store) SaveAdminNotes(kind, key string, expected int64, text string) (A
 			return AdminNotes{}, ErrInvalidDirectory
 		}
 	}
+	// Notes are part of the configuration CAS state; serialize with its writers.
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return AdminNotes{}, err

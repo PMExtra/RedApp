@@ -120,7 +120,9 @@ type configurationState struct {
 }
 
 // SetConfigurationPrepare installs the runtime coordinator. Every authoritative
-// Store configuration writer serializes through configMu, including direct users.
+// Store configuration writer serializes through configMu, including direct users,
+// admin notes and permanent deletion. Lock order: configMu before the publication
+// gate and the downloads mutex.
 func (s *Store) SetConfigurationPrepare(prepare func(DirectorySnapshot) (ConfigurationPublication, error)) {
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
@@ -887,6 +889,11 @@ func (s *Store) changeConfiguration(change func(*configurationState) error) erro
 func (s *Store) changeConfigurationAtomic(change func(*configurationState) error, finalize func(*sql.Tx) error) error {
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
+	return s.changeConfigurationLocked(change, finalize)
+}
+
+// changeConfigurationLocked requires configMu and may prepare a runtime publication.
+func (s *Store) changeConfigurationLocked(change func(*configurationState) error, finalize func(*sql.Tx) error) error {
 	baseline, err := s.configurationState()
 	if err != nil {
 		return err
