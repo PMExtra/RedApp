@@ -40,8 +40,11 @@ jobs:
             exit 0
           fi
           printf 'version=%s\nrevision=%s\npresent=true\n' "$version" "$revision" >> "$GITHUB_OUTPUT"
+      # Only imagetools is used: the docker driver avoids booting a floating BuildKit container.
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         if: steps.release.outputs.present == 'true'
+        with:
+          driver: docker
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         if: steps.release.outputs.present == 'true'
         with:

@@ -21,7 +21,7 @@ Windows 主机上建议在 Linux 容器或 WSL 中运行 `make` 目标；PowerSh
 | Node.js 版本 | `frontend/.node-version` | 所有工作流的 `setup-node`（`node-version-file`） |
 | 基础镜像 | 根 `Dockerfile` 的全局 `ARG GO_IMAGE` / `ARG NODE_IMAGE`（标签 + 摘要） | Dockerfile 各阶段；`scripts/build-native-container.sh` 与 CI 发布编译缓存键通过 `scripts/dockerfile-arg.sh GO_IMAGE` 读取 |
 
-`make check` 中的 `scripts/check-toolchain.py` 保证：镜像标签与 `go.mod`、`.node-version` 一致且按摘要固定；工作流不写死 `go-version`/`node-version`；action 固定到 commit SHA；不使用 `pull_request_target`；`docker build` 不带 `--pull`；`.github/` 下的 Dockerfile 也按摘要固定基础镜像。升级 Go 或 Node 时同时改唯一来源和对应镜像的标签与摘要。
+`make check` 中的 `scripts/check-toolchain.py` 保证：镜像标签与 `go.mod`、`.node-version` 一致且按摘要固定；工作流不写死 `go-version`/`node-version`；action 固定到 commit SHA；不使用 `pull_request_target`；`docker build` 不带 `--pull`（含反斜杠续行）；每个 `actions/checkout` 都设置 `persist-credentials: false`；`setup-qemu-action` 的特权 binfmt 镜像（`image:`）按摘要固定；`setup-buildx-action` 使用 `driver: docker`，或用 `driver-opts: image=moby/buildkit:<版本>@sha256:…` 固定 BuildKit 镜像；`.github/` 下的 Dockerfile 也按摘要固定基础镜像。升级 Go 或 Node 时同时改唯一来源和对应镜像的标签与摘要。
 
 ## 构建
 
@@ -111,6 +111,7 @@ python3 scripts/check-docs.py --base main     # 另外要求成对文档同时�
 
 - 只有 `PMExtra/RedApp` main 的 push 才上传 `runtime-<SHA>-<arch>` 产物（image.tar + metadata.json，保留 3 天）。PR 跑完整验证但不产生可发布产物。
 - 所有 action 都固定到 commit SHA，并在行尾注释主版本（如 `# v4`）。checkout 一律 `persist-credentials: false`。新增 action 遵循同样做法（`toolchain-check` 强制）。
+- 发布任务只用 buildx 的 `imagetools`，所以 `setup-buildx-action` 用 `driver: docker`，不启动 BuildKit 容器；`setup-qemu-action` 的 `tonistiigi/binfmt` 镜像按标签 + 摘要固定，升级时从 Docker Hub 查新标签的 index 摘要一并替换。
 - Linux 任务统一使用 `ubuntu-26.04` / `ubuntu-26.04-arm`；Windows 安装器门禁使用 `windows-2022`。
 - 缓存只用于加速，不能当作可信产物：源码测试的 Go 缓存按 runner/Go 版本/go.sum 分键，发布编译缓存另按 Linux 架构、`GO_IMAGE` 摘要和 go.sum 分键。
 
