@@ -61,7 +61,7 @@ RedApp 是单进程 Go 服务：一个二进制、一个 SQLite 数据库、一�
 | | `internal/apps/claude` | Claude 清单协议、平台规则与签名验证 |
 | | `internal/application` | Provider 定义与能力、应用快照、注册表、发布协议接口 |
 | | `internal/distributor` | 有界的上游 HTTP 客户端与按作用域的代理 transport |
-| 存储 | `internal/store` | SQLite schema 与全部持久化 |
+| 存储 | `internal/store` | SQLite schema 与全部持久化；底层连接不对外暴露（见 [SQLite](#sqlite-schema)） |
 | 基础 | `internal/identity` | ID 校验、保留名、UID 与存储命名空间 |
 | | `internal/cachepolicy` | HTTP 缓存规则与自动清理规则的类型和校验 |
 | | `internal/warmplan` | 预热计划的上限与字节预算 |
@@ -72,11 +72,12 @@ RedApp 是单进程 Go 服务：一个二进制、一个 SQLite 数据库、一�
 | | `internal/jsoncheck` | 拒绝重复键、过深嵌套和尾随数据 |
 | | `internal/yamlconfig` | 严格的单文档 YAML → JSON |
 | | `internal/instance` | 数据目录实例锁与只读的持锁检查 |
-| 测试 | `internal/testutil` | 基于 httptest 的上游客户端（仅测试使用） |
+| 测试 | `internal/testutil` | 基于 httptest 的上游客户端；在真实 store 中创建目录应用并构造其运行时条目（`App`、`Entry`）（仅测试使用） |
+| | `internal/store/storetest` | 测试另开一个到数据目录数据库的连接，用于故障注入和没有 store API 的夹具（仅测试使用） |
 | 嵌入数据 | `presets/` | 内置厂商、应用、分类的 YAML 模板与图标 |
 | | `installers/` | 嵌入 generated 安装脚本、许可证和公钥（见 [installers.md](installers.md)） |
 
-不符合理想方向、待重构的依赖：`store` 引用 `configexchange` 和根目录的 `presets`；`distributor` 引用 `store`；多个包直接使用 `store.DB`（见[已知问题](#已知问题与重构方向)）。
+不符合理想方向、待重构的依赖：`store` 引用 `configexchange` 和根目录的 `presets`；`distributor` 引用 `store`；`httpcache` 经过渡访问器 `Store.HTTPCacheDB` 直接写 SQL（见[已知问题](#已知问题与重构方向)）。
 
 ## 身份模型
 
@@ -125,11 +126,12 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 - **代际（generation）**：每次下载是一个代际，状态包括 downloading、resuming、retry_wait、verifying、complete、failed、invalid、interrupted。每个资源最多一个当前代际（部分唯一索引）。
 - **读者与写者**：多个读者跟随同一个写者，边下载边读取。默认上限 16 个写者、512 个读者，单制品 4 GiB；`httpcache` 和 `hosted` 共用这组额度。
 - **续传**：带 `Range: bytes=N-`，强 ETag 时加 `If-Range`。只接受精确的 206、`Content-Range` 和相同 ETag；其他情况放弃续传，新建一个完整重下的代际。每 1 MiB 记录进度。
+- **写入顺序**：进度在 `Manager.mu` 内取快照并分配该代际的下一个 `checkpoint` 序号，释放锁后写库；`SaveGeneration`、`CompleteGeneration` 只在序号比库中新时生效，迟到的旧快照不会覆盖新状态或撤销完成。`mu` 只在改变“当前代际”的写入（创建、退役、完成、删除）和 blob 发布时持有，保证内存与 `generations` 表一致。
 - **超时与重试**：下载流没有总时限，只有空闲读超时（单次读取 60 秒无数据即中断）；连接、TLS、响应头各有独立时限，元数据读取限时 5 分钟。连接错误、读取中断或截断、5xx、408、429 会重试，最多 6 次，退避从 1 秒翻倍、上限 30 秒并加随机抖动；其他 4xx、磁盘、编码和完整性错误不重试。重试耗尽时，如果已有数据且上游支持续传（ETag 或字节范围），保留 part 并标记 interrupted，下次请求从断点续传。
 - **错误分类**：上游错误为类型化的 `distributor.RequestError`（DNS、TLS、超时、重定向、网络）；本地失败（哈希、长度、磁盘、数据库、续传）是带固定消息和事件类别的类型化错误。失败类别只按错误类型判断，不匹配错误文本。
 - **校验与发布**：写入 `objects/parts/<gen>.part`，完成后校验完整 SHA-256 和大小，fsync 后 rename 到 `objects/blobs/<sha256(app)>/<hash>.blob`，fsync 目录，再在数据库标记完成。校验失败的代际为 invalid。
 - **校验不持锁**：整文件哈希不在 `Manager.mu` 内进行。同一资源的并发请求共享一次校验，校验由管理器自己的 goroutine 和 context 执行，请求方取消只是停止等待，不会让有效缓存被判为无效。校验结束后重新加锁，确认代际仍是当前代际、文件 inode/大小/修改时间未变，才应用结果；校验中的代际视为活跃，不会被清理或清除。
-- **恢复**：启动时重新校验 blob，清理孤立的 part 和 blob。
+- **恢复**：启动时不对已提交的完整 blob 做整文件哈希，只核对存在和大小，并标为待校验；首次被请求时复用惰性校验（与源失效后恢复的 dormant 代际相同），校验失败才退役重下。已改名为 blob 但尚未提交的代际在恢复时立即校验。清理孤立的 part 和 blob。
 - **清理与保留**：手动清理先生成冻结的预览，执行只作用于预览中的代际；保留策略按应用保留最新 N 个版本，有效渠道、正在读写的代际和无法比较的版本受保护。
 - 下游响应目前由服务端自行流式输出，不支持客户端 Range。
 
@@ -164,11 +166,12 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 
 ## SQLite schema
 
-- schema 内嵌在 `internal/store/schema.sql`，版本写入 `PRAGMA user_version`，常量为 `store.SchemaVersion`（当前为 13）。`PRAGMA application_id` 固定为 RedApp 的标识，用来拒绝版本号碰巧相同的其他 SQLite 文件。
+- schema 内嵌在 `internal/store/schema.sql`，版本写入 `PRAGMA user_version`，常量为 `store.SchemaVersion`（当前为 14）。`PRAGMA application_id` 固定为 RedApp 的标识，用来拒绝版本号碰巧相同的其他 SQLite 文件。
 - 新目录（为空或只含实例锁）创建全新 schema，并在首次启动前 checkpoint 到主文件。已有数据库以只读、immutable 方式检查 `application_id` 与 `user_version`，任一不符就拒绝启动，不改写、不删除，也不创建 WAL/SHM 文件。不比较表结构：1.0 前每次 schema 变化都提升版本。
 - 属于厂商或应用的行以 UID 引用父行并 `ON DELETE CASCADE`；应用引用厂商不级联，因为必须先删除应用并登记其对象文件。发布、缓存和指标数据以存储命名空间或指标命名空间为键，永久删除应用时按前缀删除；同一版本的元数据、渠道、资源和下载代际随版本级联删除。
 - 1.0 前没有迁移，规则见 [ADR 0001](adr/0001-pre-1.0-no-migrations.md)。
-- 连接参数：WAL、`synchronous=FULL`、外键开启、单连接。
+- 连接：WAL、`synchronous=FULL`、外键开启。写连接只有一个（`_txlock=immediate`），所有写入和读改写事务都在它上面串行；只读查询和只读快照事务走独立的 `query_only` 读连接池（8 个），WAL 下不等待正在进行的写事务，看到的是最近一次提交。持有写事务时（包括 `finalize`、`beforeCommit` 和删除包装回调）只能使用该事务，不能调用会写的 `Store` 方法，否则会等待调用者自己占用的写连接；只读方法可以调用，但看不到事务内未提交的修改。
+- 其他包不能拿到底层连接：读写都通过 `Store` 的类型化方法，找不到行时返回 `store.ErrNotFound`。跨包测试用 `storetest.Open` 另开连接做故障注入；`Store.HTTPCacheDB` 是 HTTP 缓存 SQL 迁入 store 前的唯一过渡例外。
 - 流量与请求计数先在内存累加，每秒、每次传输结束、每次读取计数前以及关闭时批量写入一个事务；写入失败保留增量重试，不影响传输。异常退出最多丢失约 1 秒的计数。
 
 ## 配置模型
@@ -294,9 +297,8 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 | 问题 | 现状 | 方向 |
 | --- | --- | --- |
 | 两套缓存引擎 | `download` 与 `httpcache` 各自实现代际、临时文件发布、清理预览、恢复和指标 | 阶段 5：HTTP 缓存复用下载引擎的存储与发布机制 |
-| store 暴露 DB | `Store.DB` 是公开字段，`auth`、`history`、`httpcache`、`httpserver` 直接写 SQL | 阶段 5：SQL 收回 `internal/store`，按实体封装 |
+| store 过渡访问器 | `Store.DB` 已不公开，`auth`、`history`、`httpserver` 的 SQL 已收回 store；只有 `httpcache` 仍经 `Store.HTTPCacheDB` 直接写 SQL，其 `readPolicy` 还保留了 UID 为空条目的分支 | 阶段 5：HTTP 缓存重写时把 SQL 迁入 store，删除 `HTTPCacheDB` 和该分支 |
 | 配置快照 CAS | 每次配置写入在全局锁下读取、克隆整份配置状态，事务内再与重读结果整体比较；任一实体的并发变化都会让本次写入失败，成本随配置规模增长。实体 revision 只是额外检查 | 阶段 5：按实体 CAS |
 | HTTP 缓存冷请求 | 冷请求必须先完整落盘才响应，单次下载在全部来源上合计最长 9 分钟；慢速链路上的超大文件会失败，前置反代也可能先超时 | 阶段 5：复用下载引擎边下边读后取消总时限 |
-| 锁内 I/O | 下载进度保存和数据库调用仍在 `Manager.mu` 内（整文件哈希和 bcrypt 已移出）；媒体、预热和目录写入在持锁期间做 I/O | 阶段 2/5：按[约定](conventions.md#并发)调整 |
-| 无 UID 的静态测试条目 | httpserver 的测试已全部经 `newHarness` 使用真实目录；`catalog` 等包的测试仍用没有 UID 的 `application.Entry`，`Entry.StorageID`/`MetricsID`/`Active`、`store.checkSourceActive`、`catalog.CandidatesForSource` 为它们保留了分支 | 这些测试改用真实目录后删除这些分支 |
+| 锁内 I/O | 下载 `Manager.mu` 仍覆盖改变当前代际的单行写入和 blob 发布（已在锁声明处说明）；配置写入在 `configMu` 下读取、比较并写入整份配置 | 阶段 5：随按实体 CAS 缩短配置写入的持锁范围 |
 | 后台日志 | HTTP 层用 `log/slog` 记录访问与错误日志；`cmd/redapp` 和后台循环的失败仍经标准库 `log` 进入同一个 slog handler，没有结构化字段 | 逐步改为 slog 字段 |
