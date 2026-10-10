@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -195,116 +196,22 @@ func (s *Store) HTTPCacheEntryCurrent(storageID string, fence SourceFence, id st
 	return current, tx.Commit()
 }
 
-// HTTPPreview is a frozen refresh or cleanup selection of HTTP cache entries.
-// Criteria and Result are owned by the HTTP cache and stored as JSON.
-type HTTPPreview struct {
-	ID        string
-	StorageID string
-	Kind      string // cleanup or refresh
-	State     string // building, ready, running, done or failed
-	// Fence is the source fence the selection was frozen under.
-	Fence          SourceFence
-	CreatedAt      time.Time
-	ExpiresAt      time.Time
-	Criteria       []byte
-	ExecutedAt     *time.Time
-	Result         []byte
-	ScannedFiles   int
-	SelectedFiles  int
-	SelectedBytes  int64
-	CompletedFiles int
-	FailedFiles    int
-	// HighWater is the last entry row the selection may contain.
-	HighWater int64
+// HTTPCachePreviewDetail is the frozen detail of one HTTP cache preview item.
+type HTTPCachePreviewDetail struct {
+	// AccessBucket is the entry's access bucket when it was frozen; a
+	// last_access cleanup skips the entry once it moved.
+	AccessBucket int64 `json:"access_bucket"`
+	// Basis is the cleanup basis that selected the entry, empty for refresh.
+	Basis string `json:"basis,omitempty"`
+	// RuleIndex is the automatic cleanup rule that selected the entry, or -1.
+	RuleIndex int `json:"rule_index"`
 }
 
-// HTTPPreviewItem is one frozen entry of a preview and its execution outcome.
-type HTTPPreviewItem struct {
-	Ordinal      int64
-	GenerationID string
-	Path         string
-	SizeBytes    int64
-	AccessBucket int64
-	Basis        string
-	Before       time.Time
-	// Match is the JSON path pattern that selected the entry.
-	Match        []byte
-	RuleIndex    int
-	ResultStatus string
-	ErrorCode    string
-}
-
-const httpPreviewColumns = `id,storage_id,kind,state,app_revision,vendor_revision,created_at_s,expires_at_s,selection_json,executed_at_s,result_json,scanned_count,selected_count,selected_bytes,completed_count,failed_count,high_water`
-
-func scanHTTPPreview(row scanner) (HTTPPreview, error) {
-	var p HTTPPreview
-	var created, expires int64
-	var executed sql.NullInt64
-	err := row.Scan(&p.ID, &p.StorageID, &p.Kind, &p.State, &p.Fence.AppRuntimeRevision, &p.Fence.VendorRuntimeRevision, &created, &expires, &p.Criteria, &executed, &p.Result, &p.ScannedFiles, &p.SelectedFiles, &p.SelectedBytes, &p.CompletedFiles, &p.FailedFiles, &p.HighWater)
-	p.CreatedAt = time.Unix(created, 0).UTC()
-	p.ExpiresAt = time.Unix(expires, 0).UTC()
-	p.ExecutedAt = timePointer(executed)
-	return p, err
-}
-
-const httpPreviewItemColumns = `ordinal,generation_id,path,size_bytes,access_bucket_s,basis,before_s,match_json,rule_index,result_status,error_code`
-
-func scanHTTPPreviewItem(row scanner) (HTTPPreviewItem, error) {
-	var item HTTPPreviewItem
-	var before int64
-	err := row.Scan(&item.Ordinal, &item.GenerationID, &item.Path, &item.SizeBytes, &item.AccessBucket, &item.Basis, &before, &item.Match, &item.RuleIndex, &item.ResultStatus, &item.ErrorCode)
-	if before != 0 {
-		item.Before = time.Unix(before, 0).UTC()
-	}
-	return item, err
-}
-
-// PreviewFence is the source check an HTTP cache preview operation makes in
-// its own transaction.
-type PreviewFence uint8
-
-const (
-	// NoPreviewFence checks nothing beyond the preview row itself.
-	NoPreviewFence PreviewFence = iota
-	// CleanupPreviewFence requires the frozen fence but not an active source,
-	// so manual cleanup may select disabled and historical sources.
-	CleanupPreviewFence
-	// ActivePreviewFence requires the frozen fence of a source that still
-	// serves, as refresh and automatic cleanup do.
-	ActivePreviewFence
-)
-
-func (s *Store) requireHTTPPreviewFence(tx *sql.Tx, storageID string, fence SourceFence, mode PreviewFence) error {
-	switch mode {
-	case ActivePreviewFence:
-		return s.requireSourceActive(tx, storageID, fence)
-	case CleanupPreviewFence:
-		return s.RequireCleanupFence(tx, storageID, fence)
-	}
-	return nil
-}
-
-// CreateHTTPPreview starts building p under its fence. The selection may only
-// contain entries current now; the returned preview carries that high water.
-func (s *Store) CreateHTTPPreview(ctx context.Context, p HTTPPreview, mode PreviewFence) (HTTPPreview, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return p, err
-	}
-	defer tx.Rollback()
-	if err = s.requireHTTPPreviewFence(tx, p.StorageID, p.Fence, mode); err != nil {
-		return p, err
-	}
-	if err = tx.QueryRowContext(ctx, httpHighWaterQuery, p.StorageID).Scan(&p.HighWater); err != nil {
-		return p, err
-	}
-	p.State = "building"
-	_, err = tx.ExecContext(ctx, `INSERT INTO http_cleanup_previews(id,storage_id,kind,state,app_revision,vendor_revision,created_at_s,expires_at_s,selection_json,high_water) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		p.ID, p.StorageID, p.Kind, p.State, p.Fence.AppRuntimeRevision, p.Fence.VendorRuntimeRevision, p.CreatedAt.Unix(), p.ExpiresAt.Unix(), p.Criteria, p.HighWater)
-	if err != nil {
-		return p, err
-	}
-	return p, tx.Commit()
+// HTTPCachePreviewDetailOf decodes the detail of an HTTP cache preview item.
+func HTTPCachePreviewDetailOf(item PreviewItem) (HTTPCachePreviewDetail, error) {
+	var detail HTTPCachePreviewDetail
+	err := json.Unmarshal(item.Detail, &detail)
+	return detail, err
 }
 
 // HTTPPreviewPage reports one frozen page: how many current entries were
@@ -314,187 +221,70 @@ type HTTPPreviewPage struct {
 	Last              int64
 }
 
-// FreezeHTTPPreviewPage scans up to limit current entries after row `after`
-// and not beyond the preview's high water. choose decides each entry and
-// returns stop to end the page after it. The selection and the preview's
-// counters are stored in the same transaction.
-func (s *Store) FreezeHTTPPreviewPage(ctx context.Context, p HTTPPreview, mode PreviewFence, after int64, limit int, choose func(HTTPCacheEntry) (item HTTPPreviewItem, selected, stop bool)) (HTTPPreviewPage, error) {
+// HTTPCacheChoice is how a preview treats one scanned entry.
+type HTTPCacheChoice struct {
+	Selected bool
+	// Active marks a selected entry that is in use.
+	Active bool
+	// Stop ends the page after this entry.
+	Stop   bool
+	Detail HTTPCachePreviewDetail
+}
+
+// FreezeHTTPCachePreviewPage extends a building HTTP cache preview: it scans
+// up to limit current entries of the preview's source after row `after` and
+// not beyond its high water, and choose decides each entry. Items are
+// ordered by entry row. The items and counters are stored in one
+// transaction under the preview's fence.
+func (s *Store) FreezeHTTPCachePreviewPage(ctx context.Context, p Preview, after int64, limit int, choose func(HTTPCacheEntry) HTTPCacheChoice) (HTTPPreviewPage, error) {
 	var page HTTPPreviewPage
+	if !previewKinds[p.Kind].cache {
+		return page, errors.New("not an HTTP cache preview")
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return page, err
 	}
 	defer tx.Rollback()
-	if err = s.requireHTTPPreviewFence(tx, p.StorageID, p.Fence, mode); err != nil {
+	if err = checkPreview(tx, p, p.CreatedAt); err != nil {
 		return page, err
 	}
-	entries, err := queryHTTPCacheEntries(ctx, tx, httpPageCondition, p.StorageID, after, p.HighWater, limit)
+	entries, err := queryHTTPCacheEntries(ctx, tx, httpPageCondition, p.StorageID(), after, p.HighWater, limit)
 	if err != nil {
 		return page, err
 	}
-	var bytes int64
+	items := []PreviewItem{}
+	active := 0
 	for _, e := range entries {
 		page.Scanned++
 		page.Last = e.RowNo
-		item, selected, stop := choose(e)
-		if selected {
-			item.Ordinal = e.RowNo
-			before := int64(0)
-			if !item.Before.IsZero() {
-				before = item.Before.Unix()
-			}
-			_, err = tx.ExecContext(ctx, `INSERT INTO http_cleanup_preview_items(preview_id,ordinal,generation_id,path,size_bytes,access_bucket_s,basis,before_s,match_json,rule_index) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-				p.ID, item.Ordinal, item.GenerationID, item.Path, item.SizeBytes, item.AccessBucket, item.Basis, before, item.Match, item.RuleIndex)
+		choice := choose(e)
+		if choice.Selected {
+			detail, err := json.Marshal(choice.Detail)
 			if err != nil {
 				return page, err
 			}
-			page.Selected++
-			bytes += item.SizeBytes
+			items = append(items, PreviewItem{Ordinal: e.RowNo, Ref: e.ID, Label: e.Path, SizeBytes: e.SizeBytes, Selected: true, Detail: detail})
+			if choice.Active {
+				active++
+			}
 		}
-		if stop {
+		if choice.Stop {
 			break
 		}
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE http_cleanup_previews SET scanned_count=scanned_count+?,selected_count=selected_count+?,selected_bytes=selected_bytes+? WHERE id=? AND state='building'`, page.Scanned, page.Selected, bytes, p.ID); err != nil {
+	selected, bytes, err := appendPreviewItems(ctx, tx, p.ID, items)
+	if err != nil {
+		return page, err
+	}
+	page.Selected = selected
+	result, err := tx.ExecContext(ctx, `UPDATE previews SET scanned_count=scanned_count+?,selected_count=selected_count+?,selected_bytes=selected_bytes+?,active_count=active_count+? WHERE id=? AND state='building'`, page.Scanned, selected, bytes, active, p.ID)
+	if err = affected(result, err); errors.Is(err, sql.ErrNoRows) {
+		return page, ErrConflict
+	} else if err != nil {
 		return page, err
 	}
 	return page, tx.Commit()
-}
-
-// FinishHTTPPreviewBuild makes a built preview ready while its fence holds.
-func (s *Store) FinishHTTPPreviewBuild(ctx context.Context, p HTTPPreview, mode PreviewFence) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err = s.requireHTTPPreviewFence(tx, p.StorageID, p.Fence, mode); err != nil {
-		return err
-	}
-	if _, err = tx.ExecContext(ctx, `UPDATE http_cleanup_previews SET state='ready' WHERE id=? AND state='building'`, p.ID); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-// FailHTTPPreviewBuild records a build that did not finish. Its partial
-// selection is discarded later by PruneHTTPPreviews.
-func (s *Store) FailHTTPPreviewBuild(ctx context.Context, id string, at time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE http_cleanup_previews SET state='failed',executed_at_s=?,result_json=? WHERE id=? AND state='building'`, at.Unix(), []byte(`{"error":"preview_build_failed"}`), id)
-	return err
-}
-
-// DeleteEmptyHTTPPreview removes a ready preview that selected nothing.
-func (s *Store) DeleteEmptyHTTPPreview(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM http_cleanup_previews WHERE id=? AND selected_count=0 AND state='ready'`, id)
-	return err
-}
-
-// HTTPPreview returns a preview by ID, or sql.ErrNoRows.
-func (s *Store) HTTPPreview(id string) (HTTPPreview, error) {
-	return scanHTTPPreview(s.read.QueryRow(`SELECT `+httpPreviewColumns+` FROM http_cleanup_previews WHERE id=?`, id))
-}
-
-// HTTPPreviewItems lists up to limit frozen items after ordinal `after`, only
-// those without an outcome when pendingOnly is set.
-func (s *Store) HTTPPreviewItems(ctx context.Context, id string, after int64, limit int, pendingOnly bool) ([]HTTPPreviewItem, error) {
-	query := `SELECT ` + httpPreviewItemColumns + ` FROM http_cleanup_preview_items WHERE preview_id=? AND ordinal>? ORDER BY ordinal LIMIT ?`
-	if pendingOnly {
-		query = `SELECT ` + httpPreviewItemColumns + ` FROM http_cleanup_preview_items WHERE preview_id=? AND ordinal>? AND result_status='pending' ORDER BY ordinal LIMIT ?`
-	}
-	rows, err := s.read.QueryContext(ctx, query, id, after, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []HTTPPreviewItem{}
-	for rows.Next() {
-		item, err := scanHTTPPreviewItem(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, item)
-	}
-	return out, rows.Err()
-}
-
-// HTTPPreviewDecision is how a caller treats a preview read inside a transaction.
-type HTTPPreviewDecision struct {
-	// Apply performs the update; otherwise the preview is returned unchanged.
-	Apply bool
-	// Fence is checked against the preview's frozen fence before the update.
-	Fence PreviewFence
-}
-
-func (s *Store) updateHTTPPreview(ctx context.Context, storageID, id string, decide func(HTTPPreview) (HTTPPreviewDecision, error), update func(*sql.Tx, *HTTPPreview) error) (HTTPPreview, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return HTTPPreview{}, err
-	}
-	defer tx.Rollback()
-	p, err := scanHTTPPreview(tx.QueryRowContext(ctx, `SELECT `+httpPreviewColumns+` FROM http_cleanup_previews WHERE id=? AND storage_id=?`, id, storageID))
-	if err != nil {
-		return p, err
-	}
-	decision, err := decide(p)
-	if err != nil || !decision.Apply {
-		return p, err
-	}
-	if err = s.requireHTTPPreviewFence(tx, storageID, p.Fence, decision.Fence); err != nil {
-		return p, err
-	}
-	if err = update(tx, &p); err != nil {
-		return p, err
-	}
-	return p, tx.Commit()
-}
-
-// ClaimHTTPPreview moves a ready preview to running when decide applies it.
-func (s *Store) ClaimHTTPPreview(ctx context.Context, storageID, id string, decide func(HTTPPreview) (HTTPPreviewDecision, error)) (HTTPPreview, error) {
-	return s.updateHTTPPreview(ctx, storageID, id, decide, func(tx *sql.Tx, p *HTTPPreview) error {
-		result, err := tx.ExecContext(ctx, `UPDATE http_cleanup_previews SET state='running' WHERE id=? AND state='ready'`, p.ID)
-		if err = affected(result, err); errors.Is(err, sql.ErrNoRows) {
-			return ErrConflict
-		}
-		p.State = "running"
-		return err
-	})
-}
-
-func recordHTTPPreviewItem(ctx context.Context, tx *sql.Tx, id string, ordinal int64, status, code string) error {
-	result, err := tx.ExecContext(ctx, `UPDATE http_cleanup_preview_items SET result_status=?,error_code=? WHERE preview_id=? AND ordinal=? AND result_status='pending'`, status, code, id, ordinal)
-	if err != nil {
-		return err
-	}
-	changed, err := result.RowsAffected()
-	if err != nil || changed == 0 {
-		return err
-	}
-	failed := 0
-	if status == "failed" {
-		failed = 1
-	}
-	_, err = tx.ExecContext(ctx, `UPDATE http_cleanup_previews SET completed_count=completed_count+1,failed_count=failed_count+? WHERE id=?`, failed, id)
-	return err
-}
-
-// RecordHTTPPreviewItem stores the outcome of one pending item when decide
-// applies it. An item records only its first outcome.
-func (s *Store) RecordHTTPPreviewItem(ctx context.Context, storageID, id string, ordinal int64, status, code string, decide func(HTTPPreview) (HTTPPreviewDecision, error)) error {
-	_, err := s.updateHTTPPreview(ctx, storageID, id, decide, func(tx *sql.Tx, p *HTTPPreview) error {
-		return recordHTTPPreviewItem(ctx, tx, p.ID, ordinal, status, code)
-	})
-	return err
-}
-
-// FinishHTTPPreview stores the final state and receipt of an execution when
-// decide applies it.
-func (s *Store) FinishHTTPPreview(ctx context.Context, storageID, id, state string, result []byte, at time.Time, decide func(HTTPPreview) (HTTPPreviewDecision, error)) error {
-	_, err := s.updateHTTPPreview(ctx, storageID, id, decide, func(tx *sql.Tx, p *HTTPPreview) error {
-		_, err := tx.ExecContext(ctx, `UPDATE http_cleanup_previews SET state=?,executed_at_s=?,result_json=? WHERE id=?`, state, at.Unix(), result, p.ID)
-		return err
-	})
-	return err
 }
 
 // HTTPRetirement is the outcome of one cleanup batch.
@@ -505,34 +295,42 @@ type HTTPRetirement struct {
 	SkippedChanged  int
 }
 
-// RetireHTTPPreviewItems executes one batch of a running cleanup preview in a
-// single transaction under its fence. An item is retired only if its entry is
-// still the current entry of the same path and, for the last_access basis,
-// was not accessed since the preview; every item records its outcome.
-func (s *Store) RetireHTTPPreviewItems(ctx context.Context, p HTTPPreview, mode PreviewFence, items []HTTPPreviewItem, at time.Time) (HTTPRetirement, error) {
+// RetireHTTPCachePreviewItems executes one batch of a running HTTP cache
+// cleanup preview in a single transaction under its fence. An item is retired
+// only if its entry is still the current entry of the same path and, for the
+// last_access basis, was not accessed since the preview; every item records
+// its outcome.
+func (s *Store) RetireHTTPCachePreviewItems(ctx context.Context, p Preview, items []PreviewItem, at time.Time) (HTTPRetirement, error) {
 	var out HTTPRetirement
+	if p.Kind != PreviewCacheCleanup {
+		return out, errors.New("not an HTTP cache cleanup preview")
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return out, err
 	}
 	defer tx.Rollback()
-	if err = s.requireHTTPPreviewFence(tx, p.StorageID, p.Fence, mode); err != nil {
+	if err = requireRunning(ctx, tx, p); err != nil {
 		return out, err
 	}
 	for _, item := range items {
 		if err = ctx.Err(); err != nil {
 			return HTTPRetirement{}, err
 		}
-		e, err := scanHTTPCacheEntry(tx.QueryRowContext(ctx, `SELECT `+httpEntryColumns+` FROM http_cache_generations WHERE id=? AND storage_id=?`, item.GenerationID, p.StorageID))
+		detail, err := HTTPCachePreviewDetailOf(item)
+		if err != nil {
+			return HTTPRetirement{}, err
+		}
+		e, err := scanHTTPCacheEntry(tx.QueryRowContext(ctx, `SELECT `+httpEntryColumns+` FROM http_cache_generations WHERE id=? AND storage_id=?`, item.Ref, p.StorageID()))
 		status := "retired"
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			status = "skipped_changed"
 		case err != nil:
 			return HTTPRetirement{}, err
-		case !e.Current || e.Path != item.Path:
+		case !e.Current || e.Path != item.Label:
 			status = "skipped_changed"
-		case item.Basis == "last_access" && e.AccessBucket != item.AccessBucket:
+		case detail.Basis == "last_access" && e.AccessBucket != detail.AccessBucket:
 			status = "skipped_accessed"
 		}
 		switch status {
@@ -547,75 +345,9 @@ func (s *Store) RetireHTTPPreviewItems(ctx context.Context, p HTTPPreview, mode 
 			out.Retired = append(out.Retired, e.ID)
 			out.RetiredBytes += e.SizeBytes
 		}
-		if err = recordHTTPPreviewItem(ctx, tx, p.ID, item.Ordinal, status, ""); err != nil {
+		if err = recordPreviewItem(ctx, tx, p.ID, PreviewOutcome{Ordinal: item.Ordinal, Status: status}); err != nil {
 			return HTTPRetirement{}, err
 		}
 	}
 	return out, tx.Commit()
-}
-
-// InterruptHTTPPreviews fails every preview a previous process left building
-// or running. An interrupted execution is a receipt, never a restartable
-// queue; bounded batches keep this independent of the number of items.
-func (s *Store) InterruptHTTPPreviews(ctx context.Context, at time.Time) error {
-	for {
-		result, err := s.db.ExecContext(ctx, `UPDATE http_cleanup_previews SET
-			result_json=json_object('error',CASE WHEN state='building' THEN 'preview_build_failed' ELSE 'interrupted_by_restart' END,
-			'selected_files',selected_count,'completed_files',completed_count,'failed',failed_count),
-			executed_at_s=?,state='failed'
-			WHERE id IN (SELECT id FROM http_cleanup_previews WHERE state IN ('building','running') LIMIT 100)`, at.Unix())
-		if err != nil {
-			return err
-		}
-		n, err := result.RowsAffected()
-		if err != nil || n < 100 {
-			return err
-		}
-	}
-}
-
-// PruneHTTPPreviews deletes expired previews and receipts older than 24 hours,
-// and the selections of failed builds. Each of at most batches transactions
-// removes at most 1000 items and then the header once it has none, so no
-// unbounded cascade runs.
-func (s *Store) PruneHTTPPreviews(ctx context.Context, now time.Time, batches int) error {
-	for i := 0; i < batches; i++ {
-		done, err := s.pruneHTTPPreviewBatch(ctx, now)
-		if err != nil || done {
-			return err
-		}
-	}
-	return nil
-}
-
-func (s *Store) pruneHTTPPreviewBatch(ctx context.Context, now time.Time) (bool, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return false, err
-	}
-	defer tx.Rollback()
-	var id string
-	var expired bool
-	err = tx.QueryRowContext(ctx, `SELECT id,
-		(state='ready' AND expires_at_s<=?) OR (state IN ('done','failed') AND executed_at_s<=?)
-		FROM http_cleanup_previews p WHERE
-		(state='ready' AND expires_at_s<=?) OR
-		(state IN ('done','failed') AND executed_at_s<=?) OR
-		(state='failed' AND json_extract(result_json,'$.error')='preview_build_failed' AND EXISTS(SELECT 1 FROM http_cleanup_preview_items i WHERE i.preview_id=p.id))
-		ORDER BY created_at_s,id LIMIT 1`, now.Unix(), now.Add(-24*time.Hour).Unix(), now.Unix(), now.Add(-24*time.Hour).Unix()).Scan(&id, &expired)
-	if errors.Is(err, sql.ErrNoRows) {
-		return true, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if _, err = tx.ExecContext(ctx, `DELETE FROM http_cleanup_preview_items WHERE preview_id=? AND ordinal IN (SELECT ordinal FROM http_cleanup_preview_items WHERE preview_id=? ORDER BY ordinal LIMIT 1000)`, id, id); err != nil {
-		return false, err
-	}
-	if expired {
-		if _, err = tx.ExecContext(ctx, `DELETE FROM http_cleanup_previews WHERE id=? AND NOT EXISTS(SELECT 1 FROM http_cleanup_preview_items WHERE preview_id=?)`, id, id); err != nil {
-			return false, err
-		}
-	}
-	return false, tx.Commit()
 }

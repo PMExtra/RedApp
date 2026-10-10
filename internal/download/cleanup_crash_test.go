@@ -59,7 +59,7 @@ func TestCleanupCrashHelper(t *testing.T) {
 			return
 		}
 		if ev.Job == "" {
-			storetest.Open(t, guard.Directory).QueryRow("SELECT id FROM cleanup_previews LIMIT 1").Scan(&ev.Job)
+			storetest.Open(t, guard.Directory).QueryRow("SELECT id FROM previews LIMIT 1").Scan(&ev.Job)
 		}
 		json.NewEncoder(os.Stdout).Encode(ev)
 		os.Exit(91)

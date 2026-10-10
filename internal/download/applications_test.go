@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"github.com/PMExtra/RedApp/internal/distributor"
+	"github.com/PMExtra/RedApp/internal/store"
 	"github.com/PMExtra/RedApp/internal/testutil"
 	"io"
 	"net/http"
@@ -201,7 +202,7 @@ func TestLogicalBindingsReuseWithinApplicationAndSurviveMove(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if preview.LogicalBytes != int64(len(payload)) || preview.ReclaimableBlobBytes != 0 {
+	if summary, _ := store.ReleaseSummary(preview); preview.SelectedBytes != int64(len(payload)) || summary.ReclaimableBytes != 0 {
 		t.Fatal("shared-blob reclamation estimate is incorrect", preview)
 	}
 	if e = m.Cleanup(foreign.Application, preview.ID); e == nil {

@@ -105,24 +105,6 @@ type sample struct {
 	time  time.Time
 	bytes int64
 }
-type Selection struct {
-	Resource   string
-	Generation string
-	Version    string
-	Key        string
-	Bytes      int64
-}
-type Cleanup struct {
-	ID                   string
-	Application          string
-	Selected             []Selection
-	Created              time.Time
-	Expires              time.Time
-	Executed             *time.Time
-	LogicalBytes         int64
-	ReclaimableBlobBytes int64
-	ActiveGenerations    int
-}
 type View struct {
 	Generation
 	ActiveWriter bool

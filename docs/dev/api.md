@@ -34,6 +34,7 @@
 - **并发控制**：每个可编辑资源返回 `revision` 和 `ETag: "<revision>"`。所有写操作必须带 `If-Match`，缺失或格式错误返回 `400 IF_MATCH_REQUIRED`，过期返回 `409 REVISION_CONFLICT`。请求体不再携带 `revision`。按 UID 防止误伤同名重建对象的守卫（`confirm_uid`、`source_uid`、`notes_revision`）不匹配时也返回 `409 REVISION_CONFLICT`。选择 409 而不是 HTTP 标准的 412，是为了让“过期草稿”只有一个错误码，前端统一保留草稿并重新加载。
 - **不需要 `If-Match` 的写操作**：登录/登出/改密码、上传图标、导入导出、对预览或任务 ID 的动作（ID 已绑定冻结的状态）、托管文件删除（文件 ID 不可变，替换用 `expected_id`）、HTTP 缓存单文件刷新与路径匹配测试。依赖已保存配置的动作（保留预览、复制应用）要求 `If-Match`。
 - **分页**：无限增长的列表（事件、版本、资源、缓存条目、预览条目）用游标 `limit`/`cursor` → `items`/`next_cursor`；需要页码的有限列表（厂商、应用、分类、托管文件、保留与预热条目）用 `page`/`limit` → `items`/`page`/`limit`/`total`/`total_pages`。`limit` 最大 100，默认值写在各操作。页码超出时返回空 `items`，不再回退到最后一页。
+- **预览**：清理、保留与刷新先建冻结预览，执行只作用于冻结集合，预览 ID 是幂等键，再次执行返回同一回执。未知、其他应用或已过期的预览为 404 `PREVIEW_NOT_FOUND`，来源 fence 或策略变化为 409 `PREVIEW_STALE`（构建时为 `SOURCE_CHANGED`），构建或执行中为 409 `OPERATION_IN_PROGRESS`；机制见 [architecture.md](architecture.md#冻结预览)。
 - **禁用的应用**：需要已启用应用的动作（保留预览与执行、预热启动与重试、HTTP 缓存刷新）在应用或其厂商被禁用时返回 409 `APPLICATION_DISABLED`（不可重试），不用可重试的 `SOURCE_CHANGED`；`SOURCE_CHANGED` 只表示来源在请求处理期间发生了变化。只读和管理已保留数据的操作（列表、状态、清理）对禁用的应用照常可用。
 - **错误**：响应体固定为 `{"error": {"code", "message", "request_id", "retryable"}}`，每个场景有显式 `code`，前端只按 `code` 判断。`retryable` 由目录决定，不由 HTTP 状态推导。
 

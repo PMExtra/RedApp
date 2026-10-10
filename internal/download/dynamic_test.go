@@ -171,7 +171,7 @@ func TestDynamicEpochRecoveryPreservesHistoricalDataAndMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = m.Cleanup(first.Application, job.ID); !errors.Is(err, store.ErrSourceInactive) {
+	if err = m.Cleanup(first.Application, job.ID); !errors.Is(err, store.ErrPreviewStale) {
 		t.Fatalf("stale cleanup preview accepted: %v", err)
 	}
 	job, err = m.Preview(first.Application, map[string]bool{first.ID: true}, nil)

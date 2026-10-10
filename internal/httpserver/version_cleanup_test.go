@@ -64,7 +64,7 @@ func TestVersionCleanupRejectsInvalidInputAndStalePreviews(t *testing.T) {
 	h.expectError("POST", base+"/not-an-id/execute", nil, 400, codeInvalidPath, nil)
 
 	expired := decodeJSONBody[versionCleanupDTO](t, mustBody(h.request("POST", base+"/preview", map[string]any{"minimum_version": "2.0.0"}, 201, nil)))
-	if _, err := h.sql().Exec(`UPDATE cleanup_previews SET expires_at_s=0 WHERE id=?`, expired.ID); err != nil {
+	if _, err := h.sql().Exec(`UPDATE previews SET expires_at_s=1 WHERE id=?`, expired.ID); err != nil {
 		t.Fatal(err)
 	}
 	h.expectError("POST", base+"/"+expired.ID+"/execute", nil, 404, codePreviewNotFound, nil)

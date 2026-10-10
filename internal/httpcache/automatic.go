@@ -205,7 +205,7 @@ func (s *Service) previewAutomatic(ctx context.Context, entry application.Entry,
 	}
 	if preview.SelectedFiles == 0 {
 		// Empty automatic passes do not accumulate durable empty jobs.
-		return "", preview.ScannedFiles, next, s.db.DeleteEmptyHTTPPreview(ctx, preview.ID)
+		return "", preview.ScannedFiles, next, s.db.DeleteEmptyPreview(ctx, preview.ID)
 	}
 	return preview.ID, preview.ScannedFiles, next, nil
 }

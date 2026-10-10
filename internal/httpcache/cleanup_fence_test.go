@@ -22,14 +22,14 @@ func TestCleanupStopsBetweenBatchesWhenRuntimeRevisionChanges(t *testing.T) {
 	// next batch must recheck the captured fence before retiring another row.
 	// This models a policy edit without adding a production synchronization hook.
 	_, err = f.sql(t).Exec(`CREATE TRIGGER change_revision_after_cleanup_batch
-		AFTER UPDATE OF completed_count ON http_cleanup_previews
-		WHEN NEW.kind='cleanup' AND OLD.completed_count=99 AND NEW.completed_count=100
+		AFTER UPDATE OF completed_count ON previews
+		WHEN NEW.kind='cache_cleanup' AND OLD.completed_count=99 AND NEW.completed_count=100
 		BEGIN UPDATE applications SET revision=revision+1,runtime_revision=runtime_revision+1; END`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	result, err := f.s.ExecuteCleanup(context.Background(), f.entry, preview.ID)
-	if !errors.Is(err, store.ErrSourceInactive) || result.SelectedFiles != 1205 || result.RetiredFiles != 100 || result.RetiredBytes != 700 || result.SkippedAccessed != 0 || result.SkippedChanged != 0 {
+	if !errors.Is(err, store.ErrPreviewStale) || result.SelectedFiles != 1205 || result.RetiredFiles != 100 || result.RetiredBytes != 700 || result.SkippedAccessed != 0 || result.SkippedChanged != 0 {
 		t.Fatal("cleanup continued past the changed revision or lost its committed batch", result, err)
 	}
 	status, err := f.s.LookupPreview(f.entry.StorageID(), "cleanup", preview.ID)
@@ -44,7 +44,7 @@ func TestCleanupStopsBetweenBatchesWhenRuntimeRevisionChanges(t *testing.T) {
 	if current != 1105 || early != 0 {
 		t.Fatal("unprocessed generations were removed or the first batch was rolled back", current, early)
 	}
-	if err = f.sql(t).QueryRow(`SELECT COALESCE(SUM(result_status='retired'),0),COALESCE(SUM(result_status='pending'),0) FROM http_cleanup_preview_items WHERE preview_id=?`, preview.ID).Scan(&retired, &pending); err != nil {
+	if err = f.sql(t).QueryRow(`SELECT COALESCE(SUM(result_status='retired'),0),COALESCE(SUM(result_status='pending'),0) FROM preview_items WHERE preview_id=?`, preview.ID).Scan(&retired, &pending); err != nil {
 		t.Fatal(err)
 	}
 	if retired != 100 || pending != 1105 {

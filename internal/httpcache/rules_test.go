@@ -104,7 +104,7 @@ func TestPatternPreviewFreezesMatchAndPolicyRevision(t *testing.T) {
 		t.Fatal(preview, err)
 	}
 	var raw []byte
-	if err = f.sql(t).QueryRow(`SELECT selection_json FROM http_cleanup_previews WHERE id=?`, preview.ID).Scan(&raw); err != nil {
+	if err = f.sql(t).QueryRow(`SELECT criteria_json FROM previews WHERE id=?`, preview.ID).Scan(&raw); err != nil {
 		t.Fatal(err)
 	}
 	var frozen PreviewCriteria
@@ -114,7 +114,7 @@ func TestPatternPreviewFreezesMatchAndPolicyRevision(t *testing.T) {
 	config := cachepolicy.Empty()
 	config.Rules = []cachepolicy.CacheRule{{Match: pathmatch.Spec{Type: "glob", Pattern: "/"}, TTLSeconds: 300}}
 	setPolicy(t, f, config)
-	if _, err = f.s.ExecuteCleanup(context.Background(), f.entry, preview.ID); !errors.Is(err, store.ErrSourceInactive) {
+	if _, err = f.s.ExecuteCleanup(context.Background(), f.entry, preview.ID); !errors.Is(err, store.ErrPreviewStale) {
 		t.Fatal("policy edit did not fence old preview", err)
 	}
 	preview, err = f.s.PreviewCleanup(context.Background(), f.entry, "fetched_at", f.s.now().Add(-time.Second), pathmatch.Spec{Type: "re2", Pattern: `/reports/[a-z]+\.txt`})
@@ -180,7 +180,7 @@ func TestAutomaticFirstMatchAndAccessRecheck(t *testing.T) {
 	f.entry.Revision = changed.Revision
 	f.entry.RuntimeRevision = changed.RuntimeRevision
 	f.entry.Enabled = false
-	if _, err = f.s.ExecuteCleanup(context.Background(), f.entry, id); !errors.Is(err, store.ErrSourceInactive) {
+	if _, err = f.s.ExecuteCleanup(context.Background(), f.entry, id); !errors.Is(err, store.ErrPreviewStale) {
 		t.Fatal("disabled source auto cleaned", err)
 	}
 	f.s.cleanupPass(context.Background(), registryFor(t, f.entry), func(err error) { t.Error(err) })
