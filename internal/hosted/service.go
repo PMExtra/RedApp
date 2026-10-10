@@ -8,16 +8,19 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
-	"github.com/PMExtra/RedApp/internal/application"
-	"github.com/PMExtra/RedApp/internal/download"
-	"github.com/PMExtra/RedApp/internal/identity"
-	"github.com/PMExtra/RedApp/internal/store"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/internal/download"
+	"github.com/PMExtra/RedApp/internal/fsutil"
+	"github.com/PMExtra/RedApp/internal/identity"
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
 type Budget interface {
@@ -51,7 +54,7 @@ func New(dir string, db *store.Store, budget Budget) (*Service, error) {
 		return nil, errors.New("Persistent file storage unavailable")
 	}
 	for _, part := range []string{filepath.Join(dir, "objects"), filepath.Join(dir, "objects", "hosted")} {
-		if err := directory(part); err != nil {
+		if err := fsutil.EnsureDir(part); err != nil {
 			return nil, err
 		}
 	}
@@ -79,35 +82,13 @@ func New(dir string, db *store.Store, budget Budget) (*Service, error) {
 			return nil, errors.New("Unexpected persistent resource filename")
 		}
 		if strings.HasSuffix(f.Name(), ".part") || !ids[name] {
-			if err = os.Remove(filepath.Join(s.dir, f.Name())); err != nil {
+			if _, err = fsutil.Remove(filepath.Join(s.dir, f.Name())); err != nil {
 				cancel()
 				return nil, err
 			}
 		}
 	}
 	return s, nil
-}
-func directory(path string) error {
-	err := os.Mkdir(path, 0700)
-	if err != nil && !os.IsExist(err) {
-		return err
-	}
-	info, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("Persistent resource directory is unsafe")
-	}
-	return syncDir(filepath.Dir(path))
-}
-func syncDir(path string) error {
-	f, e := os.Open(path)
-	if e != nil {
-		return e
-	}
-	defer f.Close()
-	return f.Sync()
 }
 func (s *Service) Close() { s.mu.Lock(); s.closed = true; s.cancel(); s.mu.Unlock(); s.wg.Wait() }
 func (s *Service) Progress(uid, id string) (Progress, bool) {
@@ -191,12 +172,11 @@ func (s *Service) Put(ctx context.Context, entry application.Entry, path, expect
 	}
 	temp := filepath.Join(s.dir, objectID+".part")
 	target := filepath.Join(s.dir, objectID)
-	file, err := os.OpenFile(temp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	file, err := fsutil.CreateStaged(temp)
 	if err != nil {
 		return store.HostedFile{}, err
 	}
-	defer file.Close()
-	defer os.Remove(temp)
+	defer file.Discard()
 	hash := sha256.New()
 	buffer := make([]byte, 64<<10)
 	var copied int64
@@ -234,25 +214,19 @@ func (s *Service) Put(ctx context.Context, entry application.Entry, path, expect
 	if err = ctx.Err(); err != nil {
 		return store.HostedFile{}, err
 	}
-	if err = file.Sync(); err != nil {
-		return store.HostedFile{}, err
-	}
-	if err = file.Close(); err != nil {
+	if err = file.Seal(); err != nil {
 		return store.HostedFile{}, err
 	}
 	s.mu.Lock()
 	p.State = "committing"
 	s.mu.Unlock()
-	if err = os.Rename(temp, target); err != nil {
-		return store.HostedFile{}, err
-	}
 	committed := false
 	defer func() {
 		if !committed {
-			os.Remove(target)
+			fsutil.Remove(target)
 		}
 	}()
-	if err = syncDir(s.dir); err != nil {
+	if err = file.Publish(target); err != nil {
 		return store.HostedFile{}, err
 	}
 	if err = ctx.Err(); err != nil {
@@ -275,7 +249,7 @@ func (s *Service) Put(ctx context.Context, entry application.Entry, path, expect
 	// after commit cannot claim that it stopped the completed publication.
 	p.State = "complete"
 	if old.ID != "" {
-		os.Remove(filepath.Join(s.dir, old.ID))
+		fsutil.Remove(filepath.Join(s.dir, old.ID))
 	}
 	return value, nil
 }
@@ -305,22 +279,15 @@ func (s *Service) Open(uid, path string) (*os.File, store.HostedFile, func(), er
 		release()
 		return nil, row, nil, errors.New("Invalid persistent resource identity")
 	}
-	name := filepath.Join(s.dir, row.ID)
-	before, err := os.Lstat(name)
-	if err != nil || !before.Mode().IsRegular() {
-		release()
-		return nil, row, nil, errors.New("Persistent resource unavailable")
-	}
-	file, err := os.Open(name)
+	file, err := fsutil.OpenRegular(filepath.Join(s.dir, row.ID))
 	if err != nil {
 		release()
-		return nil, row, nil, err
+		return nil, row, nil, fmt.Errorf("open hosted file: %w", err)
 	}
-	after, err := file.Stat()
-	if err != nil || !os.SameFile(before, after) || after.Size() != row.SizeBytes {
+	if info, err := file.Stat(); err != nil || info.Size() != row.SizeBytes {
 		file.Close()
 		release()
-		return nil, row, nil, errors.New("Persistent resource changed")
+		return nil, row, nil, errors.New("hosted file size does not match its record")
 	}
 	closed := make(chan struct{})
 	stop := context.AfterFunc(ctx, func() { defer close(closed); file.Close() })
@@ -344,9 +311,6 @@ func (s *Service) Delete(uid, id string) error {
 	if err != nil {
 		return err
 	}
-	err = os.Remove(filepath.Join(s.dir, row.ID))
-	if os.IsNotExist(err) {
-		return nil
-	}
+	_, err = fsutil.Remove(filepath.Join(s.dir, row.ID))
 	return err
 }

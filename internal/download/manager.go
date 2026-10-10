@@ -4,13 +4,13 @@ package download
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"github.com/PMExtra/RedApp/internal/distributor"
+	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
 	"io"
@@ -249,13 +249,6 @@ func validID(s string) bool {
 	return e == nil
 }
 func signal(g *Generation) { close(g.changed); g.changed = make(chan struct{}) }
-func id() string {
-	b := make([]byte, 16)
-	if _, e := rand.Read(b); e != nil {
-		panic(e)
-	}
-	return hex.EncodeToString(b)
-}
 func LogicalIdentity(application, version, key string) string {
 	sum := sha256.Sum256([]byte(application + "\x00" + version + "\x00" + key))
 	return hex.EncodeToString(sum[:])
@@ -301,7 +294,7 @@ type fileCheck struct {
 // checkFile hashes a cache file without holding mu. A nil result with a nil
 // error means the file could not be opened as a regular cache file.
 func checkFile(ctx context.Context, path string, n int64, expected string) (*fileCheck, error) {
-	f, err := openRegular(path)
+	f, err := fsutil.OpenRegular(path)
 	if err != nil {
 		return nil, nil
 	}
@@ -467,7 +460,11 @@ func (m *Manager) verifyBlobLocked(r Resource, fullRetry bool, path string, size
 				return e
 			}
 			if e == nil && blob.SizeBytes == size {
-				g := &Generation{ctx: m.ctx, ID: id(), Resource: r, Path: path, Bytes: size, Total: size, State: "complete", done: true, Started: time.Now(), changed: make(chan struct{}), FullRetry: fullRetry}
+				id, e := fsutil.RandomID()
+				if e != nil {
+					return e
+				}
+				g := &Generation{ctx: m.ctx, ID: id, Resource: r, Path: path, Bytes: size, Total: size, State: "complete", done: true, Started: time.Now(), changed: make(chan struct{}), FullRetry: fullRetry}
 				g.Finished = time.Now()
 				if e = m.db.CreateGeneration(m.record(g)); e != nil {
 					return e
@@ -485,10 +482,14 @@ func (m *Manager) createPartLocked(ctx context.Context, r Resource, fullRetry bo
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	g := &Generation{ctx: ctx, ID: id(), Resource: r, State: "queued", Total: -1, Started: time.Now(), changed: make(chan struct{}), FullRetry: fullRetry}
 	if m.jobs >= m.maxWriters {
 		return nil, ErrWriterLimit
 	}
+	id, err := fsutil.RandomID()
+	if err != nil {
+		return nil, err
+	}
+	g := &Generation{ctx: ctx, ID: id, Resource: r, State: "queued", Total: -1, Started: time.Now(), changed: make(chan struct{}), FullRetry: fullRetry}
 	g.Path = m.partPath(g.ID)
 	f, e := os.OpenFile(g.Path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
 	if e != nil {
@@ -643,7 +644,12 @@ func (m *Manager) admitLocked(ctx context.Context, r Resource, finish func()) (*
 		}
 	}
 	if g.file == nil {
-		f, err := openRegular(g.Path)
+		// Complete content is only read; a retained part resumes in place.
+		open := fsutil.OpenRegularWritable
+		if g.State == "complete" {
+			open = fsutil.OpenRegular
+		}
+		f, err := open(g.Path)
 		if err != nil {
 			return nil, false, err
 		}
@@ -751,9 +757,9 @@ func (m *Manager) removeLocked(g *Generation) error {
 	if st, e := os.Lstat(part); e == nil {
 		released = st.Size()
 	}
-	if e := os.Remove(part); e != nil && !os.IsNotExist(e) {
+	if removed, e := fsutil.Remove(part); e != nil {
 		return e
-	} else if e == nil {
+	} else if removed {
 		m.checkpoint("delete.after_part_unlink", g)
 	}
 	if e := m.db.DeleteGeneration(g.Resource.Application, g.ID); e != nil {

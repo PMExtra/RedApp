@@ -5,12 +5,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -69,60 +71,6 @@ func digestApplication(app string) string {
 	return hex.EncodeToString(h[:])
 }
 
-func ensureDirectory(path string) error {
-	st, e := os.Lstat(path)
-	created := false
-	if os.IsNotExist(e) {
-		e = os.Mkdir(path, 0700)
-		if e != nil && !os.IsExist(e) {
-			return e
-		}
-		created = e == nil
-		st, e = os.Lstat(path)
-	}
-	if e != nil {
-		return e
-	}
-	if !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
-		return errors.New("Cache directory must be a real directory")
-	}
-	// Persist the new directory's entry in its already-created parent. Callers
-	// initialize each cache-tree level in order before publishing any blobs.
-	if created {
-		return syncDirectory(filepath.Dir(path))
-	}
-	return nil
-}
-
-// Cache files are never followed through a symlink, and the opened inode must
-// match the inspected regular file. The instance lock owns the containing tree.
-func openRegular(path string) (*os.File, error) {
-	before, e := os.Lstat(path)
-	if e != nil {
-		return nil, e
-	}
-	if !before.Mode().IsRegular() {
-		return nil, errors.New("Cache path is not a regular file")
-	}
-	f, e := os.OpenFile(path, os.O_RDWR, 0600)
-	if e != nil {
-		return nil, e
-	}
-	after, e := f.Stat()
-	if e != nil || !os.SameFile(before, after) {
-		f.Close()
-		return nil, errors.New("Cache file changed while opening")
-	}
-	return f, nil
-}
-func syncDirectory(path string) error {
-	f, e := os.Open(path)
-	if e != nil {
-		return e
-	}
-	defer f.Close()
-	return f.Sync()
-}
 func (m *Manager) record(g *Generation) store.Generation {
 	phase := "incomplete"
 	blob := ""
@@ -175,7 +123,7 @@ func (m *Manager) closeFiles() {
 
 func (m *Manager) recover() error {
 	for _, p := range []string{filepath.Join(m.dir, "objects"), filepath.Join(m.dir, "objects", "parts"), filepath.Join(m.dir, "objects", "blobs")} {
-		if e := ensureDirectory(p); e != nil {
+		if e := fsutil.EnsureDir(p); e != nil {
 			return e
 		}
 	}
@@ -239,7 +187,7 @@ func (m *Manager) recover() error {
 		}
 
 		blobPath := m.blobPath(g.Resource)
-		f, openErr := openRegular(blobPath)
+		f, openErr := fsutil.OpenRegular(blobPath)
 		if openErr == nil {
 			st, statErr := f.Stat()
 			valid := statErr == nil && (g.Resource.Size == nil || *g.Resource.Size == st.Size()) && verified(f, st.Size(), g.Resource.Hash)
@@ -255,14 +203,14 @@ func (m *Manager) recover() error {
 						return e
 					}
 				}
-				if e = os.Remove(m.partPath(g.ID)); e != nil && !os.IsNotExist(e) {
+				if _, e = fsutil.Remove(m.partPath(g.ID)); e != nil {
 					return e
 				}
 				continue
 			}
 			openErr = errors.New("Recovered blob failed verification")
 		}
-		if g.State == "complete" || !os.IsNotExist(openErr) {
+		if g.State == "complete" || !errors.Is(openErr, fs.ErrNotExist) {
 			g.Error = "Completed cache file is missing or invalid"
 			g.Retired = true
 			if e = m.db.RetireGeneration(g.Resource.Application, g.ID, time.Now()); e != nil {
@@ -272,7 +220,8 @@ func (m *Manager) recover() error {
 			m.recordFailure(g, nil)
 			continue
 		}
-		f, e = openRegular(g.Path)
+		// The retained part resumes in place, so it is opened for writing.
+		f, e = fsutil.OpenRegularWritable(g.Path)
 		if e != nil {
 			g.Retired = true
 			if e = m.db.RetireGeneration(g.Resource.Application, g.ID, time.Now()); e != nil {
@@ -328,10 +277,10 @@ func (m *Manager) recover() error {
 // unchanged blob inode; only a blob replaced since then is hashed under mu.
 func (m *Manager) publishLocked(g *Generation, existing *fileCheck) error {
 	path := m.blobPath(g.Resource)
-	if e := ensureDirectory(filepath.Dir(path)); e != nil {
+	if e := fsutil.EnsureDir(filepath.Dir(path)); e != nil {
 		return e
 	}
-	if f, e := openRegular(path); e == nil {
+	if f, e := fsutil.OpenRegular(path); e == nil {
 		st, se := f.Stat()
 		valid := se == nil && st.Size() == g.Bytes
 		if valid && existing.matches(st) {
@@ -353,16 +302,16 @@ func (m *Manager) publishLocked(g *Generation, existing *fileCheck) error {
 			return e
 		}
 
-	} else if !os.IsNotExist(e) {
+	} else if !errors.Is(e, fs.ErrNotExist) {
 		return e
 	} else if e = os.Rename(g.Path, path); e != nil {
 		return errors.New("Cache publication failed")
 	}
 	g.Path = path
-	if e := syncDirectory(filepath.Dir(path)); e != nil {
+	if e := fsutil.SyncDir(filepath.Dir(path)); e != nil {
 		return e
 	}
-	return syncDirectory(filepath.Dir(m.partPath(g.ID)))
+	return fsutil.SyncDir(filepath.Dir(m.partPath(g.ID)))
 }
 func (m *Manager) invalidateBlobLocked(r Resource, path string) error {
 	for _, old := range m.all {
@@ -406,10 +355,10 @@ func (m *Manager) collectBlob(r Resource) (int64, error) {
 			return 0, errors.New("Invalid blob file type")
 		}
 		released = st.Size()
-	} else if !os.IsNotExist(e) {
+	} else if !errors.Is(e, fs.ErrNotExist) {
 		return 0, e
 	}
-	if e = os.Remove(path); e != nil && !os.IsNotExist(e) {
+	if _, e = fsutil.Remove(path); e != nil {
 		return 0, e
 	}
 	if released > 0 {

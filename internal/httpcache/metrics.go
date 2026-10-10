@@ -10,6 +10,7 @@ import (
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/download"
+	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -139,13 +140,16 @@ func (s *Service) finishMetrics(w *metricWriter, entry application.Entry, path s
 	s.db.SettleCounters()
 }
 
-func (s *Service) startTransfer(entry application.Entry, path string) (string, func()) {
-	id := randomID()
+func (s *Service) startTransfer(entry application.Entry, path string) (string, func(), error) {
+	id, err := fsutil.RandomID()
+	if err != nil {
+		return "", nil, err
+	}
 	s.mu.Lock()
 	s.transfers[id] = &transfer{id: id, path: path, entry: entry, started: time.Now()}
 	s.mu.Unlock()
 	var once sync.Once
-	return id, func() { once.Do(func() { s.mu.Lock(); delete(s.transfers, id); s.mu.Unlock() }) }
+	return id, func() { once.Do(func() { s.mu.Lock(); delete(s.transfers, id); s.mu.Unlock() }) }, nil
 }
 
 type spoolMeter struct {

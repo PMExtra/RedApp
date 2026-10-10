@@ -6,6 +6,9 @@ import (
 	"errors"
 	"os"
 	pathpkg "path"
+	"path/filepath"
+
+	"github.com/PMExtra/RedApp/internal/fsutil"
 )
 
 func PrepareImage(raw []byte) ([]byte, string, error) {
@@ -32,8 +35,9 @@ func (s *Store) ApplyImages(images map[string][]byte, referenced func(string) bo
 				name, _, ok := parsePath(path)
 				if ok {
 					s.mu.Lock()
-					s.root.Remove(name)
-					syncDirectory(s.root)
+					if removed, err := fsutil.Remove(filepath.Join(s.dir, name)); err == nil && removed {
+						fsutil.SyncDir(s.dir)
+					}
 					s.mu.Unlock()
 				}
 			}

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -17,12 +16,13 @@ import (
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/download"
+	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
 type fetchResult struct {
-	row            *Row // A pinned stored generation.
-	temporary      string
+	row            *Row           // A pinned stored generation.
+	staged         *fsutil.Staged // A sealed body not yet published.
 	status         int
 	response       *http.Response
 	stale          bool
@@ -40,7 +40,11 @@ func (s *Service) fetch(ctx context.Context, entry application.Entry, path strin
 	if err != nil {
 		return fetchResult{}, err
 	}
-	transferID, finish := s.startTransfer(entry, path)
+	transferID, finish, err := s.startTransfer(entry, path)
+	if err != nil {
+		release()
+		return fetchResult{}, err
+	}
 	ctx = context.WithValue(ctx, transferContextKey{}, transferID)
 	// Internal budget exhaustion is an upstream failure; caller cancellation or
 	// shutdown is not. Keep the outer context for the final fallback decision.
@@ -284,7 +288,10 @@ func (s *Service) spool(ctx context.Context, resp *http.Response) (fetchResult, 
 	if resp.ContentLength > limit {
 		return fetchResult{}, download.ErrArtifactLimit
 	}
-	id := randomID()
+	id, err := fsutil.RandomID()
+	if err != nil {
+		return fetchResult{}, err
+	}
 	path := filepath.Join(s.dir, id+".tmp")
 	transferID, _ := ctx.Value(transferContextKey{}).(string)
 	s.mu.Lock()
@@ -293,15 +300,14 @@ func (s *Service) spool(ctx context.Context, resp *http.Response) (fetchResult, 
 		t.diskBytes = 0 // A retry uses a new complete staging body, never a partial continuation.
 	}
 	s.mu.Unlock()
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	f, err := fsutil.CreateStaged(path)
 	if err != nil {
 		return fetchResult{}, err
 	}
 	keep := false
 	defer func() {
-		f.Close()
 		if !keep {
-			os.Remove(path)
+			f.Discard()
 		}
 	}()
 	hash := sha256.New()
@@ -318,16 +324,13 @@ func (s *Service) spool(ctx context.Context, resp *http.Response) (fetchResult, 
 	if resp.ContentLength >= 0 && n != resp.ContentLength {
 		return fetchResult{}, &sourceReadError{io.ErrUnexpectedEOF}
 	}
-	if err = f.Sync(); err != nil {
-		return fetchResult{}, err
-	}
-	if err = f.Close(); err != nil {
+	if err = f.Seal(); err != nil {
 		return fetchResult{}, err
 	}
 	keep = true
 	now := s.now().UTC()
 	row := &Row{GenerationID: id, SizeBytes: n, SHA256: hex.EncodeToString(hash.Sum(nil)), FetchedAt: now, ValidatedAt: now, headers: representationHeaders(resp.Header)}
-	return fetchResult{row: row, temporary: path, status: resp.StatusCode}, nil
+	return fetchResult{row: row, staged: f, status: resp.StatusCode}, nil
 }
 func (s *Service) publish(ctx context.Context, entry application.Entry, path string, old *Row, result fetchResult) (fetchResult, error) {
 	r := result.row
@@ -337,11 +340,7 @@ func (s *Service) publish(ctx context.Context, entry application.Entry, path str
 	r.FreshUntil = contextFreshness(ctx, entry, path, r.headers, r.ValidatedAt)
 	// The temporary row is not a pinned persistent generation yet.
 	result.row = nil
-	defer func() {
-		if result.temporary != "" {
-			os.Remove(result.temporary)
-		}
-	}()
+	defer result.staged.Discard()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.DB.Begin()
@@ -358,16 +357,13 @@ func (s *Service) publish(ctx context.Context, entry application.Entry, path str
 			return fetchResult{}, ErrUpstream
 		}
 	}
-	if err = os.Rename(result.temporary, s.bodyPath(r.GenerationID)); err != nil {
-		return fetchResult{}, err
-	}
 	published := false
 	defer func() {
 		if !published {
-			os.Remove(s.bodyPath(r.GenerationID))
+			fsutil.Remove(s.bodyPath(r.GenerationID))
 		}
 	}()
-	if err = syncDirectory(s.dir); err != nil {
+	if err = result.staged.Publish(s.bodyPath(r.GenerationID)); err != nil {
 		return fetchResult{}, err
 	}
 	headers, _ := json.Marshal(r.headers)
@@ -427,14 +423,6 @@ func (s *Service) revalidate(ctx context.Context, entry application.Entry, old *
 	}
 	s.pins[row.GenerationID]++
 	return fetchResult{row: &row, status: http.StatusOK}, nil
-}
-func syncDirectory(path string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return f.Sync()
 }
 
 type leasedBody struct {

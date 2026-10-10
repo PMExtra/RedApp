@@ -11,6 +11,7 @@ import (
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/cachepolicy"
+	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/pathmatch"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -176,7 +177,10 @@ func (s *Service) buildPreview(ctx context.Context, entry application.Entry, kin
 	}
 	now := s.now().UTC()
 	raw, _ := json.Marshal(criteria)
-	id := randomID()
+	id, err := fsutil.RandomID()
+	if err != nil {
+		return out, err
+	}
 	_, err = tx.Exec(`INSERT INTO http_cleanup_previews(id,storage_id,kind,state,app_revision,vendor_revision,created_at_s,expires_at_s,selection_json,high_water) VALUES(?,?,?,'building',?,?,?,?,?,?)`, id, entry.StorageID(), kind, entry.Revision, entry.VendorRevision, now.Unix(), now.Add(10*time.Minute).Unix(), raw, highWater)
 	if err != nil {
 		return out, err

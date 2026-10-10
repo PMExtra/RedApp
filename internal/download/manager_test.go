@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/PMExtra/RedApp/internal/distributor"
+	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/store"
 	"github.com/PMExtra/RedApp/internal/testutil"
 	"io"
@@ -430,7 +431,7 @@ func TestCrashRecoveryPartRenameAndTombstone(t *testing.T) {
 				if mode == "retired" {
 					g.Retired = true
 				} else {
-					ensureDirectory(filepath.Dir(m.blobPath(r)))
+					fsutil.EnsureDir(filepath.Dir(m.blobPath(r)))
 					os.Rename(g.Path, m.blobPath(r))
 				}
 			}

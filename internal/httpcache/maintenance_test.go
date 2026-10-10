@@ -27,7 +27,7 @@ func seedMaintenanceRows(t *testing.T, f *fixture, count int) {
 	defer tx.Rollback()
 	old := f.s.now().Add(-time.Hour).Unix()
 	for i := 0; i < count; i++ {
-		_, err = tx.Exec(`INSERT INTO http_cache_generations(id,storage_id,path,sha256,size_bytes,fetched_at_s,validated_at_s,last_access_bucket_s,fresh_until_s,headers_json,is_current) VALUES(?,?,?,?,7,?,?,0,?,'{}',1)`, randomID(), f.entry.StorageID(), fmt.Sprintf("seed/%06d", i), strings.Repeat("a", 64), old, old, old)
+		_, err = tx.Exec(`INSERT INTO http_cache_generations(id,storage_id,path,sha256,size_bytes,fetched_at_s,validated_at_s,last_access_bucket_s,fresh_until_s,headers_json,is_current) VALUES(?,?,?,?,7,?,?,0,?,'{}',1)`, testID(t), f.entry.StorageID(), fmt.Sprintf("seed/%06d", i), strings.Repeat("a", 64), old, old, old)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -5,13 +5,13 @@ package httpcache
 import (
 	"container/list"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -112,7 +113,7 @@ func New(dir string, db *store.Store, budget Budget) (*Service, error) {
 		return nil, errors.New("HTTP cache requires storage and shared limits")
 	}
 	for _, path := range []string{dir, filepath.Join(dir, "objects"), filepath.Join(dir, "objects", "http")} {
-		if err := ensureDirectory(path); err != nil {
+		if err := fsutil.EnsureDir(path); err != nil {
 			return nil, err
 		}
 	}
@@ -268,14 +269,6 @@ func (s *Service) touch(r *Row) error {
 	return nil
 }
 func (s *Service) bodyPath(id string) string { return filepath.Join(s.dir, id+".body") }
-func randomID() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic(err)
-	}
-	return hex.EncodeToString(b[:])
-}
-
 func (s *Service) collectLocked(id string) error {
 	if s.pins[id] > 0 {
 		return nil
@@ -316,46 +309,6 @@ func (s *Service) retire(r *Row) error {
 	}
 	return err
 }
-func ensureDirectory(path string) error {
-	info, err := os.Lstat(path)
-	created := false
-	if os.IsNotExist(err) {
-		if err = os.Mkdir(path, 0700); err != nil && !os.IsExist(err) {
-			return err
-		}
-		created = true
-		info, err = os.Lstat(path)
-	}
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("HTTP cache directory must be a real directory")
-	}
-	if created {
-		return syncDirectory(filepath.Dir(path))
-	}
-	return nil
-}
-func openRegular(path string) (*os.File, error) {
-	before, err := os.Lstat(path)
-	if err != nil {
-		return nil, err
-	}
-	if !before.Mode().IsRegular() {
-		return nil, errors.New("HTTP cache body must be a regular file")
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	after, err := f.Stat()
-	if err != nil || !os.SameFile(before, after) {
-		f.Close()
-		return nil, errors.New("HTTP cache body changed while opening")
-	}
-	return f, nil
-}
 func (s *Service) recover() error {
 	rows, err := s.db.DB.Query(`SELECT ` + columns + ` FROM http_cache_generations`)
 	if err != nil {
@@ -381,7 +334,7 @@ func (s *Service) recover() error {
 			return errors.New("Invalid HTTP cache file identity")
 		}
 		if r.current {
-			f, e := openRegular(s.bodyPath(r.GenerationID))
+			f, e := fsutil.OpenRegular(s.bodyPath(r.GenerationID))
 			if e == nil {
 				h := sha256.New()
 				n, readErr := io.Copy(h, f)
@@ -390,7 +343,7 @@ func (s *Service) recover() error {
 					keep[r.GenerationID+".body"] = true
 					continue
 				}
-			} else if !os.IsNotExist(e) {
+			} else if !errors.Is(e, fs.ErrNotExist) {
 				return e
 			}
 			if _, err = s.db.DB.Exec(`UPDATE http_cache_generations SET is_current=0,retired_at_s=? WHERE id=?`, s.now().Unix(), r.GenerationID); err != nil {
@@ -415,7 +368,7 @@ func (s *Service) recover() error {
 			if f.Type()&os.ModeSymlink != 0 || f.IsDir() {
 				return errors.New("Unexpected nonregular HTTP cache file")
 			}
-			if err = os.Remove(filepath.Join(s.dir, name)); err != nil {
+			if _, err = fsutil.Remove(filepath.Join(s.dir, name)); err != nil {
 				return err
 			}
 		}

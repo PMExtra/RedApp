@@ -201,7 +201,7 @@ func TestAutomaticBoundsCursorAndEmptyDefault(t *testing.T) {
 		if i >= 1000 {
 			path = fmt.Sprintf("zzz/%04d", i-1000)
 		}
-		_, err = tx.Exec(`INSERT INTO http_cache_generations(id,storage_id,path,sha256,size_bytes,fetched_at_s,validated_at_s,last_access_bucket_s,fresh_until_s,headers_json,is_current) VALUES(?,?,?,?,0,?,?,0,?,'{}',1)`, randomID(), f.entry.StorageID(), path, strings.Repeat("a", 64), old, old, old)
+		_, err = tx.Exec(`INSERT INTO http_cache_generations(id,storage_id,path,sha256,size_bytes,fetched_at_s,validated_at_s,last_access_bucket_s,fresh_until_s,headers_json,is_current) VALUES(?,?,?,?,0,?,?,0,?,'{}',1)`, testID(t), f.entry.StorageID(), path, strings.Repeat("a", 64), old, old, old)
 		if err != nil {
 			tx.Rollback()
 			t.Fatal(err)

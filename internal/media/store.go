@@ -3,7 +3,6 @@ package media
 
 import (
 	"bytes"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -16,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/PMExtra/RedApp/internal/fsutil"
 )
 
 const (
@@ -31,10 +32,10 @@ var (
 	ErrTooLarge    = errors.New("icon exceeds size or dimension limit")
 )
 
-// Store owns a directory handle and must be closed after its users have stopped.
-// The caller must have already validated and locked the RedApp data directory.
+// Store owns the icon directory below the caller's already validated and
+// locked RedApp data directory.
 type Store struct {
-	root     *os.Root
+	dir      string
 	mu       sync.Mutex
 	importMu sync.Mutex
 }
@@ -44,71 +45,21 @@ func New(dir string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return nil, errors.New("icon data directory must be a real directory")
+	if !info.IsDir() {
+		return nil, fmt.Errorf("icon data directory: %w", fsutil.ErrNotDirectory)
 	}
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close()
-	opened, err := root.Stat(".")
-	if err != nil || !os.SameFile(info, opened) {
-		return nil, errors.New("icon data directory changed while opening")
-	}
-	objects, err := childDirectory(root, "objects")
-	if err != nil {
-		return nil, err
-	}
-	defer objects.Close()
-	icons, err := childDirectory(objects, "icons")
-	if err != nil {
-		return nil, err
-	}
-	return &Store{root: icons}, nil
-}
-
-func childDirectory(parent *os.Root, name string) (*os.Root, error) {
-	err := parent.Mkdir(name, 0700)
-	created := err == nil
-	if err != nil && !errors.Is(err, os.ErrExist) {
-		return nil, err
-	}
-	info, err := parent.Lstat(name)
-	if err != nil {
-		return nil, err
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return nil, errors.New("icon storage path must be a real directory")
-	}
-	child, err := parent.OpenRoot(name)
-	if err != nil {
-		return nil, err
-	}
-	opened, err := child.Stat(".")
-	if err != nil || !os.SameFile(info, opened) {
-		child.Close()
-		return nil, errors.New("icon directory changed while opening")
-	}
-	if created {
-		if err := syncDirectory(parent); err != nil {
-			child.Close()
+	icons := filepath.Join(dir, "objects", "icons")
+	for _, path := range []string{filepath.Dir(icons), icons} {
+		if err := fsutil.EnsureDir(path); err != nil {
 			return nil, err
 		}
 	}
-	return child, nil
+	return &Store{dir: icons}, nil
 }
 
-func syncDirectory(root *os.Root) error {
-	f, err := root.Open(".")
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return f.Sync()
-}
-
-func (s *Store) Close() error { return s.root.Close() }
+// Close exists for symmetry with the other storage services; the store keeps
+// no open handles between calls.
+func (s *Store) Close() error { return nil }
 
 // Put accepts image bytes, never a caller-provided filename. The returned path
 // is immutable and names the normalized content, not the original upload.
@@ -139,7 +90,7 @@ func (s *Store) putContent(content []byte, extension string) (string, error) {
 	publicPath := PublicPrefix + name
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, err := s.root.Lstat(name); err == nil {
+	if _, err := os.Lstat(filepath.Join(s.dir, name)); err == nil {
 		f, _, err := s.Open(publicPath)
 		if err != nil {
 			return "", err
@@ -159,33 +110,10 @@ func (s *Store) putContent(content []byte, extension string) (string, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
-	var nonce [16]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return "", err
-	}
-	temporary := ".upload-" + hex.EncodeToString(nonce[:])
-	f, err := s.root.OpenFile(temporary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return "", err
-	}
-	defer s.root.Remove(temporary)
-	if _, err := f.Write(content); err != nil {
-		f.Close()
-		return "", err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return "", err
-	}
-	if err := f.Close(); err != nil {
-		return "", err
-	}
-	if err := s.root.Rename(temporary, name); err != nil {
-		return "", err
-	}
 	// A subsequent database reference must not become durable before the file's
-	// directory entry does. Failed uploads never remove a previously stored icon.
-	if err := syncDirectory(s.root); err != nil {
+	// directory entry does; WriteFile syncs the directory after the rename.
+	// Failed uploads never remove a previously stored icon.
+	if err := fsutil.WriteFile(filepath.Join(s.dir, name), content); err != nil {
 		return "", err
 	}
 	return publicPath, nil
@@ -199,21 +127,13 @@ func (s *Store) Open(publicPath string) (*os.File, string, error) {
 	if !ok {
 		return nil, "", fmt.Errorf("%w: invalid icon path", ErrInvalidIcon)
 	}
-	before, err := s.root.Lstat(name)
+	f, err := fsutil.OpenRegular(filepath.Join(s.dir, name))
 	if err != nil {
 		return nil, "", err
 	}
-	if !before.Mode().IsRegular() || before.Size() > MaxStoredBytes {
-		return nil, "", errors.New("stored icon must be a bounded regular file")
-	}
-	f, err := s.root.Open(name)
-	if err != nil {
-		return nil, "", err
-	}
-	after, err := f.Stat()
-	if err != nil || !os.SameFile(before, after) {
+	if info, err := f.Stat(); err != nil || info.Size() > MaxStoredBytes {
 		f.Close()
-		return nil, "", errors.New("stored icon changed while opening")
+		return nil, "", errors.New("stored icon must be a bounded regular file")
 	}
 	return f, contentType, nil
 }

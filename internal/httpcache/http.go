@@ -218,7 +218,10 @@ func (s *Service) head(w http.ResponseWriter, r *http.Request, entry application
 		return err
 	}
 	defer release()
-	_, finish := s.startTransfer(entry, path)
+	_, finish, err := s.startTransfer(entry, path)
+	if err != nil {
+		return err
+	}
 	defer finish()
 	ctx, cancel := context.WithTimeout(r.Context(), upstreamOperationTimeout)
 	defer cancel()

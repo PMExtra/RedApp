@@ -17,6 +17,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/download"
+	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -45,6 +46,15 @@ type fixture struct {
 	vendor store.Vendor
 	clock  atomic.Int64
 	budget *testBudget
+}
+
+func testID(t *testing.T) string {
+	t.Helper()
+	id, err := fsutil.RandomID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 func newFixture(t *testing.T, h http.Handler, ttl int) *fixture {
