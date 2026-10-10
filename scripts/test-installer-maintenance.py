@@ -182,14 +182,17 @@ class CheckTests(unittest.TestCase):
             self.assertFalse((tmp/'bundle.zip').exists())
 
 class FakeAPI:
-    def __init__(self):self.pr=None;self.created=0;self.updated=0
-    def open_prs(self):return [copy.deepcopy(self.pr)] if self.pr else []
-    def create(self,body):
-        self.created+=1
-        self.pr={'number':1,'draft':True,'user':{'login':p.BOT},'head':{'ref':p.BRANCH,'sha':p.MARKER.search(body)[1]},'base':{'ref':'main'},'body':body,'html_url':'https://example.invalid/draft/1'}
-        return self.pr
-    def update(self,number,body):
-        self.updated+=1;self.pr['body']=body;self.pr['head']['sha']=p.MARKER.search(body)[1];return self.pr
+    repository='PMExtra/RedApp'
+    def __init__(self):self.prs={};self.created=0;self.comments={};self.fail_create=False
+    def open_prs(self):return [copy.deepcopy(pr) for pr in self.prs.values() if pr['state']=='open']
+    def create(self,app,branch,body):
+        if self.fail_create:raise ValueError('GitHub API POST failed with HTTP 422; no settings were changed')
+        self.created+=1;number=self.created
+        self.prs[number]={'number':number,'state':'open','draft':True,'user':{'login':p.BOT},'head':{'ref':branch,'sha':p.MARKER.search(body)[1],'repo':{'full_name':self.repository}},'base':{'ref':'main'},'body':body,'html_url':f'https://example.invalid/draft/{number}'}
+        return self.prs[number]
+    def close(self,number,comment):
+        self.comments[number]=comment;self.prs[number]['state']='closed';return self.prs[number]
+    def open_for(self,app):return [pr for pr in self.open_prs() if pr['head']['ref'].startswith(p.PREFIX+app+'/')]
 
 class PublishTests(unittest.TestCase):
     def setUp(self):
@@ -240,35 +243,66 @@ class PublishTests(unittest.TestCase):
         with self.assertRaises(ValueError):materialize(path,sha,'0'*40,Path(self.temp.name)/'bad',self.root)
         self.assertFalse((Path(self.temp.name)/'bad').exists())
 
-    def test_create_idempotent_update_and_fast_forward(self):
-        result=self.publish();first=result['head']['sha'];self.assertTrue(result['draft'])
+    def remote_heads(self):
+        return {line.split()[1]:line.split()[0] for line in p.git(self.root,'ls-remote','origin').decode().splitlines()}
+    def change(self,app,body):
+        for row in self.payload['rows']:
+            if row['application']==app and row['name']=='install.sh':row.update(status='changed',current_sha256=m.digest(body))
+        self.files.update({f'installers/{app}/upstream/install.sh':body,f'installers/{app}/generated/install.sh':b'patched '+body,f'installers/{app}/provenance.json':b'{}\n'})
+    def test_one_latest_draft_per_application(self):
+        first=self.publish()[0];self.assertTrue(first['draft'])
+        self.assertTrue(first['head']['ref'].startswith(p.PREFIX+'anthropic/claude-code/'))
+        self.assertEqual(p.git(self.root,'rev-parse',first['head']['sha']+'^').decode().strip(),self.baseline)
+        # Only the provenance check time differs: same branch, no new PR.
         self.files['installers/anthropic/claude-code/provenance.json']=b'{"script_baseline":{"checked_at":"tomorrow"}}\n'
-        self.publish();self.assertEqual(self.api.created,1);self.assertEqual(self.api.updated,0)
-        self.files['installers/anthropic/claude-code/upstream/install.sh']=b'newer\n'
-        self.publish();second=self.api.pr['head']['sha'];self.assertNotEqual(first,second)
-        p.git(self.root,'merge-base','--is-ancestor',first,second)
-        self.assertEqual(p.git(self.root,'ls-remote','origin','refs/heads/main').decode().split()[0],self.baseline)
-    def test_manual_head_change_is_not_overwritten(self):
-        self.publish();head=self.api.pr['head']['sha'];tree=p.git(self.root,'rev-parse',head+'^{tree}').decode().strip()
-        manual=p.git(self.root,'commit-tree',tree,'-p',head,input=b'manual change\n').decode().strip()
-        p.git(self.root,'push','origin',manual+':refs/heads/'+p.BRANCH)
+        self.publish();self.assertEqual(self.api.created,1)
+        self.change('anthropic/claude-code',b'newer\n')
+        second=self.publish()[0]
+        self.assertEqual([pr['number'] for pr in self.api.open_for('anthropic/claude-code')],[second['number']])
+        self.assertIn(f"#{second['number']}",self.api.comments[first['number']])
+        self.assertNotIn('refs/heads/'+first['head']['ref'],self.remote_heads())
+        # Codex is handled independently and does not close the Claude draft.
+        self.change('openai/codex',b'codex new\n')
+        self.publish()
+        self.assertEqual(len(self.api.open_for('anthropic/claude-code')),1);self.assertEqual(len(self.api.open_for('openai/codex')),1)
+        self.assertEqual(self.api.created,3)
+        self.assertEqual(self.remote_heads()['refs/heads/main'],self.baseline)
+    def test_pushed_branch_without_pr_is_reused(self):
+        self.api.fail_create=True
+        with self.assertRaises(ValueError):self.publish()
+        pushed={k:v for k,v in self.remote_heads().items() if k!='refs/heads/main' and k!='HEAD'}
+        self.api.fail_create=False;result=self.publish()[0]
+        self.assertEqual({'refs/heads/'+result['head']['ref']:result['head']['sha']},pushed)
+    def test_manual_head_change_is_not_closed(self):
+        old=self.publish()[0];tree=p.git(self.root,'rev-parse',old['head']['sha']+'^{tree}').decode().strip()
+        manual=p.git(self.root,'commit-tree',tree,'-p',old['head']['sha'],input=b'manual change\n').decode().strip()
+        p.git(self.root,'push','origin',manual+':refs/heads/'+old['head']['ref'])
+        self.api.prs[old['number']]['head']['sha']=manual
+        self.change('anthropic/claude-code',b'newer\n')
         with self.assertRaisesRegex(ValueError,'changed outside'):self.publish()
-        self.assertEqual(self.api.updated,0)
-    def test_unowned_branch_nondraft_and_main_advance_stop(self):
-        self.publish();self.api.pr['draft']=False
+        self.assertEqual(self.api.created,1);self.assertEqual(self.api.prs[old['number']]['state'],'open')
+    def test_unowned_nondraft_and_main_advance_stop(self):
+        old=self.publish()[0];self.change('anthropic/claude-code',b'newer\n')
+        self.api.prs[old['number']]['draft']=False
         with self.assertRaises(ValueError):self.publish()
-        self.api.pr=None
+        self.api.prs[old['number']].update(draft=True,user={'login':'someone'})
         with self.assertRaises(ValueError):self.publish()
+        self.assertEqual(self.api.created,1)
+        # A fork PR with the managed branch name is ignored, not closed.
+        self.api.prs[old['number']].update(user={'login':p.BOT},head={**old['head'],'repo':{'full_name':'someone/RedApp'}})
+        fresh=self.publish()[0];self.assertEqual(self.api.prs[old['number']]['state'],'open');self.assertNotEqual(fresh['number'],old['number'])
         p.git(self.root,'commit','--allow-empty','-m','main advanced');p.git(self.root,'push','origin','main')
         with self.assertRaisesRegex(ValueError,'main advanced'):self.publish()
     def test_branch_with_code_change_stops(self):
-        self.publish();head=self.api.pr['head']['sha']
+        old=self.publish()[0];head=old['head']['sha']
         p.git(self.root,'checkout','-b','hosted',head)
         (self.root/'not-allowed.py').write_text('do not publish')
         p.git(self.root,'add','.');p.git(self.root,'commit','-m','extra code');manual=p.git(self.root,'rev-parse','HEAD').decode().strip()
-        p.git(self.root,'push','origin',manual+':refs/heads/'+p.BRANCH)
-        self.api.pr['head']['sha']=manual;self.api.pr['body']=self.api.pr['body'].replace(head,manual)
+        p.git(self.root,'push','origin',manual+':refs/heads/'+old['head']['ref'])
+        pr=self.api.prs[old['number']];pr['head']['sha']=manual;pr['body']=pr['body'].replace(head,manual)
+        self.change('anthropic/claude-code',b'newer\n')
         with self.assertRaisesRegex(ValueError,'non-installer'):self.publish()
+        self.assertEqual(pr['state'],'open')
 
 if __name__=='__main__':
     for name in ('GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY'):

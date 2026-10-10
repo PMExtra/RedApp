@@ -69,9 +69,9 @@ python3 scripts/test-update-installers.py
 3. 回到可信主机重新应用已审查 patch，比对容器生成结果，再封装有限文件和摘要。容器输出不是独立授权来源。
 4. 独立 Windows Server 2022 任务复用 `.github/workflows/windows-installers.yml`，检出相同 baseline 的可信 harness，核对候选 ZIP 的 SHA256、baseline、允许路径和每个文件摘要后，在临时目录以候选字节覆盖基线副本。PS7 与 Windows PowerShell 5.1 对所有声明的 ps1 进行解析及无害 EXE 行为测试。测试读取候选目录，不能回退到 checkout 中的旧文件。此任务只有 contents:read、无持久 checkout 凭据，不接收发布 token；输出禁用 Actions 命令解释。它不是 Linux 容器的网络隔离边界，也不声称 Windows 测试限制了所有潜在网络访问。
 5. 仅在 Linux 和 Windows 两个任务都成功后，新任务使用 main 精确提交中的发布工具，校验任务输出的包 SHA256、内容摘要、大小、路径及文件集合；不执行包中的脚本。允许集合从同一生成 inventory 派生，只含已注册规范 ID 下声明的 `upstream/` 脚本、对应 `generated/` 文件及 `provenance.json`。公钥、许可证、patch、descriptor、应用代码及 workflow 均不在允许集合中。
-6. 使用短期 GITHUB_TOKEN 创建或更新 `automation/installer-updates` 的 **draft PR**。权限只在发布任务授予 contents:write / pull-requests:write，验证任务只有 contents:read。无 PAT、新凭据、安全设置变更、自动合并或 force push。
+6. 使用短期 GITHUB_TOKEN，**每个应用（如 Claude、Codex）各自**创建 draft PR，分支为 `automation/installer-updates/<vendor>/<app>/<内容摘要>`。摘要只取 upstream 与 generated 文件，检测时间变化不产生新分支。权限只在发布任务授予 contents:write / pull-requests:write，验证任务只有 contents:read。无 PAT、新凭据、安全设置变更、自动合并或 force push。仓库须开启 Settings → Actions → General 中的 “Allow GitHub Actions to create and approve pull requests”；默认 workflow 权限保持只读即可，发布任务的写权限由工作流单独声明。
 
-同一 main / 同一原文不会因检测时间变化反复提交。已有草稿以 PR 标记的精确 head 校验，分支人工提交、非草稿、未知/无 PR 分支、额外代码或 main 变化均停止，避免覆盖人工工作；更新用普通快进提交，保留历史。推送成功而 PR API 失败会留下维护分支，后续检测安全停止，由维护者处理，不偷偷删除或重建。官方源没有变化时不会自动清理旧草稿。
+每个应用只保留最新一个更新草稿：同一内容重复检测不提交、不新建 PR；内容有新变化时，先推送新分支并创建新草稿，再对该应用未合入的旧草稿留言说明被哪个 PR 取代，然后关闭它，并按旧 head 做租约检查后删除旧分支。一个应用的更新不影响另一个应用的草稿。旧草稿以 PR 标记的精确 head 校验；人工提交、非草稿、非 bot 创建或含非本应用安装器文件时停止，不关闭、不覆盖人工工作。fork 中同名分支的 PR 不视为维护草稿，直接忽略。新分支推送成功而 PR API 失败时，下次检测校验该分支树和父提交一致后直接复用并补建 PR；不一致则停止。main 变化时停止，在新基线重新检测。官方源没有变化时不会自动清理旧草稿。
 
 provenance 的 `script_baseline` 记录此次 main 和官方 live 检测时间，脚本条目的 `source` / `sha256` 是新原文身份；Codex 原 `commit` 继续表示最初固定源码与 LICENSE/NOTICE 的历史出处，不能把新 live 脚本误称为该旧 commit 的字节。
 
@@ -84,7 +84,7 @@ make installer-inventory
 python3 scripts/test-installer-maintenance.py
 ```
 
-本地回归覆盖 descriptor 扩展和固定验证器约束、无变化、脚本变化、所有检测错误汇总、下载/HTML/重定向边界、实际连接地址检查、真实本地 TLS 多跳与错误证书、签名块移除、patch 行号偏移与冲突、测试失败无产物、隔离输出篡改、包白名单与摘要、草稿幂等、普通快进、人工修改/非草稿/无主分支及 main 前进保护。
+本地回归覆盖 descriptor 扩展和固定验证器约束、无变化、脚本变化、所有检测错误汇总、下载/HTML/重定向边界、实际连接地址检查、真实本地 TLS 多跳与错误证书、签名块移除、patch 行号偏移与冲突、测试失败无产物、隔离输出篡改、包白名单与摘要、按应用分别保留最新草稿并关闭旧草稿、草稿幂等、未建 PR 分支复用、人工修改/非草稿/非 bot/fork 及 main 前进保护。
 
 旧版维护流程在 2026-10-02 的[真实官方检测](https://github.com/PMExtra/RedApp/actions/runs/37035726735)通过；四份原文均未变化，故按设计跳过隔离容器及草稿发布。这次历史无变化结果不证明本次重构工作流已部署，也不证明有变化分支的真实容器构建或 GitHub PR 写权限；这些仍须单独验收，不为测试人为制造上游变化。
 
