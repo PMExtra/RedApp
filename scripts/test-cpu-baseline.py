@@ -13,6 +13,8 @@ import urllib.error
 import urllib.request
 import uuid
 
+from release_checks import require
+
 
 def run(*args):
     return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT)
@@ -20,9 +22,9 @@ def run(*args):
 
 def check(image, version, revision, qemu):
     info = json.loads(run('docker', 'image', 'inspect', image))[0]
-    assert (info['Os'], info['Architecture']) == ('linux', 'amd64')
-    assert info['Config']['Entrypoint'] == ['/redapp']
-    assert info['Config']['Cmd'] == ['serve']
+    require((info['Os'], info['Architecture']) == ('linux', 'amd64'), 'Image platform is not linux/amd64')
+    require(info['Config'].get('Entrypoint') == ['/redapp'], 'Unexpected image entrypoint')
+    require(info['Config'].get('Cmd') == ['serve'], 'Unexpected image default command')
     with tempfile.TemporaryDirectory(prefix='redapp-cpu-') as directory:
         root = Path(directory)
         binary = root / 'redapp'
@@ -32,15 +34,15 @@ def check(image, version, revision, qemu):
             run('docker', 'cp', container + ':/redapp', str(binary))
         finally:
             run('docker', 'rm', '-v', container)
-        assert os.access(binary, os.X_OK), 'Image binary is not executable'
-        assert 'Advanced Micro Devices X86-64' in run('readelf', '-h', str(binary))
-        assert 'INTERP' not in run('readelf', '-l', str(binary)), 'Expected a static binary'
+        require(os.access(binary, os.X_OK), 'Image binary is not executable')
+        require('Advanced Micro Devices X86-64' in run('readelf', '-h', str(binary)), 'Image binary is not x86-64')
+        require('INTERP' not in run('readelf', '-l', str(binary)), 'Expected a static binary')
         notes = run('readelf', '-n', str(binary))
         isa = [line.strip() for line in notes.splitlines() if 'x86 ISA needed:' in line]
-        assert isa == ['Properties: x86 ISA needed: x86-64-baseline'], isa
+        require(isa == ['Properties: x86 ISA needed: x86-64-baseline'], f'Unexpected x86 ISA requirement: {isa}')
         command = [qemu, '-cpu', 'Nehalem', str(binary)]
         expected = f'RedApp {version} (commit {revision})\n'
-        assert run(*command, 'version') == expected
+        require(run(*command, 'version') == expected, 'Unexpected version output under Nehalem')
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             port = sock.getsockname()[1]
@@ -59,23 +61,23 @@ def check(image, version, revision, qemu):
                 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
                 deadline = time.monotonic() + 25
                 while True:
-                    assert process.poll() is None, f'Serve exited with {process.returncode}'
+                    require(process.poll() is None, f'Serve exited with {process.returncode}')
                     try:
                         with opener.open(f'http://127.0.0.1:{port}/health/ready', timeout=1) as response:
-                            assert response.status == 200
+                            require(response.status == 200, f'Readiness returned HTTP {response.status}')
                         break
                     except (OSError, urllib.error.URLError):
-                        assert time.monotonic() < deadline, 'Serve did not become healthy'
+                        require(time.monotonic() < deadline, 'Serve did not become healthy')
                         time.sleep(0.2)
-                assert subprocess.run(command + ['healthcheck'], env=env,
-                                      capture_output=True, timeout=10).returncode == 0
+                healthcheck = subprocess.run(command + ['healthcheck'], env=env, capture_output=True, timeout=10)
+                require(healthcheck.returncode == 0, 'Healthcheck failed')
                 process.terminate()
-                assert process.wait(timeout=10) == 0, 'Serve did not shut down cleanly'
+                require(process.wait(timeout=10) == 0, 'Serve did not shut down cleanly')
             finally:
                 if process.poll() is None:
                     process.kill()
                     process.wait()
-        assert 'RedApp started:' in (root / 'serve.log').read_text()
+        require('RedApp started:' in (root / 'serve.log').read_text(), 'Serve log lacks startup line')
     print('Exact amd64 image: ELF baseline, Nehalem/no-AVX version, default serve, health and clean shutdown passed')
 
 
@@ -86,5 +88,5 @@ if __name__ == '__main__':
     parser.add_argument('--revision', required=True)
     parser.add_argument('--qemu', default=shutil.which('qemu-x86_64'))
     args = parser.parse_args()
-    assert args.qemu, 'qemu-x86_64 is required'
+    require(args.qemu, 'qemu-x86_64 is required')
     check(args.image, args.version, args.revision, args.qemu)
