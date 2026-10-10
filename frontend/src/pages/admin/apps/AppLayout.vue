@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { CopyPlus, Download, ExternalLink } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
-import { RouterLink, RouterView, useRoute } from "vue-router";
+import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 import { useBootstrap } from "@/features/bootstrap";
 import {
   appRoute,
@@ -41,6 +41,7 @@ import {
 const { t } = useI18n();
 const localized = useLocalized();
 const route = useRoute();
+const router = useRouter();
 const vendorId = computed(() => String(route.params.vendor));
 const appId = computed(() => String(route.params.app));
 const app = useApp(vendorId, appId);
@@ -98,6 +99,15 @@ const tabs = computed<NavTabItem[]>(() => {
 const currentTab = computed(() => appTabFromRoute(route.name));
 const tabAvailable = computed(
   () => currentTab.value !== undefined && available.value.includes(currentTab.value),
+);
+
+// `vendors/:vendor/apps/:app` without a tab opens the provider's default tab.
+watch(
+  [() => app.data.value, currentTab],
+  ([data, tab]) => {
+    if (data && tab === undefined) void router.replace(appRoute(data));
+  },
+  { immediate: true },
 );
 </script>
 
@@ -175,7 +185,7 @@ const tabAvailable = computed(
         <NavTabs :items="tabs" :label="t('adminShell.tabs.label')" />
         <RouterView v-if="tabAvailable" />
         <EmptyState
-          v-else
+          v-else-if="currentTab !== undefined"
           :title="t('directory.app.tabUnavailable')"
           :description="t('directory.app.tabUnavailableHint', { provider: providerName })"
         >

@@ -3,7 +3,6 @@ import type { RouteRecordRaw } from "vue-router";
 /**
  * Admin routes. Every named route must be listed in the spec's `x-spa-routes`
  * (checked by spaRoutes.test.ts), otherwise the server answers 404 on reload.
- * Page ownership by work package is noted per group.
  */
 export const adminRoutes: RouteRecordRaw[] = [
   {
@@ -18,7 +17,7 @@ export const adminRoutes: RouteRecordRaw[] = [
         meta: { public: true, titleKey: "session.login.title" },
       },
 
-      // Package D: overview, events, settings.
+      // Operations: overview, events, settings.
       {
         path: "overview",
         name: "admin-overview",
@@ -44,7 +43,7 @@ export const adminRoutes: RouteRecordRaw[] = [
         meta: { titleKey: "adminShell.titles.proxy" },
       },
 
-      // Package B: directory.
+      // Directory: vendors, applications, categories.
       {
         path: "vendors",
         name: "admin-vendors",
@@ -92,11 +91,12 @@ export const adminRoutes: RouteRecordRaw[] = [
         ],
       },
       {
-        // The tab host (package B) gates tabs by provider capabilities.
+        // The tab host gates tabs by provider capabilities. The path itself
+        // (no tab) is replaced by the provider's default tab once the
+        // application is loaded (see AppLayout).
         path: "vendors/:vendor/apps/:app",
         component: () => import("@/pages/admin/apps/AppLayout.vue"),
         children: [
-          { path: "", redirect: { name: "admin-app-settings" } },
           {
             path: "settings",
             name: "admin-app-settings",
@@ -107,7 +107,7 @@ export const adminRoutes: RouteRecordRaw[] = [
             name: "admin-app-notes",
             component: () => import("@/pages/admin/apps/AppNotesPage.vue"),
           },
-          // Package C: runtime tabs.
+          // Runtime tabs.
           {
             path: "versions",
             name: "admin-app-versions",

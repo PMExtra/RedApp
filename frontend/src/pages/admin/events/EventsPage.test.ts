@@ -11,11 +11,7 @@ function renderEvents() {
   return renderWithApp(RouterView, {
     routes: [
       { path: "/admin/events", component: EventsPage },
-      {
-        path: "/admin/:pathMatch(.*)*",
-        name: "admin-app-settings",
-        component: { render: () => null },
-      },
+      { path: "/admin/:pathMatch(.*)*", component: { render: () => null } },
     ],
     path: "/admin/events",
   });

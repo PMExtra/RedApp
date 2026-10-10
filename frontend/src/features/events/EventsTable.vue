@@ -24,9 +24,10 @@ const columns = computed<DataTableColumn[]>(() => [
   { key: "message", label: t("events.columns.message"), class: "min-w-64" },
 ]);
 
-function appRoute(key: string) {
+/** The application page; it opens the provider's default tab. */
+function appRoute(key: string): string {
   const [vendor = "", app = ""] = key.split("/");
-  return { name: "admin-app-settings", params: { vendor, app } };
+  return `/admin/vendors/${encodeURIComponent(vendor)}/apps/${encodeURIComponent(app)}`;
 }
 </script>
 

@@ -1,8 +1,9 @@
-import { screen, within } from "@testing-library/vue";
+import { screen, waitFor, within } from "@testing-library/vue";
 import { describe, expect, it } from "vitest";
 import type { Schema } from "@/shared/api";
 import { renderAdminPage } from "@/test/directory";
-import { app, appConfiguration, notes, vendor } from "@/test/factories/directory";
+import { app, appConfiguration, notes, page, vendor } from "@/test/factories/directory";
+import { appStatus } from "@/test/factories/metrics";
 import { apiError, mockApi, useHandlers } from "@/test/msw";
 
 function appServer(
@@ -16,6 +17,8 @@ function appServer(
     mockApi("get", "/admin/api/apps/{vendor}/{app}/configuration", () => appConfiguration()),
   );
 }
+
+const emptyCursorPage = { items: [], next_cursor: null };
 
 async function tabNames() {
   const nav = await screen.findByRole("navigation", { name: "Sections" });
@@ -35,6 +38,24 @@ describe("application tabs", () => {
     appServer({ provider });
     await renderAdminPage("/admin/vendors/example/apps/tools/admin-notes");
     expect(await tabNames()).toEqual(tabs);
+  });
+
+  it.each([
+    [{ provider: "info" }, "settings"],
+    [{ provider: "codex" }, "versions"],
+    [{ provider: "codex", deleted_at: "2026-10-01T08:00:00Z" }, "settings"],
+  ] as const)("opens the default tab of %o", async (overrides, tab) => {
+    appServer(overrides);
+    useHandlers(
+      mockApi("get", "/admin/api/categories", () => page([], { limit: 100 })),
+      mockApi("get", "/admin/api/apps/{vendor}/{app}/status", () => appStatus()),
+      mockApi("get", "/admin/api/apps/{vendor}/{app}/versions", () => emptyCursorPage),
+      mockApi("get", "/admin/api/apps/{vendor}/{app}/resources", () => emptyCursorPage),
+    );
+    const { router } = await renderAdminPage("/admin/vendors/example/apps/tools");
+    await waitFor(() => {
+      expect(router.currentRoute.value.path).toBe(`/admin/vendors/example/apps/tools/${tab}`);
+    });
   });
 
   it("shows a missing tab as unavailable instead of the page", async () => {
