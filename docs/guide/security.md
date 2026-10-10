@@ -46,9 +46,10 @@ The request origin comes from TLS or from a trusted proxy's forwarded scheme. Be
 
 ### Sign-in rate limit
 
-- Each client IP may make 10 sign-in attempts per 5 minutes. Successful attempts count too.
-- The limit resets when the 5-minute window ends.
-- Failed sign-ins and rate-limited sign-ins return the same response, so an attacker cannot tell them apart.
+- Each client may make 10 sign-in attempts per 5 minutes. A client is an IPv4 address or an IPv6 /64 prefix. A successful sign-in clears that client's count.
+- All clients together get a burst of 20 password checks, refilled at one per second. This bounds CPU use when many addresses try at once; while such an attack continues, sign-in may be refused for everyone.
+- A wrong password returns `401 LOGIN_FAILED`; a rate-limited attempt returns `429 LOGIN_RATE_LIMITED`.
+- Signing out expires the session cookie in the browser and deletes the session on the server.
 - The client IP comes from trusted proxy headers when `trusted_proxies` is set; otherwise it is the direct peer address.
 
 ## Anonymous access

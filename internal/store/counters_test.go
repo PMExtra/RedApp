@@ -158,3 +158,24 @@ func TestConcurrentCounterAddsAndFlushesAreExact(t *testing.T) {
 		t.Fatal(counters, stats)
 	}
 }
+
+func TestPermanentDeletionKeepsBufferedTrafficInGlobalTotals(t *testing.T) {
+	s := openTest(t)
+	v, err := s.CreateVendor(VendorInput{ID: "acme", Name: LocalizedText{"Acme", "Acme"}, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.CreateApplication(v.ID, ApplicationInput{ID: "tool", Name: LocalizedText{"Tool", "Tool"}, Provider: "info", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.AddFor(a.Key, "downstream_bytes", 42); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.PermanentlyDeleteApplication(a.Key, a.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if got := persistedCounter(t, s, "global", "", "downstream_bytes"); got != 42 {
+		t.Fatal("global total lost the deleted application's buffered traffic", got)
+	}
+}

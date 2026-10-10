@@ -35,6 +35,8 @@ func (s *Store) PermanentlyDeleteApplication(key string, revision int64) error {
 // prepares a publication; that path may therefore run under Downloads.mu.
 // Without allowPublish a live application is a conflict rather than a publication.
 func (s *Store) permanentlyDeleteApplicationLocked(key string, revision int64, allowPublish bool) error {
+	// Persist buffered counters first so global totals keep the application's final traffic.
+	s.SettleCounters()
 	current, e := s.Application(key)
 	if e != nil {
 		return e
