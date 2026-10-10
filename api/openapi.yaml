@@ -3423,8 +3423,9 @@ paths:
       tags: [cache]
       summary: Revalidate one cached file now, even if it is fresh.
       description: |
-        Works on the current, active source epoch only. A failed upstream revalidation is reported as
-        `status: failed` (or `stale_fallback`) with `200`; it is not an error response.
+        Works on the current, active source epoch only; a disabled application is refused
+        (`409 APPLICATION_DISABLED`). A failed upstream revalidation is reported as `status: failed` (or
+        `stale_fallback`) with `200`; it is not an error response.
       security:
         - sessionCookie: []
           csrfToken: []
@@ -3436,7 +3437,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/CacheRefreshRequest'
-      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, VALIDATION_FAILED, CACHE_ENTRY_NOT_FOUND, SOURCE_CHANGED, TRANSFER_CAPACITY, ENTITY_DELETED]
+      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, VALIDATION_FAILED, CACHE_ENTRY_NOT_FOUND, SOURCE_CHANGED, TRANSFER_CAPACITY, ENTITY_DELETED, APPLICATION_DISABLED]
       responses:
         '200':
           description: Refresh outcome.
@@ -3475,8 +3476,9 @@ paths:
       summary: Preview revalidation of all cached files matching a pattern.
       description: |
         Builds a frozen list asynchronously: the response is the preview in state `building` or `ready`; poll
-        `getCacheRefresh` until `ready`. Current, active source epoch only. At most 8 previews (cleanup and refresh
-        together) are built at once. Expires 10 minutes after creation.
+        `getCacheRefresh` until `ready`. Current, active source epoch only; a disabled application is refused
+        (`409 APPLICATION_DISABLED`). At most 8 previews (cleanup and refresh together) are built at once. Expires
+        10 minutes after creation.
       security:
         - sessionCookie: []
           csrfToken: []
@@ -3491,7 +3493,7 @@ paths:
               releases:
                 value:
                   match: {type: glob, pattern: /releases/}
-      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, VALIDATION_FAILED, SOURCE_CHANGED, PREVIEW_BUSY, ENTITY_DELETED]
+      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, VALIDATION_FAILED, SOURCE_CHANGED, PREVIEW_BUSY, ENTITY_DELETED, APPLICATION_DISABLED]
       responses:
         '201':
           description: The preview.
@@ -3604,10 +3606,11 @@ paths:
       description: |
         Returns the job in state `running`; poll `getCacheRefresh`. A restart interrupts the run and it is not resumed.
         Executing a running or finished preview returns `409 OPERATION_IN_PROGRESS` or the finished job respectively.
+        A disabled application is refused (`409 APPLICATION_DISABLED`).
       security:
         - sessionCookie: []
           csrfToken: []
-      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, PREVIEW_NOT_FOUND, PREVIEW_STALE, OPERATION_IN_PROGRESS]
+      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, PREVIEW_NOT_FOUND, PREVIEW_STALE, OPERATION_IN_PROGRESS, APPLICATION_DISABLED]
       responses:
         '202':
           description: Refresh started.

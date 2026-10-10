@@ -200,11 +200,11 @@ func TestCachePreviewErrors(t *testing.T) {
 	}
 	h.expectError("GET", api+"/cache/cleanup/"+cleanup.ID, nil, 404, codePreviewNotFound, nil)
 	h.expectError("POST", api+"/cache/cleanup/"+cleanup.ID+"/execute", nil, 404, codePreviewNotFound, nil)
-	// A disabled application has no active source to refresh.
+	// A disabled application cannot be refreshed until it is enabled again.
 	h.setAppEnabled(app.Key, false)
-	h.expectError("POST", api+"/cache/refresh/preview", map[string]any{"match": glob}, 409, codeSourceChanged, nil)
-	h.expectError("POST", api+"/cache/refresh", map[string]any{"path": "/file.bin"}, 409, codeSourceChanged, nil)
-	h.expectError("POST", api+"/cache/refresh/"+twoFiles.ID+"/execute", nil, 409, codePreviewStale, nil)
+	h.expectError("POST", api+"/cache/refresh/preview", map[string]any{"match": glob}, 409, codeApplicationDisabled, nil)
+	h.expectError("POST", api+"/cache/refresh", map[string]any{"path": "/file.bin"}, 409, codeApplicationDisabled, nil)
+	h.expectError("POST", api+"/cache/refresh/"+twoFiles.ID+"/execute", nil, 409, codeApplicationDisabled, nil)
 	// Deleted applications are read-only but still listed.
 	row, _ := h.store.Application(app.Key)
 	if err := h.store.DeleteApplication(app.Key, row.Revision); err != nil {

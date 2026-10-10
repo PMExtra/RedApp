@@ -252,8 +252,7 @@ func (s *Server) cacheWriteEntry(w http.ResponseWriter, r *http.Request) (applic
 // (refresh); a disabled application has no active source.
 func (s *Server) activeCacheEntry(w http.ResponseWriter, r *http.Request) (application.Entry, bool) {
 	entry, ok := s.cacheWriteEntry(w, r)
-	if ok && !entry.Active() {
-		s.fail(w, r, codeSourceChanged, store.ErrSourceInactive, "The application source is not active; enable the application to refresh")
+	if ok && s.refuseDisabled(w, r, entry) {
 		return entry, false
 	}
 	return entry, ok
@@ -603,6 +602,9 @@ func (s *Server) executeCacheRefresh(w http.ResponseWriter, r *http.Request) {
 	current, _ := s.registry.LookupAny(entry.Descriptor.ID)
 	if current.UID != entry.UID || current.SourceEpoch != entry.SourceEpoch || current.DeletedAt != nil {
 		s.writeError(w, r, previewExecutionError(store.ErrSourceInactive))
+		return
+	}
+	if s.refuseDisabled(w, r, current) {
 		return
 	}
 	started, err := s.httpCache.ExecuteRefresh(r.Context(), current, preview.ID)
