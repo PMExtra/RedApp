@@ -15,31 +15,6 @@ func (s *Store) VersionCount(app string) (int64, error) {
 	return n, err
 }
 
-// VersionPage uses keyset pagination within one application. HTTP asks for one
-// extra row to determine whether a next page exists; no whole history is loaded.
-func (s *Store) VersionPage(app, after string, limit int) ([]VersionStats, error) {
-	if requireApp(app) != nil || limit < 1 || limit > 101 {
-		return nil, errors.New("Invalid version page")
-	}
-	s.SettleCounters()
-	rows, err := s.DB.Query("SELECT version,first_seen_s,artifact_requests,downstream_bytes FROM app_versions WHERE app_id=? AND version>? ORDER BY version ASC LIMIT ?", app, after, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make([]VersionStats, 0)
-	for rows.Next() {
-		var v VersionStats
-		var at int64
-		if err = rows.Scan(&v.Version, &at, &v.ArtifactRequests, &v.DownstreamBytes); err != nil {
-			return nil, err
-		}
-		v.FirstSeen = time.Unix(at, 0).UTC()
-		out = append(out, v)
-	}
-	return out, rows.Err()
-}
-
 type ListedEvent struct {
 	ID           int64     `json:"id"`
 	Time         time.Time `json:"time"`
@@ -97,41 +72,4 @@ func (s *Store) EventPage(app string, beforeID int64, limit int) ([]ListedEvent,
 		out = append(out, event)
 	}
 	return out, rows.Err()
-}
-
-func (s *Store) VersionNumberPage(app string, page, limit int) (Page[VersionStats], error) {
-	if requireApp(app) != nil || page < 1 || page > 1000000000 || limit < 1 || limit > 100 {
-		return Page[VersionStats]{}, errors.New("Invalid version page")
-	}
-	s.SettleCounters()
-	tx, err := s.DB.Begin()
-	if err != nil {
-		return Page[VersionStats]{}, err
-	}
-	defer tx.Rollback()
-	var total int64
-	if err = tx.QueryRow(`SELECT COUNT(*) FROM app_versions WHERE app_id=?`, app).Scan(&total); err != nil {
-		return Page[VersionStats]{}, err
-	}
-	result := NewPage[VersionStats](page, limit, total)
-	rows, err := tx.Query(`SELECT version,first_seen_s,artifact_requests,downstream_bytes FROM app_versions WHERE app_id=? ORDER BY version ASC LIMIT ? OFFSET ?`, app, limit, (result.Page-1)*limit)
-	if err != nil {
-		return result, err
-	}
-	for rows.Next() {
-		var v VersionStats
-		var at int64
-		if err = rows.Scan(&v.Version, &at, &v.ArtifactRequests, &v.DownstreamBytes); err != nil {
-			rows.Close()
-			return result, err
-		}
-		v.FirstSeen = time.Unix(at, 0).UTC()
-		result.Items = append(result.Items, v)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return result, err
-	}
-	return result, tx.Commit()
 }

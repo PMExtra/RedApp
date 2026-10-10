@@ -147,7 +147,7 @@ func TestHostedAtomicCancellationLimitsAndConflict(t *testing.T) {
 	if _, _, _, err = s.Open(entry.UID, first.Path); !errors.Is(err, download.ErrReaderLimit) {
 		t.Fatal("reader limit", err)
 	}
-	if _, err = s.Put(context.Background(), entry, first.Path, "", transferID(t), body("unasked")); !errors.Is(err, store.ErrConflict) {
+	if _, err = s.Put(context.Background(), entry, first.Path, "", transferID(t), body("unasked")); !errors.Is(err, store.ErrHostedFileChanged) {
 		t.Fatal("overwrite without CAS", err)
 	}
 	next, err := s.Put(context.Background(), entry, first.Path, first.ID, transferID(t), body("new"))
@@ -239,7 +239,7 @@ func TestHostedDeleteFencesInflightReplacementAndPreservesOpenedReader(t *testin
 		t.Fatal("delete left public row", err)
 	}
 	writer.Close()
-	if err = <-done; !errors.Is(err, store.ErrConflict) {
+	if err = <-done; !errors.Is(err, store.ErrHostedFileChanged) {
 		t.Fatal("replacement resurrected deleted file", err)
 	}
 	data, err := io.ReadAll(reader)

@@ -94,10 +94,6 @@ func TestDynamicMetricsAndListsKeepStorageAndPublicNamespacesSeparate(t *testing
 	if err = db.SeenFor(app.StorageID(), "1.0.1"); err != nil {
 		t.Fatal(err)
 	}
-	oldVersions := decodeList[listedVersion](t, listRequest(s, app.Key, "versions", "?limit=1"))
-	if oldVersions.NextCursor == nil {
-		t.Fatal("missing old source cursor")
-	}
 	oldStorage := app.StorageID()
 	app, err = db.UpdateApplication(app.Key, app.Revision, store.ApplicationChanges{Name: app.Name, Description: app.Description, Icon: app.Icon, BaseURL: app.BaseURL + "/mirror", CacheTTLSeconds: 60, Enabled: true})
 	if err != nil {
@@ -207,14 +203,6 @@ func TestDynamicMetricsAndListsKeepStorageAndPublicNamespacesSeparate(t *testing
 	if _, err = s.appStatus(app.Key, ""); err != nil {
 		t.Fatal("disabled status inaccessible", err)
 	}
-	versions := decodeList[listedVersion](t, listRequest(s, app.Key, "versions", ""))
-	if len(versions.Items) != 2 || versions.Items[0].Version != "2.0.0" {
-		t.Fatal("version list mixed source namespaces", versions)
-	}
-	resources := decodeList[download.View](t, listRequest(s, app.Key, "resources", ""))
-	if len(resources.Items) != 1 || resources.Items[0].Resource.Application != app.Key || resources.Items[0].Resource.Version != "2.0.0" {
-		t.Fatal("resource scope not current epoch", resources)
-	}
 	events := decodeList[store.ListedEvent](t, listRequest(s, app.Key, "events", ""))
 	if len(events.Items) != 1 || events.Items[0].AppID != app.Key {
 		t.Fatal("events did not map stable scope", events)
@@ -224,12 +212,6 @@ func TestDynamicMetricsAndListsKeepStorageAndPublicNamespacesSeparate(t *testing
 		if event.AppID != app.Key && event.AppID != other.Key {
 			t.Fatal("global events leaked private scope", event)
 		}
-	}
-	if w := listRequest(s, app.Key, "versions", "?cursor="+*oldVersions.NextCursor); w.Code != 400 {
-		t.Fatal("old epoch cursor accepted", w.Code)
-	}
-	if w := listRequest(s, general.Key, "versions", ""); w.Code != 404 {
-		t.Fatal("unsupported General versions endpoint", w.Code)
 	}
 }
 

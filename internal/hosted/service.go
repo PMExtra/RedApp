@@ -23,6 +23,9 @@ import (
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
+// ErrTransferInUse reports that another running transfer uses the transfer ID.
+var ErrTransferInUse = errors.New("transfer ID is in use")
+
 type Progress struct {
 	ID     string `json:"id"`
 	Path   string `json:"path"`
@@ -90,7 +93,8 @@ func (s *Service) Progress(uid, id string) (Progress, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.transfers[id]
-	if !ok || p.uid != uid {
+	// A committed transfer is finished; the upload response reports it.
+	if !ok || p.uid != uid || p.State == "complete" {
 		return Progress{}, false
 	}
 	copy := *p
@@ -126,9 +130,13 @@ func (s *Service) Put(ctx context.Context, entry application.Entry, path, expect
 	stop := context.AfterFunc(s.ctx, cancel)
 	defer stop()
 	s.mu.Lock()
-	if s.closed || s.transfers[id] != nil {
+	if s.closed {
 		s.mu.Unlock()
-		return store.HostedFile{}, store.ErrConflict
+		return store.HostedFile{}, context.Canceled
+	}
+	if s.transfers[id] != nil {
+		s.mu.Unlock()
+		return store.HostedFile{}, ErrTransferInUse
 	}
 	p := &Progress{ID: id, Path: path, Total: -1, State: "receiving", uid: entry.UID, cancel: cancel}
 	s.transfers[id] = p
@@ -140,7 +148,7 @@ func (s *Service) Put(ctx context.Context, entry application.Entry, path, expect
 		return store.HostedFile{}, err
 	}
 	if existing.ID != expected {
-		return store.HostedFile{}, store.ErrConflict
+		return store.HostedFile{}, store.ErrHostedFileChanged
 	}
 	reader, size, err := open(ctx)
 	if err != nil {

@@ -21,8 +21,12 @@ type CleanupPreview struct {
 	ID, AppID            string
 	CreatedAt, ExpiresAt time.Time
 	Selection            []CleanupSelection
-	ExecutedAt           *time.Time
-	Result               json.RawMessage
+	// Frozen estimates shown with the preview and its receipt.
+	ReclaimableBytes  int64
+	ActiveGenerations int
+	UnknownVersions   []string
+	ExecutedAt        *time.Time
+	Result            json.RawMessage
 }
 
 func (s *Store) SaveCleanupPreview(p CleanupPreview) error {
@@ -61,19 +65,35 @@ func (s *Store) SaveCleanupPreview(p CleanupPreview) error {
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec("INSERT INTO cleanup_previews(id,app_id,created_at_s,expires_at_s,selection_json,app_revision,vendor_revision,retention_json) VALUES(?,?,?,?,?,?,?,?)", p.ID, p.AppID, p.CreatedAt.Unix(), p.ExpiresAt.Unix(), raw, p.AppRuntimeRevision, p.VendorRuntimeRevision, optionalRetention(p.Retention))
+	if p.ReclaimableBytes < 0 || p.ActiveGenerations < 0 {
+		return errors.New("invalid cleanup preview estimate")
+	}
+	if p.UnknownVersions == nil {
+		p.UnknownVersions = []string{}
+	}
+	unknown, err := json.Marshal(p.UnknownVersions)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec("INSERT INTO cleanup_previews(id,app_id,created_at_s,expires_at_s,selection_json,reclaimable_bytes,active_generations,unknown_versions_json,app_revision,vendor_revision,retention_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)", p.ID, p.AppID, p.CreatedAt.Unix(), p.ExpiresAt.Unix(), raw, p.ReclaimableBytes, p.ActiveGenerations, unknown, p.AppRuntimeRevision, p.VendorRuntimeRevision, optionalRetention(p.Retention))
 	if err != nil {
 		return err
 	}
 	return tx.Commit()
 }
+
+const cleanupColumns = `id,app_id,created_at_s,expires_at_s,selection_json,reclaimable_bytes,active_generations,unknown_versions_json,executed_at_s,result_json,app_revision,vendor_revision,retention_json`
+
 func scanCleanup(row scanner) (CleanupPreview, error) {
 	var p CleanupPreview
 	var created, expires int64
 	var executed sql.NullInt64
-	var raw, result, retention []byte
-	err := row.Scan(&p.ID, &p.AppID, &created, &expires, &raw, &executed, &result, &p.AppRuntimeRevision, &p.VendorRuntimeRevision, &retention)
+	var raw, unknown, result, retention []byte
+	err := row.Scan(&p.ID, &p.AppID, &created, &expires, &raw, &p.ReclaimableBytes, &p.ActiveGenerations, &unknown, &executed, &result, &p.AppRuntimeRevision, &p.VendorRuntimeRevision, &retention)
 	if err != nil {
+		return p, err
+	}
+	if err = json.Unmarshal(unknown, &p.UnknownVersions); err != nil {
 		return p, err
 	}
 	if retention != nil {
@@ -92,7 +112,20 @@ func (s *Store) CleanupPreview(app, id string) (CleanupPreview, error) {
 	if err := requireApp(app); err != nil {
 		return CleanupPreview{}, err
 	}
-	return scanCleanup(s.DB.QueryRow("SELECT id,app_id,created_at_s,expires_at_s,selection_json,executed_at_s,result_json,app_revision,vendor_revision,retention_json FROM cleanup_previews WHERE id=? AND app_id=?", id, app))
+	return scanCleanup(s.DB.QueryRow("SELECT "+cleanupColumns+" FROM cleanup_previews WHERE id=? AND app_id=?", id, app))
+}
+
+// ApplicationCleanupPreview reads a preview of any source epoch of the
+// application uid; previews of other applications are sql.ErrNoRows.
+func (s *Store) ApplicationCleanupPreview(uid, id string) (CleanupPreview, error) {
+	p, err := scanCleanup(s.DB.QueryRow("SELECT "+cleanupColumns+" FROM cleanup_previews WHERE id=?", id))
+	if err != nil {
+		return CleanupPreview{}, err
+	}
+	if owner, _, ok := identity.ParseStorageID(p.AppID); !ok || owner != uid {
+		return CleanupPreview{}, sql.ErrNoRows
+	}
+	return p, nil
 }
 func optionalRetention(g *RetentionGuard) any {
 	if g == nil {
@@ -117,7 +150,7 @@ func (s *Store) retireCleanupPreview(app, id string, at time.Time, blocked map[s
 		return zero, err
 	}
 	defer tx.Rollback()
-	p, err := scanCleanup(tx.QueryRow("SELECT id,app_id,created_at_s,expires_at_s,selection_json,executed_at_s,result_json,app_revision,vendor_revision,retention_json FROM cleanup_previews WHERE id=? AND app_id=?", id, app))
+	p, err := scanCleanup(tx.QueryRow("SELECT "+cleanupColumns+" FROM cleanup_previews WHERE id=? AND app_id=?", id, app))
 	if err != nil {
 		return p, err
 	}
