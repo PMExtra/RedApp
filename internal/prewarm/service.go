@@ -82,6 +82,17 @@ func New(db *store.Store, registry *application.Registry, catalog *catalog.Servi
 	return s, nil
 }
 func (s *Service) Close() { s.mu.Lock(); s.closed.Store(true); s.cancel(); s.mu.Unlock(); s.wg.Wait() }
+
+// errInterrupted ends a job whose item failed because shutdown has started.
+var errInterrupted = errors.New("prewarm interrupted by shutdown")
+
+// shuttingDown reports whether this worker or a service its items depend on
+// is closing. The process closes the worker first, but the download manager
+// or HTTP cache may still close while a job runs. A service the worker was
+// built without never closes.
+func (s *Service) shuttingDown() bool {
+	return s.ctx.Err() != nil || s.Downloads != nil && s.Downloads.Closed() || s.HTTP != nil && s.HTTP.Closed()
+}
 func fingerprint(value any) string {
 	raw, _ := json.Marshal(value)
 	hash := sha256.Sum256(raw)
@@ -329,16 +340,26 @@ func (s *Service) run(ctx context.Context, entry application.Entry, job store.Pr
 		item.Key = key
 		item.Bytes = budget.Used() - before
 		job.Completed++
+		interrupted := false
 		switch item.Status {
 		case "cached", "downloaded", "not_modified", "ttl_fallback":
 			job.Succeeded++
 		default:
-			errorsCount++
+			// A download manager or HTTP cache that is closing fails the
+			// item; that is the shutdown interrupting the job, not an error.
+			if interrupted = s.shuttingDown(); interrupted {
+				item.Status, item.Reason = "skipped", "interrupted_by_shutdown"
+			} else {
+				errorsCount++
+			}
 		}
 		if err = s.DB.AddPrewarmItem(job.ID, ordinal, item); err != nil {
 			return err
 		}
 		update()
+		if interrupted {
+			return errInterrupted
+		}
 		if budget.Limited() {
 			return warmplan.ErrLimited
 		}
@@ -419,7 +440,7 @@ func (s *Service) run(ctx context.Context, entry application.Entry, job store.Pr
 		job.State = "cancelled"
 		job.Reason = "cancelled_or_configuration_changed"
 	}
-	if s.ctx.Err() != nil {
+	if errors.Is(err, errInterrupted) || s.shuttingDown() {
 		job.State = "interrupted"
 		job.Reason = "interrupted_by_shutdown"
 	}
@@ -448,7 +469,7 @@ func (s *Service) logOutcome(entry application.Entry, job store.PrewarmJob, err,
 	case job.State == "completed_with_errors":
 		level = slog.LevelWarn
 	}
-	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, warmplan.ErrLimited) {
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, warmplan.ErrLimited) && !errors.Is(err, errInterrupted) {
 		attrs = append(attrs, logging.Error(err))
 	}
 	if stateErr != nil {

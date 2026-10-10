@@ -289,6 +289,13 @@ func serve(c config.Deployment, logger *slog.Logger) error {
 		if err := server.Shutdown(shutdown); err != nil {
 			server.Close()
 		}
+		// The background loops run under ctx, which is done. Wait for them
+		// and stop the prewarm worker before closing the services they use,
+		// so their work ends as interrupted rather than failing on closed
+		// services.
+		<-cleanupDone
+		<-retentionDone
+		prewarmer.Close()
 		hostedFiles.Close()
 		httpCache.Close()
 		manager.Close()

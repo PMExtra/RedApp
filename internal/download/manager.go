@@ -219,7 +219,7 @@ func (m *Manager) PrepareUpstreams(clients map[string]*distributor.Client) (*Ups
 	defer m.mu.Unlock()
 	fail := func(err error) (*UpstreamPublication, error) { m.publicationMu.Unlock(); return nil, err }
 	if m.closed {
-		return fail(errors.New("server is shutting down"))
+		return fail(ErrClosed)
 	}
 	copied := make(map[string]*distributor.Client, len(clients))
 	for app, client := range clients {
@@ -392,7 +392,7 @@ func (m *Manager) verifyBlobLocked(r Resource, fullRetry bool, path string, size
 			return err
 		}
 		if m.closed {
-			return errors.New("server is shutting down")
+			return ErrClosed
 		}
 		if m.current[r.ID] != nil {
 			return nil // Another admission installed a head; waiters re-run admission.
@@ -523,7 +523,7 @@ func (m *Manager) admitLocked(ctx context.Context, r Resource, finish func()) (*
 		return nil, false, e
 	}
 	if m.closed {
-		return nil, false, errors.New("server is shutting down")
+		return nil, false, ErrClosed
 	}
 	if r.Size != nil && *r.Size > m.maxBytes {
 		return nil, false, ErrArtifactLimit
