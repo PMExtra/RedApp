@@ -2,7 +2,6 @@ package store
 
 import (
 	"bytes"
-	"database/sql"
 	"errors"
 	"github.com/PMExtra/RedApp/internal/configexchange"
 	"github.com/PMExtra/RedApp/internal/networkproxy"
@@ -273,7 +272,8 @@ func TestExchangeMissingSnapshotHashWarningAndUIDABA(t *testing.T) {
 	}
 }
 func TestExchangeWholeBatchDatabaseRollbackAndDictionaryOwnership(t *testing.T) {
-	s := openTest(t)
+	fault := &commitFault{}
+	s := openTest(t, fault.option())
 	set := taxonomySet()
 	if e := s.ReconcileTemplates(set); e != nil {
 		t.Fatal(e)
@@ -299,7 +299,7 @@ func TestExchangeWholeBatchDatabaseRollbackAndDictionaryOwnership(t *testing.T) 
 	s.SetConfigurationPrepare(func(DirectorySnapshot) (ConfigurationPublication, error) {
 		return publicationProbe{&published, &aborted}, nil
 	})
-	s.configurationFault = func(string, *sql.Tx) error { return errors.New("transaction rejected") }
+	fault.armed.Store(true)
 	if _, e = s.ExecuteConfigurationImport(plan, "rollback", true); e == nil {
 		t.Fatal("batch DB failure ignored")
 	}
@@ -314,7 +314,7 @@ func TestExchangeWholeBatchDatabaseRollbackAndDictionaryOwnership(t *testing.T) 
 	if count != 0 || published != 0 || aborted != 1 {
 		t.Fatal("partial notes/publication", count, published, aborted)
 	}
-	s.configurationFault = nil
+	fault.armed.Store(false)
 	tax := configexchange.Document{SchemaVersion: 1, Kind: "Taxonomy", Spec: map[string]any(object(presets.TaxonomySpec{Categories: []presets.TaxonomyEntry{{ID: "tools", Name: presets.Text{En: "Imported tools", ZhCN: "导入工具"}}, {ID: "orphan", Name: presets.Text{En: "Orphan", ZhCN: "孤立"}}}}))}
 	plan, e = s.PreviewConfigurationImport([]configexchange.Document{tax}, nil)
 	// A package category no resulting App uses would be pruned, so it is previewed as skipped.

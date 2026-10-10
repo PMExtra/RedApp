@@ -73,7 +73,7 @@ func (s *Store) UpdatePrewarm(j PrewarmJob) error {
 	return err
 }
 func (s *Store) AddPrewarmItem(id string, ordinal int, item warmplan.Item) error {
-	_, err := s.DB.Exec(`INSERT INTO prewarm_items VALUES(?,?,?,?,?,?) ON CONFLICT(job_id,ordinal) DO UPDATE SET status=excluded.status,reason=excluded.reason,read_bytes=excluded.read_bytes`, id, ordinal, item.Key, item.Status, item.Reason, item.Bytes)
+	_, err := s.DB.Exec(`INSERT INTO prewarm_items(job_id,ordinal,item_key,status,reason,read_bytes) VALUES(?,?,?,?,?,?) ON CONFLICT(job_id,ordinal) DO UPDATE SET status=excluded.status,reason=excluded.reason,read_bytes=excluded.read_bytes`, id, ordinal, item.Key, item.Status, item.Reason, item.Bytes)
 	return err
 }
 func (s *Store) PrewarmItems(uid, id string, page, limit int) ([]warmplan.Item, int, error) {
@@ -119,6 +119,6 @@ func (s *Store) PrewarmSuccess(uid, channel, fingerprint string) (bool, error) {
 	return value == fingerprint, err
 }
 func (s *Store) SavePrewarmSuccess(uid, channel, fingerprint string) error {
-	_, err := s.DB.Exec(`INSERT INTO prewarm_success VALUES(?,?,?) ON CONFLICT(app_uid,channel) DO UPDATE SET fingerprint=excluded.fingerprint`, uid, channel, fingerprint)
+	_, err := s.DB.Exec(`INSERT INTO prewarm_success(app_uid,channel,fingerprint) VALUES(?,?,?) ON CONFLICT(app_uid,channel) DO UPDATE SET fingerprint=excluded.fingerprint`, uid, channel, fingerprint)
 	return err
 }

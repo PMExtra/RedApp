@@ -329,7 +329,7 @@ func projectTemplateTaxonomy(tx *sql.Tx, t templateSnapshot) error {
 		return err
 	}
 	for _, id := range spec.Categories {
-		if _, err := tx.Exec(`INSERT INTO template_category_refs VALUES(?,?)`, t.Key, id); err != nil {
+		if _, err := tx.Exec(`INSERT INTO template_category_refs(template_key,category_id) VALUES(?,?)`, t.Key, id); err != nil {
 			return err
 		}
 	}

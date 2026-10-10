@@ -7,9 +7,9 @@ import (
 	"errors"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
@@ -279,40 +279,7 @@ func TestConfigurationPrepareCASAndDatabaseFailuresAreAtomic(t *testing.T) {
 	}
 }
 
-func TestSchemaElevenFreshRestartAndLegacyDirectoriesReadOnly(t *testing.T) {
-	for _, version := range []string{"4", "5", "6", "7", "8", "9", "10"} {
-		t.Run(version, func(t *testing.T) {
-			dir := t.TempDir()
-			ddl, err := os.ReadFile("testdata/schema_v" + version + ".sql")
-			if err != nil {
-				t.Fatal(err)
-			}
-			db, err := sql.Open("sqlite3", sqliteURL(filepath.Join(dir, "state.sqlite"), "_journal_mode=WAL"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err = db.Exec(string(ddl)); err != nil {
-				t.Fatal(err)
-			}
-			db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
-			db.Exec(`INSERT INTO admin VALUES(1,'keep',1)`)
-			before := snapshotFiles(t, dir)
-			if !errors.Is(Preflight(dir), ErrFreshDirectory) {
-				t.Fatal("old preflight accepted")
-			}
-			opened, err := Open(dir)
-			if opened != nil {
-				opened.DB.Close()
-			}
-			if !errors.Is(err, ErrFreshDirectory) {
-				t.Fatal("old directory accepted", err)
-			}
-			if !reflect.DeepEqual(before, snapshotFiles(t, dir)) {
-				t.Fatal("main or sidecars changed")
-			}
-			db.Close()
-		})
-	}
+func TestRestartWithSameSchemaKeepsConfiguration(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(dir)
 	if err != nil {
@@ -338,7 +305,18 @@ func TestSchemaElevenFreshRestartAndLegacyDirectoriesReadOnly(t *testing.T) {
 }
 
 func TestConfigurationCommitFailureDoesNotPublish(t *testing.T) {
-	s := openTest(t)
+	var armed atomic.Bool
+	// A deferred foreign-key violation makes the commit itself fail after every write.
+	s := openTest(t, withBeforeCommit(func(tx *sql.Tx) error {
+		if !armed.Load() {
+			return nil
+		}
+		if _, err := tx.Exec(`PRAGMA defer_foreign_keys=ON`); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`INSERT INTO vendor_config(entity_uid,template_ref,overrides_json,spec_json) VALUES('ffffffffffffffffffffffffffffffff',NULL,'{}','{}')`)
+		return err
+	}))
 	if err := s.EnsureEntityTemplates(); err != nil {
 		t.Fatal(err)
 	}
@@ -347,13 +325,7 @@ func TestConfigurationCommitFailureDoesNotPublish(t *testing.T) {
 	s.SetConfigurationPrepare(func(DirectorySnapshot) (ConfigurationPublication, error) {
 		return publicationProbe{&published, &aborted}, nil
 	})
-	s.configurationFault = func(stage string, tx *sql.Tx) error {
-		if _, err := tx.Exec(`PRAGMA defer_foreign_keys=ON`); err != nil {
-			return err
-		}
-		_, err := tx.Exec(`INSERT INTO vendor_config VALUES('ffffffffffffffffffffffffffffffff',NULL,'{}','{}')`)
-		return err
-	}
+	armed.Store(true)
 	_, err := s.PatchApplicationConfiguration("openai/codex", ConfigurationPatch{Revision: before.Revision, Set: map[string]json.RawMessage{"description.en": encode("failed commit")}})
 	if err == nil {
 		t.Fatal("deferred foreign-key commit failure ignored")

@@ -24,7 +24,7 @@ func (s *Store) SavePublicURLSetting(expected int64, value any) (int64, error) {
 func (s *Store) readGlobalSetting(key string, out any) (int64, error) {
 	var raw []byte
 	var revision int64
-	err := s.DB.QueryRow(`SELECT revision,payload FROM settings WHERE scope='global' AND app_id='' AND key=?`, key).Scan(&revision, &raw)
+	err := s.DB.QueryRow(`SELECT revision,payload FROM settings WHERE key=?`, key).Scan(&revision, &raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
@@ -50,9 +50,9 @@ func (s *Store) saveGlobalSetting(key string, expected int64, value any) (int64,
 	}
 	var result sql.Result
 	if expected == 0 {
-		result, err = s.DB.Exec(`INSERT INTO settings(scope,app_id,key,revision,payload) VALUES('global','',?,1,?) ON CONFLICT(scope,app_id,key) DO NOTHING`, key, raw)
+		result, err = s.DB.Exec(`INSERT INTO settings(key,revision,payload) VALUES(?,1,?) ON CONFLICT(key) DO NOTHING`, key, raw)
 	} else {
-		result, err = s.DB.Exec(`UPDATE settings SET revision=revision+1,payload=? WHERE scope='global' AND app_id='' AND key=? AND revision=?`, raw, key, expected)
+		result, err = s.DB.Exec(`UPDATE settings SET revision=revision+1,payload=? WHERE key=? AND revision=?`, raw, key, expected)
 	}
 	if err != nil {
 		return 0, err

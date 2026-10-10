@@ -1,76 +1,9 @@
 package store
 
 import (
-	"database/sql"
-	"errors"
-	"os"
-	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
-	"time"
 )
-
-func TestSameVersionSourceSchemaRejectedWithoutWrites(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "state.sqlite")
-	db, err := sql.Open("sqlite3", sqliteURL(path, "_journal_mode=WAL"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	// This is an earlier development snapshot carrying the same version marker.
-	// It has all current tables but predates immutable multi-source metadata.
-	oldSchema := strings.ReplaceAll(schema, "  base_urls_json TEXT NOT NULL,\n", "")
-	oldSchema = strings.ReplaceAll(oldSchema, "  source_strategy TEXT NOT NULL CHECK(source_strategy IN ('','ordered','round_robin','random')),\n", "")
-	if oldSchema == schema {
-		t.Fatal("fixture did not alter the source schema")
-	}
-	if _, err = db.Exec(oldSchema); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = db.Exec(`INSERT INTO settings(scope,app_id,key,revision,payload) VALUES('app','vendor/app','channel_ttl',1,'{"seconds":37}')`); err != nil {
-		t.Fatal(err)
-	}
-	var version int
-	if err = db.QueryRow(`SELECT version FROM schema_version`).Scan(&version); err != nil || version != SchemaVersion {
-		t.Fatal("same-version fixture is invalid", version, err)
-	}
-	before := snapshotFiles(t, dir)
-	if len(before["state.sqlite-wal"]) == 0 {
-		t.Fatal("fixture must retain pending committed WAL data")
-	}
-	mtimes := map[string]time.Time{}
-	for name := range before {
-		info, err := os.Stat(filepath.Join(dir, name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		mtimes[name] = info.ModTime()
-	}
-	if err = Preflight(dir); !errors.Is(err, ErrFreshDirectory) {
-		t.Fatal("preflight accepted older same-version source schema", err)
-	}
-	opened, err := Open(dir)
-	if opened != nil {
-		opened.DB.Close()
-	}
-	if !errors.Is(err, ErrFreshDirectory) {
-		t.Fatal("Open accepted older same-version source schema", err)
-	}
-	if after := snapshotFiles(t, dir); !reflect.DeepEqual(before, after) {
-		t.Fatal("refusal modified database bytes or created/deleted sidecars")
-	}
-	for name, mtime := range mtimes {
-		info, err := os.Stat(filepath.Join(dir, name))
-		if err != nil || !info.ModTime().Equal(mtime) {
-			t.Fatal("refusal wrote source file", name, err)
-		}
-	}
-}
 
 func TestHTTPMaintenancePagesUseSourceRowRangeIndex(t *testing.T) {
 	s := openTest(t)

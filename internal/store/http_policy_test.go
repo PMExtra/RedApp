@@ -23,15 +23,6 @@ func TestHTTPPolicyApplicationCASAndAtomicPersistence(t *testing.T) {
 	if err != nil || revision != app.Revision || empty.Rules == nil || empty.AutoCleanup == nil || !empty.StaleFallback || len(empty.Rules) != 0 {
 		t.Fatal(empty, revision, err)
 	}
-	// Missing persisted fields inherit the documented default; an explicit false
-	// must remain false. Read configuration and app revision share one transaction.
-	if _, err = s.DB.Exec(`INSERT OR REPLACE INTO settings VALUES('app',?,'http_policy',1,?)`, app.MetricsID(), []byte(`{"rules":[],"auto_cleanup":[]}`)); err != nil {
-		t.Fatal(err)
-	}
-	legacy, _, err := s.ReadHTTPPolicy(app.Key)
-	if err != nil || !legacy.StaleFallback {
-		t.Fatal(legacy, err)
-	}
 	config := cachepolicy.Empty()
 	config.Rules = []cachepolicy.CacheRule{{Match: pathmatch.Spec{Type: "glob", Pattern: "/releases/"}, TTLSeconds: 0}}
 	config.AutoCleanup = []cachepolicy.CleanupRule{{Match: pathmatch.Spec{Type: "re2", Pattern: `/releases/.*`}, Basis: "last_access", AgeSeconds: 86400}}

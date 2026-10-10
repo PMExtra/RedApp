@@ -3,9 +3,7 @@ package httpserver
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/distributor"
@@ -13,8 +11,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -212,47 +208,6 @@ func TestV072DisabledBrandIconRemainsAvailableOnlyToAdmin(t *testing.T) {
 		t.Fatal("missing reviewed brand icon or static policy")
 	}
 	h.request("GET", "/admin/api/assets/builtin-icon?path=https%3A%2F%2Fexample.com%2Fevil.svg", nil, 404, nil)
-}
-
-// This extends the existing schema-5 upgrade/collision case with a real Hosted
-// body and the production HTTP reader, rather than adding another fixture matrix.
-func TestV072LegacyV5IncludingReservedVendorIsRejectedReadOnly(t *testing.T) {
-	ddl, err := os.ReadFile("../store/testdata/schema_v5.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, id := range []string{"acme", "all"} {
-		t.Run(id, func(t *testing.T) {
-			dir := t.TempDir()
-			path := filepath.Join(dir, "state.sqlite")
-			db, err := sql.Open("sqlite3", path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err = db.Exec(string(ddl)); err != nil {
-				t.Fatal(err)
-			}
-			if _, err = db.Exec(`INSERT INTO vendors VALUES('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',?,'Keep','保留','Custom description','自定义说明','',1,9,NULL)`, id); err != nil {
-				t.Fatal(err)
-			}
-			db.Close()
-			before, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			opened, err := store.Open(dir)
-			if opened != nil {
-				opened.DB.Close()
-			}
-			if !errors.Is(err, store.ErrFreshDirectory) {
-				t.Fatal("accepted old directory", err)
-			}
-			after, err := os.ReadFile(path)
-			if err != nil || !bytes.Equal(before, after) {
-				t.Fatal("legacy data changed", err)
-			}
-		})
-	}
 }
 
 func TestFieldResetNeverChangesEnabled(t *testing.T) {

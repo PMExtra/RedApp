@@ -116,7 +116,6 @@ type configurationState struct {
 	Distributions map[string]trustedDistribution
 	Taxonomy      map[string]TaxonomyItem
 	Notes         map[string]AdminNotes
-	Seeded        bool
 }
 
 // SetConfigurationPrepare installs the runtime coordinator. Every authoritative
@@ -379,9 +378,6 @@ func (st *configurationState) view(kind, uid string, revision int64) (Configurat
 
 func readConfigurationState(tx *sql.Tx) (configurationState, error) {
 	st := configurationState{Configs: map[string]ownedConfig{}, Templates: map[string]templateSnapshot{}, Instructions: map[string]Instructions{}, Policies: map[string]cachepolicy.Config{}, Pending: map[string]int64{}, Distributions: map[string]trustedDistribution{}}
-	if err := tx.QueryRow(`SELECT seeded FROM directory_state WHERE id=1`).Scan(&st.Seeded); err != nil {
-		return st, err
-	}
 	var notesErr error
 	st.Notes, notesErr = readAllNotes(tx)
 	if notesErr != nil {
@@ -525,21 +521,21 @@ func readConfigurationState(tx *sql.Tx) (configurationState, error) {
 	if err != nil {
 		return st, err
 	}
-	rows, err = tx.Query(`SELECT app_id,payload FROM settings WHERE scope='app' AND key='http_policy'`)
+	rows, err = tx.Query(`SELECT app_uid,payload FROM application_http_policies`)
 	if err != nil {
 		return st, err
 	}
 	for rows.Next() {
-		var key string
+		var uid string
 		var raw []byte
 		var c cachepolicy.Config
-		if err = rows.Scan(&key, &raw); err != nil {
+		if err = rows.Scan(&uid, &raw); err != nil {
 			break
 		}
 		if err = json.Unmarshal(raw, &c); err != nil {
 			break
 		}
-		st.Policies[key] = c
+		st.Policies[uid] = c
 	}
 	if err == nil {
 		err = rows.Err()
@@ -596,7 +592,7 @@ func readConfigurationState(tx *sql.Tx) (configurationState, error) {
 	if err == nil {
 		var raw []byte
 		st.GlobalProxy = networkproxy.Direct()
-		err = tx.QueryRow(`SELECT revision,payload FROM settings WHERE scope='global' AND app_id='' AND key='upstream_proxy'`).Scan(&st.GlobalProxyRevision, &raw)
+		err = tx.QueryRow(`SELECT revision,payload FROM settings WHERE key='upstream_proxy'`).Scan(&st.GlobalProxyRevision, &raw)
 		if err == sql.ErrNoRows {
 			err = nil
 		} else if err == nil {
@@ -793,7 +789,7 @@ func materialize(st *configurationState, before configurationState) error {
 			if err != nil {
 				return err
 			}
-			st.Policies[a.MetricsID()] = policy
+			st.Policies[a.UID] = policy
 		}
 		exists := false
 		for _, prev := range before.Applications {
@@ -827,7 +823,7 @@ func materialize(st *configurationState, before configurationState) error {
 				continue
 			}
 			a.RuntimeRevision = prev.RuntimeRevision
-			changed := prev.Enabled != a.Enabled || !reflect.DeepEqual(prev.DeletedAt, a.DeletedAt) || prev.BaseURL != a.BaseURL || !reflect.DeepEqual(prev.BaseURLs, a.BaseURLs) || prev.SourceStrategy != a.SourceStrategy || prev.CacheTTLSeconds != a.CacheTTLSeconds || !reflect.DeepEqual(before.Policies[a.MetricsID()], st.Policies[a.MetricsID()])
+			changed := prev.Enabled != a.Enabled || !reflect.DeepEqual(prev.DeletedAt, a.DeletedAt) || prev.BaseURL != a.BaseURL || !reflect.DeepEqual(prev.BaseURLs, a.BaseURLs) || prev.SourceStrategy != a.SourceStrategy || prev.CacheTTLSeconds != a.CacheTTLSeconds || !reflect.DeepEqual(before.Policies[a.UID], st.Policies[a.UID])
 			key := st.distributionKey(*a)
 			if key != "" && before.Distributions[key].Digest != st.Distributions[key].Digest {
 				changed = true
@@ -944,8 +940,8 @@ func (s *Store) changeConfigurationLocked(change func(*configurationState) error
 			return err
 		}
 	}
-	if s.configurationFault != nil {
-		if err = s.configurationFault("before_commit", tx); err != nil {
+	if s.beforeCommit != nil {
+		if err = s.beforeCommit(tx); err != nil {
 			return err
 		}
 	}
@@ -970,18 +966,13 @@ func writeConfigurationState(tx *sql.Tx, old, next configurationState) error {
 	}
 
 	if old.GlobalProxyRevision != next.GlobalProxyRevision {
-		if _, err := tx.Exec(`INSERT INTO settings VALUES('global','','upstream_proxy',?,?) ON CONFLICT(scope,app_id,key) DO UPDATE SET revision=excluded.revision,payload=excluded.payload`, next.GlobalProxyRevision, encode(next.GlobalProxy)); err != nil {
-			return err
-		}
-	}
-	if old.Seeded != next.Seeded {
-		if _, err := tx.Exec(`UPDATE directory_state SET seeded=? WHERE id=1`, next.Seeded); err != nil {
+		if _, err := tx.Exec(`INSERT INTO settings(key,revision,payload) VALUES('upstream_proxy',?,?) ON CONFLICT(key) DO UPDATE SET revision=excluded.revision,payload=excluded.payload`, next.GlobalProxyRevision, encode(next.GlobalProxy)); err != nil {
 			return err
 		}
 	}
 	for uid, revision := range next.Pending {
 		if _, ok := old.Pending[uid]; !ok {
-			if _, err := tx.Exec(`INSERT INTO pending_application_deletes VALUES(?,?)`, uid, revision); err != nil {
+			if _, err := tx.Exec(`INSERT INTO pending_application_deletes(app_uid,requested_revision) VALUES(?,?)`, uid, revision); err != nil {
 				return err
 			}
 		}
@@ -990,7 +981,7 @@ func writeConfigurationState(tx *sql.Tx, old, next configurationState) error {
 		if reflect.DeepEqual(old.Templates[key], t) {
 			continue
 		}
-		if _, err := tx.Exec(`INSERT INTO template_snapshots VALUES(?,?,?,?,?,?,?) ON CONFLICT(kind,canonical_key) DO UPDATE SET schema_version=excluded.schema_version,metadata_json=excluded.metadata_json,spec_json=excluded.spec_json,semantic_hash=excluded.semantic_hash,present=excluded.present`, t.Kind, t.Key, t.Schema, encode(t.Metadata), encode(t.Spec), t.Hash, t.Present); err != nil {
+		if _, err := tx.Exec(`INSERT INTO template_snapshots(kind,canonical_key,schema_version,metadata_json,spec_json,semantic_hash,present) VALUES(?,?,?,?,?,?,?) ON CONFLICT(kind,canonical_key) DO UPDATE SET schema_version=excluded.schema_version,metadata_json=excluded.metadata_json,spec_json=excluded.spec_json,semantic_hash=excluded.semantic_hash,present=excluded.present`, t.Kind, t.Key, t.Schema, encode(t.Metadata), encode(t.Spec), t.Hash, t.Present); err != nil {
 			return err
 		}
 		if t.Kind == "App" {
@@ -1003,7 +994,7 @@ func writeConfigurationState(tx *sql.Tx, old, next configurationState) error {
 		if reflect.DeepEqual(old.Distributions[key], d) {
 			continue
 		}
-		if _, err := tx.Exec(`INSERT INTO trusted_distribution_snapshots VALUES('App',?,?,?,?) ON CONFLICT(canonical_key) DO UPDATE SET provider=excluded.provider,descriptor_json=excluded.descriptor_json,distribution_digest=excluded.distribution_digest`, key, d.Provider, encode(d.Descriptor), d.Digest); err != nil {
+		if _, err := tx.Exec(`INSERT INTO trusted_distribution_snapshots(kind,canonical_key,provider,descriptor_json,distribution_digest) VALUES('App',?,?,?,?) ON CONFLICT(canonical_key) DO UPDATE SET provider=excluded.provider,descriptor_json=excluded.descriptor_json,distribution_digest=excluded.distribution_digest`, key, d.Provider, encode(d.Descriptor), d.Digest); err != nil {
 			return err
 		}
 	}
@@ -1021,7 +1012,7 @@ func writeConfigurationState(tx *sql.Tx, old, next configurationState) error {
 			continue
 		}
 		if !exists {
-			_, err := tx.Exec(`INSERT INTO vendors(`+vendorColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.UID, v.ID, v.Name.En, v.Name.ZhCN, v.Description.En, v.Description.ZhCN, v.Icon, v.Enabled, v.Revision, unixPointer(v.DeletedAt), v.LocalizedIcons.En, v.LocalizedIcons.ZhCN, v.RuntimeRevision)
+			_, err := tx.Exec(`INSERT INTO vendors(`+vendorColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.UID, v.ID, v.Name.En, v.Name.ZhCN, v.Description.En, v.Description.ZhCN, v.Icon, v.LocalizedIcons.En, v.LocalizedIcons.ZhCN, v.Enabled, v.Revision, v.RuntimeRevision, unixPointer(v.DeletedAt))
 			if err != nil {
 				return err
 			}
@@ -1038,7 +1029,7 @@ func writeConfigurationState(tx *sql.Tx, old, next configurationState) error {
 			continue
 		}
 		if !exists {
-			_, err := tx.Exec(`INSERT INTO applications(uid,vendor_uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,provider,base_url,cache_ttl_seconds,base_urls_json,source_strategy,enabled,revision,source_epoch,deleted_at_s,runtime_revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.UID, a.VendorUID, a.ID, a.Name.En, a.Name.ZhCN, a.Description.En, a.Description.ZhCN, a.Icon, a.Provider, a.BaseURL, a.CacheTTLSeconds, string(encode(a.BaseURLs)), a.SourceStrategy, a.Enabled, a.Revision, a.SourceEpoch, unixPointer(a.DeletedAt), a.RuntimeRevision)
+			_, err := tx.Exec(`INSERT INTO applications(uid,vendor_uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,provider,base_url,base_urls_json,source_strategy,cache_ttl_seconds,enabled,revision,runtime_revision,source_epoch,deleted_at_s) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.UID, a.VendorUID, a.ID, a.Name.En, a.Name.ZhCN, a.Description.En, a.Description.ZhCN, a.Icon, a.Provider, a.BaseURL, string(encode(a.BaseURLs)), a.SourceStrategy, a.CacheTTLSeconds, a.Enabled, a.Revision, a.RuntimeRevision, a.SourceEpoch, unixPointer(a.DeletedAt))
 			if err != nil {
 				return err
 			}
@@ -1094,7 +1085,7 @@ func writeConfigurationState(tx *sql.Tx, old, next configurationState) error {
 		if c.Spec != nil {
 			spec = encode(c.Spec)
 		}
-		if _, err := tx.Exec(`INSERT INTO `+table+` VALUES(?,?,?,?) ON CONFLICT(entity_uid) DO UPDATE SET template_ref=excluded.template_ref,overrides_json=excluded.overrides_json,spec_json=excluded.spec_json`, uid, c.Ref, encode(c.Overrides), spec); err != nil {
+		if _, err := tx.Exec(`INSERT INTO `+table+`(entity_uid,template_ref,overrides_json,spec_json) VALUES(?,?,?,?) ON CONFLICT(entity_uid) DO UPDATE SET template_ref=excluded.template_ref,overrides_json=excluded.overrides_json,spec_json=excluded.spec_json`, uid, c.Ref, encode(c.Overrides), spec); err != nil {
 			return err
 		}
 	}
@@ -1102,7 +1093,7 @@ func writeConfigurationState(tx *sql.Tx, old, next configurationState) error {
 		if reflect.DeepEqual(old.Instructions[uid], i) {
 			continue
 		}
-		if _, err := tx.Exec(`INSERT INTO application_instructions VALUES(?,?,?,?) ON CONFLICT(app_uid) DO UPDATE SET revision=excluded.revision,en=excluded.en,zh_cn=excluded.zh_cn`, uid, i.Revision, i.En, i.ZhCN); err != nil {
+		if _, err := tx.Exec(`INSERT INTO application_instructions(app_uid,revision,en,zh_cn) VALUES(?,?,?,?) ON CONFLICT(app_uid) DO UPDATE SET revision=excluded.revision,en=excluded.en,zh_cn=excluded.zh_cn`, uid, i.Revision, i.En, i.ZhCN); err != nil {
 			return err
 		}
 	}
@@ -1117,21 +1108,15 @@ func writeConfigurationState(tx *sql.Tx, old, next configurationState) error {
 		if exists {
 			continue
 		}
-		if _, err := tx.Exec(`INSERT INTO application_sources VALUES(?,?,?,?,?,?,?)`, src.AppUID, src.Epoch, src.Provider, src.BaseURL, src.CreatedAt.Unix(), string(encode(src.BaseURLs)), src.SourceStrategy); err != nil {
+		if _, err := tx.Exec(`INSERT INTO application_sources(app_uid,epoch,provider,base_url,base_urls_json,source_strategy,created_at_s) VALUES(?,?,?,?,?,?,?)`, src.AppUID, src.Epoch, src.Provider, src.BaseURL, string(encode(src.BaseURLs)), src.SourceStrategy, src.CreatedAt.Unix()); err != nil {
 			return err
 		}
 	}
-	for key, policy := range next.Policies {
-		if reflect.DeepEqual(old.Policies[key], policy) {
+	for uid, policy := range next.Policies {
+		if reflect.DeepEqual(old.Policies[uid], policy) {
 			continue
 		}
-		var revision int64
-		for _, a := range next.Applications {
-			if a.MetricsID() == key {
-				revision = a.Revision
-			}
-		}
-		if _, err := tx.Exec(`INSERT INTO settings VALUES('app',?,'http_policy',?,?) ON CONFLICT(scope,app_id,key) DO UPDATE SET revision=excluded.revision,payload=excluded.payload`, key, revision, encode(policy)); err != nil {
+		if _, err := tx.Exec(`INSERT INTO application_http_policies(app_uid,payload) VALUES(?,?) ON CONFLICT(app_uid) DO UPDATE SET payload=excluded.payload`, uid, encode(policy)); err != nil {
 			return err
 		}
 	}
@@ -1466,7 +1451,6 @@ func (s *Store) ReconcileTemplates(set presets.Set) error {
 		for _, d := range set.Descriptors() {
 			st.Distributions[d.ID] = trustedDistribution{Provider: providers[d.ID], Descriptor: d, Digest: distributionDigest(d)}
 		}
-		st.Seeded = true
 		previous := map[string]templateSnapshot{}
 		for key, t := range st.Templates {
 			previous[key] = t

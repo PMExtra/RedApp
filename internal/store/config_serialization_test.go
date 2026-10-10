@@ -104,7 +104,8 @@ func TestAdminNotesAndPermanentDeleteSerializeWithConfigurationWriters(t *testin
 }
 
 func TestPermanentDeleteOfLiveEntitiesIsAtomic(t *testing.T) {
-	s := openTest(t)
+	fault := &commitFault{}
+	s := openTest(t, fault.option())
 	v, err := s.CreateVendor(VendorInput{ID: "acme", Name: LocalizedText{"Acme", "Acme"}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
@@ -113,28 +114,28 @@ func TestPermanentDeleteOfLiveEntitiesIsAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.configurationFault = func(stage string, tx *sql.Tx) error { return errors.New("rejected " + stage) }
+	fault.armed.Store(true)
 	if err = s.PermanentlyDeleteApplication(a.Key, a.Revision); err == nil {
 		t.Fatal("fault ignored")
 	}
 	if got, err := s.Application(a.Key); err != nil || got.DeletedAt != nil || got.Revision != a.Revision {
 		t.Fatal("failed permanent delete left a soft delete", got, err)
 	}
-	s.configurationFault = nil
+	fault.armed.Store(false)
 	if err = s.PermanentlyDeleteApplication(a.Key, a.Revision); err != nil {
 		t.Fatal(err)
 	}
 	if v, err = s.Vendor(v.ID); err != nil {
 		t.Fatal(err)
 	}
-	s.configurationFault = func(stage string, tx *sql.Tx) error { return errors.New("rejected " + stage) }
+	fault.armed.Store(true)
 	if err = s.PermanentlyDeleteVendor(v.ID, v.Revision); err == nil {
 		t.Fatal("fault ignored")
 	}
 	if got, err := s.Vendor(v.ID); err != nil || got.DeletedAt != nil || got.Revision != v.Revision {
 		t.Fatal("failed permanent delete left a soft delete", got, err)
 	}
-	s.configurationFault = nil
+	fault.armed.Store(false)
 	if err = s.PermanentlyDeleteVendor(v.ID, v.Revision); err != nil {
 		t.Fatal(err)
 	}

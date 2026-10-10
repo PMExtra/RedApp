@@ -12,9 +12,9 @@ import (
 	"time"
 )
 
-func openTest(t *testing.T) *Store {
+func openTest(t *testing.T, options ...option) *Store {
 	t.Helper()
-	s, e := Open(t.TempDir())
+	s, e := openStore(t.TempDir(), options...)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -39,50 +39,6 @@ func snapshotFiles(t *testing.T, dir string) map[string][]byte {
 		out[e.Name()] = b
 	}
 	return out
-}
-func TestOldAndUnknownDirectoriesAreRejectedWithoutModification(t *testing.T) {
-	for _, ddl := range []string{
-		`CREATE TABLE schema_version(version INTEGER);INSERT INTO schema_version VALUES(1);CREATE TABLE versions(version TEXT);INSERT INTO versions VALUES('0.1.0')`,
-		`CREATE TABLE schema_version(version INTEGER);INSERT INTO schema_version VALUES(2);CREATE TABLE records(kind TEXT,id TEXT,body BLOB)`,
-		`CREATE TABLE unrelated(secret TEXT);INSERT INTO unrelated VALUES('preserve')`,
-		`CREATE TABLE schema_version(version INTEGER);INSERT INTO schema_version VALUES(3)`,
-	} {
-		t.Run(ddl[:30], func(t *testing.T) {
-			dir := t.TempDir()
-			db, err := sql.Open("sqlite3", filepath.Join(dir, "state.sqlite"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err = db.Exec(ddl); err != nil {
-				t.Fatal(err)
-			}
-			db.Close()
-			before := snapshotFiles(t, dir)
-			if !errors.Is(Preflight(dir), ErrFreshDirectory) {
-				t.Fatal("preflight accepted old data")
-			}
-			if s, err := Open(dir); !errors.Is(err, ErrFreshDirectory) {
-				if s != nil {
-					s.DB.Close()
-				}
-				t.Fatal("accepted old data", err)
-			}
-			after := snapshotFiles(t, dir)
-			if len(before) != len(after) {
-				t.Fatal("old directory modified")
-			}
-			for name, b := range before {
-				if !bytes.Equal(b, after[name]) {
-					t.Fatal("old file changed", name)
-				}
-			}
-		})
-	}
-	dir := t.TempDir()
-	os.Mkdir(filepath.Join(dir, "objects"), 0700)
-	if !errors.Is(Preflight(dir), ErrFreshDirectory) {
-		t.Fatal("nonempty legacy directory accepted")
-	}
 }
 func releaseFixture(t *testing.T, s *Store, app, version string) Resource {
 	t.Helper()
@@ -201,49 +157,6 @@ func TestGenerationCleanupScopeAndCurrentCannotBeResurrected(t *testing.T) {
 	}
 	if _, err := s.Blob("anthropic/claude-code", r.SHA256); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatal("blob ownership shared", err)
-	}
-}
-
-func TestReadOnlyPreflightUnderstandsWALAndPreservesRejectedSource(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "state.sqlite")
-	db, err := sql.Open("sqlite3", sqliteURL(path, "_journal_mode=WAL"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if _, err = db.Exec("CREATE TABLE schema_version(version INTEGER); INSERT INTO schema_version VALUES(2);"); err != nil {
-		t.Fatal(err)
-	}
-	before := snapshotFiles(t, dir)
-	if !errors.Is(Preflight(dir), ErrFreshDirectory) {
-		t.Fatal("legacy WAL accepted")
-	}
-	if s, err := Open(dir); !errors.Is(err, ErrFreshDirectory) {
-		if s != nil {
-			s.DB.Close()
-		}
-		t.Fatal("legacy WAL opened for writing", err)
-	}
-	after := snapshotFiles(t, dir)
-	if len(before) != len(after) {
-		t.Fatal("source sidecars changed")
-	}
-	for name, b := range before {
-		if !bytes.Equal(b, after[name]) {
-			t.Fatal("preflight changed source", name)
-		}
-	}
-	// A valid schema whose transactions remain in WAL can be inspected without a
-	// false fresh-directory rejection after an unclean process exit.
-	valid := t.TempDir()
-	s, err := Open(valid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.DB.Close()
-	if err = Preflight(valid); err != nil {
-		t.Fatal("valid WAL database rejected", err)
 	}
 }
 

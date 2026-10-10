@@ -143,7 +143,7 @@ func putBlob(tx *sql.Tx, b Blob) error {
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	_, err = tx.Exec("INSERT INTO blobs VALUES(?,?,?,?) ON CONFLICT(app_id,sha256) DO UPDATE SET verified_at_s=excluded.verified_at_s", b.AppID, b.SHA256, b.SizeBytes, b.VerifiedAt.Unix())
+	_, err = tx.Exec("INSERT INTO blobs(app_id,sha256,size_bytes,verified_at_s) VALUES(?,?,?,?) ON CONFLICT(app_id,sha256) DO UPDATE SET verified_at_s=excluded.verified_at_s", b.AppID, b.SHA256, b.SizeBytes, b.VerifiedAt.Unix())
 	return err
 }
 func (s *Store) PutBlob(b Blob) error {

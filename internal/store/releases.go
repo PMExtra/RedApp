@@ -111,12 +111,12 @@ func (s *Store) PutRelease(m ReleaseMetadata, resources []Resource, expected ...
 	if _, err = tx.Exec("INSERT OR IGNORE INTO app_versions(app_id,version,first_seen_s) VALUES(?,?,?)", m.AppID, m.Version, m.FetchedAt.Unix()); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(`INSERT INTO release_metadata VALUES(?,?,?,?,?,?) ON CONFLICT(app_id,version) DO UPDATE SET raw=excluded.raw,signature=excluded.signature,trust_revision=excluded.trust_revision,fetched_at_s=excluded.fetched_at_s`, m.AppID, m.Version, m.Raw, m.Signature, m.TrustRevision, m.FetchedAt.Unix()); err != nil {
+	if _, err = tx.Exec(`INSERT INTO release_metadata(app_id,version,raw,signature,trust_revision,fetched_at_s) VALUES(?,?,?,?,?,?) ON CONFLICT(app_id,version) DO UPDATE SET raw=excluded.raw,signature=excluded.signature,trust_revision=excluded.trust_revision,fetched_at_s=excluded.fetched_at_s`, m.AppID, m.Version, m.Raw, m.Signature, m.TrustRevision, m.FetchedAt.Unix()); err != nil {
 		return err
 	}
 	if !existing {
 		for _, r := range resources {
-			if _, err = tx.Exec("INSERT INTO resources VALUES(?,?,?,?,?,?)", r.AppID, r.Version, r.Key, r.SourceURL, r.SHA256, r.ExpectedSize); err != nil {
+			if _, err = tx.Exec("INSERT INTO resources(app_id,version,resource_key,source_url,sha256,expected_size) VALUES(?,?,?,?,?,?)", r.AppID, r.Version, r.Key, r.SourceURL, r.SHA256, r.ExpectedSize); err != nil {
 				return err
 			}
 		}
@@ -173,7 +173,7 @@ func (s *Store) PutChannel(c Channel, expected ...SourceFence) error {
 	if err = s.RequireSourceActive(tx, c.AppID, expected...); err != nil {
 		return err
 	}
-	_, err = tx.Exec("INSERT INTO channels VALUES(?,?,?,?,?) ON CONFLICT(app_id,channel) DO UPDATE SET version=excluded.version,fetched_at_s=excluded.fetched_at_s,expires_at_s=excluded.expires_at_s", c.AppID, c.Name, c.Version, c.FetchedAt.Unix(), c.ExpiresAt.Unix())
+	_, err = tx.Exec("INSERT INTO channels(app_id,channel,version,fetched_at_s,expires_at_s) VALUES(?,?,?,?,?) ON CONFLICT(app_id,channel) DO UPDATE SET version=excluded.version,fetched_at_s=excluded.fetched_at_s,expires_at_s=excluded.expires_at_s", c.AppID, c.Name, c.Version, c.FetchedAt.Unix(), c.ExpiresAt.Unix())
 	if err != nil {
 		return err
 	}

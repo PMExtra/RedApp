@@ -200,7 +200,7 @@ RedApp 只向标准错误输出少量日志：
 
 | 现象 | 可能原因与处理 |
 | --- | --- |
-| 启动失败并提示 “belongs to an old or unknown database” | 数据目录来自其他 schema 版本。使用新的空目录。 |
+| 启动失败并提示 “belongs to another RedApp schema version” | 数据目录来自其他 schema 版本。使用新的空目录。 |
 | 启动失败并提示 “already owned by another instance” | 另一个进程正在使用该目录。停止该进程，不要删除 `instance.lock`。 |
 | 启动时出现权限错误 | 服务用户（Docker 中为 `65532`）无法写入目录。修正属主。 |
 | 修改参数后容器不健康 | 健康检查看不到你的参数。使用环境变量，或在 exec 形式的健康检查中传入相同参数。 |

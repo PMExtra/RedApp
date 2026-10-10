@@ -26,38 +26,6 @@ func NormalizeApplication(input store.ApplicationInput) (store.ApplicationInput,
 	return input, nil
 }
 
-// Seeds describes the two defaults; Store.SeedDirectory records its one-time
-// execution so restarts never recreate a deleted app or overwrite admin edits.
-func Seeds() ([]store.VendorInput, []store.ApplicationSeed, error) {
-	descriptors, err := reviewedDescriptors()
-	if err != nil {
-		return nil, nil, err
-	}
-	var vendors []store.VendorInput
-	var apps []store.ApplicationSeed
-	seen := map[string]bool{}
-	for _, descriptor := range descriptors {
-		key, err := application.ParseKey(descriptor.ID)
-		if err != nil {
-			return nil, nil, err
-		}
-		if !seen[key.Vendor] {
-			vendors = append(vendors, store.VendorInput{ID: key.Vendor, Name: store.LocalizedText{En: descriptor.Publisher, ZhCN: descriptor.Publisher}, Enabled: true})
-			seen[key.Vendor] = true
-		}
-		provider := application.Codex
-		if descriptor.Protocol == "claude-manifest-v1" {
-			provider = application.ClaudeCode
-		}
-		icon := descriptor.Icon
-		apps = append(apps, store.ApplicationSeed{VendorID: key.Vendor, ApplicationInput: store.ApplicationInput{
-			ID: key.App, Name: localizedRecord(descriptor.Name), Description: localizedRecord(descriptor.Summary), Icon: icon,
-			Provider: provider, BaseURL: descriptor.Upstream, CacheTTLSeconds: descriptor.DefaultChannelTTLSeconds, Enabled: true,
-		}})
-	}
-	return vendors, apps, nil
-}
-
 // NewSourceClient is the static-fixture compatibility constructor. Production
 // current and historical dynamic sources use NewScopedSourceClient with owner UIDs.
 func NewSourceClient(provider, baseURL string, pool *distributor.Pool) (*distributor.Client, error) {

@@ -53,10 +53,12 @@ func newDirectoryHarness(t *testing.T, dir string, configure ...func(*Server)) *
 // A pre-opened current-schema store preserves real login/CSRF/restart coverage.
 func newDirectoryHarnessWithStore(t *testing.T, dir string, db *store.Store, configure ...func(*Server)) *directoryHarness {
 	t.Helper()
-	var initialized bool
-	if err := db.DB.QueryRow(`SELECT seeded FROM directory_state WHERE id=1`).Scan(&initialized); err != nil {
+	// A directory that already has vendors was initialized by an earlier harness.
+	existing, err := db.Vendors(true)
+	if err != nil {
 		t.Fatal(err)
 	}
+	initialized := len(existing) != 0
 	if err := db.EnsureEntityTemplates(); err != nil {
 		t.Fatal(err)
 	}
