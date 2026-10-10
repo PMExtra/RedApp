@@ -3,6 +3,9 @@ import Button from "./Button.vue";
 import type { ButtonSize, ButtonVariant } from "./types";
 import Tooltip from "./Tooltip.vue";
 
+// Attributes and listeners (`@click`, `class`) go to the button: with a
+// tooltip the root is a renderless Reka component that would drop them.
+defineOptions({ inheritAttrs: false });
 withDefaults(
   defineProps<{
     /** Accessible name; also shown as a tooltip. */
@@ -22,6 +25,7 @@ withDefaults(
 <template>
   <Button
     v-if="noTooltip"
+    v-bind="$attrs"
     icon
     :variant="variant"
     :size="size"
@@ -34,6 +38,7 @@ withDefaults(
   </Button>
   <Tooltip v-else :content="label">
     <Button
+      v-bind="$attrs"
       icon
       :variant="variant"
       :size="size"
