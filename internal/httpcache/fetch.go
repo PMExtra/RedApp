@@ -32,6 +32,9 @@ type fetchResult struct {
 
 const upstreamOperationTimeout = 9 * time.Minute
 
+// Without allowStore, fetch never publishes: it is an unconditional transfer
+// (old must be nil) streamed only to its caller.
+
 func (s *Service) fetch(ctx context.Context, entry application.Entry, path string, old *Row, allowStore bool) (out fetchResult, err error) {
 	release, err := s.budget.AcquireHTTPWriter()
 	if err != nil {
@@ -159,10 +162,6 @@ func (s *Service) fetchAttempt(ctx context.Context, entry application.Entry, pat
 			}
 			return result, retry, err
 		}
-		if !allowStore {
-			row, err := s.pin(old.GenerationID)
-			return fetchResult{row: row, status: http.StatusOK}, false, err
-		}
 		result, err := s.revalidate(ctx, entry, old, combined)
 		result, err = s.recordOverride(ctx, entry, path, combined, result, err)
 		return result, false, err
@@ -183,9 +182,6 @@ func (s *Service) fetchAttempt(ctx context.Context, entry application.Entry, pat
 		}
 		// Uncacheable responses stream only to this reader. Once downstream
 		// headers/body start, a failure cannot transparently change sources.
-		if blockReason == "" {
-			blockReason = "request-no-store"
-		}
 		return fetchResult{response: resp, status: resp.StatusCode, blockReason: blockReason}, false, nil
 	}
 	s.checkFetchLength(ctx, resp.ContentLength)

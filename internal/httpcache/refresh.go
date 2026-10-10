@@ -209,9 +209,13 @@ func (s *Service) refreshExisting(ctx context.Context, entry application.Entry, 
 		return item, err
 	}
 	ctx = context.WithValue(ctx, policyContextKey{}, policy)
-	for {
+	for tries := 0; ; tries++ {
 		if err := ctx.Err(); err != nil {
 			return item, err
+		}
+		if tries == fetchAgainLimit {
+			item.Reason = "generation_changed"
+			return item, ErrFetchContended
 		}
 		old, err := s.lookup(entry.StorageID(), relative)
 		if err != nil {
@@ -235,12 +239,15 @@ func (s *Service) refreshExisting(ctx context.Context, entry application.Entry, 
 		if errors.Is(err, ErrFetchAgain) {
 			continue
 		}
-		if err != nil {
+		uncacheable := errors.Is(err, errUncacheableFlight)
+		if err != nil && !uncacheable {
 			item.Reason = "refresh_failed"
 			return item, err
 		}
-		if result.response != nil {
-			result.response.Body.Close()
+		if result.response != nil || uncacheable {
+			if result.response != nil {
+				result.response.Body.Close()
+			}
 			item.Status, item.Reason = "skipped", "response_not_cacheable"
 			if result.blockReason != "" {
 				item.Reason = result.blockReason

@@ -243,7 +243,8 @@ func TestRoundRobinAdvancesOnlyForRealUpstreamFetch(t *testing.T) {
 	if first.Load() != 1 || second.Load() != 0 {
 		t.Fatal(first.Load(), second.Load())
 	}
-	if w, e := f.serve(t, "GET", http.Header{"Cache-Control": {"no-cache"}}); e != nil || w.Body.String() != "BBB" {
+	f.clock.Add(400)
+	if w, e := f.serve(t, "GET", http.Header{}); e != nil || w.Body.String() != "BBB" {
 		t.Fatal(w, e)
 	}
 	if first.Load() != 1 || second.Load() != 1 {

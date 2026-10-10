@@ -9,7 +9,6 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/distributor"
@@ -76,7 +75,15 @@ func (s *Service) Serve(w http.ResponseWriter, r *http.Request, entry applicatio
 	}
 	ctx = context.WithValue(ctx, policyContextKey{}, policy)
 	r = r.WithContext(ctx)
-	for {
+	// Shared freshness belongs to administrator rules and the source response.
+	// Request no-store, no-cache, max-age and Pragma are ignored so an anonymous
+	// client can never force a private upstream transfer or a per-request
+	// revalidation; misses still coalesce through sharedFetch.
+	_, onlyCached := directives(r.Header)["only-if-cached"]
+	for tries := 0; ; tries++ {
+		if tries == fetchAgainLimit {
+			return ErrFetchContended
+		}
 		old, err := s.lookup(entry.StorageID(), relativePath)
 		if err != nil {
 			return err
@@ -85,17 +92,7 @@ func (s *Service) Serve(w http.ResponseWriter, r *http.Request, entry applicatio
 		// rule is removed or stops matching. Keep the body for ordinary cleanup,
 		// but do not serve it or use it as a failure fallback under the new policy.
 		cacheEligible := old != nil && contextEligible(ctx, entry, relativePath, old.headers)
-		requestPolicy := directives(r.Header)
-		_, noStore := requestPolicy["no-store"]
-		_, noCache := requestPolicy["no-cache"]
-		fresh := cacheEligible && s.now().Before(evaluatedFreshness(policy, entry, relativePath, old.headers, old.ValidatedAt))
-		if age, ok := requestPolicy["max-age"]; ok && old != nil {
-			n, e := strconv.ParseInt(age, 10, 64)
-			if e != nil || n < 0 || s.now().Sub(old.ValidatedAt) >= time.Duration(n)*time.Second {
-				fresh = false
-			}
-		}
-		if old != nil && fresh && !noCache {
+		if cacheEligible && s.now().Before(evaluatedFreshness(policy, entry, relativePath, old.headers, old.ValidatedAt)) {
 			if err = s.db.AddFor(entry.MetricsID(), "cache_hit_requests", 1); err != nil {
 				s.unpin(old.GenerationID)
 				return err
@@ -103,28 +100,12 @@ func (s *Service) Serve(w http.ResponseWriter, r *http.Request, entry applicatio
 			defer s.unpin(old.GenerationID)
 			return s.serveStored(w, r, old)
 		}
-		if _, onlyCached := requestPolicy["only-if-cached"]; onlyCached {
+		if onlyCached {
 			if old != nil {
 				s.unpin(old.GenerationID)
 			}
 			s.serveStatus(w, http.StatusGatewayTimeout)
 			return nil
-		}
-		if noStore && r.Method == http.MethodGet {
-			if err = s.db.AddFor(entry.MetricsID(), "miss_requests", 1); err != nil {
-				if old != nil {
-					s.unpin(old.GenerationID)
-				}
-				return err
-			}
-			result, err := s.fetch(ctx, entry, relativePath, old, false)
-			if old != nil {
-				s.unpin(old.GenerationID)
-			}
-			if err != nil {
-				return err
-			}
-			return s.serveResult(w, r, result, relativePath)
 		}
 		if r.Method == http.MethodHead {
 			if old != nil {
@@ -135,6 +116,15 @@ func (s *Service) Serve(w http.ResponseWriter, r *http.Request, entry applicatio
 		result, fetchErr := s.sharedFetch(ctx, entry, relativePath, old)
 		if old != nil {
 			s.unpin(old.GenerationID)
+		}
+		if errors.Is(fetchErr, errUncacheableFlight) {
+			// The upstream response, never a request header, made this path
+			// uncacheable. Each follower transfers concurrently instead of
+			// retrying one at a time.
+			if err = s.db.AddFor(entry.MetricsID(), "miss_requests", 1); err != nil {
+				return err
+			}
+			result, fetchErr = s.fetch(ctx, entry, relativePath, nil, false)
 		}
 		if errors.Is(fetchErr, ErrFetchAgain) {
 			continue
@@ -282,7 +272,6 @@ func (s *Service) head(w http.ResponseWriter, r *http.Request, entry application
 }
 
 func (s *Service) headResponse(w http.ResponseWriter, r *http.Request, entry application.Entry, path string, old *Row, attempt sourceAttempt, headers http.Header, resp *http.Response) error {
-	_, noStoreRequest := directives(r.Header)["no-store"]
 	var err error
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
 		if err = s.retire(old); err != nil {
@@ -302,9 +291,6 @@ func (s *Service) headResponse(w http.ResponseWriter, r *http.Request, entry app
 				return err
 			}
 			return ErrUpstream
-		}
-		if noStoreRequest {
-			return s.serveStored(w, r, old)
 		}
 		result, err := s.revalidate(r.Context(), entry, old, combined)
 		result, err = s.recordOverride(r.Context(), entry, path, combined, result, err)
@@ -328,9 +314,6 @@ func (s *Service) headResponse(w http.ResponseWriter, r *http.Request, entry app
 			initial, _ := attempt.Client.RelativeURL(path)
 			same := old.SourceURL == responseSourceURL(resp, initial) && etag != "" && etag == resp.Header.Get("ETag") && resp.ContentLength == old.SizeBytes
 			if same {
-				if noStoreRequest {
-					return s.serveStored(w, r, old)
-				}
 				combined := mergedHeaders(old.headers, resp.Header)
 				result, err := s.revalidate(r.Context(), entry, old, combined)
 				result, err = s.recordOverride(r.Context(), entry, path, combined, result, err)
