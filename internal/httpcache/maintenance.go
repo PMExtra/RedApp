@@ -2,7 +2,6 @@ package httpcache
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -114,7 +113,7 @@ func (s *Service) validatePreview(p MaintenancePreview, kind string) error {
 func (s *Service) LookupPreview(storageID, kind, id string) (MaintenancePreview, error) {
 	p, err := s.preview(id)
 	if err == nil && p.storageID != storageID {
-		err = sql.ErrNoRows
+		err = store.ErrNotFound
 	}
 	if err != nil {
 		return MaintenancePreview{}, err
@@ -131,14 +130,14 @@ func (s *Service) preview(id string) (MaintenancePreview, error) {
 }
 
 // LookupAppPreview finds a preview of any source epoch of the application with
-// the stable uid. A preview of another application reads as sql.ErrNoRows.
+// the stable uid. A preview of another application reads as store.ErrNotFound.
 func (s *Service) LookupAppPreview(uid, kind, id string) (MaintenancePreview, error) {
 	p, err := s.preview(id)
 	if err != nil {
 		return p, err
 	}
 	if owner, _, ok := identity.ParseStorageID(p.storageID); !ok || owner != uid {
-		return MaintenancePreview{}, sql.ErrNoRows
+		return MaintenancePreview{}, store.ErrNotFound
 	}
 	return p, s.validatePreview(p, kind)
 }

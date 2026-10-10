@@ -2,13 +2,13 @@ package httpcache
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"io"
 	"strconv"
 	"sync"
 
 	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
 var ErrFetchAgain = errors.New("HTTP cache fetch must be retried with current storage state")
@@ -70,7 +70,7 @@ func (s *Service) sharedFetch(ctx context.Context, f fill, old *Row) (fetchResul
 		}
 		if old == nil {
 			_, err := s.db.CurrentHTTPCacheEntry(entry.StorageID(), path)
-			if !errors.Is(err, sql.ErrNoRows) {
+			if !errors.Is(err, store.ErrNotFound) {
 				s.mu.Unlock()
 				if err != nil {
 					return fetchResult{}, err
@@ -148,7 +148,7 @@ func (s *Service) sharedFetch(ctx context.Context, f fill, old *Row) (fetchResul
 		return result, nil
 	}
 	row, err := s.pin(result.row.GenerationID)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, store.ErrNotFound) {
 		return fetchResult{}, ErrFetchAgain
 	}
 	if err != nil {

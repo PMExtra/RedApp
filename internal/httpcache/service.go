@@ -10,7 +10,6 @@ package httpcache
 import (
 	"container/list"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -159,16 +158,18 @@ func fence(entry application.Entry) store.SourceFence {
 	return store.SourceFence{AppRuntimeRevision: entry.RuntimeRevision, VendorRuntimeRevision: entry.VendorRuntimeRevision}
 }
 func (s *Service) begin(entry application.Entry) error {
+	if entry.Provider != application.HttpCache || entry.Upstream == nil || !entry.Active() {
+		return store.ErrSourceInactive
+	}
+	// Every publication re-checks the fence in its own transaction, so this
+	// early check needs no lock.
+	if err := s.db.CheckSourceActive(entry.StorageID(), fence(entry)); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return ErrClosed
-	}
-	if entry.Provider != application.HttpCache || entry.Upstream == nil || !entry.Active() {
-		return store.ErrSourceInactive
-	}
-	if err := s.db.CheckSourceActive(entry.StorageID(), fence(entry)); err != nil {
-		return err
 	}
 	s.wg.Add(1)
 	return nil
@@ -207,7 +208,7 @@ func (s *Service) lookupOnce(storageID, path string) (*Row, *spool.Check, error)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, err := s.db.CurrentHTTPCacheEntry(storageID, path)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, store.ErrNotFound) {
 		return nil, nil, nil
 	}
 	if err != nil {
@@ -290,20 +291,26 @@ func (s *Service) unpin(id string) {
 		_ = s.collectLocked(id)
 	}
 }
+
+// touch records an access bucket of a pinned entry. The store keeps the
+// latest bucket, so concurrent touches need no lock around the write.
 func (s *Service) touch(r *Row) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	bucket := s.now().Unix() / 60 * 60
-	if bucket <= r.accessBucket {
+	s.mu.Lock()
+	seen := r.accessBucket
+	s.mu.Unlock()
+	if bucket <= seen {
 		return nil
 	}
 	if err := s.db.TouchHTTPCacheEntry(r.GenerationID, bucket); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, store.ErrNotFound) {
 			return errors.New("HTTP cache generation disappeared")
 		}
 		return err
 	}
-	r.accessBucket = bucket
+	s.mu.Lock()
+	r.accessBucket = max(r.accessBucket, bucket)
+	s.mu.Unlock()
 	return nil
 }
 
@@ -313,7 +320,7 @@ func (s *Service) collectLocked(id string) error {
 		return nil
 	}
 	e, err := s.db.HTTPCacheEntry(id)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, store.ErrNotFound) {
 		return nil
 	}
 	if err != nil || e.Current {

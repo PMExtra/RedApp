@@ -2,7 +2,6 @@ package httpcache
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -83,7 +82,7 @@ func TestMaintenancePaginationFrozenBoundaryAndWholeCleanup(t *testing.T) {
 	if _, err = f.s.PreviewItems(f.entry.StorageID(), "refresh", preview.ID, "", 25); !errors.Is(err, ErrInvalidPreview) {
 		t.Fatal("kind confused", err)
 	}
-	if _, err = f.s.PreviewItems("different/epoch", "cleanup", preview.ID, "", 25); !errors.Is(err, sql.ErrNoRows) {
+	if _, err = f.s.PreviewItems("different/epoch", "cleanup", preview.ID, "", 25); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("ownership confused", err)
 	}
 	if _, err = f.s.PreviewItems(f.entry.StorageID(), "cleanup", preview.ID, "01", 25); !errors.Is(err, ErrInvalidPreview) {
