@@ -2,6 +2,7 @@ import { screen, waitFor, within } from "@testing-library/vue";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { bootstrap, home, publicApp, searchHit, localized } from "@/test/factories";
+import { catalogPage } from "@/test/factories/catalog";
 import { apiError, mockApi, useHandlers } from "@/test/msw";
 import { renderEntry } from "@/test/render";
 
@@ -10,6 +11,7 @@ function publicServer() {
   useHandlers(
     mockApi("get", "/api/bootstrap", () => bootstrap({ version: "1.4.0" })),
     mockApi("get", "/api/home", () => home({ ranking: [{ app: publicApp(), download_clients: 3 }] })),
+    mockApi("get", "/api/catalog", () => catalogPage()),
     mockApi("get", "/api/search", ({ request }) => {
       const q = new URL(request.url).searchParams.get("q") ?? "";
       searches.push(q);

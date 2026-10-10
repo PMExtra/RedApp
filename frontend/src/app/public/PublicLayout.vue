@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { LayoutGrid, Shield } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
-import { RouterLink, RouterView } from "vue-router";
+import { RouterLink, RouterView, useRoute } from "vue-router";
 import { SiteFooter, useSiteTexts } from "@/features/bootstrap";
+import { useAdminLink } from "@/features/catalog";
 import { SearchBox } from "@/features/search";
 import { useSiteTitle } from "@/shared/lib";
 import {
@@ -19,6 +20,14 @@ import {
 const { t } = useI18n();
 const { bootstrap, title, subtitle } = useSiteTexts();
 useSiteTitle(title);
+const route = useRoute();
+// On application pages the admin link opens that application's admin tab.
+const adminHref = useAdminLink(() => {
+  const { vendor, app } = route.params;
+  return route.name === "public-app" && typeof vendor === "string" && typeof app === "string"
+    ? { vendor, app }
+    : null;
+});
 </script>
 
 <template>
@@ -49,7 +58,7 @@ useSiteTitle(title);
         <!-- A full page load: the admin app is a separate entry (admin.html). -->
         <Tooltip :content="t('publicShell.nav.admin')">
           <Button as-child variant="ghost" size="sm" icon>
-            <a href="/admin/overview" :aria-label="t('publicShell.nav.admin')">
+            <a :href="adminHref" :aria-label="t('publicShell.nav.admin')">
               <Shield aria-hidden="true" />
             </a>
           </Button>
