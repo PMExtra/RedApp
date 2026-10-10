@@ -55,9 +55,9 @@ func (s *Server) deleteApplication(ctx context.Context, key string, revision int
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	remove := func() error { return s.DB.FinishApplicationDeletion(uid) }
+	var purge func(remove func() error) error
 	if s.Downloads != nil {
-		return s.Downloads.PurgeApplication(uid, remove)
+		purge = func(remove func() error) error { return s.Downloads.PurgeApplication(uid, remove) }
 	}
-	return remove()
+	return s.DB.FinishApplicationDeletion(uid, purge)
 }

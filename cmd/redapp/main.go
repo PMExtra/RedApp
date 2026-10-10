@@ -201,7 +201,7 @@ func serve(c config.Deployment) error {
 	if err := manager.ConfigureLimits(c.DownloadLimits.MaxWriters, c.DownloadLimits.MaxReaders, c.DownloadLimits.MaxArtifactBytes); err != nil {
 		return err
 	}
-	a, err := auth.New(db, false, func(password string) {
+	a, err := auth.New(db, func(password string) {
 		log.Printf("Initial admin password: %s; change it after signing in and protect these logs.", password)
 	})
 	if err != nil {

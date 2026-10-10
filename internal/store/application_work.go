@@ -134,17 +134,28 @@ func (s *Store) PrepareApplicationDeletion(key string, revision int64) (string, 
 	return uid, a.drained, nil
 }
 
-func (s *Store) FinishApplicationDeletion(uid string) error {
-	var key string
-	var revision int64
-	err := s.DB.QueryRow(`SELECT v.id||'/'||a.id,a.revision FROM pending_application_deletes p JOIN applications a ON a.uid=p.app_uid JOIN vendors v ON v.uid=a.vendor_uid WHERE a.uid=?`, uid).Scan(&key, &revision)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+// FinishApplicationDeletion purges a drained pending deletion. A non-nil purge
+// wraps the database removal (for example with the downloads mutex); it runs
+// with configMu held, keeping the lock order configMu before the downloads mutex.
+func (s *Store) FinishApplicationDeletion(uid string, purge func(remove func() error) error) error {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	remove := func() error {
+		var key string
+		var revision int64
+		err := s.DB.QueryRow(`SELECT v.id||'/'||a.id,a.revision FROM pending_application_deletes p JOIN applications a ON a.uid=p.app_uid JOIN vendors v ON v.uid=a.vendor_uid WHERE a.uid=?`, uid).Scan(&key, &revision)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		return s.permanentlyDeleteApplicationLocked(key, revision, false)
 	}
-	if err != nil {
-		return err
+	if purge == nil {
+		return remove()
 	}
-	return s.PermanentlyDeleteApplication(key, revision)
+	return purge(remove)
 }
 
 // Reload admission tombstones before any service can use a reopened store.
@@ -190,7 +201,7 @@ func (s *Store) RecoverApplicationDeletions() error {
 		return readErr
 	}
 	for _, uid := range uids {
-		if err = s.FinishApplicationDeletion(uid); err != nil {
+		if err = s.FinishApplicationDeletion(uid, nil); err != nil {
 			return err
 		}
 	}

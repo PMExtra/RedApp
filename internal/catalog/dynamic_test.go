@@ -150,7 +150,7 @@ func TestPermanentDeletionCancelsMetadataFlightAndRejectsStaleEntry(t *testing.T
 	if err = <-done; err == nil {
 		t.Fatal("canceled flight succeeded")
 	}
-	if err = db.FinishApplicationDeletion(uid); err != nil {
+	if err = db.FinishApplicationDeletion(uid, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = service.Release(context.Background(), app.Key, "latest"); !errors.Is(err, store.ErrSourceInactive) {

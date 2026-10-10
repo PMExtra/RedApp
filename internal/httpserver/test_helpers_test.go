@@ -59,7 +59,7 @@ func newTestServer(t *testing.T, upstream *distributor.Client) (*Server, *store.
 	if _, err := db.DB.Exec("INSERT INTO admin VALUES(1,?,1)", hash); err != nil {
 		t.Fatal(err)
 	}
-	a, err := auth.New(db, false, func(string) { t.Fatal("existing test admin was replaced") })
+	a, err := auth.New(db, func(string) { t.Fatal("existing test admin was replaced") })
 	if err != nil {
 		t.Fatal(err)
 	}
