@@ -162,6 +162,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 - 新目录（只含实例锁或为空）创建全新 schema。已有数据库以只读、immutable 方式打开检查：版本必须完全一致，表和索引的 DDL 必须与内嵌 schema 一致，不允许未知表；否则拒绝启动，不改写、不删除。
 - 1.0 前没有迁移，规则见 [ADR 0001](adr/0001-pre-1.0-no-migrations.md)。
 - 连接参数：WAL、`synchronous=FULL`、外键开启、单连接。
+- 流量与请求计数先在内存累加，每秒、每次传输结束、每次读取计数前以及关闭时批量写入一个事务；写入失败保留增量重试，不影响传输。异常退出最多丢失约 1 秒的计数。
 
 ## 配置模型
 
@@ -195,6 +196,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 
 | 循环 | 周期 | 位置 |
 | --- | --- | --- |
+| 计数落盘 | 1 秒 | `store.StartCounterFlush` |
 | 指标采样 | 1 分钟 | `httpserver.SampleHistory` |
 | 发布保留 + 自动预热 | 15 分钟 | `releasemaintenance.Run` → `prewarm.Automatic` |
 | HTTP 缓存自动清理 | 15 分钟 | `httpcache.RunCleanup` |

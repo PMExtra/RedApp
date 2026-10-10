@@ -33,10 +33,9 @@ RedApp 向终端分发的是官方安装脚本的企业改版：初始下载地�
 
 - 禁止 fuzz。允许整体行号偏移；任何 hunk 失败、反向或需要模糊匹配都视为冲突，工具停止并要求维护者重建 patch。
 - 工具不会自动修改 patch。
-- PowerShell 原文末尾可能带 Authenticode 签名块（证书有效期短，会频繁重签）。企业修改必然使签名失效，所以应用 patch 前先移除签名块，这一步不进入 patch。移除后若仍出现签名起始标记，工具停止，交人工审查。
+- PowerShell 原文末尾可能带 Authenticode 签名块（证书有效期短，会频繁重签）。企业修改必然使签名失效，所以应用 patch 前先移除签名块，这一步不进入 patch。只移除一个位于文件末尾的签名块：从最后一个 `# SIG # Begin signature block` 起，到文件结尾处的 `# SIG # End signature block` 止，中间不得出现其他签名标记。文件其他位置出现任何签名标记都会停止并交人工审查，每日检查把这种情况报告为 `error`，不会当作无变化。
 - 每日检查按“移除签名后的内容”比较：仅重签视为无变化，summary 标注 `unchanged (signature only)`，不提 PR。因此 upstream 中的签名字节可能早于官方当前签名。
 
-> 已知问题：`scripts/installer_maintenance.py` 当前的签名正则从**第一个** `# SIG # Begin signature block` 截到文件末尾，正在修复为只移除末尾的那一个签名块。
 
 ## 本地维护
 
@@ -50,7 +49,8 @@ python3 scripts/test-installers.py --platform shell
 
 - `make installers` 等价于上面两条 `update-installers.py`。
 - 省略 `--source` 时，工具只从受审查 descriptor 中声明的官方 HTTPS 地址获取原文。默认只检查，不改动发布目录。
-- 切换到已人工核验的新原文时，必须用 `--shell-sha256` / `--powershell-sha256` 给出期望摘要。
+- 切换到已人工核验的新原文时，必须用 `--shell-sha256` / `--powershell-sha256` 给出期望摘要，此时按含签名的完整字节核对。
+- 不给摘要时，本地检查与每日维护口径一致：已提交原文须匹配 provenance 摘要；新来源若与其仅差签名块，视为无变化并保留已审计的字节。
 - `--apply` 仅在摘要、无冲突 patch、静态出口审计和离线测试全部通过后，在同一文件系统上原子替换整个应用目录并 fsync。它不提交、不推送，也不轮换公钥或许可。
 - 本地 `--apply` 不代表 Windows 验证通过，也不代表发布批准。
 
@@ -79,7 +79,7 @@ python3 scripts/test-installers.py --platform shell
 - 每个应用只保留最新一个草稿。内容相同不新建；内容变化时先建新草稿，再在旧草稿留言说明被哪个 PR 取代，关闭旧草稿并按旧 head 做租约检查后删除分支。
 - 旧草稿含人工提交、已转为非草稿、非 bot 创建或含其他应用文件时停止，不覆盖人工工作。fork 中的同名分支忽略。
 - 推送成功但 PR API 失败时，下次运行校验分支树和父提交一致后复用分支并补建 PR。
-- 仓库需要开启 Settings → Actions → General 中的 “Allow GitHub Actions to create and approve pull requests”。工作流不修改仓库设置，也没有自动合并或 force push。
+- 仓库需要开启 Settings → Actions → General 中的 “Allow GitHub Actions to create and approve pull requests”。工作流不修改仓库设置，也不自动合并；创建分支和删除被取代的分支都使用基于预期提交的 `--force-with-lease`，从不做无条件 force push。
 
 ## 测试入口
 
