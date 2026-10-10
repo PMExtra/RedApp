@@ -204,7 +204,7 @@ func TestPoolProxyIndependentOfApplicationsAndSharedAcrossModes(t *testing.T) {
 	general, _ := pool.NewClient("http://internal.invalid/files", GeneralHTTP)
 	release, _ := pool.NewClient("http://other.internal.invalid/releases", ConfiguredRelease)
 	for _, c := range []*Client{general, release} {
-		if c.Proxy() != pool.Proxy() {
+		if c.pool != pool {
 			t.Fatal("client proxy state differs from owner")
 		}
 		resp, err := c.Get(context.Background(), c.URL("asset"), nil)
@@ -222,14 +222,14 @@ func TestPoolProxyIndependentOfApplicationsAndSharedAcrossModes(t *testing.T) {
 	configured, _ := pool.NewClient(local.URL+"/files", ConfiguredRelease)
 	public, _ := pool.NewClient("https://127.0.0.1/files", PublicRelease)
 	before := pool.transports.Load()
-	if err = release.SetProxy(ProxyUpdate{Mode: "direct"}, pool.Proxy().Revision); err != nil {
+	if err = pool.SetProxy(ProxyUpdate{Mode: "direct"}, pool.Proxy().Revision); err != nil {
 		t.Fatal(err)
 	}
 	after := pool.transports.Load()
-	if before == after || after.public.Proxy != nil || after.configured.Proxy != nil || general.Proxy().URL != "" {
+	if before == after || after.public.Proxy != nil || after.configured.Proxy != nil || pool.Proxy().URL != "" {
 		t.Fatal("proxy modes or settings did not switch together")
 	}
-	if err = general.SetProxy(ProxyUpdate{Mode: "url", URL: proxy.URL}, 0); err == nil || pool.transports.Load() != after {
+	if err = pool.SetProxy(ProxyUpdate{Mode: "url", URL: proxy.URL}, 0); err == nil || pool.transports.Load() != after {
 		t.Fatal("stale CAS replaced shared transport")
 	}
 	// A configured client created before the update regains its private direct

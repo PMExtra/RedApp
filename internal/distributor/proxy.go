@@ -8,9 +8,6 @@ import (
 	"github.com/PMExtra/RedApp/internal/store"
 	"net"
 	"net/http"
-	"net/url"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -128,27 +125,6 @@ func (s *transportSwitch) RoundTrip(r *http.Request) (*http.Response, error) {
 	return s.current.Load().RoundTrip(r)
 }
 
-// These delegates retain the original client API. The state belongs to Pool,
-// so siblings and a pool with no clients have the same settings behavior.
-func (c *Client) LoadProxy(db *store.Store) error {
-	if c.pool == nil {
-		return errors.New("Upstream transport is not configurable")
-	}
-	return c.pool.LoadProxy(db)
-}
-func (c *Client) Proxy() ProxyView {
-	if c.pool == nil {
-		return ProxyView{DNS: "local"}
-	}
-	return c.pool.Proxy()
-}
-func (c *Client) SetProxy(update ProxyUpdate, expected int64) error {
-	if c.pool == nil {
-		return errors.New("Upstream proxy settings are unavailable")
-	}
-	return c.pool.SetProxy(update, expected)
-}
-
 func (c *Pool) LoadProxy(db *store.Store) error {
 	snapshot, err := db.DirectoryConfigurationSnapshot()
 	if err != nil {
@@ -205,10 +181,6 @@ func transportsFor(conf proxyConfig) (*transportSet, error) {
 	return &transportSet{public: public, configured: configured}, nil
 }
 
-func transportFor(conf proxyConfig) (*http.Transport, error) {
-	return transportForMode(conf, false)
-}
-
 func transportForMode(conf proxyConfig, configured bool) (*http.Transport, error) {
 	tr := &http.Transport{Proxy: nil, DisableCompression: true, MaxIdleConns: 16, MaxConnsPerHost: 16, ResponseHeaderTimeout: 30 * time.Second, TLSHandshakeTimeout: 10 * time.Second, DialContext: directDial}
 	if conf.Server == "" {
@@ -217,19 +189,9 @@ func transportForMode(conf proxyConfig, configured bool) (*http.Transport, error
 		}
 		return tr, nil
 	}
-	u, err := url.Parse(conf.Server)
-	if err != nil || u.Hostname() == "" || u.Opaque != "" || u.Path != "" || u.RawQuery != "" || u.ForceQuery || strings.Contains(conf.Server, "#") || len(conf.Server) > 4096 || u.Fragment != "" || (u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "socks5") || strings.ContainsAny(conf.Server, "\r\n\t ") {
-		return nil, errors.New("Proxy server must be an HTTP, HTTPS, or SOCKS5 URL without path, query, or fragment")
-	}
-	port, portErr := strconv.Atoi(u.Port())
-	if portErr != nil || port < 1 || port > 65535 {
-		return nil, errors.New("Proxy server requires an explicit port")
-	}
-	if u.User != nil {
-		password, _ := u.User.Password()
-		if len(u.User.Username()) > 255 || len(password) > 255 || strings.ContainsAny(u.User.Username()+password, "\r\n\x00") {
-			return nil, errors.New("Invalid proxy credentials")
-		}
+	u, err := networkproxy.ParseURL(conf.Server)
+	if err != nil {
+		return nil, err
 	}
 	tr.Proxy = http.ProxyURL(u)
 	tr.DialContext = (&net.Dialer{Timeout: 10 * time.Second}).DialContext

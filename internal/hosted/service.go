@@ -23,11 +23,6 @@ import (
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
-type Budget interface {
-	AcquireHTTPReader() (func(), error)
-	AcquireHTTPWriter() (func(), error)
-	MaxArtifactBytes() int64
-}
 type Progress struct {
 	ID     string `json:"id"`
 	Path   string `json:"path"`
@@ -40,7 +35,7 @@ type Progress struct {
 type Service struct {
 	dir       string
 	db        *store.Store
-	budget    Budget
+	budget    download.Budget
 	mu        sync.Mutex
 	transfers map[string]*Progress
 	closed    bool
@@ -49,7 +44,7 @@ type Service struct {
 	wg        sync.WaitGroup
 }
 
-func New(dir string, db *store.Store, budget Budget) (*Service, error) {
+func New(dir string, db *store.Store, budget download.Budget) (*Service, error) {
 	if db == nil || budget == nil {
 		return nil, errors.New("Persistent file storage unavailable")
 	}

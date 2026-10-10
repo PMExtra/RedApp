@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
@@ -28,12 +29,6 @@ import (
 var ErrClosed = errors.New("HTTP cache is shutting down")
 var ErrUpstream = errors.New("HTTP upstream response unavailable")
 var ErrInvalidCleanup = errors.New("Invalid HTTP cache cleanup request")
-
-type Budget interface {
-	AcquireHTTPReader() (func(), error)
-	AcquireHTTPWriter() (func(), error)
-	MaxArtifactBytes() int64
-}
 
 type Row struct {
 	SourceURL    string     `json:"source_url"`
@@ -97,7 +92,7 @@ type Service struct {
 	transfers       map[string]*transfer
 	dir             string
 	db              *store.Store
-	budget          Budget
+	budget          download.Budget
 	mu              sync.Mutex
 	flights         map[string]*flight
 	pins            map[string]int
@@ -108,7 +103,7 @@ type Service struct {
 	now             func() time.Time
 }
 
-func New(dir string, db *store.Store, budget Budget) (*Service, error) {
+func New(dir string, db *store.Store, budget download.Budget) (*Service, error) {
 	if db == nil || budget == nil || budget.MaxArtifactBytes() <= 0 {
 		return nil, errors.New("HTTP cache requires storage and shared limits")
 	}
