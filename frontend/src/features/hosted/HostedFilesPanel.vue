@@ -109,6 +109,18 @@ watch(chosen, (list) => {
   if (file && !path.value && !replacing.value) path.value = file.name;
 });
 
+// HostedImportRequest.url: absolute http(s), at most 8192 characters, no
+// credentials or fragment; the query is allowed.
+function importUrlValid(value: string): boolean {
+  if (value.length > 8192 || !/^https?:\/\/\S+$/i.test(value) || value.includes("#")) return false;
+  try {
+    const parsed = new URL(value);
+    return parsed.host !== "" && parsed.username === "" && parsed.password === "";
+  } catch {
+    return false;
+  }
+}
+
 const normalizedPath = computed(() => path.value.trim().replace(/^\/+/, ""));
 const pathError = computed(() => {
   if (!submitted.value) return undefined;
@@ -119,7 +131,7 @@ const pathError = computed(() => {
 });
 const urlError = computed(() => {
   if (!submitted.value || mode.value !== "url") return undefined;
-  return /^https?:\/\/\S+$/i.test(url.value.trim()) ? undefined : t("hosted.add.urlInvalid");
+  return importUrlValid(url.value.trim()) ? undefined : t("hosted.add.urlInvalid");
 });
 const fileError = computed(() =>
   submitted.value && mode.value === "upload" && chosen.value.length === 0
@@ -252,8 +264,9 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="flex flex-col gap-6">
+    <Alert v-if="deleted" tone="warning">{{ t("hosted.deleted") }}</Alert>
     <Card
-      v-if="!deleted"
+      v-else
       :title="replacing ? t('hosted.add.replaceTitle') : t('hosted.add.title')"
       :description="t('hosted.add.description')"
     >

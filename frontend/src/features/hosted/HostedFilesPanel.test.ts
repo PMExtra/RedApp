@@ -25,8 +25,8 @@ function gate() {
   return { opened, release: () => release() };
 }
 
-async function render() {
-  await renderAppPage(HostedFilesPanel, { key: "acme/tools", props });
+async function render(extra: { deleted?: boolean } = {}) {
+  await renderAppPage(HostedFilesPanel, { key: "acme/tools", props: { ...props, ...extra } });
   return userEvent.setup({
     advanceTimers: (ms) => {
       if (vi.isFakeTimers()) vi.advanceTimersByTime(ms);
@@ -171,17 +171,22 @@ describe("hosted files", () => {
     const user = await render();
     expect(await screen.findByText("No files yet.")).toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: "Import from a URL" }));
-    await user.type(
-      screen.getByRole("textbox", { name: /HTTP\(S\) URL/ }),
-      "https://downloads.example.com/setup.exe",
-    );
+    const urlBox = screen.getByRole("textbox", { name: /HTTP\(S\) URL/ });
+    await user.type(urlBox, "https://user:secret@downloads.example.com/setup.exe");
     await user.type(screen.getByRole("textbox", { name: /^Path/ }), "tools/setup.exe");
+    await user.click(screen.getByRole("button", { name: "Save file" }));
+    expect(await screen.findByText(/without credentials or a fragment/)).toBeVisible();
+    expect(body).toBeUndefined();
+
+    // A signed download link keeps its query.
+    await user.clear(urlBox);
+    await user.type(urlBox, "https://downloads.example.com/setup.exe?token=abc");
     await user.click(screen.getByRole("button", { name: "Save file" }));
     await vi.advanceTimersByTimeAsync(TRANSFER_FIRST_POLL_MS + 10);
     expect(await screen.findByText("2.00 KiB transferred")).toBeInTheDocument();
     expect(body).toEqual({
       path: "tools/setup.exe",
-      url: "https://downloads.example.com/setup.exe",
+      url: "https://downloads.example.com/setup.exe?token=abc",
     });
 
     await user.click(screen.getByRole("button", { name: "Cancel transfer" }));
@@ -229,5 +234,20 @@ describe("hosted files", () => {
     );
     expect(await screen.findByText("tools/setup.exe deleted.")).toBeInTheDocument();
     expect(deleted).toBe(existing.id);
+  });
+
+  it("explains that files of a deleted application can only be downloaded or deleted", async () => {
+    useHandlers(list());
+    await render({ deleted: true });
+    expect(
+      await screen.findByText(
+        "This application is deleted. Its files can still be downloaded and deleted, but not added or replaced.",
+      ),
+    ).toBeVisible();
+    const table = await screen.findByRole("table", { name: "Hosted files" });
+    expect(await within(table).findByRole("link", { name: /tools\/setup\.exe/ })).toBeVisible();
+    expect(within(table).getByRole("button", { name: "Delete tools/setup.exe" })).toBeEnabled();
+    expect(within(table).queryByRole("button", { name: "Replace tools/setup.exe" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save file" })).toBeNull();
   });
 });

@@ -2,6 +2,7 @@ import type { LocaleModule } from "@/shared/i18n";
 
 export default {
   hosted: {
+    deleted: "此应用已删除。文件仍可下载和删除，但不能添加或替换。",
     add: {
       title: "添加文件",
       replaceTitle: "替换文件",
@@ -12,8 +13,9 @@ export default {
       file: "文件",
       fileRequired: "请选择文件。",
       url: "HTTP(S) URL",
-      urlHint: "不能包含凭据。使用此应用的出站代理；最多跟随 4 次重定向。",
-      urlInvalid: "请输入 http:// 或 https:// 开头的 URL。",
+      urlHint:
+        "不能包含凭据或片段（#）。查询参数（如签名下载令牌）会随请求发送，但不会保存。使用此应用的出站代理；最多跟随 4 次重定向。",
+      urlInvalid: "请输入 http:// 或 https:// 开头的 URL，不含凭据和片段（#），最长 8192 个字符。",
       path: "路径",
       pathHint: "文件在此应用下的发布位置，例如 tools/setup.exe。",
       pathRequired: "请输入路径。",

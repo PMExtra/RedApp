@@ -2,6 +2,8 @@ import type { LocaleModule } from "@/shared/i18n";
 
 export default {
   hosted: {
+    deleted:
+      "This application is deleted. Its files can still be downloaded and deleted, but not added or replaced.",
     add: {
       title: "Add a file",
       replaceTitle: "Replace a file",
@@ -14,8 +16,9 @@ export default {
       fileRequired: "Choose a file.",
       url: "HTTP(S) URL",
       urlHint:
-        "Without credentials. Uses this application's outbound proxy; up to 4 redirects are followed.",
-      urlInvalid: "Enter an http:// or https:// URL.",
+        "Without credentials or a fragment (#). The query, such as a signed download token, is sent but not stored. Uses this application's outbound proxy; up to 4 redirects are followed.",
+      urlInvalid:
+        "Enter an http:// or https:// URL of at most 8192 characters, without credentials or a fragment (#).",
       path: "Path",
       pathHint: "Where the file is published below this application, for example tools/setup.exe.",
       pathRequired: "Enter a path.",
