@@ -5946,15 +5946,47 @@ components:
     HomepageSettingsState:
       type: object
       additionalProperties: false
-      required: [pinned_app_keys, revision]
+      required: [pinned_app_keys, pinned_apps, revision]
       properties:
         pinned_app_keys:
           type: array
           maxItems: 100
           items:
             $ref: '#/components/schemas/AppKey'
+        pinned_apps:
+          type: array
+          maxItems: 100
+          description: Display data of `pinned_app_keys`, in the same order and length.
+          items:
+            $ref: '#/components/schemas/HomepagePinnedApp'
         revision:
           $ref: '#/components/schemas/Revision'
+    HomepagePinnedApp:
+      type: object
+      additionalProperties: false
+      required: [key, name, icon, state]
+      description: |
+        A pinned application as the administrator sees it. Only `published` pins appear on the public homepage;
+        the others stay pinned until removed or the application is published again.
+      properties:
+        key:
+          $ref: '#/components/schemas/AppKey'
+        name:
+          description: Application name; `null` when `state` is `missing`.
+          oneOf:
+            - $ref: '#/components/schemas/LocalizedText'
+            - type: 'null'
+        icon:
+          description: Application icon; `null` when `state` is `missing`.
+          oneOf:
+            - $ref: '#/components/schemas/IconPath'
+            - type: 'null'
+        state:
+          type: string
+          enum: [published, disabled, deleted, missing]
+          description: |
+            `published`: the application and its vendor are enabled. `disabled`: the application or its vendor is disabled.
+            `deleted`: the application is deleted and its data is being removed. `missing`: the application no longer exists.
 
     # ------------------------------------------------------------ directory
     Provider:
@@ -7483,7 +7515,8 @@ components:
           description: Stored generation after the refresh.
         status:
           type: string
-          enum: [refreshed, not_modified, stale_fallback, failed]
+          enum: [refreshed, not_modified, stale_fallback, skipped, failed]
+          description: '`skipped` when the upstream response may not be cached or the file changed meanwhile; `reason` says which.'
         reason:
           type: [string, 'null']
     CacheRefreshPreviewRequest:
