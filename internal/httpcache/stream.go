@@ -114,6 +114,10 @@ func (s *Service) startStream(ctx context.Context, run *fetchRun, old *Row, resp
 	return fetchResult{stream: st, status: http.StatusOK}, nil
 }
 
+// streamFillFailed is nil in production. Tests set it to run when a fill has
+// failed or was stopped, before the stream records its end.
+var streamFillFailed func(*stream)
+
 func (s *Service) runStream(ctx context.Context, st *stream, resp *http.Response, client *distributor.Client, replaces string, release, finish func()) {
 	defer s.wg.Done()
 	defer finish()
@@ -139,6 +143,9 @@ func (s *Service) runStream(ctx context.Context, st *stream, resp *http.Response
 	}
 	err := fill.Run(ctx, &spool.Segment{Body: resp.Body, Total: resp.ContentLength})
 	if err != nil {
+		if streamFillFailed != nil {
+			streamFillFailed(st)
+		}
 		if ctx.Err() == nil && !errors.Is(err, spool.ErrLength) {
 			var status spool.StatusError
 			errors.As(err, &status)
@@ -251,12 +258,15 @@ func (s *Service) leaveFlightMapLocked(st *stream) {
 
 // dropReaderLocked releases one reader slot. When the last slot of an
 // unfinished stream goes, the fill stops: nobody waits for the body any more.
+// The stopping stream leaves the flight map at once, so a request arriving
+// before the fill has ended starts a new fetch instead of joining it.
 func (s *Service) dropReaderLocked(st *stream) (stop, closeFile bool) {
 	st.readers--
 	if st.readers > 0 {
 		return false, false
 	}
 	if !st.finished {
+		s.leaveFlightMapLocked(st)
 		return true, false
 	}
 	delete(s.streams, st.id)

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/auth"
+	"github.com/PMExtra/RedApp/internal/logging"
 )
 
 // requestInfo is the request-scoped metadata shared by the middleware, the
@@ -159,7 +160,7 @@ func (s *Server) recoverPanic(w *statusWriter, r *http.Request, info *requestInf
 		// Deliberate abort of a failed stream: net/http resets the connection.
 		panic(recovered)
 	}
-	s.log.Error("handler panic", slog.String("request_id", info.id), slog.String("panic", fmt.Sprint(recovered)), slog.String("stack", string(debug.Stack())))
+	s.log.Error("handler panic", slog.String("request_id", info.id), slog.String("panic", logging.Redact(fmt.Sprint(recovered))), slog.String("stack", string(debug.Stack())))
 	if w.status != 0 {
 		// Headers are out; truncating silently would look like success.
 		panic(http.ErrAbortHandler)

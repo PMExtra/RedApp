@@ -33,7 +33,7 @@ func TestOptionalFileDefaultsAndProxyTrust(t *testing.T) {
 	// Only the default path is discovered, never a sibling in the same directory.
 	writeConfig(t, filepath.Join(dir, "redapp.yaml"), "listen: ':9191'\n")
 	c, err := load("", path, nil)
-	if err != nil || c.SchemaVersion != 1 || c.DataDir != "/var/lib/redapp" || c.Listen != ":8080" || c.DownloadLimits != (DownloadLimits{16, 512, 4 << 30}) {
+	if err != nil || c.SchemaVersion != 1 || c.DataDir != "/var/lib/redapp" || c.Listen != ":8080" || c.DownloadLimits != (DownloadLimits{16, 512, 4 << 30, 16}) {
 		t.Fatal(c, err)
 	}
 	if len(c.TrustedProxies) != 0 {
@@ -71,10 +71,10 @@ func TestOneSelectedFileAndFieldPrecedence(t *testing.T) {
 	}
 	// Neither an invalid default file nor an invalid env path is read when CLI selects a file.
 	writeConfig(t, defaultPath, "invalid: [")
-	writeConfig(t, cliPath, "data_dir: /cli-file-data\ndownload_limits: {max_readers: 800, max_artifact_bytes: '4GiB'}\n")
+	writeConfig(t, cliPath, "data_dir: /cli-file-data\ndownload_limits: {max_readers: 800, max_artifact_bytes: '4GiB', max_downloads_per_client: 4}\n")
 	t.Setenv("REDAPP_CONFIG", filepath.Join(dir, "missing.yaml"))
 	c, err = load(cliPath, defaultPath, nil)
-	if err != nil || c.DataDir != "/cli-file-data" || c.DownloadLimits.MaxReaders != 800 || c.DownloadLimits.MaxArtifactBytes != 4<<30 {
+	if err != nil || c.DataDir != "/cli-file-data" || c.DownloadLimits.MaxReaders != 800 || c.DownloadLimits.MaxArtifactBytes != 4<<30 || c.DownloadLimits.MaxDownloadsPerClient != 4 {
 		t.Fatal(c, err)
 	}
 	t.Setenv("REDAPP_DATA", "/environment-data")
@@ -83,12 +83,13 @@ func TestOneSelectedFileAndFieldPrecedence(t *testing.T) {
 	t.Setenv("REDAPP_MAX_WRITERS", "20")
 	t.Setenv("REDAPP_MAX_READERS", "900")
 	t.Setenv("REDAPP_MAX_ARTIFACT_BYTES", "1GiB")
+	t.Setenv("REDAPP_MAX_DOWNLOADS_PER_CLIENT", "6")
 	c, err = load(cliPath, defaultPath, nil)
-	if err != nil || c.DataDir != "/environment-data" || c.Listen != "127.0.0.1:9191" || c.DownloadLimits != (DownloadLimits{20, 900, 1073741824}) || !reflect.DeepEqual(c.TrustedProxies, []string{"192.0.2.0/24"}) {
+	if err != nil || c.DataDir != "/environment-data" || c.Listen != "127.0.0.1:9191" || c.DownloadLimits != (DownloadLimits{20, 900, 1073741824, 6}) || !reflect.DeepEqual(c.TrustedProxies, []string{"192.0.2.0/24"}) {
 		t.Fatal(c, err)
 	}
-	c, err = load(cliPath, defaultPath, map[string]string{"data": "/flag-data", "listen": ":9292", "trusted-proxies": "", "max-writers": "21", "max-readers": "901", "max-artifact-bytes": "1.5GiB"})
-	if err != nil || c.DataDir != "/flag-data" || c.Listen != ":9292" || c.DownloadLimits != (DownloadLimits{21, 901, 3 << 29}) || len(c.TrustedProxies) != 0 {
+	c, err = load(cliPath, defaultPath, map[string]string{"data": "/flag-data", "listen": ":9292", "trusted-proxies": "", "max-writers": "21", "max-readers": "901", "max-artifact-bytes": "1.5GiB", "max-downloads-per-client": "8"})
+	if err != nil || c.DataDir != "/flag-data" || c.Listen != ":9292" || c.DownloadLimits != (DownloadLimits{21, 901, 3 << 29, 8}) || len(c.TrustedProxies) != 0 {
 		t.Fatal(c, err)
 	}
 }
@@ -127,6 +128,7 @@ func TestInvalidEnvironmentAndFlagsFailBeforeDataAccess(t *testing.T) {
 		{"REDAPP_DATA", "data", "relative"}, {"REDAPP_LISTEN", "listen", ":0"},
 		{"REDAPP_TRUSTED_PROXIES", "trusted-proxies", "hostname"},
 		{"REDAPP_MAX_WRITERS", "max-writers", "1025"}, {"REDAPP_MAX_READERS", "max-readers", "65537"}, {"REDAPP_MAX_ARTIFACT_BYTES", "max-artifact-bytes", "not-a-number"},
+		{"REDAPP_MAX_DOWNLOADS_PER_CLIENT", "max-downloads-per-client", "0"},
 	} {
 		t.Run(tc.env, func(t *testing.T) {
 			t.Setenv(tc.env, tc.value)

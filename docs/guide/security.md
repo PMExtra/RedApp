@@ -64,6 +64,8 @@ Without signing in, anyone who can reach RedApp can:
 
 Anonymous users never see private notes, tags, proxy settings, upstream credentials or disabled applications. RedApp does not restrict who may download. Use your reverse proxy or network to limit access if needed.
 
+Each client may run at most `max_downloads_per_client` downloads at once (16 by default), so that one client cannot hold all download capacity. A client is an IPv4 address or an IPv6 /64 prefix, taken from trusted proxy headers when `trusted_proxies` is set. Further downloads fail with `503 TRANSFER_CAPACITY` until one finishes. See [Configuration](configuration.md#field-reference).
+
 ## Usage instructions sandbox
 
 Administrators write usage instructions in Markdown, HTML and JavaScript, and may load external resources. These instructions are shown inside a sandboxed frame:

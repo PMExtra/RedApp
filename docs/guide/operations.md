@@ -119,7 +119,7 @@ Set `REDAPP_PUBLIC_URL` (or the override in the console) so that install command
 | Endpoint | Checks | Success |
 | --- | --- | --- |
 | `GET /health/live` | The process answers HTTP | `200` |
-| `GET /health/ready` | The database responds and the data directory is writable | `200`; otherwise `503` |
+| `GET /health/ready` | The database responds and the data directory is writable, checked at most once every 5 seconds | `200`; otherwise `503` |
 
 Neither endpoint contacts upstream sources, so an internet outage does not mark RedApp unhealthy. Health requests are not counted in metrics.
 
@@ -236,7 +236,7 @@ A [configuration export](configuration.md#export) is a lightweight alternative f
 | Container is unhealthy after changing flags | The health check does not see your flags. Use environment variables, or pass the same flags in an exec-form health check. |
 | Install commands show `http://` or an internal host name | Set `REDAPP_PUBLIC_URL` or the public address override, and check `trusted_proxies`. |
 | Admin sign-in fails behind the proxy | The forwarded scheme or host does not match the browser address. Check the proxy headers and `trusted_proxies`. |
-| Downloads fail with `503` | Download capacity is full. Raise `max_writers` or `max_readers`, or retry later. |
+| Downloads fail with `503` | Download capacity is full, or the client already has `max_downloads_per_client` downloads in progress. Raise `max_writers`, `max_readers` or `max_downloads_per_client`, or retry later. Behind a reverse proxy, check `trusted_proxies`. |
 | Downloads fail with `502` | The upstream is unreachable or returned untrusted metadata. Check the outbound proxy and the Events page. |
 | An application returns `404` | The vendor or the application is disabled. Enable both. |
 | Everyone is signed out after a restart | Expected. Admin sessions are kept in memory only. |

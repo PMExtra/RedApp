@@ -297,7 +297,8 @@ func (c *Client) Send(ctx context.Context, req Request) (*http.Response, error) 
 	}
 	u, err := url.Parse(req.URL)
 	if err != nil {
-		return nil, fmt.Errorf("parse upstream URL: %w", err)
+		// The parse error quotes the raw URL; keep it out of logs and events.
+		return nil, errors.New("invalid upstream URL")
 	}
 	if err = c.Validate(u); err != nil {
 		return nil, err

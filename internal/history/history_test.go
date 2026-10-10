@@ -159,7 +159,7 @@ func TestRetentionAggregatesBeforeDeletionAndIsIdempotent(t *testing.T) {
 	now := time.Date(2026, 9, 30, 12, 35, 0, 0, time.UTC)
 	old := now.Add(-48 * time.Hour).Truncate(time.Hour)
 	// A stopped process may leave unaggregated raw observations beyond 24h.
-	if _, err := sqlDB.Exec("INSERT INTO metric_samples VALUES(?,?,?,?,?,?,?,?,?)", "global", "", "disk.cache_bytes", old.Unix(), old.Unix(), "old", 123, nil, 0); err != nil {
+	if _, err := sqlDB.Exec("INSERT INTO metric_samples(scope,app_id,metric,t_s,observed_at_s,boot,value,delta,duration_s) VALUES(?,?,?,?,?,?,?,?,?)", "global", "", "disk.cache_bytes", old.Unix(), old.Unix(), "old", 123, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.Maintain(now); err != nil {
@@ -190,7 +190,7 @@ func TestAtomicFailureCannotLoseUnaggregatedRaw(t *testing.T) {
 	h, _, sqlDB := setup(t)
 	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 	old := now.Add(-48 * time.Hour)
-	sqlDB.Exec("INSERT INTO metric_samples VALUES(?,?,?,?,?,?,?,?,?)", "global", "", "disk.cache_bytes", old.Unix(), old.Unix(), "old", 42, nil, 0)
+	sqlDB.Exec("INSERT INTO metric_samples(scope,app_id,metric,t_s,observed_at_s,boot,value,delta,duration_s) VALUES(?,?,?,?,?,?,?,?,?)", "global", "", "disk.cache_bytes", old.Unix(), old.Unix(), "old", 42, nil, 0)
 	sqlDB.Exec(`CREATE TRIGGER fail_cleanup BEFORE DELETE ON metric_samples BEGIN SELECT RAISE(ABORT,'test failure'); END`)
 	if err := h.Maintain(now); err == nil {
 		t.Fatal("injected transaction failure ignored")
@@ -341,7 +341,7 @@ func TestScopedHistoryAggregationAndUnknownRetention(t *testing.T) {
 	// History keys deliberately have no foreign key to the active definitions.
 	unknown := []string{"retired.unknown", "counters.reuse_requests"}
 	for _, metric := range unknown {
-		if _, err := sqlDB.Exec("INSERT INTO metric_samples VALUES(?,?,?,?,?,?,?,?,?)", "global", "", metric, base.Unix(), base.Unix(), "old", 4, nil, 0); err != nil {
+		if _, err := sqlDB.Exec("INSERT INTO metric_samples(scope,app_id,metric,t_s,observed_at_s,boot,value,delta,duration_s) VALUES(?,?,?,?,?,?,?,?,?)", "global", "", metric, base.Unix(), base.Unix(), "old", 4, nil, 0); err != nil {
 			t.Fatal(err)
 		}
 	}

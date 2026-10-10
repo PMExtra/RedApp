@@ -7,8 +7,8 @@ import (
 )
 
 func TestApplicationDeletionValidationPrecedesCancellation(t *testing.T) {
-	fault := &commitFault{}
-	s := openTest(t, fault.option())
+	fault := injectCommitFault(t)
+	s := openTest(t)
 	if err := s.EnsureEntityTemplates(); err != nil {
 		t.Fatal(err)
 	}

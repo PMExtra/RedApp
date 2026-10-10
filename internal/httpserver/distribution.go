@@ -89,6 +89,11 @@ func (s *Server) serveHostedFile(w http.ResponseWriter, r *http.Request, entry a
 		return
 	}
 	defer finish()
+	done, admitted := s.admitDownload(w, r)
+	if !admitted {
+		return
+	}
+	defer done()
 	file, row, release, err := s.hosted.Open(entry.UID, relative)
 	if err != nil {
 		switch {
@@ -131,6 +136,11 @@ func (s *Server) serveCacheFile(w http.ResponseWriter, r *http.Request, entry ap
 		return
 	}
 	defer finish()
+	done, admitted := s.admitDownload(w, r)
+	if !admitted {
+		return
+	}
+	defer done()
 	receipt := newDownloadReceipt(w, r)
 	if err := s.httpCache.Serve(receipt, r, entry, relative); err != nil {
 		s.writeError(w, r, cacheFileError(err))
@@ -235,6 +245,11 @@ func (s *Server) serveReleasePath(w http.ResponseWriter, r *http.Request, entry 
 			}
 			return
 		}
+		done, admitted := s.admitDownload(w, r)
+		if !admitted {
+			return
+		}
+		defer done()
 		receipt := newDownloadReceipt(w, r)
 		s.serveArtifact(receipt, r, resource)
 		s.finishDownload(receipt, r, entry.UID)

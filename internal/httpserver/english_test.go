@@ -13,7 +13,7 @@ import (
 )
 
 func TestBackendApplicationMessagesUseEnglish(t *testing.T) {
-	// Check application-owned literals, not user input, upstream metadata, or old persisted events.
+	// Check application-owned literals, not user input or upstream metadata.
 	for _, dir := range []string{"../../cmd", "../../internal"} {
 		err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
@@ -42,10 +42,6 @@ func TestBackendApplicationMessagesUseEnglish(t *testing.T) {
 				value, err := strconv.Unquote(literal.Value)
 				if err != nil {
 					t.Fatal(err)
-				}
-				// This is an input parser for legacy event history, never a newly emitted message.
-				if path == "../../internal/store/store.go" && value == "\u4e0a\u6e38 HTTP %d" {
-					return true
 				}
 				for _, r := range value {
 					if unicode.Is(unicode.Han, r) {

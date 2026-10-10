@@ -99,6 +99,10 @@ func TestConfiguredHTTPMethodsAndHeaderAllowlist(t *testing.T) {
 	if _, err := c.Send(context.Background(), Request{Method: http.MethodPost, URL: source}); err == nil {
 		t.Fatal("POST accepted")
 	}
+	// An unparseable URL is rejected without quoting it: the error reaches logs.
+	if _, err := c.Send(context.Background(), Request{Method: http.MethodGet, URL: "http://u:secret/x@host:bad/"}); err == nil || strings.Contains(err.Error(), "secret") {
+		t.Fatal("malformed URL error", err)
+	}
 	// Clearing a proxy must restore each mode's direct dial behavior, rather
 	// than retaining the permissive configured dialer for public clients.
 	public, _ := New("https://127.0.0.1/files")

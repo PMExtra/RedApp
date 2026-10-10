@@ -18,10 +18,15 @@ func For(log *slog.Logger, name string) *slog.Logger {
 	return log.With(slog.String("component", name))
 }
 
-var credentialURL = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^/@\s]*@`)
+// credentialURL matches a scheme and everything after it up to the last "@"
+// before the next whitespace. A password may contain "/", "?", "#" or "@"
+// when the URL is malformed (for example an unencoded proxy password in a
+// parse error), so the match deliberately runs to the last "@": masking part
+// of a host or path is preferable to logging part of a password.
+var credentialURL = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)\S*@`)
 
 // Redact masks the user information (proxy and upstream credentials) of every
-// URL in text.
+// URL in text, including malformed URLs.
 func Redact(text string) string {
 	return credentialURL.ReplaceAllString(text, "${1}****@")
 }

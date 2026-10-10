@@ -9,6 +9,10 @@ import (
 	"github.com/PMExtra/RedApp/presets"
 )
 
+// beforeCommit is nil in production. Tests set it to run inside every
+// configuration transaction just before it commits, to inject a commit fault.
+var beforeCommit func(*sql.Tx) error
+
 // writeConfiguration runs one configuration write:
 //
 //  1. Read: change loads the rows it needs into a working set and edits them;
@@ -75,8 +79,8 @@ func (s *Store) writeConfigurationLocked(change func(*configSet) error, finalize
 			return err
 		}
 	}
-	if s.beforeCommit != nil {
-		if err = s.beforeCommit(tx); err != nil {
+	if beforeCommit != nil {
+		if err = beforeCommit(tx); err != nil {
 			return err
 		}
 	}

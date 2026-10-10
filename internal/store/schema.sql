@@ -161,6 +161,9 @@ CREATE TABLE category_state(
   id INTEGER PRIMARY KEY CHECK(id=1),
   public_revision INTEGER NOT NULL
 );
+-- Only unreferenced custom categories are deleted; deleting a category must
+-- never silently detach applications, so category_id deliberately does not
+-- cascade.
 CREATE TABLE application_categories(
   app_uid TEXT NOT NULL REFERENCES applications(uid) ON DELETE CASCADE,
   category_id TEXT NOT NULL REFERENCES categories(id),
@@ -175,6 +178,8 @@ CREATE TABLE application_tags(
   PRIMARY KEY(app_uid,folded),
   UNIQUE(app_uid,ordinal)
 );
+-- Like application_categories, a referenced category is never deleted, so
+-- category_id deliberately does not cascade.
 CREATE TABLE template_category_refs(
   template_key TEXT NOT NULL,
   category_id TEXT NOT NULL REFERENCES categories(id),

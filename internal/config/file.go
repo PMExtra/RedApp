@@ -52,7 +52,7 @@ func readDeployment(path string, optional bool, c *Deployment) error {
 			return errors.New("download_limits must be an object")
 		}
 		for key, value := range limits {
-			if key != "max_writers" && key != "max_readers" && key != "max_artifact_bytes" || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			if key != "max_writers" && key != "max_readers" && key != "max_artifact_bytes" && key != "max_downloads_per_client" || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 				return fmt.Errorf("unknown or null download limit %q", key)
 			}
 		}

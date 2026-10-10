@@ -50,6 +50,12 @@ func sourceFence(e application.Entry) store.SourceFence {
 // release carries one immutable runtime snapshot through channel resolution,
 // verification and persistence. A concurrent registry replacement cannot mix
 // the previous protocol with the new source namespace.
+//
+// The durable cache is read, verified and re-persisted without s.mu, which
+// only guards the flight map. A caller that misses the cache just before a
+// flight publishes may start a second flight; that flight checks the cache
+// again before contacting the upstream, so a completed fetch is never
+// repeated.
 func (s *Service) release(ctx context.Context, e application.Entry, target string) (application.Release, error) {
 	if e.Protocol == nil {
 		return application.Release{}, application.ErrNotFound
@@ -65,55 +71,18 @@ func (s *Service) release(ctx context.Context, e application.Entry, target strin
 			return application.Release{}, application.ErrNotFound
 		}
 	}
-	s.mu.Lock()
-	// Check the durable cache under the coalescing lock so callers arriving at a
-	// completed flight cannot accidentally issue another upstream fetch.
-	if channel {
-		cached, err := s.db.Channel(app, target)
-		if err != nil && !errors.Is(err, store.ErrNotFound) {
-			s.mu.Unlock()
-			return application.Release{}, err
-		}
-		if err == nil {
-			ttl := e.Descriptor.DefaultChannelTTLSeconds
-			now := time.Now()
-			expires := cached.FetchedAt.Add(time.Duration(ttl) * time.Second)
-			if cached.ExpiresAt.Before(expires) {
-				expires = cached.ExpiresAt
-			}
-			if !cached.FetchedAt.After(now) && now.Before(expires) {
-				s.mu.Unlock()
-				return s.release(ctx, e, cached.Version)
-			}
-		}
-	} else {
-		m, err := s.db.Release(app, target)
-		if err != nil && !errors.Is(err, store.ErrNotFound) {
-			s.mu.Unlock()
-			return application.Release{}, err
-		}
-		if err == nil {
-			r, verifyErr := e.Protocol.VerifyRelease(target, application.Envelope{Raw: m.Raw, Signature: m.Signature})
-			if verifyErr == nil {
-				// Re-verify the original envelope under the compiled trust policy.
-				// Resource bindings are checked transactionally when trust changes.
-				if m.TrustRevision != e.Descriptor.TrustRevision {
-					verifyErr = s.persist(e, r, m.FetchedAt)
-				}
-				if verifyErr == nil {
-					s.mu.Unlock()
-					return r, nil
-				}
-				if !errors.Is(verifyErr, store.ErrImmutableRelease) {
-					s.mu.Unlock()
-					return application.Release{}, verifyErr
-				}
-			}
-			// A corrupt or newly untrusted cache entry cannot authorize artifacts;
-			// re-fetch it without deleting the durable, immutable resource binding.
-		}
+	r, version, hit, err := s.cached(e, target, channel)
+	if err != nil {
+		return application.Release{}, err
+	}
+	if hit && version != "" {
+		return s.release(ctx, e, version)
+	}
+	if hit {
+		return r, nil
 	}
 	key := fmt.Sprintf("%s\x00%d/%d\x00%s", app, e.Revision, e.VendorRevision, target)
+	s.mu.Lock()
 	f := s.flights[key]
 	if f == nil {
 		if s.active[e.MetricsID()] >= 32 {
@@ -146,13 +115,68 @@ func (s *Service) release(ctx context.Context, e application.Entry, target strin
 	}
 }
 
+// cached looks target up in the durable cache. A fresh channel hit returns
+// the version it points to; a release hit returns the release, re-verified
+// under the compiled trust policy. A miss, an expired channel or a cached
+// release that no longer verifies reports hit=false, so the caller fetches
+// it again without deleting the durable, immutable resource binding.
+func (s *Service) cached(e application.Entry, target string, channel bool) (release application.Release, version string, hit bool, err error) {
+	app := e.StorageID()
+	if channel {
+		cached, err := s.db.Channel(app, target)
+		if errors.Is(err, store.ErrNotFound) {
+			return application.Release{}, "", false, nil
+		}
+		if err != nil {
+			return application.Release{}, "", false, err
+		}
+		ttl := e.Descriptor.DefaultChannelTTLSeconds
+		now := time.Now()
+		expires := cached.FetchedAt.Add(time.Duration(ttl) * time.Second)
+		if cached.ExpiresAt.Before(expires) {
+			expires = cached.ExpiresAt
+		}
+		if !cached.FetchedAt.After(now) && now.Before(expires) {
+			return application.Release{}, cached.Version, true, nil
+		}
+		return application.Release{}, "", false, nil
+	}
+	m, err := s.db.Release(app, target)
+	if errors.Is(err, store.ErrNotFound) {
+		return application.Release{}, "", false, nil
+	}
+	if err != nil {
+		return application.Release{}, "", false, err
+	}
+	r, err := e.Protocol.VerifyRelease(target, application.Envelope{Raw: m.Raw, Signature: m.Signature})
+	if err != nil {
+		return application.Release{}, "", false, nil
+	}
+	// Resource bindings are checked transactionally when trust changes.
+	if m.TrustRevision != e.Descriptor.TrustRevision {
+		if err = s.persist(e, r, m.FetchedAt); errors.Is(err, store.ErrImmutableRelease) {
+			return application.Release{}, "", false, nil
+		}
+		if err != nil {
+			return application.Release{}, "", false, err
+		}
+	}
+	return r, "", true, nil
+}
+
 func (s *Service) fetch(parent context.Context, e application.Entry, target string, isChannel bool, key string, f *flight) {
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 	app := e.StorageID()
-	var release application.Release
-	var err error
-	if isChannel {
+	// A flight that published while this one was being started has already
+	// filled the cache.
+	release, version, hit, err := s.cached(e, target, isChannel)
+	switch {
+	case err != nil: // reported below like a fetch failure
+	case hit && version != "":
+		release, err = s.release(ctx, e, version)
+	case hit: // release is the cached release
+	case isChannel:
 		var resolved application.ChannelResolution
 		resolved, err = e.Protocol.ResolveChannel(ctx, target)
 		if err == nil {
@@ -171,7 +195,7 @@ func (s *Service) fetch(parent context.Context, e application.Entry, target stri
 			now := time.Now().UTC()
 			err = s.db.PutChannel(store.Channel{AppID: app, Name: target, Version: release.Version, FetchedAt: now, ExpiresAt: now.Add(time.Duration(ttl) * time.Second)}, sourceFence(e))
 		}
-	} else {
+	default:
 		var envelope application.Envelope
 		envelope, err = e.Protocol.FetchRelease(ctx, target)
 		if err == nil {

@@ -104,8 +104,8 @@ func TestAdminNotesAndPermanentDeleteDuringConfigurationWrite(t *testing.T) {
 }
 
 func TestPermanentDeleteOfLiveEntitiesIsAtomic(t *testing.T) {
-	fault := &commitFault{}
-	s := openTest(t, fault.option())
+	fault := injectCommitFault(t)
+	s := openTest(t)
 	v, err := s.CreateVendor(VendorInput{ID: "acme", Name: LocalizedText{"Acme", "Acme"}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)

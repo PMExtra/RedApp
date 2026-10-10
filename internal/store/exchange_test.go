@@ -276,8 +276,8 @@ func TestExchangeMissingSnapshotHashWarningAndUIDABA(t *testing.T) {
 	}
 }
 func TestExchangeWholeBatchDatabaseRollbackAndDictionaryOwnership(t *testing.T) {
-	fault := &commitFault{}
-	s := openTest(t, fault.option())
+	fault := injectCommitFault(t)
+	s := openTest(t)
 	set := taxonomySet()
 	if e := s.ReconcileTemplates(set); e != nil {
 		t.Fatal(e)

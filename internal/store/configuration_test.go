@@ -238,8 +238,8 @@ type publicationProbe struct{ published, aborted *int }
 func (p publicationProbe) Publish() { *p.published++ }
 func (p publicationProbe) Abort()   { *p.aborted++ }
 func TestConfigurationPrepareCASAndDatabaseFailuresAreAtomic(t *testing.T) {
-	fault := &commitFault{}
-	s := openTest(t, fault.option())
+	fault := injectCommitFault(t)
+	s := openTest(t)
 	if err := s.EnsureEntityTemplates(); err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +308,7 @@ func TestRestartWithSameSchemaKeepsConfiguration(t *testing.T) {
 func TestConfigurationCommitFailureDoesNotPublish(t *testing.T) {
 	var armed atomic.Bool
 	// A deferred foreign-key violation makes the commit itself fail after every write.
-	s := openTest(t, withBeforeCommit(func(tx *sql.Tx) error {
+	setBeforeCommit(t, func(tx *sql.Tx) error {
 		if !armed.Load() {
 			return nil
 		}
@@ -317,7 +317,8 @@ func TestConfigurationCommitFailureDoesNotPublish(t *testing.T) {
 		}
 		_, err := tx.Exec(`INSERT INTO vendor_config(entity_uid,template_ref,overrides_json,spec_json) VALUES('ffffffffffffffffffffffffffffffff',NULL,'{}','{}')`)
 		return err
-	}))
+	})
+	s := openTest(t)
 	if err := s.EnsureEntityTemplates(); err != nil {
 		t.Fatal(err)
 	}

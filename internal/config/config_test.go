@@ -21,7 +21,7 @@ func TestDeploymentIsStrictAndValidationDoesNotTouchData(t *testing.T) {
 		t.Fatal(err)
 	}
 	c, err := Load(path, nil)
-	if err != nil || c.Listen != ":8080" || c.DownloadLimits.MaxWriters != 16 || c.EnvironmentPublicURL != "https://downloads.example.com" {
+	if err != nil || c.Listen != ":8080" || c.DownloadLimits.MaxWriters != 16 || c.DownloadLimits.MaxDownloadsPerClient != DefaultMaxDownloadsPerClient || c.EnvironmentPublicURL != "https://downloads.example.com" {
 		t.Fatal(c, err)
 	}
 	if _, err := os.Stat(data); !os.IsNotExist(err) {
@@ -31,6 +31,7 @@ func TestDeploymentIsStrictAndValidationDoesNotTouchData(t *testing.T) {
 		`"unknown":true`, `"Schema_version":1`, `"schema_version":2`, `"schema_version":null`,
 		`"download_limits":{"max_readers":0}`, `"download_limits":{"max_readers":1,"max_readers":2}`,
 		`"download_limits":{"max_readers":null}`, `"download_limits":{"MaxReaders":5}`,
+		`"download_limits":{"max_downloads_per_client":0}`, `"download_limits":{"max_downloads_per_client":65537}`,
 		`"allowed_hosts":["downloads.example.com"]`, `"download_limits":{"max_active_writers":16}`,
 		`"listen":"localhost:0"`, `"trusted_proxies":["host"]`,
 	} {

@@ -425,3 +425,11 @@ func (e *UpstreamStatusError) Error() string {
 func (e *UpstreamStatusError) NotFound() bool {
 	return e.Status == http.StatusNotFound || e.Status == http.StatusGone
 }
+
+// Closed reports whether Close has started; afterwards new work fails with
+// ErrClosed or ends early.
+func (s *Service) Closed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closed
+}

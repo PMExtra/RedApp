@@ -17,6 +17,9 @@ type DownloadLimits struct {
 	MaxWriters       int   `json:"max_writers"`
 	MaxReaders       int   `json:"max_readers"`
 	MaxArtifactBytes int64 `json:"max_artifact_bytes"`
+	// MaxDownloadsPerClient bounds the concurrent file downloads of one client
+	// (an IPv4 address or IPv6 /64), so no client can hold every reader slot.
+	MaxDownloadsPerClient int `json:"max_downloads_per_client"`
 }
 
 type Deployment struct {
@@ -30,6 +33,9 @@ type Deployment struct {
 
 const DefaultPath = "/etc/redapp/config.yaml"
 
+// DefaultMaxDownloadsPerClient is the default download_limits.max_downloads_per_client.
+const DefaultMaxDownloadsPerClient = 16
+
 // Load reads one selected file, then applies environment and explicit CLI fields.
 // An absent default file is optional; manually selected files are required.
 // PUBLIC_URL remains a separate environment default for persisted admin settings.
@@ -39,7 +45,7 @@ func Load(path string, overrides map[string]string) (Deployment, error) {
 
 func load(path, defaultPath string, overrides map[string]string) (Deployment, error) {
 	c := Deployment{SchemaVersion: 1, Listen: ":8080", DataDir: "/var/lib/redapp",
-		DownloadLimits: DownloadLimits{MaxWriters: 16, MaxReaders: 512, MaxArtifactBytes: 4 << 30}}
+		DownloadLimits: DownloadLimits{MaxWriters: 16, MaxReaders: 512, MaxArtifactBytes: 4 << 30, MaxDownloadsPerClient: DefaultMaxDownloadsPerClient}}
 	if path == "" {
 		path = os.Getenv("REDAPP_CONFIG")
 	}
@@ -57,7 +63,7 @@ func load(path, defaultPath string, overrides map[string]string) (Deployment, er
 		{"REDAPP_DATA", "data"}, {"REDAPP_LISTEN", "listen"},
 		{"REDAPP_TRUSTED_PROXIES", "trusted-proxies"},
 		{"REDAPP_MAX_WRITERS", "max-writers"}, {"REDAPP_MAX_READERS", "max-readers"},
-		{"REDAPP_MAX_ARTIFACT_BYTES", "max-artifact-bytes"},
+		{"REDAPP_MAX_ARTIFACT_BYTES", "max-artifact-bytes"}, {"REDAPP_MAX_DOWNLOADS_PER_CLIENT", "max-downloads-per-client"},
 	} {
 		if value, ok := os.LookupEnv(setting.name); ok {
 			if err := apply(&c, setting.flag, value); err != nil {
@@ -98,7 +104,7 @@ func apply(c *Deployment, name, value string) error {
 			return err
 		}
 		c.DownloadLimits.MaxArtifactBytes = n
-	case "max-writers", "max-readers":
+	case "max-writers", "max-readers", "max-downloads-per-client":
 		n, err := strconv.ParseInt(value, 10, 64)
 		if err != nil || n < 1 || n > 1<<40 {
 			return errors.New("expected a positive decimal integer within the documented limit")
@@ -114,6 +120,11 @@ func apply(c *Deployment, name, value string) error {
 				return errors.New("max_readers must be at most 65536")
 			}
 			c.DownloadLimits.MaxReaders = int(n)
+		case "max-downloads-per-client":
+			if n > 65536 {
+				return errors.New("max_downloads_per_client must be at most 65536")
+			}
+			c.DownloadLimits.MaxDownloadsPerClient = int(n)
 		}
 	default:
 		return errors.New("unknown deployment option")
@@ -155,8 +166,8 @@ func validate(c *Deployment) error {
 		}
 	}
 	l := c.DownloadLimits
-	if l.MaxWriters < 1 || l.MaxWriters > 1024 || l.MaxReaders < 1 || l.MaxReaders > 65536 || l.MaxArtifactBytes < 1 || l.MaxArtifactBytes > 1<<40 {
-		return errors.New("download_limits out of range: writers 1..1024, readers 1..65536, artifact bytes 1..1099511627776")
+	if l.MaxWriters < 1 || l.MaxWriters > 1024 || l.MaxReaders < 1 || l.MaxReaders > 65536 || l.MaxArtifactBytes < 1 || l.MaxArtifactBytes > 1<<40 || l.MaxDownloadsPerClient < 1 || l.MaxDownloadsPerClient > 65536 {
+		return errors.New("download_limits out of range: writers 1..1024, readers 1..65536, artifact bytes 1..1099511627776, downloads per client 1..65536")
 	}
 	return nil
 }

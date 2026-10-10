@@ -128,7 +128,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 
 - **资源身份**：`sha256(app \0 version \0 key)`，并与持久化的 `resources` 行（来源 URL、SHA-256、期望大小）和应用上游核对，其他应用不能借用缓存身份。
 - **代际（generation）**：每次下载是一个代际，状态包括 downloading、resuming、retry_wait、verifying、complete、failed、invalid、interrupted。每个资源最多一个当前代际（部分唯一索引）。
-- **读者与写者**：一个写者经 `spool.Fill` 填充 part，多个读者跟随同一个 `spool.Body` 边下载边读取；`Body` 有自己的锁，读者不争用 `Manager.mu`，失败只以错误结束读取，从不表现为成功的 EOF。默认上限 16 个写者、512 个读者，单制品 4 GiB；`httpcache` 和 `hosted` 共用这组额度。
+- **读者与写者**：一个写者经 `spool.Fill` 填充 part，多个读者跟随同一个 `spool.Body` 边下载边读取；`Body` 有自己的锁，读者不争用 `Manager.mu`，失败只以错误结束读取，从不表现为成功的 EOF。默认上限 16 个写者、512 个读者，单制品 4 GiB；`httpcache` 和 `hosted` 共用这组额度。HTTP 层另按客户端（IPv4 地址或 IPv6 /64，与登录限流相同）限制并发文件下载数（`max_downloads_per_client`，默认 16），使单个客户端无法占满全部读者额度。
 - **续传**：带 `Range: bytes=N-`，强 ETag 时加 `If-Range`。只接受精确的 206、`Content-Range` 和相同 ETag（`spool.CheckResume`）；其他情况放弃续传，新建一个完整重下的代际。每 1 MiB 记录进度。
 - **写入顺序**：进度在 `Manager.mu` 内取快照并分配该代际的下一个 `checkpoint` 序号，释放锁后写库；`SaveGeneration`、`CompleteGeneration` 只在序号比库中新时生效，迟到的旧快照不会覆盖新状态或撤销完成。`mu` 只在改变“当前代际”的写入（创建、退役、完成、删除）和 blob 发布时持有，保证内存与 `generations` 表一致。
 - **超时与重试**：由 `spool.Fill` 执行。下载流没有总时限，只有空闲读超时（单次读取 60 秒无数据即中断）；连接、TLS、响应头各有独立时限，元数据读取限时 5 分钟。连接错误、读取中断或截断、5xx、408、429 会重试，最多 6 次，退避从 1 秒翻倍、上限 30 秒并加随机抖动；其他 4xx、磁盘、编码和完整性错误不重试。重试耗尽时，如果已有数据且上游支持续传（ETag 或字节范围），保留 part 并标记 interrupted，下次请求从断点续传。
@@ -144,7 +144,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 服务 `http-cache` 应用：按 `(storage_id, path)` 缓存上游的可变 HTTP 响应。与下载引擎共享 `internal/spool` 的流式核心和 `internal/fsutil` 的发布原语；按路径的条目生命周期（当前/退役、读者 pin）属于 HTTP 缓存自己，SQL 全部在 `internal/store`（`http_cache.go`）；刷新与清理是[冻结预览](#冻结预览)。
 
 - **回源与合并**：同一路径、同一应用快照（运行时 revision）和同一被替换条目的并发请求合并为一个 flight。来源按策略顺序尝试，只在来源响应前失败（连接错误、超时、5xx）时换下一个来源；全部失败且允许时回退到旧条目。回源带 `If-None-Match`/`If-Modified-Since`，`304` 只更新验证时间和响应头。
-- **流**：可缓存的 `200` 响应成为一个流：一个 `spool.Fill` 写入 `objects/http/<id>.part`，flight 的等待者和之后加入的请求都作为读者跟随同一个 `spool.Body` 边下边读。没有总时限，只有单次读取 60 秒空闲超时。读取失败后只向同一来源续传：`Range` + `If-Range`（非弱 ETag，或比 `Date` 至少早 1 秒的 `Last-Modified`），续传响应必须是同一表示（验证器相同）的精确剩余区间且仍可缓存，否则流失败；没有强验证器的流不续传。重试上限与退避与下载引擎相同。最后一个读者离开时停止填充。
+- **流**：可缓存的 `200` 响应成为一个流：一个 `spool.Fill` 写入 `objects/http/<id>.part`，flight 的等待者和之后加入的请求都作为读者跟随同一个 `spool.Body` 边下边读。没有总时限，只有单次读取 60 秒空闲超时。读取失败后只向同一来源续传：`Range` + `If-Range`（非弱 ETag，或比 `Date` 至少早 1 秒的 `Last-Modified`），续传响应必须是同一表示（验证器相同）的精确剩余区间且仍可缓存，否则流失败；没有强验证器的流不续传。重试上限与退避与下载引擎相同。最后一个读者离开时停止填充，该流在同一次持锁中不再接受新读者，之后的请求重新回源；加入后才发现流已被停止的请求同样重新回源。
 - **发布**：写入时计算 SHA-256；完整且长度一致后读者即可读到 EOF，随后 fsync、rename 为 `<id>.body`，再在 store 的一个事务中检查来源 fence（替换时还确认旧条目仍为当前）并发布为当前条目。发布与停止接受新读者在同一次持锁中完成，之后清理退役该条目时不会再有读者加入这个流。失败、超限、被放弃或发布被拒绝（来源已变化、旧条目已被清理）的流删除 part，不留条目；已经开始接收的客户端连接被中断。读完整个文件的请求等到发布结束才返回，下一个请求一定能看到条目。
 - **服务**：已存储的条目由 `http.ServeContent` 处理条件请求和单段 Range，读取期间 pin 住条目，退役后最后一个持有者释放时删除文件和行。流上的请求先等待首字节，立即失败的流在发送任何内容之前报错；来源声明了长度时同样经 `http.ServeContent` 处理并等待所需字节，否则返回完整的 `200`。流的响应只带上游 ETag；存储后没有上游 ETag 时生成 `"sha256-<hex>"`。
 - **新鲜度**：首个匹配的路径规则决定 TTL（忽略上游头）；无规则时用上游 `s-maxage`/`max-age` 减去由 `Age`/`Date` 推算的年龄（有 `Cache-Control` 但没有这两个指令时立即过期）；完全没有 `Cache-Control` 时才用应用默认 TTL。路径规则最多 32 条，还可覆盖 `no-store`/`private`，但不缓存带 `Set-Cookie` 或不支持的 `Vary` 的响应。请求端缓存指令被忽略，只支持 `only-if-cached`。不可缓存的响应由每个读者各自直接传输，受写者额度约束。
@@ -190,7 +190,7 @@ HTTP 层只有一处映射（`previews.go`）：未知、其他应用或其他�
     icons/               # 上传的图标
 ```
 
-目录权限 `0700`，文件 `0600`。`/health/ready` 会在数据目录写入并删除一个临时文件来检查可写性。实例锁依赖 `flock`，只支持 Unix。
+目录权限 `0700`，文件 `0600`。`/health/ready` 会在数据目录写入并删除一个临时文件来检查可写性，结果复用 5 秒，并发探测共用一次检查。实例锁依赖 `flock`，只支持 Unix。
 
 ## SQLite schema
 

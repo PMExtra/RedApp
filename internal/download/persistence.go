@@ -24,6 +24,8 @@ var (
 	ErrWriterLimit   = errors.New("active download limit exceeded")
 	ErrReaderLimit   = errors.New("client limit exceeded")
 	ErrArtifactLimit = errors.New("artifact length exceeds configured limit")
+	// ErrClosed reports work refused because the manager is shutting down.
+	ErrClosed = errors.New("download manager is shutting down")
 )
 
 func validApplication(app string) bool { return store.ValidAppID(app) }
