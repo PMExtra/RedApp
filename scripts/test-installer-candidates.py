@@ -8,7 +8,7 @@ import sys
 import tempfile
 import zipfile
 from installer_manifest import ROOT, inventory
-from installer_test_support import sha
+from installer_test_support import require, sha
 
 
 def bundle(path, baseline, broken=False):
@@ -71,12 +71,14 @@ def main():
             rejected = subprocess.run(
                 command + ['--shell', engine], capture_output=True, text=True, timeout=120
             )
-            assert (
-                rejected.returncode != 0 and 'REDAPP_PS_PARSE_FAILED' in rejected.stderr
-            ), rejected.stdout + rejected.stderr
+            require(
+                rejected.returncode != 0 and 'REDAPP_PS_PARSE_FAILED' in rejected.stderr,
+                rejected.stdout + rejected.stderr,
+            )
             print(engine + ': rejected broken candidate while baseline stayed valid', flush=True)
-    assert all(path.read_bytes() == data for path, data in before.items()), (
-        'candidate validation changed baseline'
+    require(
+        all(path.read_bytes() == data for path, data in before.items()),
+        'candidate validation changed baseline',
     )
 
 

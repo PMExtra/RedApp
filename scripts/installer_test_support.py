@@ -7,6 +7,12 @@ import tarfile
 import threading
 
 
+def require(condition, detail=None):
+    """Fail a contract unless condition holds; unlike assert, python -O cannot disable it."""
+    if not condition:
+        raise AssertionError(*([] if detail is None else [detail]))
+
+
 def sha(data):
     """Return the SHA-256 hex digest of data."""
     return hashlib.sha256(data).hexdigest()

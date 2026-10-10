@@ -7,13 +7,13 @@ import subprocess
 import tempfile
 
 
-from installer_test_support import InstallerServer
+from installer_test_support import InstallerServer, require
 
 
 def test_shell(directory, application):
     """Run the offline Claude Code shell installer contracts against a loopback server."""
     for dependency in ['bash', 'curl', 'wget', 'jq']:
-        assert shutil.which(dependency), f'{dependency} is required for installer contracts'
+        require(shutil.which(dependency), f'{dependency} is required for installer contracts')
     fixture = InstallerServer(application, 'claude-code')
     fixture.__enter__()
     config, seen, base = fixture.config, fixture.seen, fixture.base
@@ -98,24 +98,24 @@ def case(root, script, config, seen, base, *, osname='Linux', arch='x86_64',
         'cut', 'head', 'dirname', 'sha256sum', 'stty', 'cat',
     ]:
         path = shutil.which(name)
-        assert path, name
+        require(path, name)
         (tools / name).symlink_to(path)
     if use_jq:
         (tools / 'jq').symlink_to(shutil.which('jq'))
     executable = shutil.which(downloader)
-    assert executable
+    require(executable)
     download_log = work / 'downloader.log'
     tool(
         downloader,
         '#!/usr/bin/python3\n'
         'import sys,subprocess\n'
         'urls=[x for x in sys.argv[1:] if x.startswith(("http://","https://"))]\n'
-        'assert len(urls)==1 and urls[0].startswith(' + repr(base + '/') + ')\n'
+        'if len(urls)!=1 or not urls[0].startswith(' + repr(base + '/') + '): sys.exit(97)\n'
         'with open(' + repr(str(download_log)) + ', "a") as log: log.write('
         + repr(downloader + '\n') + ')\n'
         'sys.exit(subprocess.call([' + repr(executable) + ']+sys.argv[1:]))\n',
     )
-    assert not (tools / ('curl' if downloader == 'wget' else 'wget')).exists()
+    require(not (tools / ('curl' if downloader == 'wget' else 'wget')).exists())
     tool('uname', f'#!/bin/sh\ncase "$1" in -s) echo {osname};; -m) echo {arch};; *) exit 1;; esac\n')
     tool('sysctl', '#!/bin/sh\necho ' + ('1' if rosetta else '0') + '\n')
     tool('ldd', '#!/bin/sh\necho ' + ('musl' if musl else 'glibc') + '\n')
@@ -162,51 +162,52 @@ def case(root, script, config, seen, base, *, osname='Linux', arch='x86_64',
     command = [shutil.which('bash'), '-s', '--'] + ([requested] if requested else [])
     r = subprocess.run(command, input=script, text=True, capture_output=True, env=env, timeout=20)
     if failure:
-        assert r.returncode != 0, (failure, r.stdout, r.stderr)
-        assert 'Installation complete!' not in r.stdout
+        require(r.returncode != 0, (failure, r.stdout, r.stderr))
+        require('Installation complete!' not in r.stdout)
         if original_launcher is not None:
-            assert launcher.read_bytes() == original_launcher
+            require(launcher.read_bytes() == original_launcher)
         else:
-            assert not launcher.exists()
+            require(not launcher.exists())
         if original_version is not None:
-            assert destination.read_bytes() == original_version
+            require(destination.read_bytes() == original_version)
         else:
-            assert not destination.exists()
-        assert sentinel.read_text() == 'do not change'
+            require(not destination.exists())
+        require(sentinel.read_text() == 'do not change')
         if failure == 'target':
-            assert not seen, seen
+            require(not seen, seen)
         if failure == 'hash':
-            assert 'Checksum verification failed' in r.stderr, r.stderr
+            require('Checksum verification failed' in r.stderr, r.stderr)
         if failure == 'channel':
-            assert seen == ['/latest'], seen
+            require(seen == ['/latest'], seen)
         if failure == 'manifest':
-            assert not any(path.endswith('/claude') for path in seen), seen
+            require(not any(path.endswith('/claude') for path in seen), seen)
     else:
-        assert r.returncode == 0, (r.stdout, r.stderr)
-        assert destination.read_bytes() == config['body'] and destination.stat().st_mode & 0o111
-        assert 'Add "$HOME/.local/bin" to PATH' in r.stdout
-        assert ('/latest' in seen) == (requested in ['', 'latest'])
-        assert ('/stable' in seen) == (requested == 'stable')
-        assert f'/2.1.285/{platform}/claude' in seen, seen
+        require(r.returncode == 0, (r.stdout, r.stderr))
+        require(destination.read_bytes() == config['body'] and destination.stat().st_mode & 0o111)
+        require('Add "$HOME/.local/bin" to PATH' in r.stdout)
+        require(('/latest' in seen) == (requested in ['', 'latest']))
+        require(('/stable' in seen) == (requested == 'stable'))
+        require(f'/2.1.285/{platform}/claude' in seen, seen)
     if lifecycle:
         run = subprocess.run(
             [str(launcher), 'argument with spaces', 'semi;colon', '--flag'],
             env=env, capture_output=True, text=True, timeout=5,
         )
-        assert (
+        require(
             run.returncode == 23
-            and run.stdout.splitlines() == ['1', 'argument with spaces', 'semi;colon', '--flag']
-        ), run
+            and run.stdout.splitlines() == ['1', 'argument with spaces', 'semi;colon', '--flag'],
+            run,
+        )
         # A fresh process receives the same update policy; no parent/global environment change is needed.
         run = subprocess.run(
             [str(launcher), '--version'],
             env={**env, 'DISABLE_UPDATES': 'false'}, capture_output=True, text=True, timeout=5,
         )
-        assert run.stdout.splitlines() == ['1', '--version'] and env['DISABLE_UPDATES'] == '0'
+        require(run.stdout.splitlines() == ['1', '--version'] and env['DISABLE_UPDATES'] == '0')
         rerun = subprocess.run(
             command, input=script, text=True, capture_output=True, env=env, timeout=20
         )
-        assert rerun.returncode == 0
+        require(rerun.returncode == 0)
         old_launcher = launcher.read_bytes()
         config['version'] = '2.1.286'
         config['failure'] = 'hash'
@@ -214,20 +215,21 @@ def case(root, script, config, seen, base, *, osname='Linux', arch='x86_64',
             [shutil.which('bash'), '-s', '--', '2.1.286'],
             input=script, text=True, capture_output=True, env=env, timeout=20,
         )
-        assert (
+        require(
             bad.returncode != 0
             and launcher.read_bytes() == old_launcher
-            and not (destination.parent / '2.1.286').exists()
+            and not (destination.parent / '2.1.286').exists(),
         )
         config['failure'] = ''
         upgraded = subprocess.run(
             [shutil.which('bash'), '-s', '--', 'stable'],
             input=script, text=True, capture_output=True, env=env, timeout=20,
         )
-        assert upgraded.returncode == 0, (upgraded.stdout, upgraded.stderr)
-        assert destination.exists() and '2.1.286' in launcher.read_text()
-    assert not list((home / '.claude/downloads').glob('redapp.*')), (
-        'temporary download directory leaked'
+        require(upgraded.returncode == 0, (upgraded.stdout, upgraded.stderr))
+        require(destination.exists() and '2.1.286' in launcher.read_text())
+    require(
+        not list((home / '.claude/downloads').glob('redapp.*')),
+        'temporary download directory leaked',
     )
     if failure != 'target':
-        assert set(download_log.read_text().splitlines()) == {downloader}
+        require(set(download_log.read_text().splitlines()) == {downloader})
