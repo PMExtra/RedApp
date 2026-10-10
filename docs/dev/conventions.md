@@ -62,43 +62,49 @@
 
 ## HTTP API
 
+全部路由以 [`api/openapi.yaml`](../../api/openapi.yaml) 为准，改接口先改规范（[ADR 0009](adr/0009-openapi-contract.md)）；组织方式、错误码目录用法和与旧实现的差异见 [api.md](api.md)。
+
 ### 路径与方法
 
 - 公开接口在 `/api/`，管理接口在 `/admin/api/`。分发路径是 `/<vendor>/<app>/<file_path>`，不加 `/api` 前缀。
 - 资源用名词复数路径，应用资源固定以 `/apps/<vendor>/<app>` 定位，不用请求头选择应用。
-- GET 只读、可重试；PUT 整体替换设置；PATCH 用于 `set`/`unset` 形式的稀疏修改；POST 用于创建或动作（如 `.../cleanup/preview`）；DELETE 删除。
+- GET 只读、可重试；PUT 整体替换设置；PATCH 用于稀疏修改（配置用 `set`/`unset`）；POST 用于创建或动作（如 `.../cleanup/preview`）；DELETE 删除。
+- 创建返回 `201`，没有响应体的成功返回 `204`；成功响应直接返回资源对象，不再包一层 `{"app": ...}`。
 - 查询参数白名单校验，未知或重复的参数返回 400。
 - **【目标】** 使用标准库 `http.ServeMux` 的方法 + 路径模式注册路由，鉴权、CSRF、Origin 检查、request_id 和日志做成中间件（阶段 3）。当前是 `Server.ServeHTTP` 中的手写前缀分发。
 
 ### 请求与响应体
 
 - JSON 字段名用 `snake_case`。
-- 请求体必须是 `application/json`，限制大小，拒绝重复键、未知字段和尾随数据（`decodeLimit` + `jsoncheck`）。
+- 请求体必须是 `application/json`（否则 415），限制大小，拒绝重复键、未知字段和尾随数据（`decodeLimit` + `jsoncheck`）。
 - 时间用 RFC 3339 UTC 字符串；字节数、计数用整数。
+- 不返回内部字段（本地文件路径、存储命名空间、内部 revision），不保留重复或兼容字段。
 
 ### 错误响应
 
 错误响应体：
 
 ```json
-{"error": {"code": "SETTINGS_REVISION_CONFLICT", "message": "...", "request_id": "...", "retryable": false}}
+{"error": {"code": "REVISION_CONFLICT", "message": "...", "request_id": "...", "retryable": false}}
 ```
 
-- `code` 是稳定的大写蛇形标识，前端按 `code` 而不是 HTTP 状态或消息文本做判断。
+- `code` 是稳定的大写蛇形标识，前端按 `code` 而不是 HTTP 状态或消息文本做判断。错误码、状态和 `retryable` 由规范中的错误码目录（`components.x-error-codes`）定义，新增错误码先加入目录。
 - **【目标】** 每个错误场景显式指定 `code`，不由 HTTP 状态推导（阶段 3）。当前 `fail()` 按状态映射，导致所有 409 都是 `SETTINGS_REVISION_CONFLICT`、所有 403 都是 `CSRF_REJECTED`；新代码应调用带显式 code 的 `problem()`。
-- **【目标】** `request_id` 在请求入口生成一次，写入响应头和日志（阶段 3）。当前只在生成错误响应时随机产生，不可关联日志。
+- **【目标】** `request_id` 在请求入口生成一次，写入 `X-Request-Id` 响应头和日志（阶段 3）。当前只在生成错误响应时随机产生，不可关联日志。
 - `message` 面向用户，不包含内部错误文本、路径或 SQL。
 
 ### 并发控制（revision）
 
 - 可编辑资源的 GET 返回 `revision` 字段和 `ETag: "<revision>"`。
-- 修改请求带 `If-Match: "<revision>"`（或请求体中的 `revision`，用于 PATCH 稀疏修改）。缺少时返回 400，不匹配时返回 409，前端保留用户草稿。
+- 所有修改请求带 `If-Match: "<revision>"`，请求体不携带 `revision`。缺少或格式错误返回 `400 IF_MATCH_REQUIRED`，不匹配返回 `409 REVISION_CONFLICT`，前端保留用户草稿。
+- 防止误操作同名重建对象的 UID 守卫（如删除应用的 `confirm_uid`）不匹配时同样返回 `409 REVISION_CONFLICT`。
+- 不可变对象（按 ID 寻址的托管文件）和绑定冻结状态的预览/任务动作不需要 `If-Match`。
 - 成功响应返回新的 revision 和完整的新状态，前端用它替换基线。
 
 ### 分页
 
-- 时间序或无限增长的列表（版本、资源、事件）用游标分页：`?limit=&cursor=`，响应 `{"items": [...], "next_cursor": "..." | null}`。默认 50，最大 100。游标对客户端不透明。
-- 需要页码导航的有限列表（目录、分类、托管文件）用 `?page=&limit=`，默认值按页面而定，最大 100。
+- 时间序或无限增长的列表（版本、资源、事件、缓存条目）用游标分页：`?limit=&cursor=`，响应 `{"items": [...], "next_cursor": "..." | null}`。默认值按接口而定（通常 50），最大 100。游标对客户端不透明，用在其他接口或过滤条件上返回 `400 INVALID_CURSOR`。
+- 需要页码导航的有限列表（厂商、应用、分类、托管文件）用 `?page=&limit=`，响应 `items`、`page`、`limit`、`total`、`total_pages`，默认值按页面而定，最大 100。页码超出范围返回空 `items`。
 - 先过滤、再分页；总数不随页码变化。
 
 ## 前端
