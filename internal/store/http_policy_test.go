@@ -10,7 +10,8 @@ import (
 )
 
 func TestHTTPPolicyApplicationCASAndAtomicPersistence(t *testing.T) {
-	s := openTest(t)
+	fault := &commitFault{}
+	s := openTest(t, fault.option())
 	v, err := s.CreateVendor(directoryVendor("publisher"))
 	if err != nil {
 		t.Fatal(err)
@@ -47,9 +48,7 @@ func TestHTTPPolicyApplicationCASAndAtomicPersistence(t *testing.T) {
 	if _, err = s.SaveHTTPPolicy(app.Key, app.Revision, config); !errors.Is(err, ErrConflict) {
 		t.Fatal("stale policy revision accepted", err)
 	}
-	if _, err = s.DB.Exec(`CREATE TRIGGER reject_policy_revision BEFORE UPDATE ON applications BEGIN SELECT RAISE(FAIL,'injected failure'); END`); err != nil {
-		t.Fatal(err)
-	}
+	fault.armed.Store(true)
 	changed := got
 	changed.StaleFallback = false
 	if _, err = s.SaveHTTPPolicy(app.Key, updated.Revision, changed); err == nil {
@@ -59,9 +58,7 @@ func TestHTTPPolicyApplicationCASAndAtomicPersistence(t *testing.T) {
 	if err != nil || revision != updated.Revision || !retained.StaleFallback || retained.Rules[0].ID != got.Rules[0].ID {
 		t.Fatal("partial policy commit", retained, revision, err)
 	}
-	if _, err = s.DB.Exec("DROP TRIGGER reject_policy_revision"); err != nil {
-		t.Fatal(err)
-	}
+	fault.armed.Store(false)
 	changes := applicationChanges(updated)
 	changes.BaseURL = "https://replacement.internal/files"
 	changes.Enabled = false

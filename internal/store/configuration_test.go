@@ -238,7 +238,8 @@ type publicationProbe struct{ published, aborted *int }
 func (p publicationProbe) Publish() { *p.published++ }
 func (p publicationProbe) Abort()   { *p.aborted++ }
 func TestConfigurationPrepareCASAndDatabaseFailuresAreAtomic(t *testing.T) {
-	s := openTest(t)
+	fault := &commitFault{}
+	s := openTest(t, fault.option())
 	if err := s.EnsureEntityTemplates(); err != nil {
 		t.Fatal(err)
 	}
@@ -254,9 +255,7 @@ func TestConfigurationPrepareCASAndDatabaseFailuresAreAtomic(t *testing.T) {
 	s.SetConfigurationPrepare(func(DirectorySnapshot) (ConfigurationPublication, error) {
 		return publicationProbe{&published, &aborted}, nil
 	})
-	if _, err := s.DB.Exec(`CREATE TRIGGER reject_config BEFORE UPDATE ON applications BEGIN SELECT RAISE(FAIL,'injected DB failure'); END`); err != nil {
-		t.Fatal(err)
-	}
+	fault.armed.Store(true)
 	if _, err := s.PatchApplicationConfiguration(a.Key, ConfigurationPatch{Revision: a.Revision, Set: map[string]json.RawMessage{"description.en": encode("new")}}); err == nil {
 		t.Fatal("DB failure ignored")
 	}
@@ -264,7 +263,7 @@ func TestConfigurationPrepareCASAndDatabaseFailuresAreAtomic(t *testing.T) {
 	if !reflect.DeepEqual(before, after) || published != 0 || aborted != 1 {
 		t.Fatal("partial save/publication", after, published, aborted)
 	}
-	s.DB.Exec(`DROP TRIGGER reject_config`)
+	fault.armed.Store(false)
 	s.SetConfigurationPrepare(func(DirectorySnapshot) (ConfigurationPublication, error) {
 		_, err := s.DB.Exec(`UPDATE vendors SET revision=revision+1 WHERE id='anthropic'`)
 		if err != nil {
