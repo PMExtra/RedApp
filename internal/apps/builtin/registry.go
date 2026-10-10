@@ -13,41 +13,6 @@ import (
 	"github.com/PMExtra/RedApp/internal/distributor"
 )
 
-func New() (*application.Registry, error) {
-	descriptors, err := reviewedDescriptors()
-	if err != nil {
-		return nil, err
-	}
-	var entries []application.Entry
-	var shared *distributor.Client
-	for _, descriptor := range descriptors {
-		var client *distributor.Client
-		if shared == nil {
-			client, err = distributor.New(descriptor.Upstream)
-			shared = client
-		} else {
-			client, err = shared.Sibling(descriptor.Upstream)
-		}
-		if err != nil {
-			return nil, err
-		}
-		entry, err := releaseEntry(descriptor, client)
-		if err != nil {
-			return nil, err
-		}
-		entries = append(entries, entry)
-	}
-	return application.NewRegistry(entries)
-}
-
-func reviewedDescriptors() ([]application.Descriptor, error) {
-	input := presets.Embedded().Descriptors()
-	if err := ValidateDescriptors(input); err != nil {
-		return nil, err
-	}
-	return input, nil
-}
-
 // ValidateDescriptors checks persisted contracts against compiled protocols and resources.
 // The snapshot never supplies executable code or signing keys.
 func ValidateDescriptors(input []presets.Descriptor) error {

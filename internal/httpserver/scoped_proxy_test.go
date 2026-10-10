@@ -228,3 +228,5 @@ func TestScopedProxiesRouteCatalogArtifactsHTTPAndHostedImports(t *testing.T) {
 		t.Fatal("routing coverage", hits)
 	}
 }
+
+func encodeJSON(value any) json.RawMessage { raw, _ := json.Marshal(value); return raw }

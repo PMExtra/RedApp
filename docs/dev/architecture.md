@@ -298,5 +298,5 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 | 配置快照 CAS | 每次配置写入在全局锁下读取、克隆整份配置状态，事务内再与重读结果整体比较；任一实体的并发变化都会让本次写入失败，成本随配置规模增长。实体 revision 只是额外检查 | 阶段 5：按实体 CAS |
 | HTTP 缓存冷请求 | 冷请求必须先完整落盘才响应，单次下载在全部来源上合计最长 9 分钟；慢速链路上的超大文件会失败，前置反代也可能先超时 | 阶段 5：复用下载引擎边下边读后取消总时限 |
 | 锁内 I/O | 下载进度保存和数据库调用仍在 `Manager.mu` 内（整文件哈希和 bcrypt 已移出）；媒体、预热和目录写入在持锁期间做 I/O | 阶段 2/5：按[约定](conventions.md#并发)调整 |
-| 无 UID 的静态测试条目 | httpserver 的测试已全部经 `newHarness` 使用真实目录；`builtin.New`（只剩它自己的测试调用）和 `catalog` 等包的测试仍用没有 UID 的 `application.Entry`，`Entry.StorageID`/`MetricsID`/`Active`、`store.checkSourceActive`、`catalog.CandidatesForSource` 为它们保留了分支 | 这些测试改用真实目录后删除 `builtin.New` 和这些分支 |
+| 无 UID 的静态测试条目 | httpserver 的测试已全部经 `newHarness` 使用真实目录；`catalog` 等包的测试仍用没有 UID 的 `application.Entry`，`Entry.StorageID`/`MetricsID`/`Active`、`store.checkSourceActive`、`catalog.CandidatesForSource` 为它们保留了分支 | 这些测试改用真实目录后删除这些分支 |
 | 后台日志 | HTTP 层用 `log/slog` 记录访问与错误日志；`cmd/redapp` 和后台循环的失败仍经标准库 `log` 进入同一个 slog handler，没有结构化字段 | 逐步改为 slog 字段 |

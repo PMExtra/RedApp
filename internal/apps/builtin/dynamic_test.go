@@ -8,6 +8,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/store"
+	"github.com/PMExtra/RedApp/presets"
 )
 
 func TestDynamicProviderInstancesAndDirectoryLifecycle(t *testing.T) {
@@ -32,7 +33,7 @@ func TestDynamicProviderInstancesAndDirectoryLifecycle(t *testing.T) {
 	} {
 		input.Name = store.LocalizedText{En: input.ID, ZhCN: input.ID}
 		input.Enabled = true
-		input, err = NormalizeApplication(input)
+		input, err = normalizeApplication(input)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -53,7 +54,7 @@ func TestDynamicProviderInstancesAndDirectoryLifecycle(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		registry, err := NewDynamic(vendors, apps, pool)
+		registry, err := newDynamic(vendors, apps, pool)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -112,7 +113,7 @@ func TestDynamicProviderInstancesAndDirectoryLifecycle(t *testing.T) {
 	if _, ok := registry.LookupAny(seed.Key); !ok {
 		t.Fatal("disabled template disappeared")
 	}
-	if empty, err := NewDynamic(nil, nil, pool); err != nil || len(empty.Entries()) != 0 {
+	if empty, err := newDynamic(nil, nil, pool); err != nil || len(empty.Entries()) != 0 {
 		t.Fatal("empty runtime directory is invalid", err)
 	}
 }
@@ -160,4 +161,42 @@ func TestIndependentReleaseInstancesUseTheProviderTemplate(t *testing.T) {
 	if _, err = canonicalTemplates(append(descriptors, descriptors[0])); err == nil {
 		t.Fatal("two templates for one provider accepted")
 	}
+}
+
+// normalizeApplication applies provider BaseURL defaults. The API supplies the
+// default TTL only when its input field was omitted, so an explicit GeneralHttp
+// TTL of zero remains meaningful (always revalidate).
+func normalizeApplication(input store.ApplicationInput) (store.ApplicationInput, error) {
+	config, err := application.NormalizeConfig(input.Provider, application.ProviderConfig{BaseURL: input.BaseURL, BaseURLs: input.BaseURLs, SourceStrategy: input.SourceStrategy, CacheTTLSeconds: input.CacheTTLSeconds})
+	if err != nil {
+		return store.ApplicationInput{}, err
+	}
+	input.BaseURL, input.CacheTTLSeconds = config.BaseURL, config.CacheTTLSeconds
+	input.BaseURLs, input.SourceStrategy = config.BaseURLs, config.SourceStrategy
+	return input, nil
+}
+
+func newDynamic(vendors []store.Vendor, apps []store.Application, pool *distributor.Pool) (*application.Registry, error) {
+	entries, err := entriesFromRecords(vendors, apps, pool)
+	if err != nil {
+		return nil, err
+	}
+	return application.NewRegistry(entries)
+}
+
+// entriesFromRecords builds the entries of persisted records with the reviewed descriptors.
+func entriesFromRecords(vendors []store.Vendor, apps []store.Application, pool *distributor.Pool) ([]application.Entry, error) {
+	descriptors, err := reviewedDescriptors()
+	if err != nil {
+		return nil, err
+	}
+	return entriesFromConfiguration(store.DirectorySnapshot{Vendors: vendors, Applications: apps, ReviewedDescriptors: descriptors}, pool)
+}
+
+func reviewedDescriptors() ([]application.Descriptor, error) {
+	input := presets.Embedded().Descriptors()
+	if err := ValidateDescriptors(input); err != nil {
+		return nil, err
+	}
+	return input, nil
 }

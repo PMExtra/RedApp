@@ -216,5 +216,3 @@ func (s *Server) patchAppConfiguration(w http.ResponseWriter, r *http.Request) {
 	}
 	writeRevision(w, http.StatusOK, c.Revision, configurationDocument(c, a.Provider))
 }
-
-func encodeJSON(value any) json.RawMessage { raw, _ := json.Marshal(value); return raw }

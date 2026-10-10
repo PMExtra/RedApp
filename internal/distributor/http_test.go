@@ -36,3 +36,6 @@ func sourceURL(c *Client, path string) string {
 	}
 	return u
 }
+
+// New is a public-release client on a fresh pool.
+func New(base string) (*Client, error) { return NewPool().NewClient(base, PublicRelease) }

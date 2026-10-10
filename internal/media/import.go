@@ -11,18 +11,6 @@ import (
 	"github.com/PMExtra/RedApp/internal/fsutil"
 )
 
-func PrepareImage(raw []byte) ([]byte, string, error) {
-	if len(raw) > MaxBytes {
-		return nil, "", ErrTooLarge
-	}
-	body, ext, e := normalize(raw)
-	if e != nil {
-		return nil, "", e
-	}
-	hash := sha256.Sum256(body)
-	return body, PublicPrefix + hex.EncodeToString(hash[:]) + ext, nil
-}
-
 // ApplyImages serializes image uploads with publication/rollback. Existing shared
 // content is never removed; only newly created, still unreferenced images are reclaimed.
 func (s *Store) ApplyImages(images map[string][]byte, referenced func(string) bool, apply func() error) error {
