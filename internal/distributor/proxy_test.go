@@ -93,14 +93,14 @@ func TestHTTPProxyTLSResumeAndPrivateCredentials(t *testing.T) {
 	if err := c.pool.SetProxy(ProxyUpdate{Mode: "direct"}, 0); err == nil || c.transports.current.Load() != transport || c.pool.Proxy().Revision != 1 {
 		t.Fatal("stale proxy update changed the active transport")
 	}
-	if _, err := c.Get(context.Background(), c.URL("channels/latest"), nil); err == nil {
+	if _, err := c.Get(context.Background(), sourceURL(c, "channels/latest"), nil); err == nil {
 		t.Fatal("untrusted TLS certificate accepted")
 	} else if err.Error() != "Upstream connection failed" {
 		t.Fatal("connection error exposed details")
 	}
 	trustFixture(c, upstream)
 	for _, path := range []string{"channels/latest", "releases/0.159.2/release.json", "releases/0.159.2/archive.tgz"} {
-		resp, err := c.Get(context.Background(), c.URL(path), nil)
+		resp, err := c.Get(context.Background(), sourceURL(c, path), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -110,7 +110,7 @@ func TestHTTPProxyTLSResumeAndPrivateCredentials(t *testing.T) {
 			t.Fatal("proxy transfer failed")
 		}
 	}
-	resp, err := c.Get(context.Background(), c.URL("releases/0.159.2/archive.tgz"), http.Header{"Range": []string{"bytes=10-"}, "If-Range": []string{"\"trusted\""}})
+	resp, err := c.Get(context.Background(), sourceURL(c, "releases/0.159.2/archive.tgz"), http.Header{"Range": []string{"bytes=10-"}, "If-Range": []string{"\"trusted\""}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestSOCKS5UsesProxyDNS(t *testing.T) {
 		t.Fatal(err)
 	}
 	trustFixture(c, upstream)
-	resp, err := c.Get(context.Background(), c.URL("channels/latest"), nil)
+	resp, err := c.Get(context.Background(), sourceURL(c, "channels/latest"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestProxySwapDoesNotCancelActiveResponse(t *testing.T) {
 	second := connectProxy(t, upstream, nil, nil)
 	c.pool.SetProxy(ProxyUpdate{Mode: "url", URL: first.URL}, c.pool.Proxy().Revision)
 	trustFixture(c, upstream)
-	resp, err := c.Get(context.Background(), c.URL("channels/latest"), nil)
+	resp, err := c.Get(context.Background(), sourceURL(c, "channels/latest"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +258,7 @@ func TestProxySwapDoesNotCancelActiveResponse(t *testing.T) {
 	if err != nil || string(data) != "finished" {
 		t.Fatal("active response cancelled", err)
 	}
-	next, err := c.Get(context.Background(), c.URL("channels/latest"), nil)
+	next, err := c.Get(context.Background(), sourceURL(c, "channels/latest"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +280,7 @@ func TestSiblingSharesProxyUpdatesButKeepsOriginBoundary(t *testing.T) {
 		}
 		trustFixture(c, upstream)
 		for _, client := range []*Client{c, sibling} {
-			resp, err := client.Get(context.Background(), client.URL("manifest.json"), nil)
+			resp, err := client.Get(context.Background(), sourceURL(client, "manifest.json"), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -290,7 +290,7 @@ func TestSiblingSharesProxyUpdatesButKeepsOriginBoundary(t *testing.T) {
 				t.Fatal("shared proxy not applied")
 			}
 		}
-		if _, err = sibling.Get(context.Background(), c.URL("manifest.json"), nil); err == nil {
+		if _, err = sibling.Get(context.Background(), sourceURL(c, "manifest.json"), nil); err == nil {
 			t.Fatal("sibling accepted foreign path")
 		}
 		proxy.Close()

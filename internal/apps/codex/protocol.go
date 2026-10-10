@@ -9,7 +9,6 @@ import (
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/jsoncheck"
-	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -160,7 +159,11 @@ func (p *Protocol) VerifyRelease(version string, envelope application.Envelope) 
 	}
 	out := application.Release{Version: version, Envelope: envelope, Artifacts: make([]application.VerifiedArtifact, 0, len(r.Assets))}
 	for _, a := range r.Assets {
-		out.Artifacts = append(out.Artifacts, application.VerifiedArtifact{Key: a.Name, Source: p.upstream.URL("releases/" + version + "/" + a.Name), SHA256: strings.ToLower(a.Digest[7:]), Size: a.Size})
+		source, err := p.upstream.RelativeURL("releases/" + version + "/" + a.Name)
+		if err != nil {
+			return application.Release{}, fmt.Errorf("artifact %s source: %w", a.Name, err)
+		}
+		out.Artifacts = append(out.Artifacts, application.VerifiedArtifact{Key: a.Name, Source: source, SHA256: strings.ToLower(a.Digest[7:]), Size: a.Size})
 	}
 	return out, nil
 }
@@ -216,8 +219,8 @@ func (p *Protocol) parse(body []byte, requested string) (Release, error) {
 		// that field as a fetch destination: the authorized relative path is
 		// always rebound to this instance's configured upstream in VerifyRelease.
 		path := "releases/" + v + "/" + a.Name
-		u, e := url.Parse(a.URL)
-		configured := a.URL == p.upstream.URL(path) && e == nil && p.upstream.Validate(u) == nil
+		expected, e := p.upstream.RelativeURL(path)
+		configured := e == nil && a.URL == expected
 		official := a.URL == "https://releases.openai.com/codex/"+path
 		if !configured && !official {
 			return Release{}, errors.New("Asset URL is not authorized")

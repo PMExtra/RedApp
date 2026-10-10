@@ -38,7 +38,7 @@ func TestManagerProcessHelper(t *testing.T) {
 		os.Exit(4)
 	}
 	hash := os.Getenv("REDAPP_DOWNLOAD_HASH")
-	source := c.URL("asset")
+	source := testutil.SourceURL(c, "asset")
 	r := Resource{Application: testApp, Version: "0.1.0", Key: "asset", ID: LogicalIdentity(testApp, "0.1.0", "asset"), Source: source, Hash: hash}
 	authorize(t, m, r)
 	rd, _, e := m.Acquire(context.Background(), r)

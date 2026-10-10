@@ -8,22 +8,20 @@ import (
 	"strings"
 )
 
-type indexKey struct{}
-
 // Index validates every directory redirect inside this exact configured base.
 func (c *Client) Index(ctx context.Context, relative string) (*http.Response, error) {
 	if relative == "" {
 		source := *c.Base
 		source.Path = strings.TrimSuffix(source.Path, "/") + "/"
 		source.RawPath = ""
-		return c.Do(context.WithValue(ctx, indexKey{}, true), http.MethodGet, source.String(), http.Header{})
+		return c.Send(ctx, Request{Method: http.MethodGet, URL: source.String(), directory: true})
 	}
 	source, err := c.RelativeURL(strings.TrimSuffix(relative, "/"))
 	if err != nil {
 		return nil, err
 	}
 	source += "/"
-	return c.Do(context.WithValue(ctx, indexKey{}, true), http.MethodGet, source, http.Header{})
+	return c.Send(ctx, Request{Method: http.MethodGet, URL: source, directory: true})
 }
 func (c *Client) IndexBoundary(u *url.URL) bool {
 	if u == nil || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Scheme != c.Base.Scheme || !strings.EqualFold(u.Host, c.Base.Host) {

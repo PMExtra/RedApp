@@ -864,7 +864,7 @@ func (m *Manager) attempt(g *Generation) error {
 	if client == nil {
 		return errors.New("Unknown persisted resource application")
 	}
-	resp, e := client.Get(distributor.WithIdleTimeout(g.ctx, m.idleTimeout), g.Resource.Source, headers)
+	resp, e := client.Send(g.ctx, distributor.Request{Method: http.MethodGet, URL: g.Resource.Source, Header: headers, IdleTimeout: m.idleTimeout})
 	if e != nil {
 		return e
 	}

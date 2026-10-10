@@ -120,7 +120,11 @@ func ReadBody(ctx context.Context, client *distributor.Client, path string, limi
 	// Metadata keeps an overall deadline; only artifact streams are unbounded.
 	ctx, cancel := context.WithTimeout(ctx, MetadataTimeout)
 	defer cancel()
-	r, err := client.Get(ctx, client.URL(path), http.Header{})
+	source, err := client.RelativeURL(path)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrUpstream, err)
+	}
+	r, err := client.Get(ctx, source, http.Header{})
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUpstream, err)
 	}

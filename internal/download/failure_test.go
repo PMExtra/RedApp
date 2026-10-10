@@ -20,7 +20,7 @@ func TestDiskFailureDoesNotPoisonVerifiedCache(t *testing.T) {
 	good := authorizedResource(t, m, c, data)
 	collect(t, m, good)
 	bad := good
-	bad.Source = c.URL("second")
+	bad.Source = testutil.SourceURL(c, "second")
 	bad.Version = "0.2.0"
 	bad.Hash = digest([]byte("different approved content"))
 	bad.ID = LogicalIdentity(bad.Application, bad.Version, bad.Key)
@@ -65,7 +65,7 @@ func TestDatabaseBusyIsBoundedAndVerifiedCacheSurvives(t *testing.T) {
 	}
 	defer blocker.Close()
 	bad := good
-	bad.Source = c.URL("second")
+	bad.Source = testutil.SourceURL(c, "second")
 	bad.Version = "0.2.0"
 	bad.Hash = digest([]byte("different approved content"))
 	bad.ID = LogicalIdentity(bad.Application, bad.Version, bad.Key)

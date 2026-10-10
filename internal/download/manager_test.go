@@ -37,7 +37,7 @@ func setup(t *testing.T, c *distributor.Client) (*Manager, *store.Store, string)
 	return m, db, dir
 }
 func resource(c *distributor.Client, b []byte) Resource {
-	source := c.URL("asset")
+	source := testutil.SourceURL(c, "asset")
 	hash := digest(b)
 	return Resource{Application: testApp, Version: "0.1.0", Key: "asset", ID: LogicalIdentity(testApp, "0.1.0", "asset"), Source: source, Hash: hash, Labels: map[string]string{"version": "0.1.0", "name": "asset"}}
 }

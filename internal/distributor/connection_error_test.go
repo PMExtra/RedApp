@@ -31,7 +31,7 @@ func TestConnectionFailureClassificationForSourceRetry(t *testing.T) {
 				t.Fatal(err)
 			}
 			c.HTTP.Transport = compressionTransport(func(*http.Request) (*http.Response, error) { return nil, tc.cause })
-			_, err = c.Get(context.Background(), c.URL("file"), nil)
+			_, err = c.Get(context.Background(), sourceURL(c, "file"), nil)
 			if err == nil || errors.Is(err, ErrConnection) != tc.retry {
 				t.Fatal("incorrect source retry class", err)
 			}
@@ -44,7 +44,7 @@ func TestConnectionFailureClassificationForSourceRetry(t *testing.T) {
 	c.HTTP.Transport = compressionTransport(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 302, Header: http.Header{"Location": {"http://another.example/file"}}, Body: io.NopCloser(strings.NewReader(""))}, nil
 	})
-	if _, err := c.Get(context.Background(), c.URL("file"), nil); err == nil || errors.Is(err, ErrConnection) {
+	if _, err := c.Get(context.Background(), sourceURL(c, "file"), nil); err == nil || errors.Is(err, ErrConnection) {
 		t.Fatal("redirect policy failure classified as retryable", err)
 	}
 }

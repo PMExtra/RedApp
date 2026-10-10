@@ -91,7 +91,7 @@ func TestMirrorMetadataCannotSelectTheArtifactDestination(t *testing.T) {
 			t.Fatal("valid mirror metadata rejected", err)
 		}
 		for _, artifact := range release.Artifacts {
-			if artifact.Source != client.URL("releases/1.2.3/"+artifact.Key) {
+			if artifact.Source != testutil.SourceURL(client, "releases/1.2.3/"+artifact.Key) {
 				t.Fatalf("metadata selected a different fetch destination: %s", artifact.Source)
 			}
 		}

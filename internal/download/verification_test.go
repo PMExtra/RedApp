@@ -143,7 +143,7 @@ func TestConcurrentVerificationRunsOnceWithoutBlockingOtherResources(t *testing.
 	reuse.ID = LogicalIdentity(reuse.Application, reuse.Version, reuse.Key)
 	authorize(t, m, reuse)
 	unrelated := resource(c, other)
-	unrelated.Source, unrelated.Version = c.URL("other"), "0.3.0"
+	unrelated.Source, unrelated.Version = testutil.SourceURL(c, "other"), "0.3.0"
 	unrelated.ID = LogicalIdentity(unrelated.Application, unrelated.Version, unrelated.Key)
 	authorize(t, m, unrelated)
 

@@ -78,12 +78,16 @@ func (s *Service) warmCurrent(ctx context.Context, entry application.Entry, path
 	}
 	if old != nil {
 		for i, a := range attempts {
+			source, err := a.Client.RelativeURL(path)
+			if err != nil {
+				return failed
+			}
 			release, err := s.budget.AcquireHTTPWriter()
 			if err != nil {
 				return warmplan.Item{Status: "failed", Reason: "capacity"}
 			}
-			headers := sourceValidators(old, a.Client.URL(path))
-			resp, headErr := a.Client.Head(ctx, a.Client.URL(path), headers)
+			headers := sourceValidators(old, source)
+			resp, headErr := a.Client.Head(ctx, source, headers)
 			release()
 			if headErr != nil || resp.StatusCode >= 500 && resp.StatusCode != 501 {
 				_ = s.upstreamFailure(entry, path, 0)
@@ -109,7 +113,7 @@ func (s *Service) warmCurrent(ctx context.Context, entry application.Entry, path
 				return warmplan.Item{Status: "failed", Reason: "not_found"}
 			}
 			if resp.StatusCode == 304 {
-				if !validSourceNotModified(old, resp, a.Client.URL(path), headers) {
+				if !validSourceNotModified(old, resp, source, headers) {
 					return warmplan.Item{Status: "failed", Reason: "invalid_not_modified"}
 				}
 				combined := mergedHeaders(old.headers, resp.Header)
@@ -129,7 +133,7 @@ func (s *Service) warmCurrent(ctx context.Context, entry application.Entry, path
 					_ = s.retire(old)
 					return warmplan.Item{Status: "not_cacheable", Reason: "source_policy"}
 				}
-				sameSource := old.SourceURL == responseSourceURL(resp, a.Client.URL(path))
+				sameSource := old.SourceURL == responseSourceURL(resp, source)
 				oldTag, newTag := old.headers.Get("ETag"), resp.Header.Get("ETag")
 				oldModified, newModified := old.headers.Get("Last-Modified"), resp.Header.Get("Last-Modified")
 				changed := sameSource && (oldTag != "" && newTag != "" && oldTag != newTag || oldModified != "" && newModified != "" && oldModified != newModified || resp.ContentLength >= 0 && resp.ContentLength != old.SizeBytes)

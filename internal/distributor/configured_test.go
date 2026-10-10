@@ -80,7 +80,7 @@ func TestConfiguredHTTPMethodsAndHeaderAllowlist(t *testing.T) {
 	source, _ := c.RelativeURL("目录/file name")
 	headers := http.Header{"Range": {"bytes=0-3"}, "If-Range": {`"v1"`}, "If-None-Match": {`"v0"`}, "If-Modified-Since": {"Wed, 21 Oct 2015 07:28:00 GMT"}, "If-Match": {`"v1"`}, "If-Unmodified-Since": {"Wed, 21 Oct 2015 07:28:00 GMT"}, "Authorization": {"secret"}, "Cookie": {"secret"}, "Proxy-Authorization": {"secret"}, "Origin": {"http://untrusted.example"}, "Forwarded": {"host=untrusted"}, "X-Unrelated": {"drop"}}
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
-		resp, err := c.Do(context.Background(), method, source, headers)
+		resp, err := c.Send(context.Background(), Request{Method: method, URL: source, Header: headers})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -93,16 +93,16 @@ func TestConfiguredHTTPMethodsAndHeaderAllowlist(t *testing.T) {
 	untrustedTLS := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "untrusted") }))
 	defer untrustedTLS.Close()
 	configuredTLS, _ := NewPool().NewClient(untrustedTLS.URL+"/files", GeneralHTTP)
-	if _, err := configuredTLS.Get(context.Background(), configuredTLS.URL("asset"), nil); err == nil {
+	if _, err := configuredTLS.Get(context.Background(), sourceURL(configuredTLS, "asset"), nil); err == nil {
 		t.Fatal("configured source skipped TLS certificate verification")
 	}
-	if _, err := c.Do(context.Background(), http.MethodPost, source, nil); err == nil {
+	if _, err := c.Send(context.Background(), Request{Method: http.MethodPost, URL: source}); err == nil {
 		t.Fatal("POST accepted")
 	}
 	// Clearing a proxy must restore each mode's direct dial behavior, rather
 	// than retaining the permissive configured dialer for public clients.
 	public, _ := New("https://127.0.0.1/files")
-	if _, err := public.Get(context.Background(), public.URL("asset"), nil); err == nil {
+	if _, err := public.Get(context.Background(), sourceURL(public, "asset"), nil); err == nil {
 		t.Fatal("public client connected to a loopback destination")
 	}
 }
@@ -130,7 +130,7 @@ func TestRedirectModesAndCredentialBoundary(t *testing.T) {
 		{"redirect traversal", "https://cdn.example/a/%2e%2e/file", general, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			initial, _ := http.NewRequest(http.MethodGet, tc.client.URL("start"), nil)
+			initial, _ := http.NewRequest(http.MethodGet, sourceURL(tc.client, "start"), nil)
 			next, _ := http.NewRequest(http.MethodGet, tc.target, nil)
 			for _, header := range []string{"Authorization", "Proxy-Authorization", "Cookie", "Cookie2", "Referer"} {
 				next.Header.Set(header, "sensitive")
@@ -160,7 +160,7 @@ func TestRedirectModesAndCredentialBoundary(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("file")), Request: r}, nil
 	})}
-	resp, err := general.Get(context.Background(), general.URL("start"), nil)
+	resp, err := general.Get(context.Background(), sourceURL(general, "start"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestRedirectModesAndCredentialBoundary(t *testing.T) {
 		calls++
 		return &http.Response{StatusCode: 302, Header: http.Header{"Location": {"https://cdn.example/loop"}}, Body: http.NoBody, Request: r}, nil
 	})
-	if _, err = general.Get(context.Background(), general.URL("start"), nil); err == nil {
+	if _, err = general.Get(context.Background(), sourceURL(general, "start"), nil); err == nil {
 		t.Fatal("unbounded redirect loop")
 	}
 	if calls != 5 {
@@ -207,7 +207,7 @@ func TestPoolProxyIndependentOfApplicationsAndSharedAcrossModes(t *testing.T) {
 		if c.pool != pool {
 			t.Fatal("client proxy state differs from owner")
 		}
-		resp, err := c.Get(context.Background(), c.URL("asset"), nil)
+		resp, err := c.Get(context.Background(), sourceURL(c, "asset"), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -234,10 +234,10 @@ func TestPoolProxyIndependentOfApplicationsAndSharedAcrossModes(t *testing.T) {
 	}
 	// A configured client created before the update regains its private direct
 	// transport once the global proxy has been cleared.
-	if _, err = public.Get(context.Background(), public.URL("asset"), nil); err == nil {
+	if _, err = public.Get(context.Background(), sourceURL(public, "asset"), nil); err == nil {
 		t.Fatal("public client regained configured dialer after proxy clear")
 	}
-	resp, err := configured.Get(context.Background(), configured.URL("asset"), nil)
+	resp, err := configured.Get(context.Background(), sourceURL(configured, "asset"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -166,7 +166,11 @@ func (p *Protocol) VerifyRelease(version string, envelope application.Envelope) 
 		a := m.Platforms[platform]
 		key := platform + "/" + a.Binary
 		size := a.Size
-		out.Artifacts = append(out.Artifacts, application.VerifiedArtifact{Key: key, Source: p.upstream.URL(version + "/" + key), SHA256: a.Checksum, Size: &size})
+		source, err := p.upstream.RelativeURL(version + "/" + key)
+		if err != nil {
+			return application.Release{}, fmt.Errorf("artifact %s source: %w", key, err)
+		}
+		out.Artifacts = append(out.Artifacts, application.VerifiedArtifact{Key: key, Source: source, SHA256: a.Checksum, Size: &size})
 	}
 	return out, nil
 }

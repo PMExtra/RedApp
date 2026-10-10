@@ -38,7 +38,7 @@ func TestCleanupCrashHelper(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	r := Resource{Application: testApp, Version: "0.1.0", Key: "asset", Source: c.URL("asset"), Hash: os.Getenv("REDAPP_CLEANUP_HASH")}
+	r := Resource{Application: testApp, Version: "0.1.0", Key: "asset", Source: testutil.SourceURL(c, "asset"), Hash: os.Getenv("REDAPP_CLEANUP_HASH")}
 	r.ID = LogicalIdentity(r.Application, r.Version, r.Key)
 	authorize(t, m, r)
 	versions, _ := db.VersionsFor(testApp)

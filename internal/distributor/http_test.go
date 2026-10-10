@@ -27,3 +27,12 @@ func TestFixedOriginAndPaths(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+// sourceURL builds a fixture URL and panics on an invalid path.
+func sourceURL(c *Client, path string) string {
+	u, err := c.RelativeURL(path)
+	if err != nil {
+		panic(err)
+	}
+	return u
+}

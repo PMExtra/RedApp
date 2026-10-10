@@ -29,7 +29,7 @@ func TestStalledBodyFailsWithRetryableIdleTimeout(t *testing.T) {
 		w.(http.Flusher).Flush()
 		<-r.Context().Done()
 	})
-	resp, err := c.Get(WithIdleTimeout(context.Background(), 50*time.Millisecond), c.URL("asset"), nil)
+	resp, err := c.Send(context.Background(), Request{Method: http.MethodGet, URL: sourceURL(c, "asset"), IdleTimeout: 50 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestProgressingBodyHasNoOverallDeadline(t *testing.T) {
 		}
 	})
 	start := time.Now()
-	resp, err := c.Get(WithIdleTimeout(context.Background(), idle), c.URL("asset"), nil)
+	resp, err := c.Send(context.Background(), Request{Method: http.MethodGet, URL: sourceURL(c, "asset"), IdleTimeout: idle})
 	if err != nil {
 		t.Fatal(err)
 	}
