@@ -20,18 +20,17 @@ import (
 func (s *Service) Snapshot() ([]download.View, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.DB.Query(`SELECT ` + columns + ` FROM http_cache_generations`)
+	entries, err := s.db.AllHTTPCacheEntries()
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []download.View{}
 	remaining := map[string]int{}
 	for key, count := range s.readers {
 		remaining[key] = count
 	}
-	for rows.Next() {
-		r, err := scan(rows)
+	for _, e := range entries {
+		r, err := rowFromEntry(e)
 		if err != nil {
 			return nil, err
 		}
@@ -49,9 +48,6 @@ func (s *Service) Snapshot() ([]download.View, error) {
 		}
 		remaining[key] -= readers
 		out = append(out, download.View{Generation: download.Generation{ID: r.GenerationID, Resource: resource, State: "complete", Path: s.bodyPath(r.GenerationID), Bytes: r.SizeBytes, Total: r.SizeBytes, Started: r.FetchedAt, Received: r.FetchedAt, Finished: r.FetchedAt, Retired: !r.current}, Readers: readers, Current: r.current, SampledAt: s.now()})
-	}
-	if err = rows.Err(); err != nil {
-		return nil, err
 	}
 	for _, t := range s.transfers {
 		logical := sha256.Sum256([]byte(t.entry.StorageID() + "\x00" + t.path))

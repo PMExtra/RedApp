@@ -12,8 +12,8 @@ func TestHTTPMaintenancePagesUseSourceRowRangeIndex(t *testing.T) {
 		sql  string
 		args []any
 	}{
-		{"frozen page", `SELECT row_no,id,storage_id,path,sha256,size_bytes FROM http_cache_generations WHERE storage_id=? AND is_current=1 AND row_no>? AND row_no<=? ORDER BY row_no LIMIT ?`, []any{"app/test-e1", 1000, 1000000, 1000}},
-		{"high water", `SELECT COALESCE(MAX(row_no),0) FROM http_cache_generations WHERE storage_id=? AND is_current=1`, []any{"app/test-e1"}},
+		{"frozen page", `SELECT ` + httpEntryColumns + ` FROM http_cache_generations ` + httpPageCondition, []any{"app/test-e1", 1000, 1000000, 1000}},
+		{"high water", httpHighWaterQuery, []any{"app/test-e1"}},
 	} {
 		t.Run(query.name, func(t *testing.T) {
 			rows, err := s.DB.Query("EXPLAIN QUERY PLAN "+query.sql, query.args...)

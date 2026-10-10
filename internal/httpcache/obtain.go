@@ -48,9 +48,8 @@ func (s *Service) sharedFetch(ctx context.Context, f fill, old *Row) (fetchResul
 			return fetchResult{}, ErrClosed
 		}
 		if old == nil {
-			var exists bool
-			err := s.db.DB.QueryRow(`SELECT EXISTS(SELECT 1 FROM http_cache_generations WHERE storage_id=? AND path=? AND is_current=1)`, entry.StorageID(), path).Scan(&exists)
-			if err != nil || exists {
+			_, err := s.db.CurrentHTTPCacheEntry(entry.StorageID(), path)
+			if !errors.Is(err, sql.ErrNoRows) {
 				s.mu.Unlock()
 				if err != nil {
 					return fetchResult{}, err

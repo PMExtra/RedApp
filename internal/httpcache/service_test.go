@@ -48,6 +48,7 @@ func (b *testBudget) AcquireHTTPWriter() (func(), error) {
 func (b *testBudget) MaxArtifactBytes() int64 { return b.limit }
 
 type fixture struct {
+	dir    string
 	s      *Service
 	db     *store.Store
 	entry  application.Entry
@@ -78,7 +79,7 @@ func newFixture(t *testing.T, h http.Handler, ttl int) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.DB.Close() })
+	t.Cleanup(func() { db.Close() })
 	vendor, err := db.CreateVendor(store.VendorInput{ID: "vendor", Name: store.LocalizedText{En: "Vendor", ZhCN: "发布者"}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +89,7 @@ func newFixture(t *testing.T, h http.Handler, ttl int) *fixture {
 		t.Fatal(err)
 	}
 	client, _ := distributor.NewPool().NewClient(app.BaseURL, distributor.GeneralHTTP)
-	f := &fixture{db: db, app: app, vendor: vendor, budget: &testBudget{limit: 1024}}
+	f := &fixture{dir: dir, db: db, app: app, vendor: vendor, budget: &testBudget{limit: 1024}}
 	f.entry = application.Entry{Descriptor: application.Descriptor{ID: app.Key, DefaultChannelTTLSeconds: ttl}, UID: app.UID, SourceEpoch: app.SourceEpoch, Revision: app.Revision, VendorRevision: vendor.Revision, RuntimeRevision: app.RuntimeRevision, VendorRuntimeRevision: vendor.RuntimeRevision, Provider: application.HttpCache, Enabled: true, Upstream: client}
 	f.clock.Store(time.Now().Unix())
 	f.s, err = New(dir, db, f.budget, WithClock(func() time.Time { return time.Unix(f.clock.Load(), 0).UTC() }))
@@ -108,7 +109,7 @@ func (f *fixture) serve(t *testing.T, method string, headers http.Header) (*http
 }
 func (f *fixture) rows(t *testing.T) []Row {
 	t.Helper()
-	rows, err := f.s.List(f.entry.StorageID())
+	rows, err := f.s.listRows(f.entry.StorageID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -770,7 +771,7 @@ func TestSourceEpochIsolationAndRecovery(t *testing.T) {
 	if err != nil || w.Body.String() != "second" {
 		t.Fatal("new source inherited cached bytes", w.Body.String(), err)
 	}
-	oldRows, err := f.s.List(oldEntry.StorageID())
+	oldRows, err := f.s.listRows(oldEntry.StorageID())
 	if err != nil || len(oldRows) != 1 {
 		t.Fatal("source edit removed old data", oldRows, err)
 	}
@@ -786,7 +787,7 @@ func TestSourceEpochIsolationAndRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rows, err := recovered.List(f.entry.StorageID()); err != nil || len(rows) != 1 {
+	if rows, err := recovered.listRows(f.entry.StorageID()); err != nil || len(rows) != 1 {
 		t.Fatal("complete body lost on restart", rows, err)
 	}
 	recovered.Close()
@@ -798,10 +799,10 @@ func TestSourceEpochIsolationAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer recovered.Close()
-	if rows, err := recovered.List(f.entry.StorageID()); err != nil || len(rows) != 0 {
+	if rows, err := recovered.listRows(f.entry.StorageID()); err != nil || len(rows) != 0 {
 		t.Fatal("corrupt observed hash accepted", rows, err)
 	}
-	if rows, err := recovered.List(oldEntry.StorageID()); err != nil || len(rows) != 1 {
+	if rows, err := recovered.listRows(oldEntry.StorageID()); err != nil || len(rows) != 1 {
 		t.Fatal("recovery deleted unrelated historical source", rows, err)
 	}
 }

@@ -21,7 +21,7 @@ func TestCleanupStopsBetweenBatchesWhenRuntimeRevisionChanges(t *testing.T) {
 	// result is recorded. Both become visible at the first batch commit; the
 	// next batch must recheck the captured fence before retiring another row.
 	// This models a policy edit without adding a production synchronization hook.
-	_, err = f.db.DB.Exec(`CREATE TEMP TRIGGER change_revision_after_cleanup_batch
+	_, err = f.sql(t).Exec(`CREATE TRIGGER change_revision_after_cleanup_batch
 		AFTER UPDATE OF completed_count ON http_cleanup_previews
 		WHEN NEW.kind='cleanup' AND OLD.completed_count=99 AND NEW.completed_count=100
 		BEGIN UPDATE applications SET revision=revision+1,runtime_revision=runtime_revision+1; END`)
@@ -38,27 +38,27 @@ func TestCleanupStopsBetweenBatchesWhenRuntimeRevisionChanges(t *testing.T) {
 		t.Fatal("partial cleanup receipt is inaccurate", status, receipt, err)
 	}
 	var current, early, retired, pending int
-	if err = f.db.DB.QueryRow(`SELECT COUNT(*),COALESCE(SUM(path<'seed/000100'),0) FROM http_cache_generations WHERE storage_id=? AND is_current=1`, f.entry.StorageID()).Scan(&current, &early); err != nil {
+	if err = f.sql(t).QueryRow(`SELECT COUNT(*),COALESCE(SUM(path<'seed/000100'),0) FROM http_cache_generations WHERE storage_id=? AND is_current=1`, f.entry.StorageID()).Scan(&current, &early); err != nil {
 		t.Fatal(err)
 	}
 	if current != 1105 || early != 0 {
 		t.Fatal("unprocessed generations were removed or the first batch was rolled back", current, early)
 	}
-	if err = f.db.DB.QueryRow(`SELECT COALESCE(SUM(result_status='retired'),0),COALESCE(SUM(result_status='pending'),0) FROM http_cleanup_preview_items WHERE preview_id=?`, preview.ID).Scan(&retired, &pending); err != nil {
+	if err = f.sql(t).QueryRow(`SELECT COALESCE(SUM(result_status='retired'),0),COALESCE(SUM(result_status='pending'),0) FROM http_cleanup_preview_items WHERE preview_id=?`, preview.ID).Scan(&retired, &pending); err != nil {
 		t.Fatal(err)
 	}
 	if retired != 100 || pending != 1105 {
 		t.Fatal("frozen item results disagree with committed work", retired, pending)
 	}
 	var revision, epoch int64
-	if err = f.db.DB.QueryRow(`SELECT revision,source_epoch FROM applications WHERE uid=?`, f.entry.UID).Scan(&revision, &epoch); err != nil || revision != f.entry.Revision+1 || epoch != f.entry.SourceEpoch {
+	if err = f.sql(t).QueryRow(`SELECT revision,source_epoch FROM applications WHERE uid=?`, f.entry.UID).Scan(&revision, &epoch); err != nil || revision != f.entry.Revision+1 || epoch != f.entry.SourceEpoch {
 		t.Fatal("test did not advance the policy fence within the same source", revision, epoch, err)
 	}
 	again, err := f.s.ExecuteCleanup(context.Background(), f.entry, preview.ID)
 	if !errors.Is(err, ErrInvalidPreview) || again != receipt {
 		t.Fatal("failed receipt retry resumed the remaining selection", again, err)
 	}
-	if err = f.db.DB.QueryRow(`SELECT COUNT(*) FROM http_cache_generations WHERE storage_id=? AND is_current=1`, f.entry.StorageID()).Scan(&current); err != nil || current != 1105 {
+	if err = f.sql(t).QueryRow(`SELECT COUNT(*) FROM http_cache_generations WHERE storage_id=? AND is_current=1`, f.entry.StorageID()).Scan(&current); err != nil || current != 1105 {
 		t.Fatal("failed receipt retry changed surviving files", current, err)
 	}
 }

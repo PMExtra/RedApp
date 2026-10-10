@@ -347,41 +347,22 @@ func (s *Service) publish(f fill, old *Row, result fetchResult) (fetchResult, er
 	defer result.staged.Discard()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tx, err := s.db.DB.Begin()
-	if err != nil {
-		return fetchResult{}, err
-	}
-	defer tx.Rollback()
-	if err = s.db.RequireSourceActive(tx, r.storageID, fence(f.entry)); err != nil {
-		return fetchResult{}, err
-	}
-	if old != nil {
-		var currentID string
-		if err = tx.QueryRow(`SELECT id FROM http_cache_generations WHERE storage_id=? AND path=? AND is_current=1`, r.storageID, f.path).Scan(&currentID); err != nil || currentID != old.GenerationID {
-			return fetchResult{}, ErrUpstream
-		}
-	}
-	published := false
-	defer func() {
-		if !published {
-			fsutil.Remove(s.bodyPath(r.GenerationID))
-		}
-	}()
-	if err = result.staged.Publish(s.bodyPath(r.GenerationID)); err != nil {
+	if err := result.staged.Publish(s.bodyPath(r.GenerationID)); err != nil {
 		return fetchResult{}, err
 	}
 	headers, _ := json.Marshal(r.headers)
-	if _, err = tx.Exec(`UPDATE http_cache_generations SET is_current=0,retired_at_s=COALESCE(retired_at_s,?) WHERE storage_id=? AND path=? AND is_current=1`, s.now().Unix(), r.storageID, f.path); err != nil {
-		return fetchResult{}, err
+	replaces := ""
+	if old != nil {
+		replaces = old.GenerationID
 	}
-	_, err = tx.Exec(`INSERT INTO http_cache_generations(id,storage_id,path,sha256,size_bytes,fetched_at_s,validated_at_s,last_access_bucket_s,fresh_until_s,headers_json,source_url,is_current) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)`, r.GenerationID, r.storageID, f.path, r.SHA256, r.SizeBytes, r.FetchedAt.Unix(), r.ValidatedAt.Unix(), 0, r.FreshUntil.Unix(), headers, r.SourceURL)
+	err := s.db.PublishHTTPCacheEntry(store.HTTPCacheEntry{ID: r.GenerationID, StorageID: r.storageID, Path: f.path, SourceURL: r.SourceURL, SHA256: r.SHA256, SizeBytes: r.SizeBytes, Headers: headers, FetchedAt: r.FetchedAt, ValidatedAt: r.ValidatedAt, FreshUntil: r.FreshUntil}, fence(f.entry), replaces, s.now())
 	if err != nil {
+		fsutil.Remove(s.bodyPath(r.GenerationID))
+		if errors.Is(err, store.ErrConflict) {
+			err = ErrUpstream
+		}
 		return fetchResult{}, err
 	}
-	if err = tx.Commit(); err != nil {
-		return fetchResult{}, err
-	}
-	published = true
 	s.pins[r.GenerationID]++
 	r.ETag = r.headers.Get("ETag")
 	if r.ETag == "" {
@@ -392,29 +373,13 @@ func (s *Service) publish(f fill, old *Row, result fetchResult) (fetchResult, er
 func (s *Service) revalidate(f fill, old *Row, headers http.Header) (fetchResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tx, err := s.db.DB.Begin()
-	if err != nil {
-		return fetchResult{}, err
-	}
-	defer tx.Rollback()
-	if err = s.db.RequireSourceActive(tx, f.entry.StorageID(), fence(f.entry)); err != nil {
-		return fetchResult{}, err
-	}
 	now := s.now().UTC()
 	fresh := f.freshness(headers, now)
 	raw, _ := json.Marshal(headers)
-	result, err := tx.Exec(`UPDATE http_cache_generations SET validated_at_s=?,fresh_until_s=?,headers_json=? WHERE id=? AND is_current=1`, now.Unix(), fresh.Unix(), raw, old.GenerationID)
-	if err != nil {
-		return fetchResult{}, err
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return fetchResult{}, err
-	}
-	if n != 1 {
-		return fetchResult{}, ErrUpstream
-	}
-	if err = tx.Commit(); err != nil {
+	if err := s.db.RevalidateHTTPCacheEntry(old.GenerationID, f.entry.StorageID(), fence(f.entry), now, fresh, raw); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			err = ErrUpstream
+		}
 		return fetchResult{}, err
 	}
 	row := *old

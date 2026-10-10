@@ -79,33 +79,26 @@ type buildOptions struct {
 	policy                 *cachepolicy.Policy
 }
 
-const maintenanceColumns = `id,storage_id,kind,state,app_revision,vendor_revision,created_at_s,expires_at_s,selection_json,executed_at_s,result_json,scanned_count,selected_count,selected_bytes,completed_count,failed_count`
-
-func scanMaintenance(row scanner) (MaintenancePreview, error) {
-	var p MaintenancePreview
-	var created, expires int64
-	var executed sql.NullInt64
-	var criteria, result []byte
-	err := row.Scan(&p.ID, &p.storageID, &p.Kind, &p.State, &p.fence.AppRuntimeRevision, &p.fence.VendorRuntimeRevision, &created, &expires, &criteria, &executed, &result, &p.ScannedFiles, &p.SelectedFiles, &p.SelectedBytes, &p.CompletedFiles, &p.FailedFiles)
-	if err != nil {
-		return p, err
-	}
-	if err = json.Unmarshal(criteria, &p.criteria); err != nil {
+func previewFromStore(row store.HTTPPreview) (MaintenancePreview, error) {
+	p := MaintenancePreview{ID: row.ID, Kind: row.Kind, State: row.State, CreatedAt: row.CreatedAt, ExpiresAt: row.ExpiresAt, ScannedFiles: row.ScannedFiles, SelectedFiles: row.SelectedFiles, SelectedBytes: row.SelectedBytes, CompletedFiles: row.CompletedFiles, FailedFiles: row.FailedFiles, Result: row.Result, storageID: row.StorageID, fence: row.Fence, executedAt: row.ExecutedAt, result: row.Result}
+	if err := json.Unmarshal(row.Criteria, &p.criteria); err != nil {
 		return p, err
 	}
 	p.Match = p.criteria.Match
 	p.Basis = p.criteria.Basis
 	p.Before = p.criteria.Before
-	p.CreatedAt = time.Unix(created, 0).UTC()
-	p.ExpiresAt = time.Unix(expires, 0).UTC()
-	p.result = result
-	p.Result = result
-	if executed.Valid {
-		at := time.Unix(executed.Int64, 0).UTC()
-		p.executedAt = &at
-	}
 	return p, nil
 }
+
+// fenceMode is the source check of a preview: refresh and automatic cleanup
+// act on a serving source, manual cleanup also on disabled or old sources.
+func fenceMode(kind string, criteria PreviewCriteria) store.PreviewFence {
+	if kind == "refresh" || criteria.Automatic {
+		return store.ActivePreviewFence
+	}
+	return store.CleanupPreviewFence
+}
+
 func (s *Service) validatePreview(p MaintenancePreview, kind string) error {
 	if kind != "cleanup" && kind != "refresh" || p.Kind != kind {
 		return ErrInvalidPreview
@@ -119,17 +112,28 @@ func (s *Service) validatePreview(p MaintenancePreview, kind string) error {
 	return nil
 }
 func (s *Service) LookupPreview(storageID, kind, id string) (MaintenancePreview, error) {
-	p, err := scanMaintenance(s.db.DB.QueryRow(`SELECT `+maintenanceColumns+` FROM http_cleanup_previews WHERE id=? AND storage_id=?`, id, storageID))
+	p, err := s.preview(id)
+	if err == nil && p.storageID != storageID {
+		err = sql.ErrNoRows
+	}
 	if err != nil {
-		return p, err
+		return MaintenancePreview{}, err
 	}
 	return p, s.validatePreview(p, kind)
+}
+
+func (s *Service) preview(id string) (MaintenancePreview, error) {
+	row, err := s.db.HTTPPreview(id)
+	if err != nil {
+		return MaintenancePreview{}, err
+	}
+	return previewFromStore(row)
 }
 
 // LookupAppPreview finds a preview of any source epoch of the application with
 // the stable uid. A preview of another application reads as sql.ErrNoRows.
 func (s *Service) LookupAppPreview(uid, kind, id string) (MaintenancePreview, error) {
-	p, err := scanMaintenance(s.db.DB.QueryRow(`SELECT `+maintenanceColumns+` FROM http_cleanup_previews WHERE id=?`, id))
+	p, err := s.preview(id)
 	if err != nil {
 		return p, err
 	}
@@ -175,48 +179,28 @@ func (s *Service) buildPreview(ctx context.Context, entry application.Entry, kin
 	if kind == "cleanup" && !criteria.Automatic && ((criteria.Basis != "fetched_at" && criteria.Basis != "last_access") || criteria.Before.IsZero() || criteria.Before.After(s.now())) {
 		return out, ErrInvalidCleanup
 	}
-	tx, err := s.db.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return out, err
-	}
-	defer tx.Rollback()
-	if kind == "refresh" || criteria.Automatic {
-		err = s.db.RequireSourceActive(tx, entry.StorageID(), fence(entry))
-	} else {
-		err = s.db.RequireCleanupFence(tx, entry.StorageID(), fence(entry))
-	}
-	if err != nil {
-		return out, err
-	}
-	var highWater int64
-	if err = tx.QueryRow(`SELECT COALESCE(MAX(row_no),0) FROM http_cache_generations WHERE storage_id=? AND is_current=1`, entry.StorageID()).Scan(&highWater); err != nil {
-		return out, err
-	}
 	now := s.now().UTC()
 	raw, _ := json.Marshal(criteria)
 	id, err := fsutil.RandomID()
 	if err != nil {
 		return out, err
 	}
-	_, err = tx.Exec(`INSERT INTO http_cleanup_previews(id,storage_id,kind,state,app_revision,vendor_revision,created_at_s,expires_at_s,selection_json,high_water) VALUES(?,?,?,'building',?,?,?,?,?,?)`, id, entry.StorageID(), kind, entry.Revision, entry.VendorRevision, now.Unix(), now.Add(10*time.Minute).Unix(), raw, highWater)
+	mode := fenceMode(kind, criteria)
+	row, err := s.db.CreateHTTPPreview(ctx, store.HTTPPreview{ID: id, StorageID: entry.StorageID(), Kind: kind, Fence: fence(entry), CreatedAt: now, ExpiresAt: now.Add(10 * time.Minute), Criteria: raw}, mode)
 	if err != nil {
-		return out, err
-	}
-	if err = tx.Commit(); err != nil {
 		return out, err
 	}
 	defer func() {
 		if buildErr != nil {
 			failureCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			_, _ = s.db.DB.ExecContext(failureCtx, `UPDATE http_cleanup_previews SET state='failed',executed_at_s=?,result_json=? WHERE id=? AND state='building'`, s.now().Unix(), []byte(`{"error":"preview_build_failed"}`), id)
+			_ = s.db.FailHTTPPreviewBuild(failureCtx, id, s.now())
 			_ = s.prunePreviews(failureCtx, 1)
 		}
 	}()
 	after := options.after
 	scanned, selected, active := 0, 0, 0
-	done := false
-	for !done {
+	for done := false; !done; {
 		if err = ctx.Err(); err != nil {
 			return out, err
 		}
@@ -227,35 +211,19 @@ func (s *Service) buildPreview(ctx context.Context, entry application.Entry, kin
 		if limit <= 0 {
 			break
 		}
-		page, err := s.freezePreviewPage(ctx, entry, id, kind, criteria, matcher, options, after, highWater, limit, options.selectLimit-selected)
+		page, pageActive, err := s.freezePreviewPage(ctx, row, mode, criteria, matcher, options, after, limit, options.selectLimit-selected)
 		if err != nil {
 			return out, err
 		}
-		scanned += page.scanned
-		selected += page.selected
-		active += page.active
-		if page.scanned > 0 {
-			after = page.after
+		scanned += page.Scanned
+		selected += page.Selected
+		active += pageActive
+		if page.Scanned > 0 {
+			after = page.Last
 		}
-		done = page.scanned < limit || options.scanLimit > 0 && scanned >= options.scanLimit || options.selectLimit > 0 && selected >= options.selectLimit
+		done = page.Scanned < limit || options.scanLimit > 0 && scanned >= options.scanLimit || options.selectLimit > 0 && selected >= options.selectLimit
 	}
-	tx, err = s.db.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return out, err
-	}
-	defer tx.Rollback()
-	if kind == "refresh" || criteria.Automatic {
-		err = s.db.RequireSourceActive(tx, entry.StorageID(), fence(entry))
-	} else {
-		err = s.db.RequireCleanupFence(tx, entry.StorageID(), fence(entry))
-	}
-	if err != nil {
-		return out, err
-	}
-	if _, err = tx.Exec(`UPDATE http_cleanup_previews SET state='ready' WHERE id=? AND state='building'`, id); err != nil {
-		return out, err
-	}
-	if err = tx.Commit(); err != nil {
+	if err = s.db.FinishHTTPPreviewBuild(ctx, row, mode); err != nil {
 		return out, err
 	}
 	out, err = s.LookupPreview(entry.StorageID(), kind, id)
@@ -264,122 +232,70 @@ func (s *Service) buildPreview(ctx context.Context, entry application.Entry, kin
 	return out, err
 }
 
-type frozenPage struct {
-	scanned, selected, active int
-	after                     int64
-}
-
-func (s *Service) freezePreviewPage(ctx context.Context, entry application.Entry, id, kind string, criteria PreviewCriteria, matcher *pathmatch.Matcher, options buildOptions, after, highWater int64, limit, remaining int) (page frozenPage, err error) {
+// freezePreviewPage selects one page under mu so that the active count sees
+// a consistent set of reader pins.
+func (s *Service) freezePreviewPage(ctx context.Context, row store.HTTPPreview, mode store.PreviewFence, criteria PreviewCriteria, matcher *pathmatch.Matcher, options buildOptions, after int64, limit, remaining int) (store.HTTPPreviewPage, int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tx, err := s.db.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return page, err
-	}
-	defer tx.Rollback()
-	if kind == "refresh" || criteria.Automatic {
-		err = s.db.RequireSourceActive(tx, entry.StorageID(), fence(entry))
-	} else {
-		err = s.db.RequireCleanupFence(tx, entry.StorageID(), fence(entry))
-	}
-	if err != nil {
-		return page, err
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT row_no,`+columns+` FROM http_cache_generations WHERE storage_id=? AND is_current=1 AND row_no>? AND row_no<=? ORDER BY row_no LIMIT ?`, entry.StorageID(), after, highWater, limit)
-	if err != nil {
-		return page, err
-	}
-	selected := []PreviewItem{}
-	for rows.Next() {
-		var ordinal int64
-		r, scanErr := scan(prependScanner{row: rows, first: &ordinal})
-		if scanErr != nil {
-			rows.Close()
-			return page, scanErr
+	active, selected := 0, 0
+	var choiceErr error
+	page, err := s.db.FreezeHTTPPreviewPage(ctx, row, mode, after, limit, func(e store.HTTPCacheEntry) (store.HTTPPreviewItem, bool, bool) {
+		r, err := rowFromEntry(e)
+		if err != nil {
+			choiceErr = err
+			return store.HTTPPreviewItem{}, false, true
 		}
-		page.scanned++
-		page.after = ordinal
 		if criteria.Path != "" && r.Path != criteria.Path || !matcher.Match("/"+r.Path) {
-			continue
+			return store.HTTPPreviewItem{}, false, false
 		}
-		item := PreviewItem{Ordinal: ordinal, GenerationID: r.GenerationID, Path: r.Path, SizeBytes: r.SizeBytes, AccessBucket: r.accessBucket, Basis: criteria.Basis, Before: criteria.Before, Match: criteria.Match, RuleIndex: -1, ResultStatus: "pending"}
+		basis, before, match, ruleIndex := criteria.Basis, criteria.Before, criteria.Match, -1
 		if criteria.Automatic {
 			rule, index, ok := options.policy.CleanupRule("/" + r.Path)
 			if !ok {
-				continue
+				return store.HTTPPreviewItem{}, false, false
 			}
-			item.Basis = rule.Basis
-			item.Before = s.now().UTC().Add(-time.Duration(rule.AgeSeconds) * time.Second)
-			item.Match = rule.Match
-			item.RuleIndex = index
+			basis, before, match, ruleIndex = rule.Basis, s.now().UTC().Add(-time.Duration(rule.AgeSeconds)*time.Second), rule.Match, index
 		}
-		if kind == "cleanup" {
+		if row.Kind == "cleanup" {
 			target := r.FetchedAt
-			if item.Basis == "last_access" && r.LastAccessAt != nil {
+			if basis == "last_access" && r.LastAccessAt != nil {
 				target = *r.LastAccessAt
 			}
-			if !target.Before(item.Before) {
-				continue
+			if !target.Before(before) {
+				return store.HTTPPreviewItem{}, false, false
 			}
 		}
-		selected = append(selected, item)
-		page.selected++
+		rawMatch, _ := json.Marshal(match)
+		selected++
 		if s.pins[r.GenerationID] > 0 {
-			page.active++
+			active++
 		}
-		if options.selectLimit > 0 && page.selected >= remaining {
-			break
-		}
+		item := store.HTTPPreviewItem{GenerationID: r.GenerationID, Path: r.Path, SizeBytes: r.SizeBytes, AccessBucket: r.accessBucket, Basis: basis, Before: before, Match: rawMatch, RuleIndex: ruleIndex}
+		return item, true, options.selectLimit > 0 && selected >= remaining
+	})
+	if err == nil {
+		err = choiceErr
 	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return page, err
-	}
-	var bytes int64
-	for _, item := range selected {
-		raw, _ := json.Marshal(item.Match)
-		before := int64(0)
-		if !item.Before.IsZero() {
-			before = item.Before.Unix()
-		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO http_cleanup_preview_items(preview_id,ordinal,generation_id,path,size_bytes,access_bucket_s,basis,before_s,match_json,rule_index) VALUES(?,?,?,?,?,?,?,?,?,?)`, id, item.Ordinal, item.GenerationID, item.Path, item.SizeBytes, item.AccessBucket, item.Basis, before, raw, item.RuleIndex)
+	return page, active, err
+}
+
+func itemFromStore(row store.HTTPPreviewItem) (PreviewItem, error) {
+	item := PreviewItem{Ordinal: row.Ordinal, GenerationID: row.GenerationID, Path: row.Path, SizeBytes: row.SizeBytes, AccessBucket: row.AccessBucket, Basis: row.Basis, Before: row.Before, RuleIndex: row.RuleIndex, ResultStatus: row.ResultStatus, ErrorCode: row.ErrorCode}
+	return item, json.Unmarshal(row.Match, &item.Match)
+}
+
+func itemsFromStore(rows []store.HTTPPreviewItem) ([]PreviewItem, error) {
+	out := make([]PreviewItem, 0, len(rows))
+	for _, row := range rows {
+		item, err := itemFromStore(row)
 		if err != nil {
-			return page, err
+			return nil, err
 		}
-		bytes += item.SizeBytes
+		out = append(out, item)
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE http_cleanup_previews SET scanned_count=scanned_count+?,selected_count=selected_count+?,selected_bytes=selected_bytes+? WHERE id=? AND state='building'`, page.scanned, page.selected, bytes, id); err != nil {
-		return page, err
-	}
-	return page, tx.Commit()
+	return out, nil
 }
 
-type prependScanner struct {
-	row   scanner
-	first *int64
-}
-
-func (r prependScanner) Scan(dest ...any) error {
-	return r.row.Scan(append([]any{r.first}, dest...)...)
-}
-
-const itemColumns = `ordinal,generation_id,path,size_bytes,access_bucket_s,basis,before_s,match_json,rule_index,result_status,error_code`
-
-func scanPreviewItem(row scanner) (PreviewItem, error) {
-	var item PreviewItem
-	var before int64
-	var match []byte
-	err := row.Scan(&item.Ordinal, &item.GenerationID, &item.Path, &item.SizeBytes, &item.AccessBucket, &item.Basis, &before, &match, &item.RuleIndex, &item.ResultStatus, &item.ErrorCode)
-	if err != nil {
-		return item, err
-	}
-	if before != 0 {
-		item.Before = time.Unix(before, 0).UTC()
-	}
-	err = json.Unmarshal(match, &item.Match)
-	return item, err
-}
 func (s *Service) PreviewItems(storageID, kind, id, cursor string, limit int) (PreviewPage, error) {
 	var out PreviewPage
 	if limit == 0 {
@@ -400,64 +316,49 @@ func (s *Service) PreviewItems(storageID, kind, id, cursor string, limit int) (P
 	if err != nil {
 		return out, err
 	}
-	rows, err := s.db.DB.Query(`SELECT `+itemColumns+` FROM http_cleanup_preview_items WHERE preview_id=? AND ordinal>? ORDER BY ordinal LIMIT ?`, id, after, limit+1)
+	rows, err := s.db.HTTPPreviewItems(context.Background(), id, after, limit+1, false)
 	if err != nil {
 		return out, err
 	}
-	defer rows.Close()
-	out = PreviewPage{Items: []PreviewItem{}, TotalFiles: p.SelectedFiles, TotalBytes: p.SelectedBytes, State: p.State}
-	for rows.Next() {
-		item, err := scanPreviewItem(rows)
-		if err != nil {
-			return out, err
-		}
-		if len(out.Items) == limit {
-			out.NextCursor = strconv.FormatInt(out.Items[len(out.Items)-1].Ordinal, 10)
-			break
-		}
-		out.Items = append(out.Items, item)
+	items, err := itemsFromStore(rows)
+	if err != nil {
+		return out, err
 	}
-	return out, rows.Err()
+	out = PreviewPage{Items: items, TotalFiles: p.SelectedFiles, TotalBytes: p.SelectedBytes, State: p.State}
+	if len(items) > limit {
+		out.Items = items[:limit]
+		out.NextCursor = strconv.FormatInt(out.Items[limit-1].Ordinal, 10)
+	}
+	return out, nil
 }
 
 func (s *Service) claimPreview(ctx context.Context, entry application.Entry, kind, id string) (MaintenancePreview, error) {
-	tx, err := s.db.DB.BeginTx(ctx, nil)
+	row, err := s.db.ClaimHTTPPreview(ctx, entry.StorageID(), id, func(row store.HTTPPreview) (store.HTTPPreviewDecision, error) {
+		p, err := previewFromStore(row)
+		if err != nil {
+			return store.HTTPPreviewDecision{}, err
+		}
+		if err = s.validatePreview(p, kind); err != nil {
+			return store.HTTPPreviewDecision{}, err
+		}
+		switch p.State {
+		case "done", "failed":
+			return store.HTTPPreviewDecision{}, nil
+		case "running":
+			return store.HTTPPreviewDecision{}, ErrPreviewRunning
+		case "ready":
+		default:
+			return store.HTTPPreviewDecision{}, ErrInvalidPreview
+		}
+		if p.fence != fence(entry) {
+			return store.HTTPPreviewDecision{}, store.ErrSourceInactive
+		}
+		return store.HTTPPreviewDecision{Apply: true, Fence: fenceMode(kind, p.criteria)}, nil
+	})
 	if err != nil {
 		return MaintenancePreview{}, err
 	}
-	defer tx.Rollback()
-	p, err := scanMaintenance(tx.QueryRow(`SELECT `+maintenanceColumns+` FROM http_cleanup_previews WHERE id=? AND storage_id=?`, id, entry.StorageID()))
-	if err != nil {
-		return p, err
-	}
-	if err = s.validatePreview(p, kind); err != nil {
-		return p, err
-	}
-	if p.State == "done" || p.State == "failed" {
-		return p, nil
-	}
-	if p.State == "running" {
-		return p, ErrPreviewRunning
-	}
-	if p.State != "ready" {
-		return p, ErrInvalidPreview
-	}
-	if p.fence != fence(entry) {
-		return p, store.ErrSourceInactive
-	}
-	if kind == "refresh" || p.criteria.Automatic {
-		err = s.db.RequireSourceActive(tx, entry.StorageID(), p.fence)
-	} else {
-		err = s.db.RequireCleanupFence(tx, entry.StorageID(), p.fence)
-	}
-	if err != nil {
-		return p, err
-	}
-	if _, err = tx.Exec(`UPDATE http_cleanup_previews SET state='running' WHERE id=? AND state='ready'`, id); err != nil {
-		return p, err
-	}
-	p.State = "running"
-	return p, tx.Commit()
+	return previewFromStore(row)
 }
 func (s *Service) pendingPreviewItems(ctx context.Context, storageID, kind, id string, after int64, limit int) ([]PreviewItem, error) {
 	if limit < 1 || limit > 100 {
@@ -470,80 +371,37 @@ func (s *Service) pendingPreviewItems(ctx context.Context, storageID, kind, id s
 	if p.State != "running" {
 		return nil, ErrInvalidPreview
 	}
-	rows, err := s.db.DB.QueryContext(ctx, `SELECT `+itemColumns+` FROM http_cleanup_preview_items WHERE preview_id=? AND ordinal>? AND result_status='pending' ORDER BY ordinal LIMIT ?`, id, after, limit)
+	rows, err := s.db.HTTPPreviewItems(ctx, id, after, limit, true)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []PreviewItem{}
-	for rows.Next() {
-		item, err := scanPreviewItem(rows)
+	return itemsFromStore(rows)
+}
+
+// runningPreview admits updates of a running preview of kind under entry's fence.
+func (s *Service) runningPreview(entry application.Entry, kind string) func(store.HTTPPreview) (store.HTTPPreviewDecision, error) {
+	return func(row store.HTTPPreview) (store.HTTPPreviewDecision, error) {
+		p, err := previewFromStore(row)
 		if err != nil {
-			return nil, err
+			return store.HTTPPreviewDecision{}, err
 		}
-		out = append(out, item)
+		if err = s.validatePreview(p, kind); err != nil {
+			return store.HTTPPreviewDecision{}, err
+		}
+		if p.State != "running" || p.fence != fence(entry) {
+			return store.HTTPPreviewDecision{}, ErrInvalidPreview
+		}
+		return store.HTTPPreviewDecision{Apply: true}, nil
 	}
-	return out, rows.Err()
 }
-func recordPreviewItemTx(tx *sql.Tx, id string, ordinal int64, status, code string) error {
-	result, err := tx.Exec(`UPDATE http_cleanup_preview_items SET result_status=?,error_code=? WHERE preview_id=? AND ordinal=? AND result_status='pending'`, status, code, id, ordinal)
-	if err != nil {
-		return err
-	}
-	changed, err := result.RowsAffected()
-	if err != nil || changed == 0 {
-		return err
-	}
-	failed := 0
-	if status == "failed" {
-		failed = 1
-	}
-	_, err = tx.Exec(`UPDATE http_cleanup_previews SET completed_count=completed_count+1,failed_count=failed_count+? WHERE id=?`, failed, id)
-	return err
-}
+
 func (s *Service) recordPreviewItem(ctx context.Context, entry application.Entry, kind, id string, ordinal int64, status, code string) error {
 	if status == "" || status == "pending" {
 		return ErrInvalidPreview
 	}
-	tx, err := s.db.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	p, err := scanMaintenance(tx.QueryRow(`SELECT `+maintenanceColumns+` FROM http_cleanup_previews WHERE id=? AND storage_id=?`, id, entry.StorageID()))
-	if err != nil {
-		return err
-	}
-	if err = s.validatePreview(p, kind); err != nil {
-		return err
-	}
-	if p.State != "running" || p.fence != fence(entry) {
-		return ErrInvalidPreview
-	}
-	if err = recordPreviewItemTx(tx, id, ordinal, status, code); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.db.RecordHTTPPreviewItem(ctx, entry.StorageID(), id, ordinal, status, code, s.runningPreview(entry, kind))
 }
 func (s *Service) finishPreview(ctx context.Context, entry application.Entry, kind, id string, result any, failed bool) error {
-	tx, err := s.db.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	p, err := scanMaintenance(tx.QueryRow(`SELECT `+maintenanceColumns+` FROM http_cleanup_previews WHERE id=? AND storage_id=?`, id, entry.StorageID()))
-	if err != nil {
-		return err
-	}
-	if p.Kind != kind || p.fence != fence(entry) {
-		return ErrInvalidPreview
-	}
-	if p.State == "done" || p.State == "failed" {
-		return nil
-	}
-	if p.State != "running" {
-		return ErrInvalidPreview
-	}
 	raw, err := json.Marshal(result)
 	if err != nil {
 		return err
@@ -552,8 +410,16 @@ func (s *Service) finishPreview(ctx context.Context, entry application.Entry, ki
 	if failed {
 		state = "failed"
 	}
-	if _, err = tx.Exec(`UPDATE http_cleanup_previews SET state=?,executed_at_s=?,result_json=? WHERE id=?`, state, s.now().Unix(), raw, id); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return s.db.FinishHTTPPreview(ctx, entry.StorageID(), id, state, raw, s.now(), func(row store.HTTPPreview) (store.HTTPPreviewDecision, error) {
+		if row.Kind != kind || row.Fence != fence(entry) {
+			return store.HTTPPreviewDecision{}, ErrInvalidPreview
+		}
+		switch row.State {
+		case "done", "failed":
+			return store.HTTPPreviewDecision{}, nil
+		case "running":
+			return store.HTTPPreviewDecision{Apply: true}, nil
+		}
+		return store.HTTPPreviewDecision{}, ErrInvalidPreview
+	})
 }

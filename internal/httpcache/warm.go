@@ -188,20 +188,9 @@ func (s *Service) warmCurrent(ctx context.Context, f fill, old *Row) warmplan.It
 func (s *Service) warmCurrentGeneration(entry application.Entry, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tx, err := s.db.DB.Begin()
-	if err != nil {
-		return err
+	current, err := s.db.HTTPCacheEntryCurrent(entry.StorageID(), fence(entry), id)
+	if err == nil && !current {
+		err = ErrFetchAgain
 	}
-	defer tx.Rollback()
-	if err = s.db.RequireSourceActive(tx, entry.StorageID(), fence(entry)); err != nil {
-		return err
-	}
-	var current bool
-	if err = tx.QueryRow(`SELECT is_current FROM http_cache_generations WHERE id=?`, id).Scan(&current); err != nil {
-		return err
-	}
-	if !current {
-		return ErrFetchAgain
-	}
-	return tx.Commit()
+	return err
 }

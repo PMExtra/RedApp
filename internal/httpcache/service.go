@@ -48,6 +48,34 @@ type Row struct {
 	current      bool
 }
 
+func rowFromEntry(e store.HTTPCacheEntry) (*Row, error) {
+	r := &Row{SourceURL: e.SourceURL, GenerationID: e.ID, Path: e.Path, SizeBytes: e.SizeBytes, SHA256: e.SHA256, FetchedAt: e.FetchedAt, ValidatedAt: e.ValidatedAt, FreshUntil: e.FreshUntil, storageID: e.StorageID, accessBucket: e.AccessBucket, current: e.Current}
+	if err := json.Unmarshal(e.Headers, &r.headers); err != nil {
+		return nil, err
+	}
+	if r.accessBucket > 0 {
+		t := time.Unix(r.accessBucket+60, 0).UTC()
+		r.LastAccessAt = &t
+	}
+	r.ETag = r.headers.Get("ETag")
+	if r.ETag == "" {
+		r.ETag = `"sha256-` + r.SHA256 + `"`
+	}
+	return r, nil
+}
+
+func rowsFromEntries(entries []store.HTTPCacheEntry) ([]Row, error) {
+	out := make([]Row, 0, len(entries))
+	for _, e := range entries {
+		r, err := rowFromEntry(e)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *r)
+	}
+	return out, nil
+}
+
 type fetchWaiter struct {
 	observe func(int64) error
 	check   func(int64) error
@@ -156,71 +184,31 @@ func (s *Service) begin(entry application.Entry) error {
 	return nil
 }
 
-const columns = `id,storage_id,path,sha256,size_bytes,fetched_at_s,validated_at_s,last_access_bucket_s,fresh_until_s,headers_json,is_current,source_url`
-
-type scanner interface{ Scan(...any) error }
-
-func scan(row scanner) (*Row, error) {
-	var r Row
-	var fetched, validated, fresh int64
-	var headers []byte
-	err := row.Scan(&r.GenerationID, &r.storageID, &r.Path, &r.SHA256, &r.SizeBytes, &fetched, &validated, &r.accessBucket, &fresh, &headers, &r.current, &r.SourceURL)
-	if err != nil {
-		return nil, err
-	}
-	if err = json.Unmarshal(headers, &r.headers); err != nil {
-		return nil, err
-	}
-	r.FetchedAt = time.Unix(fetched, 0).UTC()
-	r.ValidatedAt = time.Unix(validated, 0).UTC()
-	r.FreshUntil = time.Unix(fresh, 0).UTC()
-	if r.accessBucket > 0 {
-		t := time.Unix(r.accessBucket+60, 0).UTC()
-		r.LastAccessAt = &t
-	}
-	r.ETag = r.headers.Get("ETag")
-	if r.ETag == "" {
-		r.ETag = `"sha256-` + r.SHA256 + `"`
-	}
-	return &r, nil
-}
-
 func (s *Service) listRows(storageID string) ([]Row, error) {
-	return s.queryRows(`SELECT `+columns+` FROM http_cache_generations WHERE storage_id=? AND is_current=1 ORDER BY path`, storageID)
-}
-
-func (s *Service) queryRows(query string, args ...any) ([]Row, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	rows, err := s.db.DB.Query(query, args...)
+	entries, err := s.db.HTTPCacheEntries(storageID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []Row{}
-	for rows.Next() {
-		r, err := scan(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, *r)
-	}
-	return out, rows.Err()
+	return rowsFromEntries(entries)
 }
 
 func (s *Service) lookup(storageID, path string) (*Row, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	row, err := scan(s.db.DB.QueryRow(`SELECT `+columns+` FROM http_cache_generations WHERE storage_id=? AND path=? AND is_current=1`, storageID, path))
+	e, err := s.db.CurrentHTTPCacheEntry(storageID, path)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	row, err := rowFromEntry(e)
+	if err != nil {
+		return nil, err
+	}
 	size, statErr := s.bodies().Size(row.GenerationID)
 	if os.IsNotExist(statErr) || (statErr == nil && size != row.SizeBytes) {
-		if _, err = s.db.DB.Exec(`UPDATE http_cache_generations SET is_current=0,retired_at_s=? WHERE id=?`, s.now().Unix(), row.GenerationID); err != nil {
+		if err = s.db.RetireHTTPCacheEntry(row.GenerationID, s.now()); err != nil {
 			return nil, err
 		}
 		if err = s.collectLocked(row.GenerationID); err != nil {
@@ -237,7 +225,11 @@ func (s *Service) lookup(storageID, path string) (*Row, error) {
 func (s *Service) pin(id string) (*Row, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	r, err := scan(s.db.DB.QueryRow(`SELECT `+columns+` FROM http_cache_generations WHERE id=?`, id))
+	e, err := s.db.HTTPCacheEntry(id)
+	if err != nil {
+		return nil, err
+	}
+	r, err := rowFromEntry(e)
 	if err != nil {
 		return nil, err
 	}
@@ -260,16 +252,11 @@ func (s *Service) touch(r *Row) error {
 	if bucket <= r.accessBucket {
 		return nil
 	}
-	result, err := s.db.DB.Exec(`UPDATE http_cache_generations SET last_access_bucket_s=MAX(last_access_bucket_s,?) WHERE id=?`, bucket, r.GenerationID)
-	if err != nil {
+	if err := s.db.TouchHTTPCacheEntry(r.GenerationID, bucket); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errors.New("HTTP cache generation disappeared")
+		}
 		return err
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n != 1 {
-		return errors.New("HTTP cache generation disappeared")
 	}
 	r.accessBucket = bucket
 	return nil
@@ -279,29 +266,28 @@ func (s *Service) collectLocked(id string) error {
 	if s.pins[id] > 0 {
 		return nil
 	}
-	var current bool
-	var storageID string
-	var bytes int64
-	err := s.db.DB.QueryRow(`SELECT is_current,storage_id,size_bytes FROM http_cache_generations WHERE id=?`, id).Scan(&current, &storageID, &bytes)
+	e, err := s.db.HTTPCacheEntry(id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
-	if err != nil || current {
+	if err != nil || e.Current {
 		return err
 	}
 	removed, err := s.bodies().Delete(id)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.DB.Exec(`DELETE FROM http_cache_generations WHERE id=? AND is_current=0`, id)
-	if err == nil && removed && bytes > 0 {
-		metric := storageID
-		if uid, _, ok := identity.ParseStorageID(storageID); ok {
+	if _, err = s.db.DeleteRetiredHTTPCacheEntry(id); err != nil {
+		return err
+	}
+	if removed && e.SizeBytes > 0 {
+		metric := e.StorageID
+		if uid, _, ok := identity.ParseStorageID(e.StorageID); ok {
 			metric = identity.MetricsID(uid)
 		}
-		err = s.db.AddFor(metric, "cleanup_freed_bytes", bytes)
+		return s.db.AddFor(metric, "cleanup_freed_bytes", e.SizeBytes)
 	}
-	return err
+	return nil
 }
 func (s *Service) retire(r *Row) error {
 	if r == nil {
@@ -309,54 +295,40 @@ func (s *Service) retire(r *Row) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.db.DB.Exec(`UPDATE http_cache_generations SET is_current=0,retired_at_s=COALESCE(retired_at_s,?) WHERE id=?`, s.now().Unix(), r.GenerationID)
+	err := s.db.RetireHTTPCacheEntry(r.GenerationID, s.now())
 	if err == nil {
 		err = s.collectLocked(r.GenerationID)
 	}
 	return err
 }
 func (s *Service) recover() error {
-	rows, err := s.db.DB.Query(`SELECT ` + columns + ` FROM http_cache_generations`)
-	if err != nil {
-		return err
-	}
-	all := []*Row{}
-	for rows.Next() {
-		r, e := scan(rows)
-		if e != nil {
-			rows.Close()
-			return e
-		}
-		all = append(all, r)
-	}
-	err = rows.Err()
-	rows.Close()
+	entries, err := s.db.AllHTTPCacheEntries()
 	if err != nil {
 		return err
 	}
 	keep := map[string]bool{}
-	for _, r := range all {
-		if len(r.GenerationID) != 32 || strings.Trim(r.GenerationID, "0123456789abcdef") != "" {
+	for _, e := range entries {
+		if len(e.ID) != 32 || strings.Trim(e.ID, "0123456789abcdef") != "" {
 			return errors.New("Invalid HTTP cache file identity")
 		}
-		if r.current {
-			f, e := fsutil.OpenRegular(s.bodyPath(r.GenerationID))
-			if e == nil {
+		if e.Current {
+			f, err := fsutil.OpenRegular(s.bodyPath(e.ID))
+			if err == nil {
 				h := sha256.New()
 				n, readErr := io.Copy(h, f)
 				f.Close()
-				if readErr == nil && n == r.SizeBytes && hex.EncodeToString(h.Sum(nil)) == r.SHA256 {
-					keep[r.GenerationID+".body"] = true
+				if readErr == nil && n == e.SizeBytes && hex.EncodeToString(h.Sum(nil)) == e.SHA256 {
+					keep[e.ID+".body"] = true
 					continue
 				}
-			} else if !errors.Is(e, fs.ErrNotExist) {
-				return e
+			} else if !errors.Is(err, fs.ErrNotExist) {
+				return err
 			}
-			if _, err = s.db.DB.Exec(`UPDATE http_cache_generations SET is_current=0,retired_at_s=? WHERE id=?`, s.now().Unix(), r.GenerationID); err != nil {
+			if err = s.db.RetireHTTPCacheEntry(e.ID, s.now()); err != nil {
 				return err
 			}
 		}
-		if err = s.collectLocked(r.GenerationID); err != nil {
+		if err = s.collectLocked(e.ID); err != nil {
 			return err
 		}
 	}
