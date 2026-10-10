@@ -14,6 +14,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
 	"io"
+	mathrand "math/rand/v2"
 	"net/http"
 	"os"
 	"strconv"
@@ -88,6 +89,7 @@ type Generation struct {
 	done           bool
 	readers        int
 	hashing        bool // pinned by a manager-owned verification running without mu
+	rangeable      bool // upstream advertised or served byte ranges for this generation
 	samples        []sample
 	upstreamStatus int
 	downloadNS     int64
@@ -153,6 +155,12 @@ type Manager struct {
 	maxWriters    int
 	jobs          int
 	httpReaders   int
+	// Upstream transfer policy: a body read waiting idleTimeout without bytes
+	// fails the attempt; transient failures retry up to retryAttempts times.
+	idleTimeout   time.Duration
+	retryAttempts int
+	retryBase     time.Duration
+	retryMax      time.Duration
 	// Unexported fault barrier used only by package tests; production leaves it nil.
 	testFault func(string, *Generation)
 }
@@ -168,7 +176,8 @@ func NewApplications(dir string, db *store.Store, clients map[string]*distributo
 		upstreams[app] = client
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m := &Manager{dir: dir, db: db, upstreams: upstreams, current: map[string]*Generation{}, all: map[string]*Generation{}, verifying: map[string]*verification{}, ctx: ctx, cancel: cancel, maxBytes: 4 << 30, maxReaders: 512, maxWriters: 16}
+	m := &Manager{dir: dir, db: db, upstreams: upstreams, current: map[string]*Generation{}, all: map[string]*Generation{}, verifying: map[string]*verification{}, ctx: ctx, cancel: cancel, maxBytes: 4 << 30, maxReaders: 512, maxWriters: 16,
+		idleTimeout: distributor.DefaultIdleTimeout, retryAttempts: 6, retryBase: time.Second, retryMax: 30 * time.Second}
 	if e := m.recover(); e != nil {
 		cancel()
 		m.closeFiles()
@@ -640,11 +649,15 @@ func (m *Manager) admitLocked(ctx context.Context, r Resource, finish func()) (*
 		}
 		g.file = f
 	}
-	if !g.done && !g.running {
+	// A retained part from an exhausted or interrupted transfer resumes.
+	resume := g.done && !g.running && g.State == "interrupted"
+	if (!g.done || resume) && !g.running {
 		if m.jobs >= m.maxWriters {
 			return nil, false, ErrWriterLimit
 		}
+		g.done = false
 		if err := m.startLocked(g); err != nil {
+			g.done = resume
 			return nil, false, err
 		}
 	}
@@ -768,6 +781,7 @@ func (m *Manager) removeLocked(g *Generation) error {
 var (
 	unsafeResume    = errors.New("Unsafe upstream resume; a new generation is required")
 	errHashMismatch = errors.New("Complete file SHA256 does not match")
+	errTruncated    = errors.New("Artifact truncated")
 )
 
 type upstreamHTTPError int
@@ -775,14 +789,43 @@ type upstreamHTTPError int
 func (e upstreamHTTPError) Error() string { return fmt.Sprintf("Upstream HTTP %d", int(e)) }
 
 // causeError keeps a stable user-visible message while preserving its cause
-// for classification.
+// for classification. transient marks failures a later attempt may resolve.
 type causeError struct {
-	message string
-	cause   error
+	message   string
+	cause     error
+	transient bool
 }
 
 func (e *causeError) Error() string { return e.message }
 func (e *causeError) Unwrap() error { return e.cause }
+
+// retryable reports transport-level failures; integrity, length, encoding,
+// disk and client HTTP errors are final.
+func retryable(err error) bool {
+	var status upstreamHTTPError
+	var cause *causeError
+	switch {
+	case errors.Is(err, distributor.ErrConnection), errors.Is(err, errTruncated):
+		return true
+	case errors.As(err, &status):
+		return status >= 500 || status == http.StatusRequestTimeout || status == http.StatusTooManyRequests
+	case errors.As(err, &cause):
+		return cause.transient
+	}
+	return false
+}
+
+// retryDelay is exponential backoff with jitter in [d/2, d], capped at retryMax.
+func (m *Manager) retryDelay(attempt int) time.Duration {
+	d := m.retryMax
+	if attempt < 30 && m.retryBase<<attempt < m.retryMax {
+		d = m.retryBase << attempt
+	}
+	if d <= 1 {
+		return d
+	}
+	return d/2 + mathrand.N(d/2+1)
+}
 
 func (m *Manager) attempt(g *Generation) error {
 	m.mu.Lock()
@@ -815,7 +858,7 @@ func (m *Manager) attempt(g *Generation) error {
 	if client == nil {
 		return errors.New("Unknown persisted resource application")
 	}
-	resp, e := client.Get(g.ctx, g.Resource.Source, headers)
+	resp, e := client.Get(distributor.WithIdleTimeout(g.ctx, m.idleTimeout), g.Resource.Source, headers)
 	if e != nil {
 		return e
 	}
@@ -849,6 +892,9 @@ func (m *Manager) attempt(g *Generation) error {
 	g.Total = total
 	if offset == 0 {
 		g.ETag = resp.Header.Get("ETag")
+	}
+	if resp.StatusCode == http.StatusPartialContent || strings.EqualFold(resp.Header.Get("Accept-Ranges"), "bytes") {
+		g.rangeable = true
 	}
 	g.State = "downloading"
 	e = m.save(g)
@@ -885,7 +931,7 @@ func (m *Manager) attempt(g *Generation) error {
 			}
 			written, we := g.file.WriteAt(buf[:n], offset)
 			if we != nil {
-				return &causeError{"Disk write failed", we}
+				return &causeError{"Disk write failed", we, false}
 			}
 			if written != n {
 				return io.ErrShortWrite
@@ -907,13 +953,13 @@ func (m *Manager) attempt(g *Generation) error {
 		}
 		if re != nil {
 			if re != io.EOF {
-				return &causeError{"Upstream download interrupted", re}
+				return &causeError{"Upstream download interrupted", re, true}
 			}
 			break
 		}
 	}
 	if total >= 0 && offset != total {
-		return errors.New("Artifact truncated")
+		return errTruncated
 	}
 	if g.Resource.Size != nil && offset != *g.Resource.Size {
 		return errors.New("Artifact length does not match")
@@ -957,9 +1003,9 @@ func (m *Manager) run(g *Generation) {
 	defer g.finishWork()
 	defer m.wg.Done()
 	var err error
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; ; attempt++ {
 		err = m.attempt(g)
-		if err == nil || errors.Is(err, unsafeResume) || g.ctx.Err() != nil {
+		if err == nil || !retryable(err) || g.ctx.Err() != nil || attempt+1 >= m.retryAttempts {
 			break
 		}
 		m.mu.Lock()
@@ -968,10 +1014,12 @@ func (m *Manager) run(g *Generation) {
 		m.save(g)
 		signal(g)
 		m.mu.Unlock()
+		wait := time.NewTimer(m.retryDelay(attempt))
 		select {
 		case <-g.ctx.Done():
-		case <-time.After(time.Duration(attempt+1) * 50 * time.Millisecond):
+		case <-wait.C:
 		}
+		wait.Stop()
 	}
 	if err == nil {
 		m.mu.Lock()
@@ -1055,7 +1103,9 @@ func (m *Manager) run(g *Generation) {
 		if errors.Is(err, errHashMismatch) {
 			g.State = "invalid"
 		}
-		if g.ctx.Err() != nil {
+		// Exhausted transient failures keep a resumable prefix; the next
+		// admission resumes it with Range. Integrity failures never do.
+		if g.ctx.Err() != nil || retryable(err) && g.Bytes > 0 && (g.ETag != "" || g.rangeable) {
 			g.State = "interrupted"
 		}
 		m.save(g)

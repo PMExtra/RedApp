@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -155,7 +154,9 @@ func (p *Pool) newClient(base string, mode ClientMode, appUID, vendorUID string)
 	u, _ := url.Parse(base)
 	c := &Client{Base: u, mode: mode, pool: p}
 	c.transports = &transportSwitch{current: transportReference{pool: p, configured: mode != PublicRelease, appUID: appUID, vendorUID: vendorUID}}
-	c.HTTP = &http.Client{Transport: c.transports, Timeout: 5 * time.Minute, CheckRedirect: c.checkRedirect}
+	// No Client.Timeout: it would bound whole body streaming. The transport
+	// bounds dial/TLS/response headers and Do bounds idle body reads.
+	c.HTTP = &http.Client{Transport: c.transports, CheckRedirect: c.checkRedirect}
 	return c, nil
 }
 
@@ -302,7 +303,16 @@ func (c *Client) Do(ctx context.Context, method, source string, headers http.Hea
 	if err = c.Validate(u); err != nil {
 		return nil, err
 	}
-	r, err := http.NewRequestWithContext(ctx, method, u.String(), nil)
+	// There is no overall client deadline: the returned body owns this
+	// request context and cancels it on Close or after an idle read.
+	requestCtx, cancel := context.WithCancel(ctx)
+	owned := false
+	defer func() {
+		if !owned {
+			cancel()
+		}
+	}()
+	r, err := http.NewRequestWithContext(requestCtx, method, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -368,5 +378,7 @@ func (c *Client) Do(ctx context.Context, method, source string, headers http.Hea
 		resp.Body.Close()
 		return nil, ErrUnsafeEncoding
 	}
+	watchBody(resp, idleTimeoutFor(ctx), cancel)
+	owned = true
 	return resp, nil
 }

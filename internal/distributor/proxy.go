@@ -248,7 +248,11 @@ func resolvedDial(ctx context.Context, network, addr string, requirePublic bool)
 	if e != nil {
 		return nil, e
 	}
-	ips, e := net.DefaultResolver.LookupIPAddr(ctx, host)
+	// Requests have no overall deadline, so name resolution is bounded here
+	// like the dial itself.
+	lookupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ips, e := net.DefaultResolver.LookupIPAddr(lookupCtx, host)
+	cancel()
 	if e != nil {
 		return nil, e
 	}

@@ -126,7 +126,7 @@ func TestTransportFailureCategories(t *testing.T) {
 		})
 	}
 	// Body read failures keep their stable message and their transport class.
-	interrupted := &causeError{"Upstream download interrupted", &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}}
+	interrupted := &causeError{"Upstream download interrupted", &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}, true}
 	if got := failureCategory(interrupted, interrupted.Error()); got != "timeout" {
 		t.Fatal("interrupted read timeout category", got)
 	}
