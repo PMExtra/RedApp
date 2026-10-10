@@ -26,6 +26,9 @@
 | `make e2e` | 用现有 `bin/redapp` 和全新数据目录跑 Playwright 浏览器测试；需要先安装 Chromium（见 [frontend.md](docs/dev/frontend.md#测试)） |
 | `make network-test` | 手动联网测试：官方 Claude 签名清单与一个真实二进制，不在门禁中 |
 | `make docs-check` | 双语文档结构与 Markdown 链接 |
+| `make installer-inventory` | 由内置预置生成 `.generated/installer-inventory.json`，供安装器脚本使用（`make test` 自动运行） |
+| `make installers` | 由 `upstream/` 与 `patches/` 重新生成两个应用的 `generated/` 安装器 |
+| `make docker` | 从源码构建镜像 `redapp:local` |
 
 提交前至少运行与改动相关的门禁；改 Go 代码必须通过 `make check test`，改前端必须通过 `make frontend-test`，重新构建并提交产物，提交后 `make frontend-check` 必须通过；改 `api/openapi.yaml` 必须重新生成前端类型。
 
@@ -59,6 +62,8 @@
 | `internal/media` | 图标校验与存储 |
 | `internal/jsoncheck`、`internal/yamlconfig` | 严格 JSON 校验；严格 YAML → JSON |
 | `internal/instance` | 数据目录实例锁 |
+| `internal/fsutil` | 原子写、目录 fsync、rename 发布、只读打开、删除与随机 ID |
+| `internal/logging` | `component` 字段、遮盖凭据的 `error` 字段、未传入 logger 时默认丢弃 |
 | `internal/testutil` | 测试辅助，只能被测试引用 |
 | `presets/` | 内置厂商/应用/分类的 YAML 模板与图标（嵌入） |
 | `installers/` | 官方安装器原文、patch、生成结果与来源记录 |
