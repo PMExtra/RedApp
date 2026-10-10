@@ -236,7 +236,7 @@ time=2026-10-10T08:15:00.000Z level=WARN msg="automatic HTTP cache cleanup faile
 | 修改参数后容器不健康 | 健康检查看不到你的参数。使用环境变量，或在 exec 形式的健康检查中传入相同参数。 |
 | 安装命令显示 `http://` 或内部主机名 | 设置 `REDAPP_PUBLIC_URL` 或公共地址覆盖值，并检查 `trusted_proxies`。 |
 | 在代理后无法登录后台 | 转发的 scheme 或 host 与浏览器地址不一致。检查代理头和 `trusted_proxies`。 |
-| 下载返回 `503` | 下载容量已满。调高 `max_writers` 或 `max_readers`，或稍后重试。 |
+| 下载返回 `503` | 下载容量已满，或该客户端已有 `max_downloads_per_client` 个下载在进行。调高 `max_writers`、`max_readers` 或 `max_downloads_per_client`，或稍后重试。位于反向代理之后时请检查 `trusted_proxies`。 |
 | 下载返回 `502` | 上游不可达或返回了不可信的元数据。检查出口代理和事件页面。 |
 | 应用返回 `404` | 厂商或应用被禁用。两者都要启用。 |
 | 重启后所有人都已退出登录 | 正常现象。管理员会话只保存在内存中。 |

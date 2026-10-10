@@ -87,8 +87,10 @@ func New(db *store.Store, bootstrap func(string)) (*Auth, error) {
 	return a, nil
 }
 
-// clientKey aggregates IPv6 clients by /64, the smallest prefix normally assigned to one site.
-func clientKey(ip string) string {
+// ClientKey is the identity that rate and concurrency limits count per client:
+// an IPv4 address, or an IPv6 /64, the smallest prefix normally assigned to
+// one site.
+func ClientKey(ip string) string {
 	parsed := net.ParseIP(ip)
 	if parsed == nil {
 		return ip
@@ -152,7 +154,7 @@ func (a *Auth) evict(now time.Time) {
 // blocked behind bcrypt. A password change that lands during the comparison
 // invalidates the attempt.
 func (a *Auth) Login(ip, password string) (string, Session, error) {
-	key := clientKey(ip)
+	key := ClientKey(ip)
 	a.mu.Lock()
 	if !a.admit(key, a.now()) {
 		a.mu.Unlock()
@@ -210,7 +212,7 @@ func (a *Auth) Password(ip, old, next string) error {
 	if len(next) < 12 || len(next) > 72 {
 		return ErrPasswordInvalid
 	}
-	key := clientKey(ip)
+	key := ClientKey(ip)
 	a.mu.Lock()
 	if !a.admit(key, a.now()) {
 		a.mu.Unlock()

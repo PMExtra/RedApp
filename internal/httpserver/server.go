@@ -31,7 +31,8 @@ import (
 var web embed.FS
 
 // Deps are the services the HTTP layer is built on. Every field except
-// Version, Started and Logger is required; New validates them once.
+// Version, Started, Logger, MaxDownloadsPerClient and Frontend is required;
+// New validates them once.
 type Deps struct {
 	Version        string // build version; "" reports "dev"
 	Store          *store.Store
@@ -51,6 +52,10 @@ type Deps struct {
 	DataDir        string
 	Started        time.Time    // process start; zero means now
 	Logger         *slog.Logger // nil discards the logs
+	// MaxDownloadsPerClient bounds the concurrent file downloads of one
+	// client (IPv4 address or IPv6 /64); 0 means
+	// config.DefaultMaxDownloadsPerClient.
+	MaxDownloadsPerClient int
 	// Frontend is the frontend build (index.html, admin.html, assets/); nil
 	// means the build embedded from internal/httpserver/web.
 	Frontend fs.FS
@@ -101,6 +106,8 @@ type Server struct {
 	log         *slog.Logger
 	frontend    fs.FS
 
+	downloadSlots *clientDownloads
+
 	mux    *http.ServeMux
 	routes []route
 
@@ -150,6 +157,14 @@ func New(deps Deps, options ...Option) (*Server, error) {
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
 	}
+	maxDownloads := deps.MaxDownloadsPerClient
+	if maxDownloads == 0 {
+		maxDownloads = config.DefaultMaxDownloadsPerClient
+	}
+	if maxDownloads < 0 {
+		return nil, errors.New("httpserver: MaxDownloadsPerClient must not be negative")
+	}
+	s.downloadSlots = newClientDownloads(maxDownloads)
 	s.frontend = deps.Frontend
 	if s.frontend == nil {
 		embedded, err := fs.Sub(web, "web")

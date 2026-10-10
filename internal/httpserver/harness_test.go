@@ -70,6 +70,8 @@ type harnessConfig struct {
 	dir     string
 	options []Option
 	proxies TrustedProxies
+	// maxDownloadsPerClient is Deps.MaxDownloadsPerClient; 0 is the default.
+	maxDownloadsPerClient int
 	// embeddedFrontend serves the committed build instead of frontendFixture.
 	embeddedFrontend bool
 }
@@ -91,6 +93,11 @@ func withTrustedProxies(t *testing.T, cidrs ...string) harnessOption {
 		t.Fatal(err)
 	}
 	return func(c *harnessConfig) { c.proxies = p }
+}
+
+// withMaxDownloadsPerClient bounds the concurrent downloads of each client.
+func withMaxDownloadsPerClient(n int) harnessOption {
+	return func(c *harnessConfig) { c.maxDownloadsPerClient = n }
 }
 
 // withEmbeddedFrontend serves the committed frontend build from internal/httpserver/web.
@@ -200,7 +207,7 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 		Version:  "test", Store: db, Registry: registry, Catalog: catalogService, Downloads: manager,
 		HTTPCache: httpCache, Hosted: hostedFiles, Auth: a, TrustedProxies: cfg.proxies, Pool: pool, Icons: icons,
 		History: metricHistory, PublicSettings: public, Prewarmer: prewarmer, Maintenance: maintenance,
-		DataDir: cfg.dir, Started: time.Now(), Logger: logger,
+		DataDir: cfg.dir, Started: time.Now(), Logger: logger, MaxDownloadsPerClient: cfg.maxDownloadsPerClient,
 	}, cfg.options...)
 	must(err)
 	h.http = httptest.NewServer(h.server)

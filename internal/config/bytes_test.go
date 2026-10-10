@@ -61,7 +61,7 @@ func TestArtifactSizeFilesPreserveStrictConfiguration(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), path) {
 					t.Fatalf("invalid selected file was hidden: %v", err)
 				}
-			} else if err != nil || c.DownloadLimits != (DownloadLimits{16, 512, tc.want}) {
+			} else if err != nil || c.DownloadLimits != (DownloadLimits{16, 512, tc.want, DefaultMaxDownloadsPerClient}) {
 				t.Fatal(c.DownloadLimits, err)
 			}
 		})

@@ -41,6 +41,7 @@ download_limits:
   max_writers: 16
   max_readers: 512
   max_artifact_bytes: '4GiB'
+  max_downloads_per_client: 16
 ```
 
 ### 取值优先级
@@ -65,6 +66,7 @@ download_limits:
 | `download_limits.max_writers` | `REDAPP_MAX_WRITERS` | `--max-writers` | `16` | 1–1024 |
 | `download_limits.max_readers` | `REDAPP_MAX_READERS` | `--max-readers` | `512` | 1–65536 |
 | `download_limits.max_artifact_bytes` | `REDAPP_MAX_ARTIFACT_BYTES` | `--max-artifact-bytes` | 4 GiB | 1 字节到 1 TiB |
+| `download_limits.max_downloads_per_client` | `REDAPP_MAX_DOWNLOADS_PER_CLIENT` | `--max-downloads-per-client` | `16` | 1–65536 |
 | — | `REDAPP_PUBLIC_URL` | — | 空 | HTTP(S) origin；见[公共地址](#公共地址) |
 
 说明：
@@ -73,7 +75,8 @@ download_limits:
 - 空的 `REDAPP_TRUSTED_PROXIES` 或 `--trusted-proxies` 会清空列表。
 - `max_writers` 限制所有应用合计的并发回源数。HTTP 缓存回源和上游 `HEAD` 请求也占用 writer。
 - `max_readers` 限制正在服务的并发下载数，包括缓存命中、`HEAD` 和 `304` 响应。
-- 任一限额已满时，请求以 `503` 失败，不进入等待队列。
+- `max_downloads_per_client` 限制单个客户端的并发文件下载数，使一个客户端无法占满全部 reader。客户端指一个 IPv4 地址或一个 IPv6 /64 前缀。托管文件和 HTTP 缓存请求（包括 `HEAD`）以及发布文件下载都计入。位于反向代理之后时请配置 `trusted_proxies`，否则所有请求都按代理的地址计数。
+- 以上任一限额已满时，请求以 `503` 失败，不进入等待队列。
 - `max_artifact_bytes` 限制**每个**下载文件的大小，不是缓存总配额。
 - `REDAPP_PUBLIC_URL` 不是部署字段，只为公共地址设置提供默认值。非空的非法值会阻止启动。
 
@@ -88,7 +91,7 @@ download_limits:
 | `4GB` 或 `4gb` | 4,000,000,000（每 GB 为 10^9） |
 | `1.5GiB` | 1,610,612,736 |
 
-建议使用 `GiB` 等明确的二进制单位以免混淆。不要使用千位分隔符。`max_writers` 和 `max_readers` 不接受单位。
+建议使用 `GiB` 等明确的二进制单位以免混淆。不要使用千位分隔符。`max_writers`、`max_readers` 和 `max_downloads_per_client` 不接受单位。
 
 ### 校验配置
 

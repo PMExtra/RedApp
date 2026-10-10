@@ -105,7 +105,7 @@ func TestIPv6AttemptsAggregateByPrefix(t *testing.T) {
 	if _, _, e := a.Login("2001:db8:1:3::1", password); e != nil {
 		t.Fatal("相邻 /64 被误限速", e)
 	}
-	if clientKey("::ffff:192.0.2.7") != clientKey("192.0.2.7") || clientKey("192.0.2.7") == clientKey("192.0.2.8") {
+	if ClientKey("::ffff:192.0.2.7") != ClientKey("192.0.2.7") || ClientKey("192.0.2.7") == ClientKey("192.0.2.8") {
 		t.Fatal("IPv4 键不应聚合")
 	}
 }

@@ -9,3 +9,5 @@ download_limits:
   max_readers: 512
   # Per artifact, not total cache usage. GB = 10^9 bytes; GiB = 2^30 bytes.
   max_artifact_bytes: '4GiB'
+  # Concurrent downloads of one client (IPv4 address or IPv6 /64).
+  max_downloads_per_client: 16

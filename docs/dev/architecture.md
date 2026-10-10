@@ -128,7 +128,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 
 - **资源身份**：`sha256(app \0 version \0 key)`，并与持久化的 `resources` 行（来源 URL、SHA-256、期望大小）和应用上游核对，其他应用不能借用缓存身份。
 - **代际（generation）**：每次下载是一个代际，状态包括 downloading、resuming、retry_wait、verifying、complete、failed、invalid、interrupted。每个资源最多一个当前代际（部分唯一索引）。
-- **读者与写者**：一个写者经 `spool.Fill` 填充 part，多个读者跟随同一个 `spool.Body` 边下载边读取；`Body` 有自己的锁，读者不争用 `Manager.mu`，失败只以错误结束读取，从不表现为成功的 EOF。默认上限 16 个写者、512 个读者，单制品 4 GiB；`httpcache` 和 `hosted` 共用这组额度。
+- **读者与写者**：一个写者经 `spool.Fill` 填充 part，多个读者跟随同一个 `spool.Body` 边下载边读取；`Body` 有自己的锁，读者不争用 `Manager.mu`，失败只以错误结束读取，从不表现为成功的 EOF。默认上限 16 个写者、512 个读者，单制品 4 GiB；`httpcache` 和 `hosted` 共用这组额度。HTTP 层另按客户端（IPv4 地址或 IPv6 /64，与登录限流相同）限制并发文件下载数（`max_downloads_per_client`，默认 16），使单个客户端无法占满全部读者额度。
 - **续传**：带 `Range: bytes=N-`，强 ETag 时加 `If-Range`。只接受精确的 206、`Content-Range` 和相同 ETag（`spool.CheckResume`）；其他情况放弃续传，新建一个完整重下的代际。每 1 MiB 记录进度。
 - **写入顺序**：进度在 `Manager.mu` 内取快照并分配该代际的下一个 `checkpoint` 序号，释放锁后写库；`SaveGeneration`、`CompleteGeneration` 只在序号比库中新时生效，迟到的旧快照不会覆盖新状态或撤销完成。`mu` 只在改变“当前代际”的写入（创建、退役、完成、删除）和 blob 发布时持有，保证内存与 `generations` 表一致。
 - **超时与重试**：由 `spool.Fill` 执行。下载流没有总时限，只有空闲读超时（单次读取 60 秒无数据即中断）；连接、TLS、响应头各有独立时限，元数据读取限时 5 分钟。连接错误、读取中断或截断、5xx、408、429 会重试，最多 6 次，退避从 1 秒翻倍、上限 30 秒并加随机抖动；其他 4xx、磁盘、编码和完整性错误不重试。重试耗尽时，如果已有数据且上游支持续传（ETag 或字节范围），保留 part 并标记 interrupted，下次请求从断点续传。

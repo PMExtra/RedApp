@@ -57,7 +57,7 @@ func command(args []string, logger *slog.Logger) error {
 		fmt.Println("Usage: redapp [serve] [options] | config validate [options] | healthcheck [options] | version")
 		fmt.Println("Config path: --config FILE > REDAPP_CONFIG > optional /etc/redapp/config.yaml (YAML)")
 		fmt.Println("Deployment fields: CLI > environment > selected file > defaults")
-		fmt.Println("Options: --data, --listen, --trusted-proxies, --max-writers, --max-readers, --max-artifact-bytes")
+		fmt.Println("Options: --data, --listen, --trusted-proxies, --max-writers, --max-readers, --max-artifact-bytes, --max-downloads-per-client")
 		return nil
 	}
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
@@ -76,7 +76,7 @@ func command(args []string, logger *slog.Logger) error {
 	flags := flag.NewFlagSet(mode, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	path := flags.String("config", "", "deployment YAML configuration file")
-	for _, name := range []string{"data", "listen", "trusted-proxies", "max-writers", "max-readers", "max-artifact-bytes"} {
+	for _, name := range []string{"data", "listen", "trusted-proxies", "max-writers", "max-readers", "max-artifact-bytes", "max-downloads-per-client"} {
 		flags.String(name, "", "override deployment setting")
 	}
 	if err := flags.Parse(rest); err != nil {
@@ -249,7 +249,7 @@ func serve(c config.Deployment, logger *slog.Logger) error {
 		Version: version, Store: db, Registry: registry, Catalog: catalogService, Downloads: manager,
 		HTTPCache: httpCache, Hosted: hostedFiles, Auth: a, TrustedProxies: proxies, Pool: upstream,
 		Icons: icons, History: metricHistory, PublicSettings: public, Prewarmer: prewarmer, Maintenance: maintenance,
-		DataDir: guard.Directory, Started: time.Now().UTC(), Logger: logger,
+		DataDir: guard.Directory, Started: time.Now().UTC(), Logger: logger, MaxDownloadsPerClient: c.DownloadLimits.MaxDownloadsPerClient,
 	})
 	if err != nil {
 		return err

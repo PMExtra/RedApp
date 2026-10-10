@@ -41,6 +41,7 @@ download_limits:
   max_writers: 16
   max_readers: 512
   max_artifact_bytes: '4GiB'
+  max_downloads_per_client: 16
 ```
 
 ### Precedence of values
@@ -65,6 +66,7 @@ Lists replace lower-priority lists; they are not merged. Every source is validat
 | `download_limits.max_writers` | `REDAPP_MAX_WRITERS` | `--max-writers` | `16` | 1–1024 |
 | `download_limits.max_readers` | `REDAPP_MAX_READERS` | `--max-readers` | `512` | 1–65536 |
 | `download_limits.max_artifact_bytes` | `REDAPP_MAX_ARTIFACT_BYTES` | `--max-artifact-bytes` | 4 GiB | 1 byte to 1 TiB |
+| `download_limits.max_downloads_per_client` | `REDAPP_MAX_DOWNLOADS_PER_CLIENT` | `--max-downloads-per-client` | `16` | 1–65536 |
 | — | `REDAPP_PUBLIC_URL` | — | empty | HTTP(S) origin; see [Public address](#public-address) |
 
 Notes:
@@ -73,7 +75,8 @@ Notes:
 - An empty `REDAPP_TRUSTED_PROXIES` or `--trusted-proxies` clears the list.
 - `max_writers` limits concurrent upstream fetches across all applications. HTTP cache fetches and upstream `HEAD` requests also use a writer slot.
 - `max_readers` limits concurrent downloads being served, including cache hits, `HEAD` and `304` responses.
-- When either limit is full, the request fails with `503`. There is no waiting queue.
+- `max_downloads_per_client` limits the concurrent file downloads of one client, so that one client cannot hold every reader slot. A client is an IPv4 address or an IPv6 /64 prefix. It counts hosted file and HTTP cache requests, including `HEAD`, and release file downloads. Behind a reverse proxy, configure `trusted_proxies`; otherwise every request counts against the proxy's address.
+- When any of these limits is full, the request fails with `503`. There is no waiting queue.
 - `max_artifact_bytes` limits the size of **each** downloaded file. It is not a total cache quota.
 - `REDAPP_PUBLIC_URL` is not a deployment field. It only supplies a default for the public address setting. An invalid non-empty value stops startup.
 
@@ -88,7 +91,7 @@ Notes:
 | `4GB` or `4gb` | 4,000,000,000 (10^9 per GB) |
 | `1.5GiB` | 1,610,612,736 |
 
-Use explicit binary units such as `GiB` to avoid confusion. Do not use thousands separators. `max_writers` and `max_readers` do not accept units.
+Use explicit binary units such as `GiB` to avoid confusion. Do not use thousands separators. `max_writers`, `max_readers` and `max_downloads_per_client` do not accept units.
 
 ### Validating the configuration
 
