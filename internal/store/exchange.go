@@ -657,7 +657,16 @@ func (s *Store) ExecuteConfigurationImport(plan ImportPlan, id string, trust boo
 	if !plan.Ready || plan.NeedsTrust && !trust {
 		return result, ErrInvalidDirectory
 	}
+	var existing *ImportResult
 	err := s.changeConfigurationAtomic(func(st *configurationState) error {
+		// Receipts are written under configMu, so a concurrent request with the
+		// same id that committed first is visible here.
+		if previous, found, e := s.ImportReceipt(id); e != nil {
+			return e
+		} else if found {
+			existing = &previous
+			return errImportReceipt
+		}
 		if stateHash(*st) != plan.Fingerprint {
 			return ErrConflict
 		}
@@ -690,8 +699,13 @@ func (s *Store) ExecuteConfigurationImport(plan ImportPlan, id string, trust boo
 		_, e := tx.Exec(`INSERT INTO configuration_import_receipts VALUES(?,?,?)`, id, encode(result), time.Now().Unix())
 		return e
 	})
+	if errors.Is(err, errImportReceipt) {
+		return *existing, nil
+	}
 	return result, err
 }
+
+var errImportReceipt = errors.New("import receipt already exists")
 
 type CopyApplicationInput struct {
 	SourceUID      string `json:"source_uid"`

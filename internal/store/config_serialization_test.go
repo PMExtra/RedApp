@@ -3,6 +3,8 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"github.com/PMExtra/RedApp/presets"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -20,6 +22,49 @@ func pauseFirstPublication(s *Store, race func()) {
 		})
 		return nil, nil
 	})
+}
+
+func TestConcurrentImportWithSameIDReturnsExistingReceipt(t *testing.T) {
+	s := openTest(t)
+	s.ReconcileTemplates(presets.Embedded())
+	p, _ := s.ExportConfiguration(exchangeOptions("independent"))
+	for i := range p.Documents {
+		if p.Documents[i].Kind == "Vendor" {
+			p.Documents[i].Metadata.ID = "new"
+		} else {
+			p.Documents[i].Metadata.Vendor = "new"
+			p.Documents[i].Metadata.ID = "copy"
+		}
+	}
+	plan, e := s.PreviewConfigurationImport(p.Documents, nil)
+	if e != nil || !plan.Ready {
+		t.Fatal(plan, e)
+	}
+	const n = 4
+	results, errs := make([]ImportResult, n), make([]error, n)
+	var wg sync.WaitGroup
+	run := func(i int) {
+		defer wg.Done()
+		results[i], errs[i] = s.ExecuteConfigurationImport(plan, "same-id", true, func() bool { return true })
+	}
+	// The others pass the unlocked receipt check while the first holds the writer.
+	pauseFirstPublication(s, func() {
+		for i := 1; i < n; i++ {
+			wg.Add(1)
+			go run(i)
+		}
+	})
+	wg.Add(1)
+	run(0)
+	wg.Wait()
+	for i := range n {
+		if errs[i] != nil || !results[i].Applied || !reflect.DeepEqual(results[i], results[0]) {
+			t.Fatal(i, results[i], errs[i])
+		}
+	}
+	if receipt, found, err := s.ImportReceipt("same-id"); err != nil || !found || !reflect.DeepEqual(receipt, results[0]) {
+		t.Fatal(receipt, found, err)
+	}
 }
 
 func TestAdminNotesAndPermanentDeleteSerializeWithConfigurationWriters(t *testing.T) {
