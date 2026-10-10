@@ -51,6 +51,11 @@ export default {
       progress: "Prewarm progress",
       summary: "{completed} of {planned} files processed · {succeeded} succeeded · {size} read",
       ignored: "Ignored while planning:",
+      ignoredReasons: {
+        duplicate_directory: "directories listed twice",
+        duplicate_file: "files listed twice",
+        unsafe_link: "unsafe or out-of-scope links",
+      },
       items: "Planned files",
       noItems: "No files planned yet.",
       cancel: "Cancel task",

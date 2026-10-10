@@ -37,7 +37,7 @@
 - `/assets/` 下只有扁平的 `*.js`、`*.css`、`*.woff2` 和字体许可 `*.txt`（`assetsInlineLimit: 0`，不产生其他类型）。`frontend/public/assets/` 中的 JetBrains Mono 字体同时被使用说明文档引用，文件名不能改。
 - 文件都在嵌入目录 `internal/httpserver/web/` 的根部：`index.html`、`admin.html`、`assets/`。
 
-两个入口共享的模块（Vue、Reka UI、`shared/`）打成公共 chunk。`vite build` 的 `publicBundleGuard` 检查公开入口能到达的模块中没有 `src/app/admin/` 和 `src/pages/admin/`，否则构建失败。
+两个入口共享的模块（Vue、Reka UI、`shared/`）打成公共 chunk。chunk 按 `[name]-[hash].js` 命名；vue-router 的核心在其发行包中名为 `devtools-*.js`，`chunkFileNames` 把它改名为 `vue-router-[hash].js`，以免被误认为调试代码。`vite build` 的 `publicBundleGuard` 检查公开入口能到达的模块中没有 `src/app/admin/` 和 `src/pages/admin/`，否则构建失败。
 
 本地开发：`npm run dev` 把 `/admin`、`/admin/...` 改写到 `admin.html`。设置 `REDAPP_DEV_BACKEND=http://127.0.0.1:8080` 会把 `/api`、`/admin/api`、`/assets/icons`、`/assets/presets` 代理到本机 Go 服务（保留 `Host`，Origin 检查与 Cookie 可用）。
 
@@ -89,7 +89,7 @@ frontend/
 | `exchange` | 配置导出、导入（预览—决定—信任—执行）与复制应用 | 后台 |
 | `metrics` | 全局/应用指标查询、`MetricCards`、`HistoryChart`、`MetricHistoryDialog`，见下文 | 后台概览、应用版本页 |
 | `events` | `listEvents` 游标分页查询、`EventsTable` | 后台事件页 |
-| `settings` | 站点文本、公开地址、首页置顶、全局代理的查询与保存，各区块表单、`AppPicker`（`listApps` 搜索） | 后台设置页 |
+| `settings` | 站点文本、公开地址、首页置顶、全局代理的查询与保存，各区块表单（草稿由 `useServerDraft` 维护：未修改时跟随服务端，保存、冲突重新加载与放弃时重置）、`AppPicker`（`listApps` 搜索） | 后台设置页 |
 | `releases` | 版本与制品清单（`ReleaseInventory`，游标分页、按版本筛选）、缓存来源选择（`SourceEpochSelect`、`useSources`）、版本清理（预览—执行）、预览过期（`useExpired`） | 应用版本页、缓存页 |
 | `retention` | 版本保留策略（配置覆盖）、状态与预览—执行（`RetentionPanel`） | 发布类应用缓存页 |
 | `prewarm` | 自动预热策略、手动预热任务的创建、轮询、重试与取消（`PrewarmPanel`；任务 ID 存在 `localStorage`，刷新后继续跟踪） | 应用缓存页 |
@@ -155,7 +155,8 @@ const save = useRevisionedMutation({
 ```
 
 - 409 `REVISION_CONFLICT` 不弹通知，而是设置 `save.conflict`；页面保留草稿并显示 `<RevisionConflictAlert @reload="save.reload()" />`。`reload()` 重新读取基线，页面自己决定是否重置草稿。
-- 其他失败由全局处理：`MutationCache` 弹出错误通知，内容是本地化的错误码文本、服务端细节（如 `VALIDATION_FAILED` 指出的字段）和请求 ID。`ENTITY_DELETED` 与 `APPLICATION_DISABLED` 另外让 `getApp`、`getVendor` 重新读取，页面随之显示只读或“请先启用应用”提示。页面自行展示某些错误码时，在 `meta: { handledCodes: [...] }`（`useRevisionedMutation` 用 `handledCodes` 选项）中声明；完全不弹用 `meta: { silent: true }`。
+- 其他失败由全局处理：`MutationCache` 弹出错误通知，内容是本地化的错误码文本、服务端细节（如 `VALIDATION_FAILED` 指出的字段）和请求 ID。`ENTITY_DELETED`、`APPLICATION_DELETE_PENDING` 与 `APPLICATION_DISABLED` 另外让 `getApp`、`getVendor` 重新读取，页面随之显示只读或“请先启用应用”提示。页面自行展示某些错误码时，在 `meta: { handledCodes: [...] }`（`useRevisionedMutation` 用 `handledCodes` 选项）中声明；完全不弹用 `meta: { silent: true }`。
+- 以某个 revision 为条件、但响应不是该资源的写操作（如保留策略的预览以配置 revision 为 `If-Match`）同样用 `useRevisionedMutation`，不传 `queryKey`；冲突时显示 `RevisionConflictAlert`，重新加载由页面自己读取基线并调用 `dismissConflict()`。
 - `ifMatch(revision)` / `ifMatchHeader(resource)` / `revisionFromEtag(etag)` 处理 `"7"` 格式。
 - 应用和厂商的配置覆盖是同一个 revision 资源，所有编辑区块必须通过 `@/features/configuration` 的 `useAppConfiguration` / `useAppConfigurationPatch` 读写，否则一个区块保存后其他区块会 409。
 - 配置覆盖表单用 `useOverlayForm({ configuration, paths, schema })`：草稿只含 `paths` 中的字段，未修改时跟随服务端，有修改时（含 409 重新加载后）保留；`patch(values)` 只包含改过的字段，`reset(path)` 恢复模板值并在原值为覆盖时发送 `unset`；保存成功后调用 `load(响应)`。`resetBinding(path)` 直接绑定到 `FieldReset`。
@@ -167,7 +168,7 @@ const save = useRevisionedMutation({
 - CSRF：后台入口启动时 `configureApi({ csrfToken, onUnauthorized })`；客户端只给 `/admin/api/` 的 POST/PUT/PATCH/DELETE 加 `X-CSRF-Token`。令牌只存在内存（Pinia）。
 - 首次导航读取 `GET /admin/api/session`；未登录跳转 `/admin/login?returnTo=...`，`safeReturnPath` 只接受同源 `/admin/...`。
 - 任何后台请求返回 401 `AUTH_REQUIRED`（或到达 `expires_at`）时会话变为 `expired`：页面不跳转，弹出登录对话框，草稿保留，登录后所有查询失效重取。标签页重新可见时重新读取会话。
-- 退出登录先通过 `confirmDiscardDrafts()` 询问未保存的草稿。修改密码成功后所有会话失效，回到登录页并提示。
+- 退出登录和修改密码（打开对话框前）先通过 `confirmDiscardDrafts()` 询问未保存的草稿；修改密码成功后所有会话失效。会话结束后壳层用 `leaveDiscardingDrafts()` 跳到登录页并提示，离开保护不再询问。退出失败时什么都不记住，之后的导航照常询问。
 
 ## 扩展点
 
@@ -188,7 +189,7 @@ const save = useRevisionedMutation({
 | `MetricScope`、`GLOBAL_SCOPE`、`appScope(vendor, app)` | 指标归属：`{ kind: "global" }` 或 `{ kind: "app", vendor, app }` |
 | `<MetricCards :metrics :primary :scope @select>` | 按规范的 `group`（disk、traffic、speed、runtime、resources）分组；`primary` 中的键为常用指标，其余为折叠的诊断指标。默认 `GLOBAL_COMMON_METRICS`（16 项），应用页传 `APP_COMMON_METRICS`。`level` 设置标题层级 |
 | `<MetricHistoryDialog v-model:metric :scope>` | 设置 `metric` 打开对话框，关闭时置为 `undefined`；在对话框间保持所选范围 |
-| `<HistoryChart :metric :scope v-model:range>` | 不带对话框的历史图（uPlot）：24h/7d/30d（默认 7d），计数器可切换累计值与每段增量；缺失样本保持空缺；键盘（左右、Page Up/Down、Home/End、Esc）与触摸读数；摘要句与数据表作为无图替代 |
+| `<HistoryChart :metric :scope v-model:range>` | 不带对话框的历史图（uPlot）：24h/7d/30d（默认 7d），计数器可切换累计值与每段增量；缺失样本保持空缺；键盘（左右、Page Up/Down、Home/End、Esc）与触摸读数，所选时间段在后台刷新后保留，触摸后鼠标移入恢复悬停读数；摘要句与数据表（`HistoryReadout`、`HistoryTable`）作为无图替代 |
 | `useMetricHistory(scope, metric, range)` | `getHistory` / `getAppHistory` |
 | `useMetricLabels()`、`useMetricFormat()`、`formatMetricValue()` | 本地化名称（`metrics.labels.<key>`，缺失时回退到服务端英文 `label`）与按 `unit` 格式化（IEC 字节、字节/秒、计数、时长；未知为 `—`） |
 
@@ -199,7 +200,7 @@ const save = useRevisionedMutation({
 <MetricHistoryDialog v-model:metric="selected" :scope="appScope(vendor, app)" />
 ```
 
-`sampled`、`stale` 两个文本（`metrics.sampled`、`metrics.stale`）供页面显示采样时间与刷新失败警告。图表颜色在绘制时从设计令牌（`--rd-primary`、`--rd-text-subtle`、`--rd-border`）读取，主题或语言切换后重绘。uPlot 只通过 CSSOM 设置样式，不违反 CSP。happy-dom 没有 canvas，打开历史图的测试用 `vi.mock("uplot", () => import("@/test/uplot"))` 替身。
+`sampled`、`stale` 两个文本（`metrics.sampled`、`metrics.stale`）供页面显示采样时间与刷新失败警告。图表颜色在绘制时从设计令牌（`--rd-primary`、`--rd-text-subtle`、`--rd-border`）读取，主题或语言切换后重绘。uPlot 只通过 CSSOM 设置样式，不违反 CSP。happy-dom 没有 canvas，打开历史图的测试用 `vi.mock("uplot", () => import("@/test/uplot"))` 替身（每个时间段 10px，鼠标在绘图区移动时像 uPlot 一样触发 `setCursor` 钩子）。
 
 ## 国际化
 
@@ -227,6 +228,7 @@ const save = useRevisionedMutation({
 - `<FormField v-slot="{ field }" name="title" :label="t('...')"><Input v-bind="field" /></FormField>`：生成 label、描述、错误，并设置 `aria-invalid`、`aria-describedby`；字段被触碰或提交后才显示错误。无表单状态的场景用 `Field`。
 - 服务端的字段错误用 `setFieldError(name, formError("errors.codes.X"))` 放到对应字段。
 - `useDirtyGuard(() => meta.value.dirty)`：离开路由时用 ConfirmDialog 询问，关闭标签页时用浏览器提示。一个页面有多个未保存区块时，同一次导航只询问一次。
+- 草稿已确认或已无意义的跳转（退出登录、修改密码后到登录页，删除厂商或应用后回到列表）写成 `await leaveDiscardingDrafts(() => router.push(...))`：只有回调中的导航跳过离开保护，导航结束（成功或失败）后恢复。不要用全局标志记住“已确认”。
 - 不用 `window.confirm`；需要确认时 `await confirm({ title, description, tone: "danger" })`。
 
 ## 设计令牌
@@ -248,7 +250,7 @@ const save = useRevisionedMutation({
 
 ## 组件清单
 
-从 `@/shared/ui` 引入（表单字段从 `@/shared/forms`）。组件把 `id`、`aria-*` 等属性传给真正获得焦点的元素，所以 `<Field v-slot="{ control }"><Select v-bind="control" /></Field>` 同样有效。
+从 `@/shared/ui` 引入（表单字段从 `@/shared/forms`）。组件把 `id`、`aria-*` 等属性传给真正获得焦点的元素，所以 `<Field v-slot="{ control }"><Select v-bind="control" /></Field>` 同样有效。`control` 含指向字段标签的 `aria-labelledby`，`<label for>` 无法命名的控件（`RadioGroup`、`FilePicker`）也因此有名称。
 
 | 组件 | 用途与要点 |
 | --- | --- |
@@ -256,7 +258,7 @@ const save = useRevisionedMutation({
 | `Input`、`Textarea`、`NumberInput` | `v-model`；`NumberInput` 为 `number \| null`，带加减按钮与 `unit` |
 | `Select`、`Combobox` | `Select` 用 `options`；`Combobox` 用于异步建议：`v-model:search` 输入、服务端过滤，`@select` 选中，列表关闭或没有高亮可用选项（包括列表在打开时清空）时回车触发 `@submit`；忽略输入法组字时的回车 |
 | `Switch`、`Checkbox`、`RadioGroup` | `v-model`；`Checkbox` 支持 `indeterminate` |
-| `Tabs`、`NavTabs` | 页内标签（面板为同名插槽）；`NavTabs` 是路由标签（`aria-current`） |
+| `Tabs`、`NavTabs` | 页内标签（面板为同名插槽），隐藏的面板默认卸载，面板里有进行中的工作（预览、运行中的任务）时加 `keep-mounted`；`NavTabs` 是路由标签（`aria-current`） |
 | `Dialog`、`ConfirmDialog`、`ConfirmHost` | `Dialog` 有 `title`、`footer` 插槽、`persistent`；确认框优先用 `confirm()`，`ConfirmHost` 由壳层挂载 |
 | `Popover`、`Tooltip`、`DropdownMenu`、`DropdownMenuItem` | 菜单项 `@select`、`tone="danger"`；分隔线等用 Reka 的 `DropdownMenuSeparator` |
 | `Toaster` | `toast()`、`notifyError()`（`@/shared/lib`）；错误通知带可复制的请求 ID |
@@ -266,8 +268,8 @@ const save = useRevisionedMutation({
 | `AsyncState` | 查询的加载/错误（本地化消息 + 请求 ID + 重试）/空状态外框 |
 | `RevisionConflictAlert` | 409 冲突提示与“加载最新版本” |
 | `Field`、`FormField` | 标签、描述、错误与控件关联；`FormField` 绑定 vee-validate |
-| `FilePicker`、`ProgressBar` | 按钮或拖放选文件（`accept`、`multiple`）；确定/不确定进度 |
-| `CodeBlock`、`CopyButton` | 代码或命令加复制按钮，复制结果对读屏播报 |
+| `FilePicker`、`ProgressBar` | 按钮或拖放选文件（`accept`、`multiple`），`aria-labelledby`/`aria-describedby`/`aria-invalid` 落在按钮上，`id` 留在隐藏的文件输入上；确定/不确定进度 |
+| `CodeBlock`、`CopyButton` | 代码或命令加复制按钮，复制结果在按钮外的状态区域播报，重复复制会再次播报 |
 | `Breadcrumbs`、`PageHeader` | 页面 h1、描述、面包屑、操作区 |
 | `SideNav`、`TopNav`、`SkipLink` | 壳层导航；`SkipLink` 跳到 `#main-content` |
 | `LanguageSwitcher`、`ThemeToggle` | 写入偏好 store |

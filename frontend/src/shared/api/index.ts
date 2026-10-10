@@ -14,6 +14,7 @@ export { describeError, type ErrorDescription } from "./describeError";
 export { ifMatch, ifMatchHeader, revisionFromEtag } from "./revision";
 export { queryKey, createQueryClient, shouldRetry, type OperationId } from "./query";
 export { useRevisionedMutation, type RevisionedMutationOptions } from "./useRevisionedMutation";
+export { fetchAllPages, type NumberedPage } from "./pages";
 export { uploadWithProgress, type UploadOptions, type UploadProgress } from "./upload";
 export { spaRoutes, spaAllowedQuery, spaDocuments, errorCatalog } from "./spec.gen";
 

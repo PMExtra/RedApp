@@ -1,6 +1,13 @@
 import { computed, toValue, type MaybeRefOrGetter } from "vue";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/vue-query";
-import { api, queryKey, unwrap, useRevisionedMutation, type Schema } from "@/shared/api";
+import {
+  api,
+  fetchAllPages,
+  queryKey,
+  unwrap,
+  useRevisionedMutation,
+  type Schema,
+} from "@/shared/api";
 
 export type Category = Schema<"Category">;
 export type CategoryPatch = Schema<"CategoryPatch">;
@@ -17,14 +24,12 @@ export function useAllCategories() {
   return useQuery({
     queryKey: queryKey("listCategories", { all: true }),
     queryFn: async ({ signal }) => {
-      const items: Category[] = [];
-      for (let page = 1; ; page++) {
-        const result = await unwrap(
+      const { items } = await fetchAllPages((page) =>
+        unwrap(
           api.GET("/admin/api/categories", { params: { query: { page, limit: 100 } }, signal }),
-        );
-        items.push(...result.items);
-        if (page >= result.total_pages || result.items.length === 0) return items;
-      }
+        ),
+      );
+      return items;
     },
   });
 }

@@ -5,8 +5,12 @@ import { computed, ref } from "vue";
 import { confirm } from "@/shared/lib";
 import {
   Combobox,
+  CopyButton,
   DataTable,
+  Field,
+  FilePicker,
   Pagination,
+  RadioGroup,
   SortableList,
   Switch,
   Tabs,
@@ -42,6 +46,8 @@ const chosen = ref("");
 const submitted = ref("");
 const confirmed = ref<string>("pending");
 const tab = ref("one");
+const files = ref<File[]>([]);
+const mode = ref<string | undefined>("a");
 
 async function ask() {
   confirmed.value = String(
@@ -119,6 +125,38 @@ async function ask() {
         <template #one>First panel</template>
         <template #two>Second panel</template>
       </Tabs>
+    </template>
+
+    <template v-else-if="props.part === 'keptTabs'">
+      <Tabs
+        v-model="tab"
+        label="Sections"
+        keep-mounted
+        :items="[
+          { value: 'one', label: 'First' },
+          { value: 'two', label: 'Second' },
+        ]"
+      >
+        <template #one><input aria-label="Draft" /></template>
+        <template #two>Second panel</template>
+      </Tabs>
+    </template>
+
+    <template v-else-if="props.part === 'fields'">
+      <Field v-slot="{ control }" label="Package" description="A ZIP file." error="Required.">
+        <FilePicker v-bind="control" v-model="files" />
+      </Field>
+      <Field v-slot="{ control }" label="Mode">
+        <RadioGroup
+          v-bind="control"
+          v-model="mode"
+          :options="[
+            { value: 'a', label: 'Alpha' },
+            { value: 'b', label: 'Beta' },
+          ]"
+        />
+      </Field>
+      <CopyButton text="secret-token" />
     </template>
   </div>
 </template>

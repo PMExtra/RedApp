@@ -8,6 +8,7 @@ export {
   codePointLength,
   useDirtyGuard,
   confirmDiscardDrafts,
+  leaveDiscardingDrafts,
 } from "./forms";
 export { default as FormField } from "./FormField.vue";
 export type { FormFieldBinding } from "@/shared/ui";

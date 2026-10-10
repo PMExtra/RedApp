@@ -26,6 +26,7 @@ export default {
       action: "导入配置",
       title: "导入配置",
       description: "上传 ZIP 或 YAML 包，查看将发生的变更并逐项决定。执行导入前不会有任何修改。",
+      file: "配置包文件",
       fileHint: "新建的厂商和应用默认停用。预览在十分钟后过期。",
       uploading: "正在上传配置包",
       preview: "预览导入",
@@ -74,6 +75,8 @@ export default {
       after: "导入后",
       changedTitle: "决定已修改",
       changed: "请先更新预览以应用你的决定，然后再导入。",
+      staleTitle: "预览已失效",
+      stale: "预览已过期，或生成后数据已变化。没有导入任何内容，请重新预览。",
       notReady: "请处理上面标记的项目，然后更新预览。",
       trustWarning:
         "此包会修改使用说明。使用说明可能包含在公开应用页面上运行的 HTML 和 JavaScript；上方仅以文本显示。",

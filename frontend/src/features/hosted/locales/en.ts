@@ -37,6 +37,7 @@ export default {
       label: "Transfer progress",
       of: "{done} of {total}",
       bytes: "{done} transferred",
+      started: "Transferring the file…",
       committing: "Saving the file…",
       cancel: "Cancel transfer",
       cancelled: "Transfer cancelled. Nothing was saved.",

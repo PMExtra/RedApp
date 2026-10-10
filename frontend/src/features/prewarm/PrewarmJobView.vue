@@ -149,7 +149,14 @@ function label(prefix: string, value: string): string {
       </p>
       <p v-if="ignored.length" class="text-xs text-muted">
         {{ t("prewarm.job.ignored") }}
-        {{ ignored.map(([why, count]) => `${why}: ${String(count)}`).join(" · ") }}
+        {{
+          ignored
+            .map(
+              ([why, count]) =>
+                `${label("prewarm.job.ignoredReasons", why)}: ${format.number(count)}`,
+            )
+            .join(" · ")
+        }}
       </p>
     </div>
 

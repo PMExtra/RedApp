@@ -1,5 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/vue";
 import userEvent from "@testing-library/user-event";
+import { nextTick } from "vue";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PREWARM_POLL_MS, PrewarmPanel } from "@/features/prewarm";
 import type { Schema } from "@/shared/api";
@@ -190,6 +191,78 @@ describe("prewarm", () => {
     });
     expect(retryBody).toEqual({ request_id: expect.stringMatching(/^[0-9a-f]{32}$/) as string });
     expect(await within(task).findByText("Completed")).toBeInTheDocument();
+  });
+
+  it("clears a busy retry once a new task starts, and names ignored entries", async () => {
+    const finished = prewarmJob({
+      state: "completed_with_errors",
+      reason: "prewarm_failed",
+      ignored: { duplicate_file: 2, unsafe_link: 1, duplicate_directory: 0 },
+    });
+    const started: Job = prewarmJob({ id: hexId(302), state: "completed" });
+    localStorage.setItem(STORAGE, finished.id);
+    useHandlers(
+      ...common(),
+      mockApi("get", "/admin/api/apps/{vendor}/{app}/prewarm/jobs/{job_id}", ({ params }) =>
+        params.job_id === started.id ? started : finished,
+      ),
+      mockApi("get", "/admin/api/apps/{vendor}/{app}/prewarm/jobs/{job_id}/items", () =>
+        prewarmItemPage([]),
+      ),
+      mockApi("post", "/admin/api/apps/{vendor}/{app}/prewarm/jobs/{job_id}/retry", () =>
+        apiError("PREWARM_BUSY"),
+      ),
+      mockApi("post", "/admin/api/apps/{vendor}/{app}/prewarm/jobs", () => started),
+    );
+    await renderAppPage(PrewarmPanel, { props });
+    const user = userEvent.setup();
+    const task = await screen.findByRole("region", { name: "Prewarm task" });
+    expect(
+      within(task).getByText(/files listed twice: 2 · unsafe or out-of-scope links: 1/),
+    ).toBeInTheDocument();
+
+    await user.click(within(task).getByRole("button", { name: "Retry unsuccessful files" }));
+    const busy = "Another prewarm task is running in this service. Try again when it has finished.";
+    expect(await screen.findByText(busy)).toBeInTheDocument();
+
+    await user.click(screen.getAllByRole("checkbox", { name: "Linux x64" })[0] as HTMLElement);
+    await user.click(screen.getByRole("button", { name: "Start prewarming" }));
+    await waitFor(() => {
+      expect(localStorage.getItem(STORAGE)).toBe(started.id);
+    });
+    expect(screen.queryByText(busy)).toBeNull();
+  });
+
+  it("keeps the last chosen manifest when an earlier one finishes reading later", async () => {
+    useHandlers(...common(prewarmOptions({ kind: "http_cache", channels: [], platforms: [] })));
+    await renderAppPage(PrewarmPanel, {
+      key: "example/mirror",
+      props: { vendor: "example", app: "mirror" },
+    });
+    const user = userEvent.setup();
+    await screen.findByRole("textbox", { name: "File paths" });
+    let finishSlowRead: () => void = () => undefined;
+    let slowRead: Promise<ArrayBuffer> | undefined;
+    const slow = new File(["/a.zip\n/b.zip\n/c.zip\n"], "slow.txt", { type: "text/plain" });
+    const slowContent = await slow.arrayBuffer();
+    slow.arrayBuffer = () =>
+      (slowRead = new Promise((resolve) => {
+        finishSlowRead = () => {
+          resolve(slowContent);
+        };
+      }));
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+    if (!input) throw new Error("no file input");
+    await user.upload(input, slow);
+    await user.upload(input, new File(["/d.zip\n/e.zip\n"], "fast.txt", { type: "text/plain" }));
+    expect(await screen.findByText("fast.txt: 2 paths")).toBeInTheDocument();
+
+    finishSlowRead();
+    // The form reads first (it asked first), then the page updates.
+    await slowRead;
+    await nextTick();
+    expect(screen.getByText("fast.txt: 2 paths")).toBeInTheDocument();
+    expect(screen.queryByText(/slow\.txt/)).toBeNull();
   });
 
   it("starts an HTTP cache task from paths, a manifest and a filter", async () => {

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { same } from "@/features/configuration";
 import { ProxyFields } from "@/features/proxy";
 import { isApiError, type Schema } from "@/shared/api";
-import { useDirtyGuard } from "@/shared/forms";
 import { toast } from "@/shared/lib";
 import { AsyncState, Button, Card, RevisionConflictAlert } from "@/shared/ui";
 import {
@@ -12,6 +12,7 @@ import {
   type GlobalProxySettings,
   type GlobalProxyState,
 } from "./queries";
+import { useServerDraft } from "./serverDraft";
 
 // `ProxyFields`' model (the spec's ProxyConfig; `inherit` is not offered globally).
 type ProxyValue = Schema<"ProxyConfig">;
@@ -24,29 +25,19 @@ const state = computed(() => settings.data.value);
 function draftOf(value: GlobalProxyState): ProxyValue {
   return value.mode === "url" ? { mode: "url", url: value.url ?? "" } : { mode: "direct" };
 }
-function same(a: ProxyValue, b: ProxyValue) {
-  return a.mode === b.mode && (a.mode !== "url" || a.url === b.url);
-}
 
 // The saved value the draft was made from; `null` until loaded.
 const base = ref<ProxyValue | null>(null);
 const draft = ref<ProxyValue>({ mode: "direct" });
 const dirty = computed(() => base.value !== null && !same(draft.value, base.value));
-useDirtyGuard(dirty);
-
-function adopt(value: GlobalProxyState) {
-  base.value = draftOf(value);
-  draft.value = draftOf(value);
-}
-
-// Adopt the server state unless the user has unsaved edits.
-watch(
-  state,
-  (value) => {
-    if (value && !dirty.value) adopt(value);
+const baseline = useServerDraft({
+  state: () => state.value,
+  dirty: () => dirty.value,
+  adopt: (value: GlobalProxyState) => {
+    base.value = draftOf(value);
+    draft.value = draftOf(value);
   },
-  { immediate: true },
-);
+});
 
 const submitted = ref(false);
 const clientError = computed(() => {
@@ -77,7 +68,7 @@ function submit() {
   save.mutate(body, {
     onSuccess: (value) => {
       submitted.value = false;
-      adopt(value);
+      baseline.reset(value);
       toast({ tone: "success", title: t("settings.proxy.saved") });
     },
   });
@@ -85,12 +76,12 @@ function submit() {
 
 async function reload() {
   await save.reload();
-  if (state.value) adopt(state.value);
+  baseline.reset();
 }
 
 function discard() {
   submitted.value = false;
-  if (base.value) draft.value = { ...base.value };
+  baseline.reset();
 }
 </script>
 

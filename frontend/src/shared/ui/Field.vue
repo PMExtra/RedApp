@@ -23,6 +23,7 @@ const generated = useId();
 const id = computed(() => props.id ?? generated);
 const control = computed<FieldControlProps>(() => ({
   id: id.value,
+  "aria-labelledby": `${id.value}-label`,
   "aria-describedby":
     [props.description && `${id.value}-description`, props.error && `${id.value}-error`]
       .filter(Boolean)
@@ -34,7 +35,12 @@ const control = computed<FieldControlProps>(() => ({
 
 <template>
   <div class="flex flex-col gap-1.5">
-    <label :for="id" class="text-sm font-medium" :class="hideLabel && 'sr-only'">
+    <label
+      :id="`${id}-label`"
+      :for="id"
+      class="text-sm font-medium"
+      :class="hideLabel && 'sr-only'"
+    >
       {{ label }}
       <span v-if="required" class="text-danger" aria-hidden="true">*</span>
       <span v-if="required" class="sr-only">({{ t("ui.form.required") }})</span>

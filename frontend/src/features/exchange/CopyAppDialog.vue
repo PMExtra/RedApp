@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { useAppConfiguration } from "@/features/configuration";
 import { appRoute, VendorPicker, type App } from "@/features/directory";
 import { useNotes } from "@/features/notes";
 import { isApiError, type Schema } from "@/shared/api";
-import { isSlug, isVendorId, toast } from "@/shared/lib";
+import { isSlug, isVendorId, notifyError, toast } from "@/shared/lib";
 import {
   Alert,
   Button,
@@ -68,9 +68,15 @@ const modes = computed(() => [
 const vendorError = computed(() =>
   submitted.value && !isVendorId(targetVendor.value) ? t("exchange.copy.vendorInvalid") : undefined,
 );
-const idError = computed(() =>
-  submitted.value && !isSlug(targetId.value) ? t("exchange.copy.idInvalid") : undefined,
-);
+// ALREADY_EXISTS from the server, until the target changes.
+const taken = ref(false);
+watch([targetVendor, targetId], () => {
+  taken.value = false;
+});
+const idError = computed(() => {
+  if (submitted.value && !isSlug(targetId.value)) return t("exchange.copy.idInvalid");
+  return taken.value ? t("exchange.copy.exists") : undefined;
+});
 
 async function submit(): Promise<void> {
   submitted.value = true;
@@ -82,21 +88,27 @@ async function submit(): Promise<void> {
     mode: mode.value as ExchangeMode,
     include_notes: includeNotes.value === true,
   };
-  try {
-    if (body.include_notes) {
-      // Guard the copied notes by their current revision.
+  if (body.include_notes) {
+    // Guard the copied notes by their current revision.
+    try {
       const current = await notes.refetch({ throwOnError: true });
       if (current.data) body.notes_revision = current.data.revision;
-    }
-    const created = await copy.mutateAsync(body);
-    toast({ tone: "success", title: t("exchange.copy.done", { key: created.key }) });
-    open.value = false;
-    await router.push(appRoute(created, "settings"));
-  } catch (error) {
-    if (isApiError(error, "ALREADY_EXISTS")) {
-      toast({ tone: "error", title: t("exchange.copy.exists") });
+    } catch (error) {
+      notifyError(error);
+      return;
     }
   }
+  let created: Schema<"App">;
+  try {
+    created = await copy.mutateAsync(body);
+  } catch (error) {
+    // A conflict shows RevisionConflictAlert; other failures are toasted globally.
+    if (isApiError(error, "ALREADY_EXISTS")) taken.value = true;
+    return;
+  }
+  toast({ tone: "success", title: t("exchange.copy.done", { key: created.key }) });
+  open.value = false;
+  await router.push(appRoute(created, "settings"));
 }
 </script>
 

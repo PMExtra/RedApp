@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, useAttrs, useId } from "vue";
 import { Upload, X } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { useFormat } from "@/shared/i18n";
@@ -8,6 +8,9 @@ import Button from "./Button.vue";
 /**
  * File selection by button or drag and drop. Emits the chosen files; the
  * caller uploads them (see `uploadWithProgress`) and shows a ProgressBar.
+ * The ARIA attributes of a Field (label, description, error) go to the
+ * button, which is what keyboard and screen reader users reach; `id` and
+ * the rest stay on the hidden input so `<label for>` still opens the chooser.
  */
 defineOptions({ inheritAttrs: false });
 const files = defineModel<File[]>({ default: () => [] });
@@ -15,6 +18,22 @@ const props = defineProps<{ accept?: string; multiple?: boolean; disabled?: bool
 const { t } = useI18n();
 const format = useFormat();
 const input = ref<HTMLInputElement>();
+const attrs = useAttrs();
+const textId = useId();
+const forwarded = ["aria-labelledby", "aria-describedby", "aria-invalid", "aria-required"];
+const inputAttrs = computed(() =>
+  Object.fromEntries(Object.entries(attrs).filter(([key]) => !forwarded.includes(key))),
+);
+const buttonAttrs = computed(() => {
+  const labelledBy = attrs["aria-labelledby"];
+  return {
+    // The field label first, then the button's own text: "Manifest, Choose file".
+    "aria-labelledby": typeof labelledBy === "string" ? `${labelledBy} ${textId}` : undefined,
+    "aria-describedby": attrs["aria-describedby"] as string | undefined,
+    "aria-invalid": attrs["aria-invalid"] as string | undefined,
+    "aria-required": attrs["aria-required"] as string | undefined,
+  };
+});
 const dragging = ref(false);
 
 const summary = computed(() =>
@@ -60,7 +79,7 @@ function clear() {
     <div class="flex flex-wrap items-center gap-3">
       <input
         ref="input"
-        v-bind="$attrs"
+        v-bind="inputAttrs"
         type="file"
         class="sr-only"
         tabindex="-1"
@@ -69,9 +88,11 @@ function clear() {
         :disabled="disabled"
         @change="choose(($event.target as HTMLInputElement).files)"
       />
-      <Button :disabled="disabled" @click="input?.click()">
+      <Button v-bind="buttonAttrs" :disabled="disabled" @click="input?.click()">
         <Upload aria-hidden="true" />
-        {{ multiple ? t("ui.filePicker.chooseMany") : t("ui.filePicker.choose") }}
+        <span :id="textId">{{
+          multiple ? t("ui.filePicker.chooseMany") : t("ui.filePicker.choose")
+        }}</span>
       </Button>
       <span class="text-sm text-muted">
         {{ multiple ? t("ui.filePicker.dropMany") : t("ui.filePicker.drop") }}

@@ -50,6 +50,11 @@ export default {
       progress: "预热进度",
       summary: "已处理 {completed} / {planned} 个文件 · 成功 {succeeded} · 已读取 {size}",
       ignored: "规划时忽略：",
+      ignoredReasons: {
+        duplicate_directory: "重复的目录",
+        duplicate_file: "重复的文件",
+        unsafe_link: "不安全或超出范围的链接",
+      },
       items: "计划的文件",
       noItems: "尚无计划的文件。",
       cancel: "取消任务",

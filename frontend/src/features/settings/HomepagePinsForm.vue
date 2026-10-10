@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import { X } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
-import { useDirtyGuard } from "@/shared/forms";
+import { same } from "@/features/configuration";
 import { useLocalized } from "@/shared/i18n";
 import { toast } from "@/shared/lib";
 import {
@@ -23,6 +23,7 @@ import {
   type HomepagePinnedApp,
   type HomepageSettingsState,
 } from "./queries";
+import { useServerDraft } from "./serverDraft";
 
 const MAX_PINS = 100;
 
@@ -43,13 +44,7 @@ interface PinInfo {
   state: PinState;
 }
 const info = ref(new Map<string, PinInfo>());
-const dirty = computed(
-  () =>
-    base.value !== null &&
-    (draft.value.length !== base.value.length ||
-      draft.value.some((key, index) => key !== base.value?.[index])),
-);
-useDirtyGuard(dirty);
+const dirty = computed(() => base.value !== null && !same(draft.value, base.value));
 
 function remember(apps: readonly HomepagePinnedApp[]) {
   for (const app of apps) {
@@ -61,23 +56,19 @@ function remember(apps: readonly HomepagePinnedApp[]) {
   }
 }
 
-function adopt(state: HomepageSettingsState) {
-  remember(state.pinned_apps);
-  base.value = [...state.pinned_app_keys];
-  draft.value = [...state.pinned_app_keys];
-}
-
-// Adopt the server state unless the user has unsaved edits; display data is
-// refreshed either way.
-watch(
-  () => settings.data.value,
-  (state) => {
-    if (!state) return;
-    if (dirty.value) remember(state.pinned_apps);
-    else adopt(state);
+// Display data is refreshed even while the order has unsaved edits.
+const baseline = useServerDraft({
+  state: () => settings.data.value,
+  dirty: () => dirty.value,
+  adopt: (state: HomepageSettingsState) => {
+    remember(state.pinned_apps);
+    base.value = [...state.pinned_app_keys];
+    draft.value = [...state.pinned_app_keys];
   },
-  { immediate: true },
-);
+  keep: (state) => {
+    remember(state.pinned_apps);
+  },
+});
 
 const stateTones = { disabled: "warning", deleted: "danger", missing: "danger" } as const;
 
@@ -122,7 +113,7 @@ function itemLabel(key: string) {
 function submit() {
   save.mutate([...draft.value], {
     onSuccess: (state) => {
-      adopt(state);
+      baseline.reset(state);
       toast({ tone: "success", title: t("settings.homepage.saved") });
     },
   });
@@ -130,11 +121,11 @@ function submit() {
 
 async function reload() {
   await save.reload();
-  if (settings.data.value) adopt(settings.data.value);
+  baseline.reset();
 }
 
 function discard() {
-  draft.value = [...(base.value ?? [])];
+  baseline.reset();
 }
 </script>
 

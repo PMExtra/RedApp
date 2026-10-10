@@ -1,5 +1,5 @@
 import { screen } from "@testing-library/vue";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { usePreferencesStore } from "@/shared/lib";
 import { renderWithApp } from "@/test/render";
 import InstructionsDocument from "./InstructionsDocument.vue";
@@ -18,6 +18,10 @@ async function renderFrame() {
   Object.defineProperty(frame, "contentWindow", { value: child, configurable: true });
   return { ...rendered, frame, child };
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("InstructionsDocument", () => {
   it("isolates the document in an opaque-origin sandbox", async () => {
@@ -59,11 +63,17 @@ describe("InstructionsDocument", () => {
   });
 
   it("stops listening when unmounted", async () => {
+    // The handler finds no frame after unmounting, so a leaked listener is
+    // invisible in the DOM: compare the message listeners added and removed.
+    const added = vi.spyOn(window, "addEventListener");
+    const removed = vi.spyOn(window, "removeEventListener");
+    const messageListeners = (spy: typeof added) =>
+      spy.mock.calls.filter(([type]) => type === "message").map(([, listener]) => listener);
     const rendered = await renderFrame();
-    post(rendered.child, { type: "redapp-instructions-height", height: 480 });
+    const listening = messageListeners(added);
+    expect(listening).not.toHaveLength(0);
     rendered.unmount();
-    post(rendered.child, { type: "redapp-instructions-height", height: 1000 });
-    expect(rendered.frame.style.height).toBe("500px");
+    expect(messageListeners(removed)).toEqual(expect.arrayContaining(listening));
   });
 
   it("follows the UI language and re-creates the frame for a new language", async () => {

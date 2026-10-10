@@ -1,3 +1,4 @@
+import { nextTick } from "vue";
 import { screen, waitFor, within } from "@testing-library/vue";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
@@ -254,7 +255,7 @@ describe("vendor catalog", () => {
       release = resolve;
     });
     vendorServer({ openai: openaiDelay });
-    const { router } = await renderEntry("public", "/openai");
+    const { router, queryClient } = await renderEntry("public", "/openai");
     await router.push("/anthropic");
     expect(await screen.findByRole("heading", { level: 1, name: "Anthropic" })).toBeInTheDocument();
     expect(await screen.findByRole("link", { name: "App tool" })).toHaveAttribute(
@@ -262,7 +263,11 @@ describe("vendor catalog", () => {
       "/anthropic/tool",
     );
     release();
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Wait until the late response is handled, then for the page to update.
+    await waitFor(() => {
+      expect(queryClient.isFetching()).toBe(0);
+    });
+    await nextTick();
     expect(screen.getByRole("heading", { level: 1, name: "Anthropic" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "OpenAI" })).not.toBeInTheDocument();
   });
