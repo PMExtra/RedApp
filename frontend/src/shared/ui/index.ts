@@ -28,7 +28,6 @@ export { default as LanguageSwitcher } from "./LanguageSwitcher.vue";
 export { default as NavTabs } from "./NavTabs.vue";
 export { default as NumberInput } from "./NumberInput.vue";
 export { default as PageHeader } from "./PageHeader.vue";
-export { default as PagePlaceholder } from "./PagePlaceholder.vue";
 export { default as Pagination } from "./Pagination.vue";
 export { default as Popover } from "./Popover.vue";
 export { default as ProgressBar } from "./ProgressBar.vue";

@@ -125,7 +125,6 @@ export default {
       error: "Something went wrong while loading.",
     },
     autoRefresh: "Auto refresh",
-    placeholder: "This page is being rebuilt and is not available yet.",
     sortable: {
       handle: "Reorder {label}",
       instructions:

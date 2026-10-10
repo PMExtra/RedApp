@@ -124,7 +124,6 @@ export default {
       error: "加载时出错。",
     },
     autoRefresh: "自动刷新",
-    placeholder: "此页面正在重建，暂不可用。",
     sortable: {
       handle: "调整{label}的顺序",
       instructions: "按上下方向键移动此项；Home 和 End 键移到开头或末尾。",

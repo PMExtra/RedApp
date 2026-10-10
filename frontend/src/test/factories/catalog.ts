@@ -1,4 +1,4 @@
-/* Fixtures of the public catalog (package A). */
+/* Fixtures of the public catalog. */
 import type { Schema } from "@/shared/api";
 import { localized, publicApp, publicVendor } from "./index";
 
