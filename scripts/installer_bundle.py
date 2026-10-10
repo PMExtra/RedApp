@@ -42,8 +42,6 @@ def load_bundle(path, expected_sha, baseline, root=ROOT):
             expected_files.update({f'installers/{app}/upstream/{name}',f'installers/{app}/generated/{name}',f'installers/{app}/provenance.json'})
             if hashlib.sha256(files.get(f'installers/{app}/upstream/{name}',b'')).hexdigest()!=row['current_sha256']:
                 raise ValueError('Upstream digest differs from the check report')
-        elif row['baseline_sha256'] != row['current_sha256']:
-            raise ValueError('Unchanged script has inconsistent digests')
     if set(files)!=expected_files: raise ValueError('Changed file set differs from the check report')
     return payload,files
 

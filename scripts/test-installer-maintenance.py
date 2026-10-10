@@ -34,6 +34,12 @@ class CheckTests(unittest.TestCase):
         def changed(url):return self.original(url)+(b'\n# new official comment\n' if url.endswith('/install.sh') and 'claude.ai' in url else b'')
         rows=m.inspect(fetch=changed)
         self.assertEqual(sum(r['status']=='changed' for r in rows),1)
+        def resigned(url):
+            body=m.unsigned(self.original(url))
+            return body+b'\r\n# SIG # Begin signature block\r\n# UkVTSUdORUQ=\r\n# SIG # End signature block\r\n' if url.endswith('.ps1') else body
+        rows=m.inspect(fetch=resigned)
+        self.assertEqual([r['status'] for r in rows],['unchanged']*len(m.inventory()))
+        self.assertIn('unchanged (signature only)',m.report(rows,'0'*40))
     def test_manifest_extends_inventory_and_allowlist_without_protocol_code(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);target=root/'.generated/installer-inventory.json';target.parent.mkdir(parents=True)

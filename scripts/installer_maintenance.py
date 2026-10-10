@@ -108,7 +108,8 @@ def inspect(root=ROOT,fetch=download):
             if row['baseline_sha256']!=expected: raise ValueError('Main baseline differs from its audited digest')
             current=fetch(item['url']);script_shape(item['name'],current)
             row['current_sha256']=digest(current);row['data']=current
-            row['status']='unchanged' if current==body else 'changed'
+            # Re-signing alone does not change what RedApp generates or serves.
+            row['status']='unchanged' if unsigned(current)==unsigned(body) else 'changed'
         except (OSError,ValueError,UnicodeError,TimeoutError) as error:
             row['error']=str(error) if not isinstance(error,urllib.error.HTTPError) else f'Upstream HTTP {error.code}'
         rows.append(row)
@@ -119,7 +120,8 @@ def report(rows,baseline):
     lines=['## Official installer check','',f'Baseline main commit: `{baseline}`','', '| File | Official source | Result | Baseline SHA256 | Current SHA256 |','| --- | --- | --- | --- | --- |']
     for r in rows:
         file=r['application']+'/'+r['name']
-        lines.append(f"| {file} | {r['url']} | {r['status']} | `{r.get('baseline_sha256','unavailable')}` | `{r['current_sha256'] or 'unavailable'}` |")
+        status=r['status']+(' (signature only)' if r['status']=='unchanged' and r['current_sha256'] and r['current_sha256']!=r.get('baseline_sha256') else '')
+        lines.append(f"| {file} | {r['url']} | {status} | `{r.get('baseline_sha256','unavailable')}` | `{r['current_sha256'] or 'unavailable'}` |")
         if r['status']=='error': print('::error title=Installer upstream check failed::'+annotation(file+': '+r.get('error','Unknown failure')))
         if r['status']=='changed': print('::notice title=Official installer changed::'+annotation(file+': '+r['baseline_sha256']+' -> '+r['current_sha256']))
     lines+=['','Changed scripts require conflict-free patch application (line offsets allowed) and isolated tests before a draft PR. Download/validation failures are errors, not “unchanged”.']
@@ -214,7 +216,7 @@ def package(prepared,validated,bundle,root=ROOT):
             generated=apply_patch(raw,base/'patches'/(name+'.patch'))
             candidate=validated/app/name
             if candidate.is_symlink() or not candidate.is_file() or candidate.stat().st_size>MAX_SCRIPT or candidate.read_bytes()!=generated:raise ValueError('Isolated output differs from the audited source plus patch')
-            if raw!=(base/'upstream'/name).read_bytes():
+            if row['status']=='changed':
                 changed=True;files[f'installers/{app}/upstream/{name}']=raw;files[f'installers/{app}/generated/{name}']=generated
                 manifest['files'][name].update(bytes=len(raw),sha256=digest(raw),source=row['url'])
         if changed:

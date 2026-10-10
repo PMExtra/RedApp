@@ -26,7 +26,7 @@ python3 scripts/test-installers.py --platform shell
 | install.sh | 31 | 128 | 简短修改声明；企业 URL；下载地址约束；移除 GitHub fallback 与重新获取摘要；保留清单/包校验；抑制更新 marker |
 | install.ps1 | 18 | 80 | 简短修改声明；企业 URL；请求地址约束；移除 GitHub fallback 与重新获取摘要；保留清单/包校验；抑制更新 marker |
 
-2026-10-09 起官方线上 `install.ps1` 改为 CRLF，加入不依赖模块加载的 SHA256 计算，并在末尾附带 Authenticode 签名块（证书有效期仅数天，会频繁重签）。企业修改必然使原签名失效，保留只会得到 HashMismatch 的签名声明，因此维护工具在应用 patch 前移除签名：从末尾的 `# SIG # Begin signature block` 行截到文件结束（须以 `# SIG # End signature block` 收尾），不检查块内内容和末尾换行，重签不会影响 patch。这一步不进入 patch 文件。移除后生成结果中仍出现签名起始标记（例如签名块后还有代码）即停止，交人工审查。upstream 保存官方原始字节（含签名），generated 为未签名脚本。
+2026-10-09 起官方线上 `install.ps1` 改为 CRLF，加入不依赖模块加载的 SHA256 计算，并在末尾附带 Authenticode 签名块（证书有效期仅数天，会频繁重签）。企业修改必然使原签名失效，保留只会得到 HashMismatch 的签名声明，因此维护工具在应用 patch 前移除签名：从末尾的 `# SIG # Begin signature block` 行截到文件结束（须以 `# SIG # End signature block` 收尾），不检查块内内容和末尾换行，重签不会影响 patch。这一步不进入 patch 文件。移除后生成结果中仍出现签名起始标记（例如签名块后还有代码）即停止，交人工审查。upstream 保存官方原始字节（含签名），generated 为未签名脚本。每日检查按移除签名后的内容比较：仅重签视为无变化，summary 标注 `unchanged (signature only)`，不提 PR；因此 upstream 中的签名字节只随实际内容变化更新，可能早于官方当前签名。
 
 删除行主要是公网回退及其 digest 重新解析分支，不是对平台识别、安装/迁移确认或解包流程的改写。本次治理恢复了两处 PowerShell 原始多行参数声明格式；没有改写 upstream，没有删除上游原有注释。每次变更均须重新确认 generated 与 patch 一致、正常安装成功、篡改/截断失败、失败关闭及交互语义保持。
 
