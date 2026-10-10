@@ -36,7 +36,6 @@ RedApp 向终端分发的是官方安装脚本的企业改版：初始下载地�
 - PowerShell 原文末尾可能带 Authenticode 签名块（证书有效期短，会频繁重签）。企业修改必然使签名失效，所以应用 patch 前先移除签名块，这一步不进入 patch。只移除一个位于文件末尾的签名块：从最后一个 `# SIG # Begin signature block` 起，到文件结尾处的 `# SIG # End signature block` 止，中间不得出现其他签名标记。文件其他位置出现任何签名标记都会停止并交人工审查，每日检查把这种情况报告为 `error`，不会当作无变化。
 - 每日检查按“移除签名后的内容”比较：仅重签视为无变化，summary 标注 `unchanged (signature only)`，不提 PR。因此 upstream 中的签名字节可能早于官方当前签名。
 
-
 ## 本地维护
 
 ```sh
@@ -63,7 +62,7 @@ python3 scripts/test-installers.py --platform shell
 
 ## 每日检查与草稿 PR
 
-`.github/workflows/installer-updates.yml` 在每日 06:23 UTC、手动触发，或 main 上相关路径（工作流、安装器工具、`presets/**` 等）变更时运行。它检出 main 并固定当次提交，同一时刻只运行一个。
+`.github/workflows/installer-updates.yml` 在每日 06:23 UTC、手动触发，或 main 上相关路径（工作流、安装器原文与工具脚本、`Makefile`、`presets/**`、`cmd/preset-inventory/**`、`internal/**`、`go.mod`/`go.sum` 等任务实际执行的内容）变更时运行。它检出 main 并固定当次提交，同一时刻只运行一个。
 
 1. **prepare**：逐一核对 main 中原文与 provenance 一致，并获取官方当前脚本。
    - 下载器只允许 HTTPS→HTTPS 跳转（最多 5 次），拒绝 HTTP 降级、URL 凭据和私网/回环/metadata 地址；DNS 结果和实际 socket 对端都要检查。

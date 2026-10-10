@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import tempfile
 from contextlib import contextmanager
-from installer_test_support import InstallerServer, codex_fixture, file_state, sha
+from installer_test_support import InstallerServer, codex_fixture, file_state, require, sha
 
 
 def run(command, **kwargs):
@@ -24,8 +24,8 @@ def run(command, **kwargs):
 
 
 def succeeded(result):
-    """Assert that a completed process exited successfully."""
-    assert result.returncode == 0, result.stdout + result.stderr
+    """Require that a completed process exited successfully."""
+    require(result.returncode == 0, result.stdout + result.stderr)
 
 
 def windows_environment(home):
@@ -125,7 +125,7 @@ def test_windows(apps, installer_root, directory=None, requested_shell=None):
                     fixtures[provider, version] = compile_fixture(root, provider, version)
         for engine in engines:
             shell = shutil.which(engine)
-            assert shell, f'Required Windows engine missing: {engine}'
+            require(shell, f'Required Windows engine missing: {engine}')
             version = run(
                 [shell, '-NoProfile', '-NonInteractive', '-Command', '$PSVersionTable.PSVersion.ToString()']
             )
@@ -137,7 +137,7 @@ def test_windows(apps, installer_root, directory=None, requested_shell=None):
                     if installer['shell'] != 'powershell':
                         continue
                     script = generated / installer['file']
-                    assert script.is_file(), f'Missing exact candidate: {script}'
+                    require(script.is_file(), f'Missing exact candidate: {script}')
                     parse = (
                         "$ErrorActionPreference='Stop'; $e=$null;$t=$null;"
                         "[System.Management.Automation.Language.Parser]::ParseFile("
@@ -248,7 +248,7 @@ def claude_case(root, script, body, shell, config, seen, arch="AMD64", platform=
     (sentinel / 'keep.txt').write_text('do not touch')
     if takeover == 'junction':
         create = run(['cmd.exe', '/d', '/c', 'mklink', '/J', str(home / '.local'), str(sentinel)])
-        assert create.returncode == 0, create.stderr
+        require(create.returncode == 0, create.stderr)
     before_bin = file_state(bin_dir)
     before_versions = file_state(versions)
     before_sentinel = file_state(sentinel)
@@ -258,11 +258,11 @@ def claude_case(root, script, body, shell, config, seen, arch="AMD64", platform=
     ] + (['-Target', target] if target else [])
     result = run(command, env=env)
     if failure:
-        assert result.returncode != 0, (failure, result.stdout, result.stderr)
-        assert 'Installation complete!' not in result.stdout
-        assert file_state(bin_dir) == before_bin, ('launcher changed on failure', failure)
-        assert file_state(versions) == before_versions, ('version changed on failure', failure)
-        assert file_state(sentinel) == before_sentinel, ('junction target changed', failure)
+        require(result.returncode != 0, (failure, result.stdout, result.stderr))
+        require('Installation complete!' not in result.stdout)
+        require(file_state(bin_dir) == before_bin, ('launcher changed on failure', failure))
+        require(file_state(versions) == before_versions, ('version changed on failure', failure))
+        require(file_state(sentinel) == before_sentinel, ('junction target changed', failure))
         expected = {
             'hash': 'Checksum verification failed',
             'channel': 'valid version',
@@ -271,20 +271,20 @@ def claude_case(root, script, body, shell, config, seen, arch="AMD64", platform=
             'target': 'Target',
         }
         if failure in expected:
-            assert expected[failure].lower() in (result.stdout + result.stderr).lower(), result
+            require(expected[failure].lower() in (result.stdout + result.stderr).lower(), result)
         if failure == 'target':
-            assert not seen, seen
+            require(not seen, seen)
         if failure == 'channel':
-            assert seen == ['/latest'], seen
+            require(seen == ['/latest'], seen)
         if failure == 'manifest':
-            assert not any(p.endswith('/claude.exe') for p in seen), seen
+            require(not any(p.endswith('/claude.exe') for p in seen), seen)
     else:
-        assert result.returncode == 0, (result.stdout, result.stderr)
-        assert installed.read_bytes() == body
-        assert not (bin_dir / 'claude.exe').exists()
-        assert ('/latest' in seen) == (target in ('', 'latest'))
-        assert ('/stable' in seen) == (target == 'stable')
-        assert f'/2.1.285/{platform}/claude.exe' in seen, seen
+        require(result.returncode == 0, (result.stdout, result.stderr))
+        require(installed.read_bytes() == body)
+        require(not (bin_dir / 'claude.exe').exists())
+        require(('/latest' in seen) == (target in ('', 'latest')))
+        require(('/stable' in seen) == (target == 'stable'))
+        require(f'/2.1.285/{platform}/claude.exe' in seen, seen)
     if lifecycle:
         for entry in ('claude.ps1', 'claude.cmd'):
             # The child exit code and argument boundaries must survive each native launcher.
@@ -300,12 +300,15 @@ def claude_case(root, script, body, shell, config, seen, arch="AMD64", platform=
                 ],
                 env={**env, 'FIXTURE_LAUNCHER': str(bin_dir / entry)},
             )
-            assert launched.returncode == 23, (entry, launched.stdout, launched.stderr)
-            assert launched.stdout.splitlines() == [
+            require(launched.returncode == 23, (entry, launched.stdout, launched.stderr))
+            require(
+                launched.stdout.splitlines() == [
                 '1', 'argument with spaces', 'semi;colon', '--flag', 'restored=0'
-            ], (entry, launched.stdout, launched.stderr)
+            ],
+                (entry, launched.stdout, launched.stderr),
+            )
         repeated = run(command, env=env)
-        assert repeated.returncode == 0, (repeated.stdout, repeated.stderr)
+        require(repeated.returncode == 0, (repeated.stdout, repeated.stderr))
         old = {p.name: p.read_bytes() for p in bin_dir.iterdir()}
         config['version'] = '2.1.286'
         config['failure'] = 'hash'
@@ -316,11 +319,11 @@ def claude_case(root, script, body, shell, config, seen, arch="AMD64", platform=
             ],
             env=env,
         )
-        assert (
+        require(
             upgraded.returncode != 0
-            and {p.name: p.read_bytes() for p in bin_dir.iterdir()} == old
+            and {p.name: p.read_bytes() for p in bin_dir.iterdir()} == old,
         )
-        assert not (versions / '2.1.286.exe').exists()
+        require(not (versions / '2.1.286.exe').exists())
         config['failure'] = ''
         upgraded = run(
             [
@@ -329,11 +332,12 @@ def claude_case(root, script, body, shell, config, seen, arch="AMD64", platform=
             ],
             env=env,
         )
-        assert upgraded.returncode == 0, (upgraded.stdout, upgraded.stderr)
-        assert installed.read_bytes() == body and (versions / '2.1.286.exe').read_bytes() == body
-        assert all('2.1.286' in (bin_dir / name).read_text() for name in ('claude.ps1', 'claude.cmd'))
-    assert not list((home / '.claude/downloads').glob('redapp-*')), (
-        'temporary download directory leaked'
+        require(upgraded.returncode == 0, (upgraded.stdout, upgraded.stderr))
+        require(installed.read_bytes() == body and (versions / '2.1.286.exe').read_bytes() == body)
+        require(all('2.1.286' in (bin_dir / name).read_text() for name in ('claude.ps1', 'claude.cmd')))
+    require(
+        not list((home / '.claude/downloads').glob('redapp-*')),
+        'temporary download directory leaked',
     )
 
 
@@ -376,12 +380,13 @@ def codex_case(root, script, fixtures, shell, server, legacy=False, requested='l
     with preserve_user_path():
         result = install(requested)
         if failure:
-            assert result.returncode != 0, (failure, result.stdout, result.stderr)
-            assert not current.exists() and not visible.exists(), failure
-            assert (
+            require(result.returncode != 0, (failure, result.stdout, result.stderr))
+            require(not current.exists() and not visible.exists(), failure)
+            require(
                 not list(releases.glob('*/codex.exe'))
-                and not list(releases.glob('*/bin/codex.exe'))
-            ), failure
+                and not list(releases.glob('*/bin/codex.exe')),
+                failure,
+            )
             expected = {
                 'metadata': 'trusted release metadata unavailable',
                 'tag': 'trusted release metadata unavailable',
@@ -393,48 +398,55 @@ def codex_case(root, script, fixtures, shell, server, legacy=False, requested='l
                 'truncated': 'checksum did not match',
             }
             if failure in expected:
-                assert expected[failure].lower() in (result.stdout + result.stderr).lower(), result
+                require(expected[failure].lower() in (result.stdout + result.stderr).lower(), result)
             if failure in ('metadata', 'tag', 'missing-digest', 'missing-package'):
-                assert (
+                require(
                     len(server.seen) == 1
-                    and server.seen[0].endswith(('latest', 'release.json'))
-                ), server.seen
+                    and server.seen[0].endswith(('latest', 'release.json')),
+                    server.seen,
+                )
             if failure in ('manifest-hash', 'manifest-entry'):
-                assert server.seen[-1].endswith('codex-package_SHA256SUMS'), server.seen
+                require(server.seen[-1].endswith('codex-package_SHA256SUMS'), server.seen)
             if failure in ('archive-hash', 'truncated'):
-                assert server.seen[-1].endswith(server.config['asset']), server.seen
+                require(server.seen[-1].endswith(server.config['asset']), server.seen)
         else:
             succeeded(result)
-            assert (
+            require(
                 '/channels/latest' in server.seen
                 if requested in ('', 'latest')
-                else f'/releases/{version}/release.json' in server.seen
-            ), server.seen
-            assert visible.read_bytes() == fixtures['codex', version]
-            assert current.resolve() == (releases / f'{version}-{target}').resolve()
-            assert not marker.exists(), 'auto-update marker retained'
+                else f'/releases/{version}/release.json' in server.seen,
+                server.seen,
+            )
+            require(visible.read_bytes() == fixtures['codex', version])
+            require(current.resolve() == (releases / f'{version}-{target}').resolve())
+            require(not marker.exists(), 'auto-update marker retained')
             probe = run([str(visible), '--version'], env=env)
-            assert probe.returncode == 0 and probe.stdout.strip() == 'codex-cli ' + version, probe
+            require(probe.returncode == 0 and probe.stdout.strip() == 'codex-cli ' + version, probe)
             if lifecycle:
                 succeeded(install(requested))
                 before = file_state(releases)
                 old_target = current.resolve()
                 configure('0.159.3', 'archive-hash')
                 rejected = install('0.159.3')
-                assert (
+                require(
                     rejected.returncode != 0
-                    and 'checksum did not match' in rejected.stderr.lower()
-                ), rejected
-                assert file_state(releases) == before and current.resolve() == old_target, (
-                    'failed upgrade changed old release'
+                    and 'checksum did not match' in rejected.stderr.lower(),
+                    rejected,
                 )
-                assert visible.read_bytes() == fixtures['codex', version]
+                require(
+                    file_state(releases) == before and current.resolve() == old_target,
+                    'failed upgrade changed old release',
+                )
+                require(visible.read_bytes() == fixtures['codex', version])
                 configure('0.159.3')
                 succeeded(install('0.159.3'))
-                assert current.resolve() == (releases / f'0.159.3-{target}').resolve()
-                assert visible.read_bytes() == fixtures['codex', '0.159.3']
-                assert all(
+                require(current.resolve() == (releases / f'0.159.3-{target}').resolve())
+                require(visible.read_bytes() == fixtures['codex', '0.159.3'])
+                require(
+                    all(
                     (releases / name).read_bytes() == body for name, body in before.items()
-                ), 'upgrade removed old release'
-                assert not marker.exists()
-        assert not list(releases.glob('.staging.*')), 'staging release leaked'
+                ),
+                    'upgrade removed old release',
+                )
+                require(not marker.exists())
+        require(not list(releases.glob('.staging.*')), 'staging release leaked')

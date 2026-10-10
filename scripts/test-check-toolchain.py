@@ -69,6 +69,37 @@ class CheckToolchainTest(unittest.TestCase):
         self.edit(".github/workflows/ci.yml", "  pull_request:", "  pull_request_target:")
         self.assert_problem("pull_request_target")
 
+    def test_pull_on_a_continuation_line_is_rejected(self):
+        self.edit(
+            ".github/workflows/ci.yml",
+            "docker build -t installer-validator",
+            "docker build \\\n            --pull -t installer-validator",
+        )
+        self.assert_problem("--pull")
+
+    def test_checkout_must_not_persist_credentials(self):
+        self.edit(".github/workflows/publish.yml", "persist-credentials: false", "persist-credentials: true")
+        self.assert_problem("publish.yml: actions/checkout must set persist-credentials: false")
+        self.edit(".github/workflows/installer-updates.yml", "          persist-credentials: false\n", "")
+        self.assert_problem("installer-updates.yml: actions/checkout")
+
+    def test_qemu_image_must_be_pinned_by_digest(self):
+        path = self.root / ".github/workflows/publish.yml"
+        text = path.read_text()
+        image = next(line for line in text.splitlines() if "image: docker.io/tonistiigi/binfmt" in line)
+        path.write_text(text.replace(image + "\n", ""))
+        self.assert_problem("setup-qemu-action")
+
+    def test_buildx_must_not_boot_a_floating_buildkit(self):
+        self.edit(".github/workflows/verify-published.yml", "driver: docker", "driver: docker-container")
+        self.assert_problem("verify-published.yml: docker/setup-buildx-action")
+        self.edit(
+            ".github/workflows/verify-published.yml",
+            "driver: docker-container",
+            "driver: docker-container\n          driver-opts: image=moby/buildkit:v0.1.0@sha256:" + "0" * 64,
+        )
+        self.assertEqual(check_toolchain.check(self.root), [])
+
 
 if __name__ == "__main__":
     unittest.main()

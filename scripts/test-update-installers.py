@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import tempfile
 from installer_manifest import ROOT, applications
-from installer_test_support import sha, file_state
+from installer_test_support import file_state, require, sha
 from installer_maintenance import SIGNATURE_BEGIN, SIGNATURE_END, unsigned
 
 for app in applications():
@@ -28,8 +28,8 @@ for app in applications():
             return subprocess.run(command + options, capture_output=True, text=True, timeout=180)
 
         checked = execute(['--source', str(target / 'upstream')])
-        assert checked.returncode == 0, checked.stderr
-        assert file_state(target) == before, 'check mode changed files'
+        require(checked.returncode == 0, checked.stderr)
+        require(file_state(target) == before, 'check mode changed files')
         signed = [
             name for name in ('install.ps1', 'install.sh')
             if SIGNATURE_BEGIN in (target / 'upstream' / name).read_bytes()
@@ -47,13 +47,14 @@ for app in applications():
                 (hidden / name).write_bytes(body + block.rstrip() + b'\r\nWrite-Host hidden' + block)
             for mode in ([], ['--apply']):
                 ok = execute(['--source', str(resigned)] + mode)
-                assert ok.returncode == 0, ok.stderr
-                assert (
+                require(ok.returncode == 0, ok.stderr)
+                require(
                     {k: v for k, v in file_state(target).items() if k != 'provenance.json'}
-                    == {k: v for k, v in before.items() if k != 'provenance.json'}
-                ), 'signature-only change rewrote installers'
+                    == {k: v for k, v in before.items() if k != 'provenance.json'},
+                    'signature-only change rewrote installers',
+                )
             bad = execute(['--source', str(hidden)])
-            assert bad.returncode != 0 and 'maintainer review' in bad.stderr, bad.stderr
+            require(bad.returncode != 0 and 'maintainer review' in bad.stderr, bad.stderr)
             before = file_state(target)
         source = fixture / 'changed'
         shutil.copytree(target / 'upstream', source)
@@ -61,17 +62,17 @@ for app in applications():
         file.write_bytes(file.read_bytes().replace(b'BASE_URL=', b'CHANGED_BASE_URL=', 1))
         for options in [[], ['--shell-sha256', sha(file.read_bytes())]]:
             failed = execute(['--source', str(source), '--apply'] + options)
-            assert failed.returncode != 0, 'digest/patch context failure accepted'
-            assert file_state(target) == before, 'failure changed existing installer tree'
+            require(failed.returncode != 0, 'digest/patch context failure accepted')
+            require(file_state(target) == before, 'failure changed existing installer tree')
         applied = execute(['--source', str(target / 'upstream'), '--apply'])
-        assert applied.returncode == 0, applied.stderr
+        require(applied.returncode == 0, applied.stderr)
         after = file_state(target)
-        assert (
+        require(
             {k: v for k, v in after.items() if k != 'provenance.json'}
-            == {k: v for k, v in before.items() if k != 'provenance.json'}
+            == {k: v for k, v in before.items() if k != 'provenance.json'},
         )
-        assert (
+        require(
             json.loads(after['provenance.json'])['retrieved_at']
-            != json.loads(before['provenance.json'])['retrieved_at']
+            != json.loads(before['provenance.json'])['retrieved_at'],
         )
         print(app['id'] + ': check-only, digest/context protection and isolated atomic apply PASS')

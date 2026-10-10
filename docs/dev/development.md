@@ -21,7 +21,7 @@ Windows 主机上建议在 Linux 容器或 WSL 中运行 `make` 目标；PowerSh
 | Node.js 版本 | `frontend/.node-version` | 所有工作流的 `setup-node`（`node-version-file`） |
 | 基础镜像 | 根 `Dockerfile` 的全局 `ARG GO_IMAGE` / `ARG NODE_IMAGE`（标签 + 摘要） | Dockerfile 各阶段；`scripts/build-native-container.sh` 与 CI 发布编译缓存键通过 `scripts/dockerfile-arg.sh GO_IMAGE` 读取 |
 
-`make check` 中的 `scripts/check-toolchain.py` 保证：镜像标签与 `go.mod`、`.node-version` 一致且按摘要固定；工作流不写死 `go-version`/`node-version`；action 固定到 commit SHA；不使用 `pull_request_target`；`docker build` 不带 `--pull`；`.github/` 下的 Dockerfile 也按摘要固定基础镜像。升级 Go 或 Node 时同时改唯一来源和对应镜像的标签与摘要。
+`make check` 中的 `scripts/check-toolchain.py` 保证：镜像标签与 `go.mod`、`.node-version` 一致且按摘要固定；工作流不写死 `go-version`/`node-version`；action 固定到 commit SHA；不使用 `pull_request_target`；`docker build` 不带 `--pull`（含反斜杠续行）；每个 `actions/checkout` 都设置 `persist-credentials: false`；`setup-qemu-action` 的特权 binfmt 镜像（`image:`）按摘要固定；`setup-buildx-action` 使用 `driver: docker`，或用 `driver-opts: image=moby/buildkit:<版本>@sha256:…` 固定 BuildKit 镜像；`.github/` 下的 Dockerfile 也按摘要固定基础镜像。升级 Go 或 Node 时同时改唯一来源和对应镜像的标签与摘要。
 
 ## 构建
 
@@ -57,7 +57,7 @@ npm test                # Vitest
 npm run build           # 输出到 internal/httpserver/web
 ```
 
-- Vite 以 `/` 为 asset base，输出到 `internal/httpserver/web`（`index.html`、`admin.html`、扁平的 `assets/`）。**该目录是提交到仓库的产物**：前端改动必须同时重新构建并提交它（见 [ADR 0007](adr/0007-committed-frontend-bundle.md)）。CI 会重新构建并要求该目录与提交完全一致（`git diff --exit-code` 与 `git status --porcelain` 都为空，新增未提交的文件同样失败）。
+- Vite 以 `/` 为 asset base，输出到 `internal/httpserver/web`（`index.html`、`admin.html`、扁平的 `assets/`）。**该目录是提交到仓库的产物**：前端改动必须同时重新构建并提交它（见 [ADR 0007](adr/0007-committed-frontend-bundle.md)）。`make frontend-check` 用 `npm run build` 重新构建并要求该目录与提交完全一致（`git diff --exit-code` 与 `git status --porcelain` 都为空，新增未提交的文件同样失败）；CI 调用同一个目标。
 - 服务端必须为公开路由返回 `index.html`、为 `/admin/...` 返回 `admin.html`，规则见 [frontend.md](frontend.md#两个入口与-spa-服务契约) 和规范的 `x-spa-routes`。
 - 改了 `api/openapi.yaml` 要运行 `npm run codegen` 并提交生成的 `src/shared/api/*.gen.ts`。
 - `npm run build` 还检查两件事：公开入口不包含后台模块；打包进产物的每个 npm 包都记录在 [third_party/README.md](../../third_party/README.md)。
@@ -72,6 +72,7 @@ npm run build           # 输出到 internal/httpserver/web
 | `make check` | 文档检查（`docs-check`）、工具链与 CI 固定检查（`toolchain-check`）、`gofmt`（`cmd internal installers presets`）、`go vet` | Go、Python |
 | `make test` | 发布脚本单测、文档检查与工具链检查单测、`go test -race`（`cmd`、`installers`、`internal`、`presets`）、Shell 安装器契约、安装器更新与每日维护的离线回归 | Go、Python、`patch` |
 | `make frontend-test` | 生成物检查、ESLint、Prettier、`vue-tsc` 类型检查与 Vitest DOM 测试 | Node |
+| `make frontend-check` | 重新构建前端，要求 `internal/httpserver/web` 与提交逐字节一致且没有未跟踪文件 | Node、Git |
 | `make runtime-test` | 用**当前** `bin/redapp`（不重新编译，缺失时直接失败）跑真实进程：数据目录与配置、HTTP 路由与重启、使用说明文档执行、retention、prewarm、分类/Tag、配置导入导出 | 已构建的二进制、Node（自动 `npm ci`，供 Happy DOM 使用） |
 | `make e2e` | 用**当前** `bin/redapp` 和全新数据目录启动服务，从首次启动日志读取管理员密码，发布一个 `info` 应用作为公开内容，再跑 Playwright（Chromium）：公开首页、目录搜索与应用页、公开与后台 404 文档、登录—导航—退出、站点文本保存、不带标签的应用深链；控制台不能有错误（含 CSP 违规） | 已构建的二进制、Node、Playwright Chromium（`cd frontend && npx playwright install --with-deps chromium`） |
 | `make docs-check` | 双语用户文档结构一致、仓库内 Markdown 相对链接有效 | Python |
@@ -102,15 +103,16 @@ python3 scripts/check-docs.py --base main     # 另外要求成对文档同时�
 
 | Job | 内容 |
 | --- | --- |
-| `frontend` | `make frontend-test`，重新构建并比对已提交的 `internal/httpserver/web`，上传 `frontend-<SHA>` 产物（含 SHA256SUMS） |
+| `frontend` | `make frontend-test frontend-check`（重新构建并比对已提交的 `internal/httpserver/web`），上传 `frontend-<SHA>` 产物（含 SHA256SUMS） |
 | `test`（amd64、arm64） | `make check test`；PR 上另跑 `check-docs.py --base HEAD^1`；amd64 在无网络、只读的容器里再跑一次 Shell 安装器测试 |
 | `runtime`（amd64、arm64） | 校验并解包本次 `frontend` 产物，用原生容器编译，`make runtime-test`，用根 Dockerfile（`--target runtime`、`RUNTIME_FILES=prebuilt`）打包 scratch 运行镜像并跑 Docker 测试；amd64 另跑 CPU 基线测试，并把编译出的二进制上传为 `redapp-<SHA>-linux-amd64`（保留 1 天） |
-| `e2e`（amd64） | 下载 `runtime` 的 amd64 二进制并核对版本，按 `package-lock.json` 锁定的 Playwright 安装 Chromium，`make e2e`；失败时上传 `frontend/test-results/` 中的 trace |
+| `e2e`（amd64） | 下载 `runtime` 的 amd64 二进制并核对版本，按 `package-lock.json` 锁定的 Playwright 安装 Chromium，`make e2e`；失败时上传 `frontend/test-results/` 中的 trace（含登录步骤输入的管理员密码；该密码只属于本次运行的临时服务和数据目录） |
 | `source-image`（amd64） | 用根 Dockerfile 从源码（前端 + Go 阶段）构建镜像，检查版本并跑 Docker 测试；只验证，不产生产物 |
 | `windows-installers` | 复用 `windows-installers.yml`，PS7 与 5.1 安装器门禁 |
 
 - 只有 `PMExtra/RedApp` main 的 push 才上传 `runtime-<SHA>-<arch>` 产物（image.tar + metadata.json，保留 3 天）。PR 跑完整验证但不产生可发布产物。
 - 所有 action 都固定到 commit SHA，并在行尾注释主版本（如 `# v4`）。checkout 一律 `persist-credentials: false`。新增 action 遵循同样做法（`toolchain-check` 强制）。
+- 发布任务只用 buildx 的 `imagetools`，所以 `setup-buildx-action` 用 `driver: docker`，不启动 BuildKit 容器；`setup-qemu-action` 的 `tonistiigi/binfmt` 镜像按标签 + 摘要固定，升级时从 Docker Hub 查新标签的 index 摘要一并替换。
 - Linux 任务统一使用 `ubuntu-26.04` / `ubuntu-26.04-arm`；Windows 安装器门禁使用 `windows-2022`。
 - 缓存只用于加速，不能当作可信产物：源码测试的 Go 缓存按 runner/Go 版本/go.sum 分键，发布编译缓存另按 Linux 架构、`GO_IMAGE` 摘要和 go.sum 分键。
 
@@ -132,7 +134,7 @@ python3 scripts/check-docs.py --base main     # 另外要求成对文档同时�
 - 产物过期或缺失：对仍在 main 上的同一提交重跑 CI，再重跑原发布任务。若 main 已前进，使用新版本和新提交，不能移动旧 tag。
 - 注册表多标签写入不是原子的。推广中途网络失败时，核对四个标签后重跑同一任务，不重新编译或更换产物。
 - 发布 runner 必须先安装 `qemu-user`/`binutils`，再注册 Docker binfmt；顺序颠倒会让 ARM 容器验收时报 exec format error。
-- 候选和 `ci-<SHA>` 架构标签目前没有自动清理策略。
+- 候选和 `ci-<SHA>` 架构标签没有自动清理策略。
 
 ## Schema 迁移
 
