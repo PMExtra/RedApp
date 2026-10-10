@@ -109,7 +109,7 @@ def inspect(root=ROOT,fetch=download):
             current=fetch(item['url']);script_shape(item['name'],current)
             row['current_sha256']=digest(current);row['data']=current
             # Re-signing alone does not change what RedApp generates or serves.
-            row['status']='unchanged' if unsigned(current)==unsigned(body) else 'changed'
+            row['status']='unchanged' if same_unsigned(current,body) else 'changed'
         except (OSError,ValueError,UnicodeError,TimeoutError) as error:
             row['error']=str(error) if not isinstance(error,urllib.error.HTTPError) else f'Upstream HTTP {error.code}'
         rows.append(row)
@@ -159,6 +159,10 @@ def unsigned(original):
     if SIGNATURE_BEGIN in body or SIGNATURE_END in body:
         raise ValueError('Authenticode marker outside a single trailing signature block; maintainer review is required')
     return body
+
+# Shared by daily checks and local updates: re-signing alone is not an upstream change.
+def same_unsigned(current,audited):
+    return unsigned(current)==unsigned(audited)
 
 # Line offsets are accepted; fuzz, rejected or reversed hunks are conflicts.
 def apply_patch(original,patch):
