@@ -2,7 +2,7 @@
 
 面向终端分发的 generated 脚本仅保留简短修改声明、原有代码注释及必要的用户行为说明。项目的源码身份、patch 流程及验证过程放在本文和维护工具中，避免把维护说明混入安装制品。
 
-官方原始基线位于 `installers/openai/codex/upstream/`，固定 0.159.2 commit `ff6aec96948b70d94983af2641a6b67c94faeff5`；字节摘要与许可证来源记录在 `provenance.json`。禁止直接修改 upstream 原文。企业变换由 `patches/` 保存，`generated/` 必须逐字节等于原文（移除末尾 Authenticode 签名块后）加严格 patch 的结果。
+官方原始基线位于 `installers/openai/codex/upstream/`，固定 0.159.2 commit `ff6aec96948b70d94983af2641a6b67c94faeff5`；字节摘要与许可证来源记录在 `provenance.json`。禁止直接修改 upstream 原文。企业变换由 `patches/` 保存，`generated/` 必须逐字节等于原文（移除末尾 Authenticode 签名块后）应用 patch 的结果。patch 禁止 fuzz，允许整体行号偏移；任何 hunk 失败、反向或需要模糊匹配均视为冲突。
 
 企业脚本将初始下载地址限定为 RedApp、关闭公网回退、保留官方正常重定向行为和原始哈希验证，并删除自动更新 marker。CLI 二进制和官方交互确认不改动；无人值守安装显式设置 `CODEX_NON_INTERACTIVE=1`。源码基线、完整许可证和 NOTICE 独立随服务交付，不在脚本头部重复维护记录。
 
@@ -13,7 +13,7 @@ python3 scripts/test-update-installers.py
 python3 scripts/test-installers.py --platform shell
 ```
 
-检查模式不改动发布目录。更新器固定源码摘要、拒绝 patch fuzz/offset、检查网络出口并运行离线失败矩阵；仅全部成功后 `--apply` 才在同一文件系统原子替换目录。生成一致性回归核对两份 generated 的完整字节，摘要/上下文失败回归确保发布目录保持不变。Linux 仅验证 Shell 和生成字节一致性；PowerShell 解析及行为统一在 Windows PS7/5.1 执行。本地 `--apply` 不代表 Windows 验证或发布批准。
+检查模式不改动发布目录。更新器固定源码摘要、拒绝 patch fuzz 和冲突（允许行号偏移）、检查网络出口并运行离线失败矩阵；仅全部成功后 `--apply` 才在同一文件系统原子替换目录。生成一致性回归核对两份 generated 的完整字节，摘要/上下文失败回归确保发布目录保持不变。Linux 仅验证 Shell 和生成字节一致性；PowerShell 解析及行为统一在 Windows PS7/5.1 执行。本地 `--apply` 不代表 Windows 验证或发布批准。
 
 ## 最小修改原则
 
@@ -26,13 +26,13 @@ python3 scripts/test-installers.py --platform shell
 | install.sh | 31 | 128 | 简短修改声明；企业 URL；下载地址约束；移除 GitHub fallback 与重新获取摘要；保留清单/包校验；抑制更新 marker |
 | install.ps1 | 18 | 80 | 简短修改声明；企业 URL；请求地址约束；移除 GitHub fallback 与重新获取摘要；保留清单/包校验；抑制更新 marker |
 
-2026-10-09 起官方线上 `install.ps1` 改为 CRLF，加入不依赖模块加载的 SHA256 计算，并在末尾附带 Authenticode 签名块（证书有效期仅数天，会频繁重签）。企业修改必然使原签名失效，保留只会得到 HashMismatch 的签名声明，因此维护工具在严格 patch 前确定性地移除**文件末尾、标记与 base64 行完全匹配**的签名块；其它位置或内容不符的块不处理，仍须审查。upstream 保存官方原始字节（含签名），generated 为未签名脚本。补丁按新原文重建，变更统计不变；仅重签时补丁仍可严格应用，每日检查生成草稿 PR 即可。
+2026-10-09 起官方线上 `install.ps1` 改为 CRLF，加入不依赖模块加载的 SHA256 计算，并在末尾附带 Authenticode 签名块（证书有效期仅数天，会频繁重签）。企业修改必然使原签名失效，保留只会得到 HashMismatch 的签名声明，因此维护工具在应用 patch 前移除签名：从末尾的 `# SIG # Begin signature block` 行截到文件结束（须以 `# SIG # End signature block` 收尾），不检查块内内容和末尾换行，重签不会影响 patch。这一步不进入 patch 文件。移除后生成结果中仍出现签名起始标记（例如签名块后还有代码）即停止，交人工审查。upstream 保存官方原始字节（含签名），generated 为未签名脚本。
 
 删除行主要是公网回退及其 digest 重新解析分支，不是对平台识别、安装/迁移确认或解包流程的改写。本次治理恢复了两处 PowerShell 原始多行参数声明格式；没有改写 upstream，没有删除上游原有注释。每次变更均须重新确认 generated 与 patch 一致、正常安装成功、篡改/截断失败、失败关闭及交互语义保持。
 
 ## Claude Code 基线与最小 patch
 
-Claude 原文、来源、长度与 SHA256 独立记录于 `installers/anthropic/claude-code/`，不改写 Codex 基线。完整信任链和安装语义见 [Claude 说明](claude-code-v0.5.0.md)。官方原文保持逐字节不变；生成结果由严格补丁得到。`.gitattributes` 禁止原文、生成文件、patch 和签名 fixture 的换行转换；原文既有空白及 unified diff 的空白上下文不作格式化，以保持身份与最小差异。
+Claude 原文、来源、长度与 SHA256 独立记录于 `installers/anthropic/claude-code/`，不改写 Codex 基线。完整信任链和安装语义见 [Claude 说明](claude-code-v0.5.0.md)。官方原文保持逐字节不变；生成结果由同一 patch 规则得到。`.gitattributes` 禁止原文、生成文件、patch 和签名 fixture 的换行转换；原文既有空白及 unified diff 的空白上下文不作格式化，以保持身份与最小差异。
 
 | 脚本 | 新增行 | 删除行 | 必要变更 |
 | --- | ---: | ---: | --- |
@@ -48,7 +48,7 @@ python3 scripts/test-installers.py --platform shell --application anthropic/clau
 python3 scripts/test-update-installers.py
 ```
 
-省略 `--source` 时只从受审查的两个官方 HTTPS 地址获取；默认只检查。切换到已人工核验的新原文，须显式给出 `--shell-sha256` / `--powershell-sha256`；摘要、严格 patch、静态出口和离线测试全部通过后，`--apply` 在本地同一文件系统原子交换整个模块目录并 fsync。它不提交、不推送，也不自行轮换签名公钥和许可。
+省略 `--source` 时只从受审查的两个官方 HTTPS 地址获取；默认只检查。切换到已人工核验的新原文，须显式给出 `--shell-sha256` / `--powershell-sha256`；摘要、无冲突 patch、静态出口和离线测试全部通过后，`--apply` 在本地同一文件系统原子交换整个模块目录并 fsync。它不提交、不推送，也不自行轮换签名公钥和许可。
 
 ## 共同清单与服务资产
 
@@ -64,7 +64,7 @@ python3 scripts/test-update-installers.py
 
 全部 descriptor 声明的脚本检测结果统一记录在 Actions summary；数量随受审查清单变化，不在工具中固定为四份。全部不变时成功结束。下载或完整性检查失败仍报告其它脚本的结果，然后任务失败，不能记作无变化。有变化时依次：
 
-1. 使用 main 中现有 patch，禁止 fuzz、offset 和上下文漂移；不自动修改 patch。
+1. 使用 main 中现有 patch，禁止 fuzz；允许行号偏移，只要所有 hunk 无冲突地应用即继续，否则停止并报错。不自动修改 patch，偏移量随上游演进累积不影响应用；需要时由维护者重建。
 2. 在 Ubuntu 工具容器执行统一入口的 Shell 测试；镜像不包含 PowerShell，也不解析或执行 ps1；容器无网络、无凭据、无 capabilities，源目录只读，限制内存/进程，只有临时空间和验证输出可写。工具镜像在执行原文之前构建。测试输出不能注入 Actions 控制命令。
 3. 回到可信主机重新应用已审查 patch，比对容器生成结果，再封装有限文件和摘要。容器输出不是独立授权来源。
 4. 独立 Windows Server 2022 任务复用 `.github/workflows/windows-installers.yml`，检出相同 baseline 的可信 harness，核对候选 ZIP 的 SHA256、baseline、允许路径和每个文件摘要后，在临时目录以候选字节覆盖基线副本。PS7 与 Windows PowerShell 5.1 对所有声明的 ps1 进行解析及无害 EXE 行为测试。测试读取候选目录，不能回退到 checkout 中的旧文件。此任务只有 contents:read、无持久 checkout 凭据，不接收发布 token；输出禁用 Actions 命令解释。它不是 Linux 容器的网络隔离边界，也不声称 Windows 测试限制了所有潜在网络访问。
@@ -84,7 +84,7 @@ make installer-inventory
 python3 scripts/test-installer-maintenance.py
 ```
 
-本地回归覆盖 descriptor 扩展和固定验证器约束、无变化、脚本变化、所有检测错误汇总、下载/HTML/重定向边界、实际连接地址检查、真实本地 TLS 多跳与错误证书、严格补丁冲突、测试失败无产物、隔离输出篡改、包白名单与摘要、草稿幂等、普通快进、人工修改/非草稿/无主分支及 main 前进保护。
+本地回归覆盖 descriptor 扩展和固定验证器约束、无变化、脚本变化、所有检测错误汇总、下载/HTML/重定向边界、实际连接地址检查、真实本地 TLS 多跳与错误证书、签名块移除、patch 行号偏移与冲突、测试失败无产物、隔离输出篡改、包白名单与摘要、草稿幂等、普通快进、人工修改/非草稿/无主分支及 main 前进保护。
 
 旧版维护流程在 2026-10-02 的[真实官方检测](https://github.com/PMExtra/RedApp/actions/runs/37035726735)通过；四份原文均未变化，故按设计跳过隔离容器及草稿发布。这次历史无变化结果不证明本次重构工作流已部署，也不证明有变化分支的真实容器构建或 GitHub PR 写权限；这些仍须单独验收，不为测试人为制造上游变化。
 

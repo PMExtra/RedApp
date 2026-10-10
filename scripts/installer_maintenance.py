@@ -122,7 +122,7 @@ def report(rows,baseline):
         lines.append(f"| {file} | {r['url']} | {r['status']} | `{r.get('baseline_sha256','unavailable')}` | `{r['current_sha256'] or 'unavailable'}` |")
         if r['status']=='error': print('::error title=Installer upstream check failed::'+annotation(file+': '+r.get('error','Unknown failure')))
         if r['status']=='changed': print('::notice title=Official installer changed::'+annotation(file+': '+r['baseline_sha256']+' -> '+r['current_sha256']))
-    lines+=['','Changed scripts require strict patch application and isolated tests before a draft PR. Download/validation failures are errors, not “unchanged”.']
+    lines+=['','Changed scripts require conflict-free patch application (line offsets allowed) and isolated tests before a draft PR. Download/validation failures are errors, not “unchanged”.']
     summary='\n'.join(lines)+'\n'
     if os.environ.get('GITHUB_STEP_SUMMARY'):
         with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as f:f.write(summary)
@@ -145,19 +145,23 @@ def prepare(destination,root=ROOT,fetch=download):
     return changed
 
 # Generated scripts are modified, so an upstream Authenticode block would only claim an
-# invalid signature. Removing the exact trailing block also keeps patches stable when
-# upstream re-signs unchanged code.
-SIGNATURE_BLOCK=re.compile(rb'\r?\n# SIG # Begin signature block\r?\n(?:# [A-Za-z0-9+/=]+\r?\n)+# SIG # End signature block\r?\n\Z')
+# invalid signature. Cutting from the trailing begin marker keeps patches independent of
+# re-signing; any marker left elsewhere stops for review.
+SIGNATURE_BEGIN=b'# SIG # Begin signature block'
+SIGNATURE_BLOCK=re.compile(rb'\r?\n'+re.escape(SIGNATURE_BEGIN)+rb'\r?\n.*# SIG # End signature block\s*\Z',re.S)
 
 def unsigned(original):
     return SIGNATURE_BLOCK.sub(b'',original)
 
-def strict_patch(original,patch):
+# Line offsets are accepted; fuzz, rejected or reversed hunks are conflicts.
+def apply_patch(original,patch):
     with tempfile.TemporaryDirectory(prefix='redapp-patch-') as tmp:
         file=Path(tmp)/'installer';file.write_bytes(unsigned(original))
         result=run(['patch','--batch','--forward','--fuzz=0',str(file),str(patch.resolve())])
-        if re.search(r'offset|fuzz|FAILED|Reversed',result,re.I): raise ValueError('Patch context moved; maintainer review is required')
-        return file.read_bytes()
+        if re.search(r'fuzz|FAILED|Reversed|ignored',result,re.I): raise ValueError('Patch conflicts with the official script; maintainer review is required')
+        generated=file.read_bytes()
+        if SIGNATURE_BEGIN in generated: raise ValueError('Unexpected Authenticode block remains; maintainer review is required')
+        return generated
 
 def audit_shell(directory, provider):
     shell = (directory / 'install.sh').read_text()
@@ -192,7 +196,7 @@ def validate(prepared,output,root=ROOT):
                 row=next(r for r in plan['rows'] if r['application']==app and r['name']==name)
                 if digest(raw)!=row['current_sha256']:raise ValueError('Prepared source digest changed')
                 (stage/'upstream'/name).write_bytes(raw)
-                (stage/'generated'/name).write_bytes(strict_patch(raw,root/'installers'/app/'patches'/(name+'.patch')))
+                (stage/'generated'/name).write_bytes(apply_patch(raw,root/'installers'/app/'patches'/(name+'.patch')))
             validate_shell(stage/'generated', descriptor, root)
             target=output/app;target.mkdir(parents=True,exist_ok=True)
             for name in names:shutil.copyfile(stage/'generated'/name,target/name)
@@ -207,7 +211,7 @@ def package(prepared,validated,bundle,root=ROOT):
         for name in names:
             raw=(prepared/'sources'/app/name).read_bytes();row=next(r for r in plan['rows'] if r['application']==app and r['name']==name)
             if digest(raw)!=row['current_sha256']:raise ValueError('Downloaded source changed after preparation')
-            generated=strict_patch(raw,base/'patches'/(name+'.patch'))
+            generated=apply_patch(raw,base/'patches'/(name+'.patch'))
             candidate=validated/app/name
             if candidate.is_symlink() or not candidate.is_file() or candidate.stat().st_size>MAX_SCRIPT or candidate.read_bytes()!=generated:raise ValueError('Isolated output differs from the audited source plus patch')
             if raw!=(base/'upstream'/name).read_bytes():
@@ -216,7 +220,7 @@ def package(prepared,validated,bundle,root=ROOT):
         if changed:
             manifest['script_baseline']={'kind':'official-live','checked_at':plan['checked_at'],'previous_main_commit':plan['baseline']}
             files[f'installers/{app}/provenance.json']=(json.dumps(manifest,indent=2,ensure_ascii=False)+'\n').encode()
-    payload={'baseline':plan['baseline'],'rows':plan['rows'],'files':{name:digest(body) for name,body in files.items()},'validation':'Strict zero-offset patches; isolated offline descriptor-selected Shell tests. This candidate still requires the Windows PowerShell 7/5.1 job before draft publication.'}
+    payload={'baseline':plan['baseline'],'rows':plan['rows'],'files':{name:digest(body) for name,body in files.items()},'validation':'Conflict-free zero-fuzz patches (line offsets allowed); isolated offline descriptor-selected Shell tests. This candidate still requires the Windows PowerShell 7/5.1 job before draft publication.'}
     with zipfile.ZipFile(bundle,'w',compression=zipfile.ZIP_DEFLATED) as archive:
         for name,body in files.items():archive.writestr(name,body)
         archive.writestr('update.json',json.dumps(payload,indent=2))

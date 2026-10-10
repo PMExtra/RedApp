@@ -587,7 +587,7 @@ installer 目录变成 `installers/openai/codex/`、`installers/anthropic/claude
 
 1. 固定 main commit，用只读权限读取受审查 descriptor/provenance；遍历全部声明 installer，任何检查失败都汇总失败，不能当作 unchanged。
 2. 只从 descriptor 的官方 HTTPS 源获取；每跳验证 scheme/credentials/fragment、大小/时间/重定向上限和实际连接目的地。下载阶段不执行内容，不继承任意代理环境改变安全边界。
-3. 新脚本严格零 fuzz/offset patch；在无网络、无凭据、只读源码挂载、资源限制的容器中执行受审查验证器。脚本变化需要相应平台 parser，不可缺失时静默跳过。
+3. 新脚本零 fuzz、允许行号偏移的无冲突 patch；在无网络、无凭据、只读源码挂载、资源限制的容器中执行受审查验证器。脚本变化需要相应平台 parser，不可缺失时静默跳过。
 4. 可信宿主重新应用 patch，逐字节比对容器产物，再打包允许变化的 upstream/generated/provenance。patch、公钥、许可证、descriptor、workflow、产品代码都不能由 daily 更新。
 5. 写权限 job 固定同一 baseline，验证包摘要/大小/路径/文件集合；拒绝人工改过的托管分支或非草稿 PR，使用普通 fast-forward 更新。只创建/更新草稿，不自动 merge/release/deploy。
 6. 新应用的加入本身属于人工受审查代码变更；每日维护仅更新已注册应用的官方脚本基线。不能因 genericity 获得添加应用或任意执行插件的能力。

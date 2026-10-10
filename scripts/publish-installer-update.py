@@ -58,7 +58,7 @@ def body_for(payload,head,run_url):
     lines=['Updates official installer originals and generated files using the patches already reviewed on main.','',f"Baseline main: `{payload['baseline']}`",'', '| Script | Official source | Previous SHA256 | New SHA256 |','| --- | --- | --- | --- |']
     for row in payload['rows']:
         if row['status']=='changed':lines.append(f"| {row['application']}/{row['name']} | {row['url']} | `{row['baseline_sha256']}` | `{row['current_sha256']}` |")
-    lines+=['','Validation: strict zero-offset patch application, isolated offline Shell tests, a trusted file/digest recheck, and Windows PowerShell 7/5.1 parsing and harmless-executable tests of this exact candidate bundle.',
+    lines+=['','Validation: conflict-free zero-fuzz patch application (line offsets allowed), isolated offline Shell tests, a trusted file/digest recheck, and Windows PowerShell 7/5.1 parsing and harmless-executable tests of this exact candidate bundle.',
         'Windows AMD64 behavior was tested; Claude ARM64 selection was simulated. Native Windows ARM64, macOS, and official binary runtime were not tested.',
         f'Updater run: {run_url}',
         'PR CI for GITHUB_TOKEN-created updates may require manual approval. The required candidate Windows job ran before this PR was created; this does not claim a separate PR CI run.',

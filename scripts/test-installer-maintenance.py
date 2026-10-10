@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -126,24 +127,34 @@ class CheckTests(unittest.TestCase):
                             with self.assertRaises(ValueError):m.download(base+path)
             finally:server.shutdown();server.server_close();thread.join()
 
-    def test_strict_patch_generation_and_conflict(self):
+    def test_patch_generation_offset_and_conflict(self):
         for item in m.inventory():
             app,name=item['application'],item['name']
-            root=m.ROOT/'installers'/app
-            raw=(root/'upstream'/name).read_bytes()
-            result=m.strict_patch(raw,root/'patches'/(name+'.patch'))
-            self.assertEqual(result,(root/'generated'/name).read_bytes())
+            root=m.ROOT/'installers'/app;diff=root/'patches'/(name+'.patch')
+            raw=(root/'upstream'/name).read_bytes();generated=(root/'generated'/name).read_bytes()
+            self.assertEqual(m.apply_patch(raw,diff),generated)
+            newline=b'\r\n' if b'\r\n' in raw else b'\n'
+            # Shift every hunk after the first; GNU patch anchors hunks that touch the file start.
+            start=int(re.findall(rb'^@@ -(\d+)',diff.read_bytes(),re.M)[1])-1
+            lines=raw.splitlines(keepends=True);probe=b'# redapp offset probe'+newline
+            shifted=b''.join(lines[:start]+[probe]+lines[start:])
+            self.assertEqual(m.apply_patch(shifted,diff).replace(probe,b'',1),generated)
+            removed=next(l[1:] for l in diff.read_bytes().splitlines(keepends=True) if l.startswith(b'-') and not l.startswith(b'---') and raw.count(l[1:])==1)
             with self.assertRaises((ValueError,subprocess.SubprocessError)):
-                m.strict_patch(b'\n'+raw,root/'patches'/(name+'.patch'))
-    def test_trailing_authenticode_block_is_removed_before_strict_patch(self):
-        root=m.ROOT/'installers/openai/codex';patch=root/'patches/install.ps1.patch'
+                m.apply_patch(raw.replace(removed,b'# redapp conflict'+newline,1),diff)
+    def test_trailing_authenticode_block_is_removed_before_patch(self):
+        root=m.ROOT/'installers/openai/codex';diff=root/'patches/install.ps1.patch'
         raw=(root/'upstream/install.ps1').read_bytes();body=m.unsigned(raw)
         self.assertNotIn(b'# SIG #',body);self.assertEqual(m.unsigned(body),body)
-        resigned=body+b'\r\n# SIG # Begin signature block\r\n# QUJD\r\n# REVG+/=\r\n# SIG # End signature block\r\n'
-        self.assertEqual(m.strict_patch(resigned,patch),(root/'generated/install.ps1').read_bytes())
-        # Only an exact trailing block is removed; code after it or inside it is kept for review.
-        for altered in (resigned+b'Write-Host injected\r\n',resigned.replace(b'# QUJD',b'Invoke-Expression x')):
-            self.assertEqual(m.unsigned(altered),altered)
+        generated=(root/'generated/install.ps1').read_bytes()
+        # Re-signing may change the block content and its trailing newline.
+        for block in (b'# QUJD\r\n# REVG+/=\r\n',b'# any future layout\r\n'):
+            for end in (b'\r\n',b''):
+                resigned=body+b'\r\n# SIG # Begin signature block\r\n'+block+b'# SIG # End signature block'+end
+                self.assertEqual(m.apply_patch(resigned,diff),generated)
+        # A block that is not trailing is kept and stops for review.
+        with self.assertRaises(ValueError):
+            m.apply_patch(resigned+b'\r\nWrite-Host injected\r\n',diff)
         shell=(m.ROOT/'installers/openai/codex/upstream/install.sh').read_bytes()
         self.assertEqual(m.unsigned(shell),shell)
     def test_isolated_test_failure_does_not_output(self):

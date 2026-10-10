@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unified installer maintenance: audited sources, strict patches, Shell contracts, atomic local apply.
+"""Unified installer maintenance: audited sources, conflict-free patches, Shell contracts, atomic local apply.
 
 PowerShell validation belongs to the Windows job; local apply is not release approval.
 """
@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import tempfile
 from installer_manifest import ROOT, applications
-from installer_maintenance import digest, download, script_shape, strict_patch, validate_shell
+from installer_maintenance import digest, download, script_shape, apply_patch, validate_shell
 
 
 def exchange(a, b):
@@ -54,7 +54,7 @@ def main():
             if not re.fullmatch('[0-9a-f]{64}',expected) or digest(raw)!=expected:
                 raise ValueError(name+': audited digest differs; review and provide the expected SHA256')
             (stage/'upstream'/name).write_bytes(raw)
-            (stage/'generated'/name).write_bytes(strict_patch(raw,stage/'patches'/(name+'.patch')))
+            (stage/'generated'/name).write_bytes(apply_patch(raw,stage/'patches'/(name+'.patch')))
             manifest['files'][name].update(bytes=len(raw),sha256=digest(raw),source=installer['source'])
         validate_shell(stage/'generated',descriptor)
         if args.apply:
