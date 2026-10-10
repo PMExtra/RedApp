@@ -10,28 +10,19 @@ const emit = defineEmits<{ error: [unknown] }>();
 const error = ref<unknown>();
 const revision = ref<number>();
 const proxy = ref<ProxyConfig>({ mode: "direct" });
-const server = ref(""),
-  saved = ref<ProxySettings>(),
+const saved = ref<ProxySettings>(),
   busy = ref(false),
   message = ref(false),
   loading = ref(false);
+function draft(value: ProxySettings): ProxyConfig {
+  return value.mode === "url"
+    ? { mode: "url", url: value.url || "" }
+    : { mode: "direct" };
+}
 const dirty = computed(
   () =>
     !!saved.value &&
-    JSON.stringify(proxy.value) !==
-      JSON.stringify(
-        saved.value.mode
-          ? {
-              mode: saved.value.mode,
-              ...(saved.value.mode === "url"
-                ? { url: saved.value.url || saved.value.server }
-                : {}),
-            }
-          : {
-              mode: saved.value.server ? "url" : "direct",
-              ...(saved.value.server ? { url: saved.value.server } : {}),
-            },
-      ),
+    JSON.stringify(proxy.value) !== JSON.stringify(draft(saved.value)),
 );
 const confirmDiscard = useDirtyDraft(dirty);
 let controller: AbortController | undefined,
@@ -53,16 +44,7 @@ async function load() {
     if (!disposed) {
       revision.value = data.revision;
       saved.value = data;
-      server.value = data.server;
-      proxy.value = data.mode
-        ? {
-            mode: data.mode,
-            ...(data.mode === "url" ? { url: data.url || data.server } : {}),
-          }
-        : {
-            mode: data.server ? "url" : "direct",
-            ...(data.server ? { url: data.server } : {}),
-          };
+      proxy.value = draft(data);
     }
   } catch (reason) {
     if (!disposed && !isCancellation(reason)) {
@@ -97,16 +79,7 @@ async function save() {
     if (!disposed) {
       revision.value = data.revision;
       saved.value = data;
-      server.value = data.server;
-      proxy.value = data.mode
-        ? {
-            mode: data.mode,
-            ...(data.mode === "url" ? { url: data.url || data.server } : {}),
-          }
-        : {
-            mode: data.server ? "url" : "direct",
-            ...(data.server ? { url: data.server } : {}),
-          };
+      proxy.value = draft(data);
       message.value = true;
     }
   } catch (reason) {
@@ -151,7 +124,7 @@ onUnmounted(() => {
       <p class="muted small-text">
         {{
           t(
-            "Enter one complete URL with percent-encoded credentials. The saved URL is visible to administrators.",
+            "Enter one complete URL with percent-encoded credentials.",
           )
         }}
       </p>

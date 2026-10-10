@@ -77,10 +77,10 @@ export interface CleanupPreview {
   active: number;
   unknown_versions: string[];
 }
+// The URL password is redacted; see REDACTED_PROXY_PASSWORD in configuration.ts.
 export interface ProxySettings {
- mode?: "direct"|"url";
- url?: string;
-  server: string;
+  mode: "direct" | "url";
+  url?: string;
   dns: string;
 }
 export interface APIProblem {

@@ -421,6 +421,8 @@ func (s *Server) asset(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	} else if strings.HasSuffix(name, ".woff2") {
 		w.Header().Set("Content-Type", "font/woff2")
+		// Fonts are CORS fetches; sandboxed instruction documents have an opaque origin.
+		w.Header().Set("Access-Control-Allow-Origin", "*")
 	} else if strings.HasSuffix(name, ".txt") {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	} else {
@@ -742,7 +744,7 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 			if app != "" || s.Upstream == nil {
 				break
 			}
-			v := s.Upstream.Proxy()
+			v := s.Upstream.Proxy().Redacted()
 			revisionReply(w, v.Revision, v)
 			return
 		case "settings/public-url":
@@ -832,7 +834,7 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 				settingsError(w, e)
 				return
 			}
-			v := s.Upstream.Proxy()
+			v := s.Upstream.Proxy().Redacted()
 			revisionReply(w, v.Revision, v)
 			return
 		case "settings/public-url":

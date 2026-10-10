@@ -1,0 +1,1 @@
+var e=`****`;function t(e,t){return t.split(`.`).reduce((e,t)=>e?.[t],e)}function n(e,t,n){let r=t.split(`.`),i=e;for(let e of r.slice(0,-1))i=i[e];i[r.at(-1)]=JSON.parse(JSON.stringify(n))}export{t as n,n as r,e as t};

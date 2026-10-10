@@ -67,33 +67,29 @@ func TestV072PublicDirectoryPinsTemplatesAndInstructionDocuments(t *testing.T) {
 	for _, path := range []string{"/admin/api/apps/openai/codex/template", "/admin/api/vendors/openai/template"} {
 		h.request("GET", path, nil, 404, nil)
 	}
-	_, headers := h.request("GET", "/api/apps/openai/codex/instructions/document?lang=en", nil, 200, nil)
-	if strings.Contains(headers.Get("Content-Security-Policy"), "sandbox") {
-		t.Fatal("instructions sandboxed")
-	}
-	if err := h.server.Pool.SetProxy(distributor.ProxyUpdate{Server: "http://fake-user:fake-secret@proxy.example:8080"}, h.server.Pool.Proxy().Revision); err != nil {
+	if err := h.server.Pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: "http://fake-user:fake-secret@proxy.example:8080"}, h.server.Pool.Proxy().Revision); err != nil {
 		t.Fatal(err)
 	}
 	source := "# Fixture\n\n<script>window.fixtureInline=1</script>\n<script src=\"https://cdn.example/fixture.js\"></script>\n<img src=\"https://cdn.example/fixture.png\">\n\n{{app_name}} {{public_origin}} {{unknown}}"
 	h.request("PUT", "/admin/api/apps/acme/tool-0/instructions", map[string]any{"en": source, "zh-CN": "<b>中文</b>", "revision": 0}, 200, nil)
-	data, headers = h.request("GET", "/api/apps/acme/tool-0/instructions/document?lang=en", nil, 200, nil)
+	data, headers := h.request("GET", "/api/apps/acme/tool-0/instructions/document?lang=en", nil, 200, nil)
 	for _, want := range []string{"<h1>Fixture</h1>", "<script>window.fixtureInline=1</script>", "https://cdn.example/fixture.js", "Tool 0", "{{unknown}}"} {
 		if !bytes.Contains(data, []byte(want)) {
 			t.Fatal("document lost HTML, JS, or controlled placeholder", want, string(data))
 		}
 	}
-	if bytes.Contains(data, []byte("fake-secret")) || strings.Contains(headers.Get("Content-Security-Policy"), "sandbox") {
-		t.Fatal("private data leaked or JS sandboxed")
+	if bytes.Contains(data, []byte("fake-secret")) || !strings.Contains(headers.Get("Content-Security-Policy"), "sandbox allow-scripts ") {
+		t.Fatal("private data leaked or JS not isolated")
 	}
 	h.request("PUT", "/admin/api/apps/acme/tool-0/instructions", map[string]any{"en": "", "zh-CN": "", "revision": 1}, 200, nil)
 	data, _ = h.request("GET", "/api/apps/acme/tool-0/instructions/document?lang=en", nil, 200, nil)
 	if bytes.Contains(data, []byte("Fixture")) {
 		t.Fatal("explicit blank not preserved")
 	}
-	// Proxy full URL is visible only through the protected settings API.
+	// The protected settings API shows the proxy user and host but never the password.
 	data, _ = h.request("GET", "/admin/api/settings/proxy", nil, 200, nil)
-	if !bytes.Contains(data, []byte("fake-secret")) {
-		t.Fatal("admin full URL missing")
+	if bytes.Contains(data, []byte("fake-secret")) || !bytes.Contains(data, []byte("http://fake-user:****@proxy.example:8080")) {
+		t.Fatal("admin proxy view", string(data))
 	}
 	for _, path := range []string{"/api/bootstrap", "/api/home", "/api/vendors/acme"} {
 		data, _ = h.request("GET", path, nil, 200, nil)

@@ -422,6 +422,10 @@ func makeImportPlan(st configurationState, documents []configexchange.Document, 
 		if len(d.OmittedFields) > 0 {
 			var proxy networkproxy.Config
 			if choice.Proxy != nil {
+				// No saved password is bound to an import choice; use keep_effective_proxy.
+				if _, err := networkproxy.KeepRedactedPassword(*choice.Proxy, networkproxy.Config{}); err != nil {
+					return plan, fmt.Errorf("%w: %s", ErrInvalidDirectory, err)
+				}
 				proxy = *choice.Proxy
 			} else if choice.KeepEffectiveProxy && before != nil {
 				proxy = effectiveObjectProxy(st, d.Kind, row.UID)

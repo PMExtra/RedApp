@@ -1,4 +1,7 @@
 export type ProxyConfig = { mode: "inherit" | "direct" | "url"; url?: string };
+// The server shows saved proxy passwords as this placeholder and keeps the saved
+// password when it is submitted for the same scheme, user and host.
+export const REDACTED_PROXY_PASSWORD = "****";
 export interface ProxyEffective extends ProxyConfig {
   source_scope: "app" | "vendor" | "global";
   source_id: string;

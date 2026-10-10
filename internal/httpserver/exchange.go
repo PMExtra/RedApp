@@ -132,7 +132,7 @@ func (s *Server) exchangeAPI(w http.ResponseWriter, r *http.Request, session aut
 		digest := hex.EncodeToString(hash[:])
 		until := now.Add(10 * time.Minute)
 		s.exchangePreviews[id] = exchangePreview{plan: plan, session: owner, digest: digest, until: until, images: images}
-		reply(w, 200, map[string]any{"id": id, "digest": digest, "expires_at": until, "preview": plan})
+		reply(w, 200, map[string]any{"id": id, "digest": digest, "expires_at": until, "preview": redactImportPlan(plan)})
 		return true
 	}
 	if strings.HasPrefix(endpoint, "configuration/import/") && strings.HasSuffix(endpoint, "/execute") {
