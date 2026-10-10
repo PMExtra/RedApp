@@ -181,8 +181,6 @@ func (s *Server) patchVendorConfiguration(w http.ResponseWriter, r *http.Request
 		s.writeError(w, r, e)
 		return
 	}
-	s.directoryMu.Lock()
-	defer s.directoryMu.Unlock()
 	c, err := s.store.PatchVendorConfiguration(id, patch)
 	if err != nil {
 		s.writeError(w, r, directoryFailure(err, codeVendorNotFound))
@@ -202,8 +200,6 @@ func (s *Server) patchAppConfiguration(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, e)
 		return
 	}
-	s.directoryMu.Lock()
-	defer s.directoryMu.Unlock()
 	a, err := s.store.Application(key)
 	if err != nil {
 		s.writeError(w, r, directoryFailure(err, codeApplicationNotFound))

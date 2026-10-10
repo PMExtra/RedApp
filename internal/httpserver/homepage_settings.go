@@ -85,8 +85,6 @@ func (s *Server) replaceHomepageSettings(w http.ResponseWriter, r *http.Request)
 		}
 		seen[key] = true
 	}
-	s.directoryMu.Lock()
-	defer s.directoryMu.Unlock()
 	saved, err := s.store.SaveHomepagePins(store.HomepagePins{Keys: keys, Revision: revision})
 	switch {
 	case errors.Is(err, store.ErrConflict):

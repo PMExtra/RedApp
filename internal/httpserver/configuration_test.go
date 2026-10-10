@@ -3,6 +3,9 @@ package httpserver
 import (
 	"bytes"
 	"errors"
+	"slices"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -180,4 +183,43 @@ func TestConfigurationRuntimeAndDatabaseStayAlignedOnFailure(t *testing.T) {
 	h.request("GET", "/admin/api/apps/"+key+"/settings", nil, 404, nil)
 	h.request("GET", "/admin/api/apps/"+key+"/instructions", nil, 404, nil)
 	h.request("GET", "/admin/api/assets/builtin-icon", nil, 404, nil)
+}
+
+func TestConcurrentConfigurationEditsConflictOnlyOnTheSameApplication(t *testing.T) {
+	h := newHarness(t)
+	h.login("")
+	h.createVendor("acme")
+	one := h.createApp("acme", "one", "info", nil)
+	two := h.createApp("acme", "two", "info", nil)
+	patch := func(a store.Application, text string) int {
+		body := strings.NewReader(`{"set":{"description.en":"` + text + `"}}`)
+		code, _, _ := h.raw("PATCH", "/admin/api/apps/"+a.Key+"/configuration", body, "application/json", ifMatchHeader(a.Revision))
+		return code
+	}
+	concurrently := func(requests ...func() int) []int {
+		codes := make([]int, len(requests))
+		var wg sync.WaitGroup
+		for i, request := range requests {
+			wg.Add(1)
+			go func() { defer wg.Done(); codes[i] = request() }()
+		}
+		wg.Wait()
+		slices.Sort(codes)
+		return codes
+	}
+	if codes := concurrently(func() int { return patch(one, "first") }, func() int { return patch(two, "second") }); !slices.Equal(codes, []int{200, 200}) {
+		t.Fatal("edits of different applications conflicted", codes)
+	}
+	one, _ = h.store.Application(one.Key)
+	two, _ = h.store.Application(two.Key)
+	if codes := concurrently(func() int { return patch(one, "a") }, func() int { return patch(one, "b") }); !slices.Equal(codes, []int{200, 409}) {
+		t.Fatal("same-revision edits of one application", codes)
+	}
+	for _, a := range []store.Application{one, two} {
+		stored, _ := h.store.Application(a.Key)
+		entry, _ := h.server.registry.Lookup(a.Key)
+		if entry.Revision != stored.Revision {
+			t.Fatal("runtime differs from the database", a.Key, entry.Revision, stored.Revision)
+		}
+	}
 }

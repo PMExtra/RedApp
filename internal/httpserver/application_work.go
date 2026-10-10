@@ -34,8 +34,8 @@ func (s *Server) applicationResponse(w http.ResponseWriter, r *http.Request, app
 
 var errDeletePending = errors.New("Application deletion is not complete")
 
-func (s *Server) deleteApplication(ctx context.Context, key string, revision int64) (err error) {
-	uid, drained, err := s.store.PrepareApplicationDeletion(key, revision)
+func (s *Server) deleteApplication(ctx context.Context, key, expectedUID string, revision int64) (err error) {
+	uid, drained, err := s.store.PrepareGuardedApplicationDeletion(key, expectedUID, revision)
 	if err != nil {
 		return err
 	}

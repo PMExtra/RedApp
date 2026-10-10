@@ -13,7 +13,6 @@ import (
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/apps/builtin"
-	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/media"
@@ -21,34 +20,9 @@ import (
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
-// ReloadDirectory publishes one complete runtime snapshot. Callers serialize
-// mutations with directoryMu; source fences reject work from replaced snapshots.
-func (s *Server) ReloadDirectory() error {
-	snapshot, err := s.store.DirectoryConfigurationSnapshot()
-	if err != nil {
-		return err
-	}
-	entries, err := builtin.EntriesFromConfiguration(snapshot, s.pool)
-	if err != nil {
-		return err
-	}
-	next, err := application.NewRegistry(entries)
-	if err != nil {
-		return err
-	}
-	clients := make(map[string]*distributor.Client, len(snapshot.Sources))
-	for _, source := range snapshot.Sources {
-		client, e := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, snapshot.ProviderDefaults[source.Provider], source.AppUID, snapshot.ProxyScopes[source.AppUID].VendorUID, s.pool)
-		if e != nil {
-			return e
-		}
-		clients[source.StorageID()] = client
-	}
-	if err = s.downloads.RegisterUpstreams(clients); err != nil {
-		return err
-	}
-	return s.registry.Replace(next.AllEntries())
-}
+// ReloadDirectory republishes the runtime from the database, ordered with
+// configuration writes; source fences reject work from replaced snapshots.
+func (s *Server) ReloadDirectory() error { return s.store.RepublishConfiguration() }
 
 // directoryFailure maps a store error of a directory, configuration or notes
 // operation to its response. notFound is the code for a missing object
@@ -183,8 +157,6 @@ func (s *Server) createVendor(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.directoryMu.Lock()
-	defer s.directoryMu.Unlock()
 	created, err := s.store.CreateVendor(v)
 	if err != nil {
 		s.writeError(w, r, directoryFailure(err, codeVendorNotFound))
@@ -224,8 +196,6 @@ func (s *Server) updateVendor(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, e)
 		return
 	}
-	s.directoryMu.Lock()
-	defer s.directoryMu.Unlock()
 	v, err := s.store.PatchVendorFields(id, revision, nil, &enabled)
 	if err != nil {
 		s.writeError(w, r, directoryFailure(err, codeVendorNotFound))
@@ -245,8 +215,6 @@ func (s *Server) deleteVendor(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, e)
 		return
 	}
-	s.directoryMu.Lock()
-	defer s.directoryMu.Unlock()
 	if err := s.store.PermanentlyDeleteVendor(id, revision); err != nil {
 		s.writeError(w, r, directoryFailure(err, codeVendorNotFound))
 		return
@@ -342,8 +310,6 @@ func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, e)
 		return
 	}
-	s.directoryMu.Lock()
-	defer s.directoryMu.Unlock()
 	a, err := s.store.CreateApplication(*in.Vendor, input)
 	if err != nil {
 		s.writeError(w, r, directoryFailure(err, codeVendorNotFound))
@@ -363,8 +329,6 @@ func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, e)
 		return
 	}
-	s.directoryMu.Lock()
-	defer s.directoryMu.Unlock()
 	a, err := s.store.PatchApplicationFields(key, revision, nil, &enabled)
 	if err != nil {
 		s.writeError(w, r, directoryFailure(err, codeApplicationNotFound))
@@ -391,8 +355,6 @@ func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, e)
 		return
 	}
-	s.directoryMu.Lock()
-	defer s.directoryMu.Unlock()
 	a, err := s.store.Application(key)
 	if err != nil {
 		s.writeError(w, r, directoryFailure(err, codeApplicationNotFound))
@@ -402,7 +364,7 @@ func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, revisionConflict(nil))
 		return
 	}
-	if err = s.deleteApplication(r.Context(), key, revision); err != nil {
+	if err = s.deleteApplication(r.Context(), key, uid, revision); err != nil {
 		s.writeError(w, r, directoryFailure(err, codeApplicationNotFound))
 		return
 	}
