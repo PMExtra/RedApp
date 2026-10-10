@@ -61,7 +61,7 @@
 
 ## HTTP API
 
-全部路由以 [`api/openapi.yaml`](../../api/openapi.yaml) 为准，改接口先改规范（[ADR 0009](adr/0009-openapi-contract.md)）；组织方式、错误码目录用法和与旧实现的差异见 [api.md](api.md)。
+全部路由以 [`api/openapi.yaml`](../../api/openapi.yaml) 为准，改接口先改规范（[ADR 0009](adr/0009-openapi-contract.md)）；组织方式与错误码目录用法见 [api.md](api.md)。
 
 ### 路径与方法
 
