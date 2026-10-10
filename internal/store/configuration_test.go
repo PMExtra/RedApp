@@ -410,3 +410,42 @@ func TestDistributionDigestRevisionSeparateFromSpec(t *testing.T) {
 		t.Fatal("double revision increment", final.Revision)
 	}
 }
+
+// Configuration writes only insert and update rows, so a change that drops a
+// persisted entry must fail instead of leaving the row behind.
+func TestConfigurationChangeCannotDropPersistedEntries(t *testing.T) {
+	s := openTest(t)
+	if err := s.EnsureEntityTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.Application("openai/codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SaveAdminNotes("app", a.Key, 0, "private"); err != nil {
+		t.Fatal(err)
+	}
+	for name, drop := range map[string]func(*configurationState){
+		"application": func(st *configurationState) {
+			for i := range st.Applications {
+				if st.Applications[i].UID == a.UID {
+					st.Applications = append(st.Applications[:i], st.Applications[i+1:]...)
+					return
+				}
+			}
+		},
+		"admin note": func(st *configurationState) { delete(st.Notes, configKey("App", a.UID)) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			before, _ := s.configurationState()
+			err := s.changeConfiguration(func(st *configurationState) error { drop(st); return nil })
+			if err == nil {
+				t.Fatal("dropping a persisted entry was accepted")
+			}
+			after, _ := s.configurationState()
+			if !bytes.Equal(encode(before), encode(after)) {
+				t.Fatal("rejected change modified the configuration")
+			}
+		})
+	}
+}

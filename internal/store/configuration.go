@@ -955,7 +955,15 @@ func (s *Store) changeConfigurationLocked(change func(*configurationState) error
 	return nil
 }
 
+// writeConfigurationState inserts and updates the rows that changed between
+// old and next. It never deletes: rows leave the database only through a
+// finalize step (permanent deletion), deletion recovery or category pruning,
+// all of which delete the rows directly. A change that drops an entry from
+// the state is therefore rejected rather than silently kept in the database.
 func writeConfigurationState(tx *sql.Tx, old, next configurationState) error {
+	if err := requireRetained(old, next); err != nil {
+		return err
+	}
 	taxonomyChanged := !reflect.DeepEqual(old.Taxonomy, next.Taxonomy)
 	for key, item := range next.Taxonomy {
 		if !reflect.DeepEqual(old.Taxonomy[key], item) {
@@ -1121,6 +1129,66 @@ func writeConfigurationState(tx *sql.Tx, old, next configurationState) error {
 		}
 	}
 	return nil
+}
+
+// requireRetained fails when next lacks any entity, configuration, template,
+// distribution, pending deletion, instruction, policy, source, note or
+// taxonomy entry of old.
+func requireRetained(old, next configurationState) error {
+	missing := func(kind string) error {
+		return fmt.Errorf("configuration change removed a persisted %s", kind)
+	}
+	vendors := map[string]bool{}
+	for _, v := range next.Vendors {
+		vendors[v.UID] = true
+	}
+	for _, v := range old.Vendors {
+		if !vendors[v.UID] {
+			return missing("vendor")
+		}
+	}
+	apps := map[string]bool{}
+	for _, a := range next.Applications {
+		apps[a.UID] = true
+	}
+	for _, a := range old.Applications {
+		if !apps[a.UID] {
+			return missing("application")
+		}
+	}
+	sources := map[string]bool{}
+	for _, src := range next.Sources {
+		sources[src.StorageID()] = true
+	}
+	for _, src := range old.Sources {
+		if !sources[src.StorageID()] {
+			return missing("source")
+		}
+	}
+	for kind, kept := range map[string]bool{
+		"configuration":    retained(old.Configs, next.Configs),
+		"template":         retained(old.Templates, next.Templates),
+		"distribution":     retained(old.Distributions, next.Distributions),
+		"pending deletion": retained(old.Pending, next.Pending),
+		"instruction":      retained(old.Instructions, next.Instructions),
+		"HTTP policy":      retained(old.Policies, next.Policies),
+		"admin note":       retained(old.Notes, next.Notes),
+		"taxonomy entry":   retained(old.Taxonomy, next.Taxonomy),
+	} {
+		if !kept {
+			return missing(kind)
+		}
+	}
+	return nil
+}
+
+func retained[V any](old, next map[string]V) bool {
+	for key := range old {
+		if _, ok := next[key]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func applyPatch(c *ownedConfig, kind string, patch ConfigurationPatch) error {
