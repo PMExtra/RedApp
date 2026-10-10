@@ -234,7 +234,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 
 ### 路由表
 
-`routes.go` 的 `routeTable()` 每个规范操作一行，按迁移工作包分段，可以直接与规范对照：
+`routes.go` 的 `routeTable()` 每个规范操作一行（共 103 个），按领域分段，可以直接与规范对照：
 
 | 字段 | 含义 |
 | --- | --- |
@@ -246,9 +246,8 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 | `handlerChecksQuery` | 由处理函数按资源决定查询串的错误码（分发路径） |
 | `servedBy` | 由另一个操作的注册一并处理：HEAD 由 GET 模式应答，安装脚本由文件路由分派 |
 | `paths` | 改为逐条注册这些路径；用于 `/admin/{ui_path}`（按 `x-spa-routes` 注册，见 `spa.go` 的 `adminSPARoutes`） |
-| `legacy` | 仍由 `legacy.go` 的旧处理器服务，不做查询和请求体校验，契约测试跳过 |
 
-`muxPattern` 把路径模板转换成 ServeMux 模式：`x-greedy` 参数变为 `{name...}`，`/` 变为 `/{$}`。`/{vendor}`、`/{vendor}/{app}` 和文件路由遇到保留厂商名时由 `reservedPath` 处理：`/admin/...` 返回后台文档并带 404，其余返回 `404 NOT_FOUND`。
+`muxPattern` 把路径模板转换成 ServeMux 模式：`x-greedy` 参数变为 `{name...}`，`/` 变为 `/{$}`。`/{vendor}`、`/{vendor}/{app}` 和文件路由遇到保留厂商名时由 `reservedPath` 处理：`/admin/...` 页面返回后台文档并带 404；`/admin/api/`、`/api/`、`/assets/`、`/health/` 下没有操作的路径由 `reservedRouteError` 应答，路径有其他方法的操作时为 `405`（`Allow`），否则为 `404 NOT_FOUND`。文件路由的 GET 模式匹配任意 GET 路径，所以这些路径不能依赖 ServeMux 自己的 404/405。
 
 新增一个路由：先改规范；在 `routeTable()` 对应分段加一行（查询参数、上限、鉴权与规范一致，`TestRouteTableMatchesSpec` 会检查）；写处理函数，只用显式错误码和显式响应类型；用 `newHarness` 写行为测试，响应会被自动按规范校验。
 
@@ -261,7 +260,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 3. 默认安全响应头（`nosniff`、`Referrer-Policy`、`X-Frame-Options: DENY`、`Cache-Control: no-store`）。
 4. 请求 origin（TLS、`Host`、可信代理的转发头），无效返回 `400 REQUEST_ORIGIN_INVALID`。
 5. 规范路径检查（`.`/`..`、`//`、反斜杠、NUL、`%2F`/`%5C`），否则 `400 INVALID_PATH`。
-6. ServeMux 匹配；未匹配时把 ServeMux 的 404/405（含 `Allow`）改写成 `Error` 文档。
+6. ServeMux 匹配；未匹配时把 ServeMux 的 404/405（含 `Allow`）改写成 `Error` 文档（保留路径见上文 `reservedRouteError`）。
 
 每条路由再依次执行：`/admin/api/` 的 Origin 检查（`403 ORIGIN_REJECTED`）、会话（`401 AUTH_REQUIRED`）、CSRF（`403 CSRF_REJECTED`）、查询白名单、请求体上限，然后进入处理函数。
 
@@ -270,8 +269,9 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 | 文件 | 内容 |
 | --- | --- |
 | `request.go` | `checkQuery`、`queryInt`、`pageQuery`、`queryText`；`decodeJSON`（`application/json`、415、413、`jsoncheck.Strict`：重复键、无效 UTF-8、`null`、过深嵌套，再拒绝未知字段和尾随数据）、`decodeJSONNullable`；`ifMatch`（只接受一个 `"<正整数>"`，否则 `400 IF_MATCH_REQUIRED`）、`revisionConflict` |
-| `response.go` | `writeOK`、`writeRevision`（带 `ETag`）、`writeCreated`（201、`Location`、`ETag`）、`writeNoContent` |
-| `errors.go` | `newError(code, cause, message)`、`writeError`、`fail`、`storageError`；`cause` 只进日志（URL 凭据被遮盖），`message` 是面向用户的英文 |
+| `response.go` | `writeOK`、`writeRevision`（带 `ETag`）、`writeCreated`（201、`Location`、`ETag`）、`writeNoContent`；`optionalText`、`utcTime` |
+| `page_cursor.go` | 游标分页的唯一实现：`cursorPage[T]`（`items`、`next_cursor`）、`pageCursor`（绑定 operationId 和范围摘要，范围内的 UID 等内部标识只以摘要出现）、`decodeAfterCursor`/`afterCursor`、`invalidCursor`；页码分页用 `pageQuery` 与 `pageDTO[T]` |
+| `errors.go` | `newError(code, cause, message)`、`writeError`、`s.fail(w, r, code, cause, message)`、`storageError`；`cause` 只进日志（URL 凭据被遮盖），`message` 是面向用户的英文 |
 | `error_codes.go` | 规范 `components.x-error-codes` 的 Go 常量与状态/`retryable` 表；`TestErrorCatalogMatchesSpec` 保证两者一致 |
 | `public_dto.go` 等 | 响应文档类型，按规范 schema 显式构造；不直接编码 store 或领域结构体 |
 
@@ -281,15 +281,12 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 
 `spa.go` 定义构建布局：公开页面用 `index.html`，后台页面（含其 404 文档）用 `admin.html`，静态资源在 `assets/`，都位于构建目录根部。后台页面从不回退到公开入口，缺少入口文件时返回 `500 INTERNAL_ERROR`。前端产物来自 `Deps.Frontend`（默认是嵌入的 `internal/httpserver/web`；测试用固定的小型产物 `frontendFixture`），构建布局变化时只改这几个常量。未发布的厂商和应用页面返回 `index.html` 并带 404。
 
-### 遗留管理处理器
-
-`legacy.go` 保留旧的管理 API 分发（`legacyAdmin`）和旧辅助函数（`reply`、`problem`、`fail`、`decodeLimit`、`queryAllowed`、`expectedRevision`）。它经两条途径到达：路由表中标记 `legacy` 的规范操作，以及 `legacyCatchAll` 注册的 `/admin/api/` 各方法兜底（只用于规范已删除的旧路径）。`fail()` 按 HTTP 状态映射到目录中的错误码，`problem()` 从响应头取 `request_id`。新代码不得调用这些函数；最后一个管理领域迁移后删除该文件、`legacyCatchAll` 和 `legacy` 字段。
-
 ### 测试
 
 - `harness_test.go` 的 `newHarness(t, options...)` 是唯一的 HTTP 测试工厂：真实 store 与全部服务、临时数据目录、`New` 构造的服务器、httptest 监听和带 cookie 的客户端。选项有 `withDir`（重启同一目录）、`withStore`、`withOptions`、`withTrustedProxies`、`keepTemplatesDisabled`。
 - 辅助方法：`login`、`request`/`raw`/`expectError`、`serve`（进程内请求，可指定 `RemoteAddr`/`Host`）、`createVendor`/`createApp`（直接写 store，不依赖被测管理 API）、`publicCatalog`、`upstreamProxy`+`releaseApp`+`codexRelease`（发布类应用经全局代理连到测试上游）、`logs`（服务器结构化日志）。
-- 契约校验：客户端 transport 和 `serve` 对每个响应找到规范操作（ServeMux 优先级，HEAD 回落到 GET），检查状态已声明、`X-Request-Id`、安全头、已声明的响应头、媒体类型、JSON 响应体（JSON Schema 2020-12，`santhosh-tekuri/jsonschema`）；错误响应还检查错误码属于该操作的错误码集合（`x-error-codes` 加适用的组）、状态与 `retryable` 与目录一致、`request_id` 与响应头一致。`legacy` 路由的响应不校验。校验器实现在 `openapi_test.go`，`TestContractValidatorRejectsNonConformingResponses` 确认它确实会拒绝不符合的响应。
+- 夹具：`store_fixtures_test.go` 经 store 修改配置（`patchApp`、`setAppEnabled`、`setVendorEnabled`、`markDeleted`），供目录以外领域的测试使用；`directory_helpers_test.go` 经管理 API 操作目录与配置，供目录领域的测试使用。
+- 契约校验：客户端 transport 和 `serve` 对每个响应找到规范操作（ServeMux 优先级，HEAD 回落到 GET），检查状态已声明、`X-Request-Id`、安全头、已声明的响应头、媒体类型、JSON 响应体（JSON Schema 2020-12，`santhosh-tekuri/jsonschema`）；错误响应还检查错误码属于该操作的错误码集合（`x-error-codes` 加适用的组）、状态与 `retryable` 与目录一致、`request_id` 与响应头一致。校验器实现在 `openapi_test.go`，`TestContractValidatorRejectsNonConformingResponses` 确认它确实会拒绝不符合的响应。
 - `spec_test.go`：路由表与规范一致、`x-spa-routes` 与 `adminSPARoutes` 一致、错误码目录一致，以及规范自身的结构检查（`$ref` 可解析、operationId 唯一且为 camelCase、标签已定义、路径参数一致、错误码在目录中且状态已声明、属性名为 snake_case、全部 schema 可编译）。
 
 ## 已知问题与重构方向
@@ -299,9 +296,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 | 两套缓存引擎 | `download` 与 `httpcache` 各自实现代际、临时文件发布、清理预览、恢复和指标 | 阶段 5：HTTP 缓存复用下载引擎的存储与发布机制 |
 | store 暴露 DB | `Store.DB` 是公开字段，`auth`、`history`、`httpcache`、`httpserver` 直接写 SQL | 阶段 5：SQL 收回 `internal/store`，按实体封装 |
 | 配置快照 CAS | 每次配置写入在全局锁下读取、克隆整份配置状态，事务内再与重读结果整体比较；任一实体的并发变化都会让本次写入失败，成本随配置规模增长。实体 revision 只是额外检查 | 阶段 5：按实体 CAS |
-| 遗留管理 API | 健康检查、公开 API、页面、静态资源、分发路径和会话/密码已按契约迁移到 `http.ServeMux`；其余管理领域仍由 `legacy.go` 的旧分发、旧路径和按状态推导错误码的 `fail()` 服务 | 阶段 3b 后续三个工作包（见 [api.md](api.md#服务端实现)）迁移后删除 `legacy.go` |
 | HTTP 缓存冷请求 | 冷请求必须先完整落盘才响应，单次下载在全部来源上合计最长 9 分钟；慢速链路上的超大文件会失败，前置反代也可能先超时 | 阶段 5：复用下载引擎边下边读后取消总时限 |
 | 锁内 I/O | 下载进度保存和数据库调用仍在 `Manager.mu` 内（整文件哈希和 bcrypt 已移出）；媒体、预热和目录写入在持锁期间做 I/O | 阶段 2/5：按[约定](conventions.md#并发)调整 |
-| 测试命名 | 测试钩子已改为构造选项（`httpserver.WithConfigurationCheck`、`WithDeleteWait` 等）；部分 httpserver 测试文件仍以版本或评审轮次命名（如 `v072_test.go`） | 随各管理领域迁移改名 |
-| 无 UID 的静态测试条目 | `builtin.New` 和多个包的测试用没有 UID 的 `application.Entry`（httpserver 中只剩 `listing_test.go`、`dynamic_metrics_test.go` 的遗留列表测试）；`Entry.StorageID`/`MetricsID`/`Active`、`store.checkSourceActive`、`catalog.CandidatesForSource` 为它们保留了分支 | 测试改用真实目录后删除这些分支 |
+| 无 UID 的静态测试条目 | httpserver 的测试已全部经 `newHarness` 使用真实目录；`builtin.New`（只剩它自己的测试调用）和 `catalog` 等包的测试仍用没有 UID 的 `application.Entry`，`Entry.StorageID`/`MetricsID`/`Active`、`store.checkSourceActive`、`catalog.CandidatesForSource` 为它们保留了分支 | 这些测试改用真实目录后删除 `builtin.New` 和这些分支 |
 | 后台日志 | HTTP 层用 `log/slog` 记录访问与错误日志；`cmd/redapp` 和后台循环的失败仍经标准库 `log` 进入同一个 slog handler，没有结构化字段 | 逐步改为 slog 字段 |

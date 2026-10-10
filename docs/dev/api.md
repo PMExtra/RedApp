@@ -34,7 +34,7 @@
 - **并发控制**：每个可编辑资源返回 `revision` 和 `ETag: "<revision>"`。所有写操作必须带 `If-Match`，缺失或格式错误返回 `400 IF_MATCH_REQUIRED`，过期返回 `409 REVISION_CONFLICT`。请求体不再携带 `revision`。按 UID 防止误伤同名重建对象的守卫（`confirm_uid`、`source_uid`、`notes_revision`）不匹配时也返回 `409 REVISION_CONFLICT`。选择 409 而不是 HTTP 标准的 412，是为了让“过期草稿”只有一个错误码，前端统一保留草稿并重新加载。
 - **不需要 `If-Match` 的写操作**：登录/登出/改密码、上传图标、导入导出、对预览或任务 ID 的动作（ID 已绑定冻结的状态）、托管文件删除（文件 ID 不可变，替换用 `expected_id`）、HTTP 缓存单文件刷新与路径匹配测试。依赖已保存配置的动作（保留预览、复制应用）要求 `If-Match`。
 - **分页**：无限增长的列表（事件、版本、资源、缓存条目、预览条目）用游标 `limit`/`cursor` → `items`/`next_cursor`；需要页码的有限列表（厂商、应用、分类、托管文件、保留与预热条目）用 `page`/`limit` → `items`/`page`/`limit`/`total`/`total_pages`。`limit` 最大 100，默认值写在各操作。页码超出时返回空 `items`，不再回退到最后一页。
-- **禁用的应用**：需要已启用应用的动作（保留、预热等）在应用或其厂商被禁用时返回 409 `APPLICATION_DISABLED`（不可重试）；其他工作包遇到同样情况复用这个错误码，不用 `SOURCE_CHANGED`。
+- **禁用的应用**：需要已启用应用的动作（保留预览与执行、预热启动与重试、HTTP 缓存刷新）在应用或其厂商被禁用时返回 409 `APPLICATION_DISABLED`（不可重试），不用可重试的 `SOURCE_CHANGED`；`SOURCE_CHANGED` 只表示来源在请求处理期间发生了变化。只读和管理已保留数据的操作（列表、状态、清理）对禁用的应用照常可用。
 - **错误**：响应体固定为 `{"error": {"code", "message", "request_id", "retryable"}}`，每个场景有显式 `code`，前端只按 `code` 判断。`retryable` 由目录决定，不由 HTTP 状态推导。
 
 ### 错误码的归属
@@ -50,35 +50,20 @@
 | `json_body` / `multipart_body` | 有对应类型的请求体 | `INVALID_REQUEST`、`UNSUPPORTED_MEDIA_TYPE`、`PAYLOAD_TOO_LARGE` |
 | `if_match` | 声明了 `If-Match` 参数 | `IF_MATCH_REQUIRED`、`REVISION_CONFLICT` |
 
-路由层（尚未选中操作）只会返回 `x-router-error-codes`：`NOT_FOUND`、`METHOD_NOT_ALLOWED`（带 `Allow`）、`INVALID_PATH`、`REQUEST_ORIGIN_INVALID`。
+路由层（尚未选中操作）只会返回 `x-router-error-codes`：`NOT_FOUND`、`METHOD_NOT_ALLOWED`（带 `Allow`）、`INVALID_PATH`、`REQUEST_ORIGIN_INVALID`。路径不存在时对任何方法都是 `404 NOT_FOUND`；路径存在但方法不对时是 `405 METHOD_NOT_ALLOWED`。
 
 ## 服务端实现
 
 实现结构（构造、路由表、中间件顺序、错误与请求辅助、测试工厂、契约校验）见 [architecture.md](architecture.md#http-层)。
 
 - 每个操作在 `internal/httpserver/routes.go` 的路由表中占一行，用 `http.ServeMux` 的方法 + 路径模式注册；`x-greedy` 参数用 `{name...}`，`/` 用 `/{$}`。GET 模式同时应答 HEAD，所以规范中的 HEAD 操作和 `install.sh`/`install.ps1` 不单独注册（路由表用 `servedBy` 标明由哪个操作的注册应答）；安装脚本若单独注册，会与 `/api/vendors/{vendor}`、`/admin/vendors/{vendor}` 等三段路径互相冲突。
-- `/admin/{ui_path}` 与 `/{vendor}/{app}` 系列在 ServeMux 中互不包含，不能直接注册：按 `x-spa-routes` 逐条注册后台页面；其余 `/admin/...` 落到 `/{vendor}/...` 处理器，由它识别保留厂商名后返回后台文档并带 404（`/admin/api/...` 返回 `404 NOT_FOUND`）。其他保留厂商名（`api`、`assets`、`health`、`all`）返回 `404 NOT_FOUND`，不进入应用查找。
+- `/admin/{ui_path}` 与 `/{vendor}/{app}` 系列在 ServeMux 中互不包含，不能直接注册：按 `x-spa-routes` 逐条注册后台页面；其余 `/admin/...` 落到 `/{vendor}/...` 处理器，由它识别保留厂商名后返回后台文档并带 404。其他保留厂商名（`api`、`assets`、`health`、`all`）不进入应用查找。
+- `/{vendor}/{app}/{file_path}` 的 GET 模式匹配任意 GET 路径，ServeMux 自己的 404/405 判断因此不适用于保留路径：`/admin/api/`、`/api/`、`/assets/`、`/health/` 下的路径若有操作以其他方法注册则返回 `405`（`Allow` 只列这些方法），否则对任何方法都返回 `404 NOT_FOUND`（`spa.go` 的 `reservedRouteError`）。
 - 页面文档按 `x-spa-routes.documents`：公开页面（`/`、`/all`、`/{vendor}`、`/{vendor}/{app}`）返回 `index.html`；`/admin/...` 全部返回 `admin.html`，从不回退到 `index.html`。前端构建缺少某个入口时该类页面返回 `500 INTERNAL_ERROR`（当前提交的旧前端只有 `index.html`，后台页面因此不可用，直到重写的前端产物提交）。文件都在构建目录根部（`index.html`、`admin.html`、`assets/`），布局只在 `spa.go` 的常量中定义。
-- 厂商或应用不存在、未发布或标识无效时，`/{vendor}` 和 `/{vendor}/{app}` 返回 `index.html` 并带 404，由 SPA 显示“页面不存在”；其下的分发路径仍返回规范中的 JSON 错误。首段为 `api`、`assets`、`health` 的未知路径返回 `404 NOT_FOUND`。
+- 厂商或应用不存在、未发布或标识无效时，`/{vendor}` 和 `/{vendor}/{app}` 返回 `index.html` 并带 404，由 SPA 显示“页面不存在”；其下的分发路径仍返回规范中的 JSON 错误。保留路径的 404/405 见上一条。
 - 查询参数、请求体上限和鉴权按路由声明，由中间件执行；`TestRouteTableMatchesSpec` 保证与规范一致。JSON 严格解码（`jsoncheck.Strict`）、`If-Match` 解析和错误码都是共享辅助函数。
 - 错误码常量在 `error_codes.go`，与 `components.x-error-codes` 由测试保持一致；状态和 `retryable` 只来自这张表。
 - 契约测试：`newHarness` 的每个响应都按规范校验（状态、`X-Request-Id`、安全头、声明的响应头、媒体类型、JSON Schema 2020-12 响应体、错误码归属与目录一致）；`spec_test.go` 检查路由表、`x-spa-routes`、错误码目录和规范自身的结构。
-
-### 迁移状态
-
-已按规范实现：health、public、pages、assets、distribution、auth 六个标签下的全部 29 个操作，以及工作包 2 的 21 个管理操作（发布版本、资源、版本清理、保留、预热、托管文件管理）。以下差异已落地：错误码与 `request_id`、`Error` 文档（含 404/405）、HEAD（发布制品不触发下载）、认证与会话、公开 API、分发与静态资源、页码超出时返回空页、`PREWARM_BUSY` 改为标准 `Error`，以及下文“发布类应用”“预热”“托管文件”三节。
-
-工作包 1（directory、configuration、exchange 三个标签的 27 个操作）已按规范实现，下文“目录、配置与分类”“导入导出与复制”两节的差异均已落地；旧的 `settings`、`instructions`、`assets/icons`、`assets/builtin-icon` 与 `vendors/{v}/apps` 路径已删除。`legacy_directory.go` 的分派函数直接返回 `false`，该文件只保留工作包 2、3 的旧处理器仍在使用的 `directoryError`、`positivePage`。
-
-其余 47 个管理操作在路由表中标记为 `legacy`，仍由旧处理器以旧路径和旧响应形状服务（`legacy.go` 的分发骨架与 `legacy_releases.go`、`legacy_overview.go` 两个分派函数）；规范已删除的旧路径经 `/admin/api/` 兜底注册到达。三个工作包互不重叠：
-
-| 工作包 | 操作 | 主要文件 |
-| --- | --- | --- |
-| 1 目录、配置、导入导出、分类、管理备注（27，已完成） | `listProviders`、`listVendors`、`createVendor`、`getVendor`、`updateVendor`、`deleteVendor`、`listApps`、`createApp`、`getApp`、`updateApp`、`deleteApp`、`uploadIcon`、`getVendorConfiguration`、`patchVendorConfiguration`、`getAppConfiguration`、`patchAppConfiguration`、`getVendorNotes`、`replaceVendorNotes`、`getAppNotes`、`replaceAppNotes`、`listCategories`、`getCategory`、`patchCategory`、`exportConfiguration`、`previewImport`、`executeImport`、`copyApp` | `directory.go`、`directory_listing.go`、`directory_table.go`、`configuration.go`、`admin_notes.go`、`taxonomy.go`、`exchange.go`、`proxy_redaction.go`、`application_work.go`、`legacy_directory.go`；测试 `directory_test.go`、`directory_table_test.go`、`configuration_test.go`、`admin_notes_test.go`、`taxonomy_test.go`、`exchange_test.go`、`vendor_icons_test.go`、`proxy_redaction_test.go`、`force_delete_test.go`、`scoped_proxy_test.go`、`v072_test.go` |
-| 2 发布版本、资源、版本清理、保留、预热、托管文件管理（21） | `listVersions`、`listResources`、`previewVersionCleanup`、`executeVersionCleanup`、`getRetentionStatus`、`previewRetention`、`getRetentionPreview`、`listRetentionPreviewItems`、`executeRetention`、`getPrewarmOptions`、`startPrewarm`、`getPrewarmJob`、`listPrewarmItems`、`cancelPrewarmJob`、`retryPrewarmJob`、`listHostedFiles`、`uploadHostedFile`、`importHostedFile`、`deleteHostedFile`、`getHostedTransfer`、`cancelHostedTransfer` | `listing.go`、`numbered_listing.go`、`retention.go`、`prewarm.go`、`hosted.go`、`legacy_releases.go`；测试 `listing_test.go`、`retention_test.go`、`prewarm_test.go`、`content_providers_test.go` |
-| 3 HTTP 缓存管理、概览、事件、历史、站点设置（26，已完成） | `listSources`、`listCacheEntries`、`refreshCacheEntry`、`previewCacheRefresh`、`getCacheRefresh`、`listCacheRefreshItems`、`executeCacheRefresh`、`previewCacheCleanup`、`getCacheCleanup`、`listCacheCleanupItems`、`executeCacheCleanup`、`getAutoCleanupStatus`、`testPathMatch`、`getStatus`、`getHistory`、`listEvents`、`getAppStatus`、`getAppHistory`、`getSiteSettings`、`replaceSiteSettings`、`getPublicUrlSettings`、`replacePublicUrlSettings`、`getGlobalProxySettings`、`replaceGlobalProxySettings`、`getHomepageSettings`、`replaceHomepageSettings` | `cache.go`、`status.go`、`history.go`、`events.go`、`settings.go`、`homepage_settings.go`、`page_cursor.go`、`legacy_overview.go`；测试 `cache_admin_test.go`、`cache_maintenance_test.go`、`cache_policy_test.go`、`cache_capacity_test.go`、`overview_test.go`、`settings_test.go`、`site_test.go`、`general_routes_test.go`（管理部分）、`dynamic_metrics_test.go` |
-
-每个工作包的做法：把本包在 `routeTable()` 中的行从 `serve: s.legacyAdmin, …, legacy: true` 改为新处理函数（契约测试随之生效），按规范重写处理器与测试；完成后让本包的 `legacy_*.go` 分派函数直接返回 `false` 并删除不再引用的旧处理器。不要修改 `legacy.go`；三个包都完成后，在一次清理中删除 `legacy.go`、三个 `legacy_*.go`、`legacyCatchAll` 和路由字段 `legacy`。
 
 ## 阶段 4：前端
 
@@ -87,13 +72,13 @@
 - 409 `REVISION_CONFLICT` 保留草稿并提示重新加载；`retryable: true` 的错误可提供重试。
 - MSW 的模拟响应使用生成的类型，示例可直接取自规范。
 
-## 与现有实现的差异
+## 旧接口对照
 
-以下改动是有意的，3b 和 4 以此为准。未列出的接口保持原有语义。已落地的部分见[迁移状态](#迁移状态)。
+服务端已完全按规范实现，旧的管理处理器和旧路径都已删除。下表列出规范相对旧实现的有意改动，供阶段 4 移植旧前端时对照；接口的权威描述始终是规范本身。旧前端删除后本节一并删除。
 
 ### 全局
 
-| 项 | 现有 | 规范 |
+| 项 | 旧实现 | 规范 |
 | --- | --- | --- |
 | 错误码 | `fail()` 按状态推导，所有 409 都是 `SETTINGS_REVISION_CONFLICT`，所有 403 都是 `CSRF_REJECTED` | 每个场景显式 `code`，见目录 |
 | 改名/拆分的错误码 | `SETTINGS_REVISION_CONFLICT`、`DIRECTORY_REVISION_CONFLICT` | `REVISION_CONFLICT` |
@@ -121,7 +106,7 @@
 
 ### 认证
 
-| 现有 | 规范 |
+| 旧实现 | 规范 |
 | --- | --- |
 | `POST /admin/api/login` → `{csrf}` | `POST /admin/api/session` → `201 {csrf_token, expires_at}` |
 | `GET /admin/api/session` → `{csrf}` | 同路径 → `{csrf_token, expires_at}` |
@@ -130,7 +115,7 @@
 
 ### 公开 API
 
-| 现有 | 规范 |
+| 旧实现 | 规范 |
 | --- | --- |
 | `GET /api/bootstrap` 含全部公开应用 `apps`、`public_origin` | 去掉 `apps`；`public_origin` → `public_url`；`revision` 不再覆盖应用 |
 | `GET /api/apps`（全部应用数组） | 删除，用 `listCatalog` |
@@ -146,7 +131,7 @@
 
 ### 目录、配置与分类
 
-| 现有 | 规范 |
+| 旧实现 | 规范 |
 | --- | --- |
 | `GET /admin/api/vendors/{v}/apps`（含 `view=table`）和 `GET /admin/api/apps` | 合并为 `GET /admin/api/apps?vendor=`，总是返回表格字段，支持排序；默认 `limit` 20；`latest_version` 为空时 `null` |
 | `POST /admin/api/vendors/{v}/apps` | `POST /admin/api/apps`，`vendor` 在请求体 |
@@ -171,7 +156,7 @@
 
 ### 导入导出与复制
 
-| 现有 | 规范 |
+| 旧实现 | 规范 |
 | --- | --- |
 | 预览响应 `{id, digest, expires_at, preview: {items, ready, needs_instructions_trust}}` | 拍平为一个对象 |
 | 条目和选择的 `kind`：`Vendor`、`App`、`categories` | `vendor`、`app`、`category`（导出 `selection.kind` 同样） |
@@ -184,7 +169,7 @@
 
 ### 概览与事件
 
-| 现有 | 规范 |
+| 旧实现 | 规范 |
 | --- | --- |
 | `GET /admin/api/status` 含 `name`、`os`、`arch`、`go`、`goroutines`、`memory_bytes`、`counters`、`disk`、`rates`、`public_base_url`、`application_version_counts`、`started` | 只保留 `sampled_at`、`started_at`、`metrics` |
 | 应用状态含 `application`、`version_count`、`counters`、`public_base_url` | 只保留 `sampled_at`、`metrics`；info/hosted 返回 `404 CAPABILITY_UNSUPPORTED` |
@@ -198,7 +183,7 @@
 
 ### 发布类应用（Codex、Claude Code）
 
-| 现有 | 规范 |
+| 旧实现 | 规范 |
 | --- | --- |
 | 版本、资源列表同时支持 `page` 和 `cursor` | 只用游标；版本总数见应用指标 `versions.total` |
 | 版本按字符串升序 | 按 Provider 的版本顺序从新到旧，无法解析的版本按字符串排在最后；游标绑定 source epoch |
@@ -219,7 +204,7 @@
 
 ### HTTP 缓存
 
-| 现有 | 规范 |
+| 旧实现 | 规范 |
 | --- | --- |
 | `GET .../cache` 一次返回全部条目 | `GET .../cache/entries`，游标分页；`etag` 为空时 `null` |
 | `POST .../cache/match` → `{matches, canonical_path}` | `POST /admin/api/path-match` → `{matches, path}`（与应用无关） |
@@ -233,7 +218,7 @@
 
 ### 预热
 
-| 现有 | 规范 |
+| 旧实现 | 规范 |
 | --- | --- |
 | `POST .../prewarm/start` | `POST .../prewarm/jobs`，新任务 `201`，重复 `request_id` 返回已有任务 `200` |
 | `.../prewarm/{id}`、`/items`、`/cancel`、`/retry` | `.../prewarm/jobs/{id}/…` |
@@ -244,7 +229,7 @@
 
 ### 托管文件
 
-| 现有 | 规范 |
+| 旧实现 | 规范 |
 | --- | --- |
 | 删除文件 `{deleted: true}`，取消传输 `{cancelled: true}` | `204` |
 | 传输进度 `total: -1` 表示未知；可能看到 `complete` | `total_bytes: null`；状态只有 `receiving`、`committing` |
@@ -253,7 +238,7 @@
 
 ### 分发与静态资源
 
-| 现有 | 规范 |
+| 旧实现 | 规范 |
 | --- | --- |
 | 旧图标路由 `/assets/builtin/*`、`/{vendor}/{app}/icon.svg` | 删除；预置图片只在 `/assets/presets/...` |
 | 只读缓存 `only-if-cached` 未命中时由缓存模块写出非 JSON 的 504 | `504 CACHE_MISS`（`Error`） |

@@ -13,7 +13,7 @@
 
 ### 错误
 
-- 错误消息用小写开头、不带句末标点，描述“做什么失败了”：`fmt.Errorf("open state database: %w", err)`。**【目标】** 现有不少错误以大写开头，因为它们曾被直接返回给客户端；HTTP 层改为显式错误码后不再返回错误文本，修改相关代码时统一为小写（阶段 3/5）。
+- 错误消息用小写开头、不带句末标点，描述“做什么失败了”：`fmt.Errorf("open state database: %w", err)`。**【目标】** 现有不少错误以大写开头，因为它们曾被直接返回给客户端；HTTP 层已改为显式错误码，错误文本只进日志，修改相关代码时统一为小写（阶段 5）。
 - 包装底层错误一律用 `%w`，保留错误链。
 - 调用方需要区分的错误，定义 sentinel（`var ErrConflict = errors.New(...)`）或带字段的类型化错误，用 `errors.Is` / `errors.As` 判断。
 - **禁止按错误文本分类**，例如 `strings.Contains(err.Error(), "SHA256")` 或比较已持久化的错误字符串。需要持久化错误类别时，单独存一个稳定的代码字段。
@@ -88,7 +88,7 @@
 ```
 
 - `code` 是稳定的大写蛇形标识，前端按 `code` 而不是 HTTP 状态或消息文本做判断。错误码、状态和 `retryable` 由规范中的错误码目录（`components.x-error-codes`）定义，新增错误码先加入目录。
-- 每个错误场景显式指定 `code`（`s.fail(w, r, code, cause, message)` 或 `newError`），不由 HTTP 状态推导；底层错误只进日志。按状态映射的 `fail()` 只存在于待删除的 `legacy.go`，新代码不得调用。
+- 每个错误场景显式指定 `code`（`s.fail(w, r, code, cause, message)` 或 `newError`），不由 HTTP 状态推导；底层错误只进日志。
 - `request_id` 在请求入口生成一次，写入 `X-Request-Id` 响应头、错误响应和日志。
 - `message` 面向用户，不包含内部错误文本、路径或 SQL。
 
