@@ -174,12 +174,26 @@ func (s *Staged) Publish(target string) error {
 	if err := s.Seal(); err != nil {
 		return err
 	}
-	if err := os.Rename(s.path, target); err != nil {
+	source := s.path
+	if err := os.Rename(source, target); err != nil {
 		return fmt.Errorf("publish staging file: %w", err)
 	}
 	s.published = true
-	source := s.path
 	s.path = target
+	return syncRenamed(source, target)
+}
+
+// Rename publishes a complete file written elsewhere in the data directory
+// under its final name and makes the rename durable. The caller has already
+// synced the file's content.
+func Rename(source, target string) error {
+	if err := os.Rename(source, target); err != nil {
+		return fmt.Errorf("publish file: %w", err)
+	}
+	return syncRenamed(source, target)
+}
+
+func syncRenamed(source, target string) error {
 	if err := SyncDir(filepath.Dir(target)); err != nil {
 		return err
 	}

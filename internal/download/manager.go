@@ -9,18 +9,18 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/PMExtra/RedApp/internal/distributor"
-	"github.com/PMExtra/RedApp/internal/fsutil"
-	"github.com/PMExtra/RedApp/internal/identity"
-	"github.com/PMExtra/RedApp/internal/store"
-	"io"
-	mathrand "math/rand/v2"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/PMExtra/RedApp/internal/distributor"
+	"github.com/PMExtra/RedApp/internal/fsutil"
+	"github.com/PMExtra/RedApp/internal/identity"
+	"github.com/PMExtra/RedApp/internal/spool"
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
 type Resource struct {
@@ -80,8 +80,9 @@ type Generation struct {
 	Retired        bool
 	Error          string
 	FullRetry      bool
-	file           *os.File
-	changed        chan struct{}
+	// body is the streamed file shared with readers; Bytes mirrors its size
+	// for persistence and listings.
+	body           *spool.Body
 	dormant        bool
 	running        bool
 	ctx            context.Context
@@ -136,11 +137,12 @@ type View struct {
 // SHA256 runs in a manager-owned goroutine registered in verifying; callers
 // wait for it without mu and then re-run admission, which re-checks generation
 // identity and state. A generation being hashed is pinned (hashing) and is not
-// removed until that verification commits its result under mu.
+// removed until that verification commits its result under mu. Readers follow
+// a generation's spool.Body, whose own lock never nests mu.
 type Manager struct {
 	publicationMu sync.Mutex // Configuration publication and Close only; never acquired while holding mu.
 	mu            sync.Mutex
-	verifying     map[string]*verification // logical resource ID -> in-flight verification
+	verifying     spool.Checks // logical resource ID -> in-flight verification
 	dir           string
 	db            *store.Store
 	upstreams     map[string]*distributor.Client
@@ -156,12 +158,10 @@ type Manager struct {
 	jobs          int
 	httpReaders   int
 	// Upstream transfer policy: a body read waiting idleTimeout without bytes
-	// fails the attempt; transient failures retry up to retryAttempts times.
-	idleTimeout   time.Duration
-	retryAttempts int
-	retryBase     time.Duration
-	retryMax      time.Duration
-	trace         func(point string, g *Generation) // see withTrace; nil in production
+	// fails the attempt; transient failures retry within retry.
+	idleTimeout time.Duration
+	retry       spool.Retry
+	trace       func(point string, g *Generation) // see withTrace; nil in production
 }
 
 // Option configures a Manager at construction.
@@ -185,8 +185,8 @@ func NewApplications(dir string, db *store.Store, clients map[string]*distributo
 		upstreams[app] = client
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m := &Manager{dir: dir, db: db, upstreams: upstreams, current: map[string]*Generation{}, all: map[string]*Generation{}, verifying: map[string]*verification{}, ctx: ctx, cancel: cancel, maxBytes: 4 << 30, maxReaders: 512, maxWriters: 16,
-		idleTimeout: distributor.DefaultIdleTimeout, retryAttempts: 6, retryBase: time.Second, retryMax: 30 * time.Second}
+	m := &Manager{dir: dir, db: db, upstreams: upstreams, current: map[string]*Generation{}, all: map[string]*Generation{}, ctx: ctx, cancel: cancel, maxBytes: 4 << 30, maxReaders: 512, maxWriters: 16,
+		idleTimeout: distributor.DefaultIdleTimeout, retry: spool.DefaultRetry()}
 	for _, option := range options {
 		option(m)
 	}
@@ -260,80 +260,14 @@ func validID(s string) bool {
 	_, e := hex.DecodeString(s)
 	return e == nil
 }
-func signal(g *Generation) { close(g.changed); g.changed = make(chan struct{}) }
 func LogicalIdentity(application, version, key string) string {
 	sum := sha256.Sum256([]byte(application + "\x00" + version + "\x00" + key))
 	return hex.EncodeToString(sum[:])
 }
 
-type verificationReader struct {
-	context.Context
-	io.Reader
-}
-
-func (r verificationReader) Read(p []byte) (int, error) {
-	if err := r.Err(); err != nil {
-		return 0, err
-	}
-	return r.Reader.Read(p)
-}
 func verified(f *os.File, n int64, expected string) bool {
-	return verifiedContext(context.Background(), f, n, expected)
-}
-func verifiedContext(ctx context.Context, f *os.File, n int64, expected string) bool {
-	ok, err := hashMatches(ctx, f, n, expected)
+	ok, err := spool.HashMatches(context.Background(), f, n, expected)
 	return ok && err == nil
-}
-
-// hashMatches reports whether the first n bytes of f have the expected digest.
-// A non-nil error means the check was cancelled and proves nothing about the
-// content; unreadable or short content is reported as a mismatch.
-func hashMatches(ctx context.Context, f *os.File, n int64, expected string) (bool, error) {
-	h := sha256.New()
-	copied, e := io.Copy(h, verificationReader{ctx, io.NewSectionReader(f, 0, n)})
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	return e == nil && copied == n && hex.EncodeToString(h.Sum(nil)) == expected, nil
-}
-
-// fileCheck is a whole-file verification result bound to the inode it read.
-type fileCheck struct {
-	info  os.FileInfo
-	valid bool
-}
-
-// checkFile hashes a cache file without holding mu. A nil result with a nil
-// error means the file could not be opened as a regular cache file.
-func checkFile(ctx context.Context, path string, n int64, expected string) (*fileCheck, error) {
-	f, err := fsutil.OpenRegular(path)
-	if err != nil {
-		return nil, nil
-	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil {
-		return nil, nil
-	}
-	ok := false
-	if st.Size() == n {
-		if ok, err = hashMatches(ctx, f, n, expected); err != nil {
-			return nil, err
-		}
-	}
-	return &fileCheck{info: st, valid: ok}, nil
-}
-
-// matches reports whether path is still the exact inode and size that was hashed.
-func (c *fileCheck) matches(st os.FileInfo) bool {
-	return c != nil && st != nil && os.SameFile(c.info, st) && st.Size() == c.info.Size() && st.ModTime().Equal(c.info.ModTime())
-}
-
-// verification is one in-flight whole-file check for a logical resource.
-// err is written before done is closed and is returned to every waiter.
-type verification struct {
-	done chan struct{}
-	err  error
 }
 
 var errVerificationPending = errors.New("Cache verification in progress")
@@ -341,16 +275,15 @@ var errVerificationPending = errors.New("Cache verification in progress")
 // startVerificationLocked runs check without mu under application work owned
 // by the manager, so a waiter's cancellation never aborts it for the others.
 // commit runs under mu with the hashing result (or the cancellation error).
-func (m *Manager) startVerificationLocked(r Resource, check func(context.Context) (*fileCheck, error), commit func(*fileCheck, error) error) error {
-	if m.verifying[r.ID] != nil {
+func (m *Manager) startVerificationLocked(r Resource, check func(context.Context) (*spool.FileCheck, error), commit func(*spool.FileCheck, error) error) error {
+	if m.verifying.Pending(r.ID) != nil {
 		return errVerificationPending
 	}
 	ctx, finish, err := m.db.ApplicationWork(m.ctx, r.Application)
 	if err != nil {
 		return err
 	}
-	v := &verification{done: make(chan struct{})}
-	m.verifying[r.ID] = v
+	v := m.verifying.Start(r.ID)
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
@@ -359,9 +292,7 @@ func (m *Manager) startVerificationLocked(r Resource, check func(context.Context
 		result, err := check(ctx)
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		delete(m.verifying, r.ID)
-		v.err = commit(result, err)
-		close(v.done)
+		m.verifying.Finish(r.ID, v, commit(result, err))
 	}()
 	return nil
 }
@@ -370,9 +301,9 @@ func (m *Manager) startVerificationLocked(r Resource, check func(context.Context
 // verify. Cancellation leaves it untouched; only proven-invalid content retires.
 func (m *Manager) verifyDormantLocked(g *Generation) error {
 	path, n, hash := g.Path, g.Bytes, g.Resource.Hash
-	err := m.startVerificationLocked(g.Resource, func(ctx context.Context) (*fileCheck, error) {
-		return checkFile(ctx, path, n, hash)
-	}, func(check *fileCheck, err error) error {
+	err := m.startVerificationLocked(g.Resource, func(ctx context.Context) (*spool.FileCheck, error) {
+		return spool.CheckFile(ctx, path, n, hash)
+	}, func(check *spool.FileCheck, err error) error {
 		g.hashing = false
 		if err != nil {
 			return err
@@ -384,7 +315,7 @@ func (m *Manager) verifyDormantLocked(g *Generation) error {
 			}
 			return nil
 		}
-		if st, e := os.Lstat(path); e == nil && check.matches(st) && check.valid {
+		if st, e := os.Lstat(path); e == nil && check.Matches(st) && check.Valid {
 			g.dormant = false
 			return nil
 		}
@@ -447,9 +378,9 @@ func (m *Manager) createLocked(r Resource, fullRetry bool, contexts ...context.C
 // verifyBlobLocked hashes an existing blob without mu, then installs a complete
 // generation if the same inode verified, or a queued download otherwise.
 func (m *Manager) verifyBlobLocked(r Resource, fullRetry bool, path string, size int64) error {
-	return m.startVerificationLocked(r, func(ctx context.Context) (*fileCheck, error) {
-		return checkFile(ctx, path, size, r.Hash)
-	}, func(check *fileCheck, err error) error {
+	return m.startVerificationLocked(r, func(ctx context.Context) (*spool.FileCheck, error) {
+		return spool.CheckFile(ctx, path, size, r.Hash)
+	}, func(check *spool.FileCheck, err error) error {
 		if err != nil {
 			return err
 		}
@@ -463,10 +394,10 @@ func (m *Manager) verifyBlobLocked(r Resource, fullRetry bool, path string, size
 			return e
 		}
 		st, statErr := os.Lstat(path)
-		if statErr == nil && check != nil && !check.matches(st) {
+		if statErr == nil && check != nil && !check.Matches(st) {
 			return nil // Replaced while hashing (e.g. a repair published); verify again.
 		}
-		if statErr == nil && check != nil && check.valid {
+		if statErr == nil && check != nil && check.Valid {
 			blob, e := m.db.Blob(r.Application, r.Hash)
 			if e != nil && !errors.Is(e, sql.ErrNoRows) {
 				return e
@@ -476,7 +407,7 @@ func (m *Manager) verifyBlobLocked(r Resource, fullRetry bool, path string, size
 				if e != nil {
 					return e
 				}
-				g := &Generation{ctx: m.ctx, ID: id, Resource: r, Path: path, Bytes: size, Total: size, State: "complete", done: true, Started: time.Now(), changed: make(chan struct{}), FullRetry: fullRetry}
+				g := &Generation{ctx: m.ctx, ID: id, Resource: r, Path: path, Bytes: size, Total: size, State: "complete", done: true, Started: time.Now(), body: spool.NewComplete(nil, size), FullRetry: fullRetry}
 				g.Finished = time.Now()
 				if e = m.db.CreateGeneration(m.record(g)); e != nil {
 					return e
@@ -501,13 +432,13 @@ func (m *Manager) createPartLocked(ctx context.Context, r Resource, fullRetry bo
 	if err != nil {
 		return nil, err
 	}
-	g := &Generation{ctx: ctx, ID: id, Resource: r, State: "queued", Total: -1, Started: time.Now(), changed: make(chan struct{}), FullRetry: fullRetry}
+	g := &Generation{ctx: ctx, ID: id, Resource: r, State: "queued", Total: -1, Started: time.Now(), FullRetry: fullRetry}
 	g.Path = m.partPath(g.ID)
 	f, e := os.OpenFile(g.Path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
 	if e != nil {
 		return nil, e
 	}
-	g.file = f
+	g.body = spool.NewBody(f, 0)
 	if e = m.db.CreateGeneration(m.record(g)); e != nil {
 		f.Close()
 		os.Remove(g.Path)
@@ -517,10 +448,11 @@ func (m *Manager) createPartLocked(ctx context.Context, r Resource, fullRetry bo
 	return g, nil
 }
 
+// Reader streams one admitted generation and holds a reader slot until Close.
 type Reader struct {
+	*spool.Reader
 	m          *Manager
 	g          *Generation
-	offset     int64
 	ctx        context.Context
 	once       sync.Once
 	Kind       string
@@ -548,20 +480,15 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 		// Only this caller stops waiting on cancellation; the manager-owned
 		// verification continues for other waiters and commits its own result.
 		m.checkpoint("acquire.wait_verification", nil)
-		select {
-		case <-ctx.Done():
-			return nil, false, ctx.Err()
-		case <-wait.done:
-		}
-		if wait.err != nil {
-			return nil, false, wait.err
+		if err := wait.Wait(ctx); err != nil {
+			return nil, false, err
 		}
 	}
 }
 
 // admit performs one admission pass under mu. A non-nil verification means the
 // caller must wait for it without mu and then re-run admission.
-func (m *Manager) admit(ctx context.Context, r Resource, finish func(), first bool) (*Reader, bool, *verification, error) {
+func (m *Manager) admit(ctx context.Context, r Resource, finish func(), first bool) (*Reader, bool, *spool.Check, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if first {
@@ -569,7 +496,7 @@ func (m *Manager) admit(ctx context.Context, r Resource, finish func(), first bo
 	}
 	reader, hit, err := m.admitLocked(ctx, r, finish)
 	if errors.Is(err, errVerificationPending) {
-		if v := m.verifying[r.ID]; v != nil {
+		if v := m.verifying.Pending(r.ID); v != nil {
 			return nil, false, v, nil
 		}
 	}
@@ -592,7 +519,7 @@ func (m *Manager) admitLocked(ctx context.Context, r Resource, finish func()) (*
 	if m.readersLocked() >= m.maxReaders {
 		return nil, false, ErrReaderLimit
 	}
-	if m.verifying[r.ID] != nil {
+	if m.verifying.Pending(r.ID) != nil {
 		return nil, false, errVerificationPending
 	}
 	g := m.current[r.ID]
@@ -655,7 +582,7 @@ func (m *Manager) admitLocked(ctx context.Context, r Resource, finish func()) (*
 			kind = "cache_hit"
 		}
 	}
-	if g.file == nil {
+	if g.body.File() == nil {
 		// Complete content is only read; a retained part resumes in place.
 		open := fsutil.OpenRegularWritable
 		if g.State == "complete" {
@@ -665,7 +592,7 @@ func (m *Manager) admitLocked(ctx context.Context, r Resource, finish func()) (*
 		if err != nil {
 			return nil, false, err
 		}
-		g.file = f
+		g.body.SetFile(f)
 	}
 	// A retained part from an exhausted or interrupted transfer resumes.
 	resume := g.done && !g.running && g.State == "interrupted"
@@ -680,51 +607,7 @@ func (m *Manager) admitLocked(ctx context.Context, r Resource, finish func()) (*
 		}
 	}
 	g.readers++
-	return &Reader{m: m, g: g, ctx: ctx, Kind: kind, finishWork: finish}, hit, nil
-}
-func (r *Reader) Read(p []byte) (int, error) {
-	if len(p) == 0 {
-		return 0, nil
-	}
-	for {
-		if e := r.ctx.Err(); e != nil {
-			return 0, e
-		}
-		r.m.mu.Lock()
-		g := r.g
-		available := g.Bytes - r.offset
-		errMsg := g.Error
-		done := g.done
-		state := g.State
-		ch := g.changed
-		f := g.file
-		// Failure must not become a successful EOF, even after all bytes were streamed.
-		if done && state != "complete" {
-			r.m.mu.Unlock()
-			return 0, fmt.Errorf("Download is not verified: %s", errMsg)
-		}
-		if available > 0 {
-			if int64(len(p)) > available {
-				p = p[:available]
-			}
-			r.m.mu.Unlock()
-			n, e := f.ReadAt(p, r.offset)
-			r.offset += int64(n)
-			if e == io.EOF {
-				e = io.ErrUnexpectedEOF
-			}
-			return n, e
-		}
-		r.m.mu.Unlock()
-		if done {
-			return 0, io.EOF
-		}
-		select {
-		case <-r.ctx.Done():
-			return 0, r.ctx.Err()
-		case <-ch:
-		}
-	}
+	return &Reader{Reader: g.body.NewReader(ctx), m: m, g: g, ctx: ctx, Kind: kind, finishWork: finish}, hit, nil
 }
 func (r *Reader) Close() error {
 	var err error
@@ -737,9 +620,8 @@ func (r *Reader) Close() error {
 		r.g.readers--
 		if r.g.readers == 0 && r.g.done && (r.g.Retired || r.g.State != "complete" && r.g.State != "interrupted") {
 			err = r.m.removeLocked(r.g)
-		} else if r.g.readers == 0 && r.g.done && r.g.file != nil {
-			r.g.file.Close()
-			r.g.file = nil
+		} else if r.g.readers == 0 && r.g.done {
+			r.g.body.CloseFile()
 		}
 	})
 	return err
@@ -759,10 +641,7 @@ func (m *Manager) removeLocked(g *Generation) error {
 	if g.active() {
 		return nil
 	}
-	if g.file != nil {
-		g.file.Close()
-		g.file = nil
-	}
+	g.body.CloseFile()
 	m.checkpoint("delete.before_files", g)
 	part := m.partPath(g.ID)
 	var released int64
@@ -810,49 +689,45 @@ type failure struct {
 func (e *failure) Error() string { return e.message }
 func (e *failure) Unwrap() error { return e.cause }
 
+// Transient lets spool.Retryable retry a failure a later attempt may resolve.
+func (e *failure) Transient() bool { return e.transient }
+
 var (
 	unsafeResume    = &failure{message: "Unsafe upstream resume; a new generation is required", category: "range"}
 	errHashMismatch = &failure{message: "Complete file SHA256 does not match", category: "hash"}
 	errTruncated    = &failure{message: "Artifact truncated", category: "length", transient: true}
 	errLength       = &failure{message: "Artifact length exceeds limit or does not match", category: "length"}
 	errBlobInvalid  = &failure{message: "Completed cache file is missing or invalid", category: "disk"}
+	errBlobReplaced = &failure{message: "Completed cache blob failed verification", category: "disk"}
 )
 
-type upstreamHTTPError int
-
-func (e upstreamHTTPError) Error() string { return fmt.Sprintf("Upstream HTTP %d", int(e)) }
-
-// retryable reports transport-level failures; integrity, length, encoding,
-// disk and client HTTP errors are final.
-func retryable(err error) bool {
-	var status upstreamHTTPError
-	var f *failure
+// describe gives a spool transfer error the stable message and event
+// category of a download failure. Other errors are returned unchanged.
+func describe(err error) error {
+	var read *spool.ReadError
+	var write *spool.WriteError
 	switch {
-	case errors.Is(err, distributor.ErrConnection):
-		return true
-	case errors.As(err, &status):
-		return status >= 500 || status == http.StatusRequestTimeout || status == http.StatusTooManyRequests
-	case errors.As(err, &f):
-		return f.transient
+	case err == nil:
+		return nil
+	case errors.As(err, &read):
+		return &failure{message: "Upstream download interrupted", category: "upstream", cause: read.Err, transient: true}
+	case errors.As(err, &write):
+		return &failure{message: "Disk write failed", category: "disk", cause: write.Err}
+	case errors.Is(err, spool.ErrTruncated):
+		return errTruncated
+	case errors.Is(err, spool.ErrLength):
+		return errLength
+	case errors.Is(err, spool.ErrUnsafeResume):
+		return unsafeResume
 	}
-	return false
+	return err
 }
 
-// retryDelay is exponential backoff with jitter in [d/2, d], capped at retryMax.
-func (m *Manager) retryDelay(attempt int) time.Duration {
-	d := m.retryMax
-	if attempt < 30 && m.retryBase<<attempt < m.retryMax {
-		d = m.retryBase << attempt
-	}
-	if d <= 1 {
-		return d
-	}
-	return d/2 + mathrand.N(d/2+1)
-}
-
-func (m *Manager) attempt(g *Generation) error {
+// open starts one transfer attempt at offset, the generation's current size.
+// A resumed attempt must return exactly the remaining bytes of the same
+// representation; anything else needs a new generation.
+func (m *Manager) open(g *Generation, offset int64) (spool.Segment, error) {
 	m.mu.Lock()
-	offset := g.Bytes
 	etag := g.ETag
 	total := g.Total
 	g.State = "downloading"
@@ -864,52 +739,58 @@ func (m *Manager) attempt(g *Generation) error {
 		g.Resumes++
 	}
 	e := m.save(g)
+	client := m.upstreams[g.Resource.Application]
+	maxBytes := m.maxBytes
 	m.mu.Unlock()
 	if e != nil {
-		return e
+		return spool.Segment{}, e
 	}
-	headers := http.Header{}
-	if offset > 0 {
-		headers.Set("Range", fmt.Sprintf("bytes=%d-", offset))
-		if etag != "" && !strings.HasPrefix(etag, "W/") {
-			headers.Set("If-Range", etag)
-		}
-	}
-	m.mu.Lock()
-	client := m.upstreams[g.Resource.Application]
-	m.mu.Unlock()
 	if client == nil {
-		return errors.New("Unknown persisted resource application")
+		return spool.Segment{}, errors.New("Unknown persisted resource application")
+	}
+	var headers http.Header
+	if offset > 0 {
+		ifRange := ""
+		if etag != "" && !strings.HasPrefix(etag, "W/") {
+			ifRange = etag
+		}
+		headers = spool.RangeHeader(offset, ifRange)
 	}
 	resp, e := client.Send(g.ctx, distributor.Request{Method: http.MethodGet, URL: g.Resource.Source, Header: headers, IdleTimeout: m.idleTimeout})
 	if e != nil {
-		return e
+		return spool.Segment{}, e
 	}
-	defer resp.Body.Close()
+	keep := false
+	defer func() {
+		if !keep {
+			resp.Body.Close()
+		}
+	}()
 	if offset > 0 {
-		if resp.StatusCode == 416 {
+		if resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+			// The part may already hold every byte: accept that only for the
+			// exact length and digest.
 			var n int64
-			if _, e = fmt.Sscanf(resp.Header.Get("Content-Range"), "bytes */%d", &n); e == nil && n == offset && resp.Header.Get("Content-Range") == "bytes */"+strconv.FormatInt(n, 10) && (total < 0 || total == n) && verifiedContext(g.ctx, g.file, offset, g.Resource.Hash) {
-				return nil
+			if _, e = fmt.Sscanf(resp.Header.Get("Content-Range"), "bytes */%d", &n); e == nil && n == offset && resp.Header.Get("Content-Range") == "bytes */"+strconv.FormatInt(n, 10) && (total < 0 || total == n) {
+				if ok, err := spool.HashMatches(g.ctx, g.body.File(), offset, g.Resource.Hash); ok && err == nil {
+					return spool.Segment{Total: offset}, nil
+				}
 			}
-			return unsafeResume
+			return spool.Segment{}, unsafeResume
 		}
-		if resp.StatusCode != 206 {
-			return unsafeResume
-		}
-		start, end, n, e := parseRange(resp.Header.Get("Content-Range"))
-		if e != nil || start != offset || end != n-1 || (total >= 0 && total != n) || n > m.maxBytes || (resp.ContentLength >= 0 && resp.ContentLength != end-start+1) || (etag != "" && resp.Header.Get("ETag") != "" && resp.Header.Get("ETag") != etag) {
-			return unsafeResume
+		n, err := spool.CheckResume(resp, offset, total)
+		if err != nil || n > maxBytes || (etag != "" && resp.Header.Get("ETag") != "" && resp.Header.Get("ETag") != etag) {
+			return spool.Segment{}, unsafeResume
 		}
 		total = n
 	} else {
-		if resp.StatusCode != 200 {
-			return upstreamHTTPError(resp.StatusCode)
+		if resp.StatusCode != http.StatusOK {
+			return spool.Segment{}, spool.StatusError(resp.StatusCode)
 		}
 		total = resp.ContentLength
 	}
-	if total > m.maxBytes || (g.Resource.Size != nil && total >= 0 && *g.Resource.Size != total) {
-		return errLength
+	if total > maxBytes || (g.Resource.Size != nil && total >= 0 && *g.Resource.Size != total) {
+		return spool.Segment{}, errLength
 	}
 	m.mu.Lock()
 	g.Total = total
@@ -923,92 +804,70 @@ func (m *Manager) attempt(g *Generation) error {
 	e = m.save(g)
 	m.mu.Unlock()
 	if e != nil {
-		return e
+		return spool.Segment{}, e
 	}
-	buf := make([]byte, 64<<10)
-	var checkpoint int64 = offset
-	for {
-		n, re := resp.Body.Read(buf)
-		if n > 0 {
-			// Count bytes consumed from the identity HTTP body, even if validation or disk writes fail.
-			m.mu.Lock()
-			g.SourceBytes += int64(n)
-			now := time.Now()
-			if len(g.samples) == 0 {
-				g.samples = append(g.samples, sample{g.Started, 0})
-			}
-			if len(g.samples) < 2 || now.Sub(g.samples[len(g.samples)-1].time) > 200*time.Millisecond {
-				g.samples = append(g.samples, sample{now, g.SourceBytes})
-			} else {
-				g.samples[len(g.samples)-1] = sample{now, g.SourceBytes}
-			}
-			for len(g.samples) > 2 && now.Sub(g.samples[1].time) > 5*time.Second {
-				g.samples = g.samples[1:]
-			}
-			m.mu.Unlock()
-			if e = m.db.AddFor(g.Resource.MetricScope(), "upstream_bytes", int64(n)); e != nil {
-				return e
-			}
-			if offset+int64(n) > m.maxBytes || (total >= 0 && offset+int64(n) > total) {
-				return errLength
-			}
-			written, we := g.file.WriteAt(buf[:n], offset)
-			if we != nil {
-				return &failure{message: "Disk write failed", category: "disk", cause: we}
-			}
-			if written != n {
-				return io.ErrShortWrite
-			}
-			offset += int64(n)
-			m.mu.Lock()
-			g.Bytes = offset
-			signal(g)
-			m.mu.Unlock()
-			if offset-checkpoint >= 1<<20 {
-				m.mu.Lock()
-				e = m.save(g)
-				m.mu.Unlock()
-				if e != nil {
-					return e
-				}
-				checkpoint = offset
-			}
-		}
-		if re != nil {
-			if re != io.EOF {
-				return &failure{message: "Upstream download interrupted", category: "upstream", cause: re, transient: true}
-			}
-			break
-		}
-	}
-	if total >= 0 && offset != total {
-		return errTruncated
-	}
-	if g.Resource.Size != nil && offset != *g.Resource.Size {
-		return errLength
-	}
-	return nil
+	keep = true
+	return spool.Segment{Body: resp.Body, Total: total}, nil
 }
-func parseRange(s string) (int64, int64, int64, error) {
-	if !strings.HasPrefix(s, "bytes ") {
-		return 0, 0, 0, unsafeResume
+
+// observe accounts one upstream chunk, even if it is rejected afterwards.
+func (m *Manager) observe(g *Generation, n int) error {
+	m.mu.Lock()
+	g.SourceBytes += int64(n)
+	now := time.Now()
+	if len(g.samples) == 0 {
+		g.samples = append(g.samples, sample{g.Started, 0})
 	}
-	parts := strings.Split(strings.TrimPrefix(s, "bytes "), "/")
-	if len(parts) != 2 {
-		return 0, 0, 0, unsafeResume
+	if len(g.samples) < 2 || now.Sub(g.samples[len(g.samples)-1].time) > 200*time.Millisecond {
+		g.samples = append(g.samples, sample{now, g.SourceBytes})
+	} else {
+		g.samples[len(g.samples)-1] = sample{now, g.SourceBytes}
 	}
-	bounds := strings.Split(parts[0], "-")
-	if len(bounds) != 2 {
-		return 0, 0, 0, unsafeResume
+	for len(g.samples) > 2 && now.Sub(g.samples[1].time) > 5*time.Second {
+		g.samples = g.samples[1:]
 	}
-	a, e1 := strconv.ParseInt(bounds[0], 10, 64)
-	b, e2 := strconv.ParseInt(bounds[1], 10, 64)
-	n, e3 := strconv.ParseInt(parts[1], 10, 64)
-	if e1 != nil || e2 != nil || e3 != nil || a < 0 || b < a || n <= b {
-		return 0, 0, 0, unsafeResume
-	}
-	return a, b, n, nil
+	m.mu.Unlock()
+	return m.db.AddFor(g.Resource.MetricScope(), "upstream_bytes", int64(n))
 }
+
+// transfer fills the generation's part file from upstream with bounded
+// retries, resuming in place, and checkpoints progress every 1 MiB.
+func (m *Manager) transfer(g *Generation) error {
+	m.mu.Lock()
+	limit := m.maxBytes
+	checkpoint := g.Bytes
+	m.mu.Unlock()
+	fill := spool.Fill{
+		Body:    g.body,
+		Limit:   limit,
+		Retry:   m.retry,
+		Open:    func(_ context.Context, offset int64) (spool.Segment, error) { return m.open(g, offset) },
+		Observe: func(p []byte) error { return m.observe(g, len(p)) },
+		Progress: func(size int64) error {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			g.Bytes = size
+			if size-checkpoint < 1<<20 {
+				return nil
+			}
+			checkpoint = size
+			return m.save(g)
+		},
+		Retrying: func(err error) {
+			m.mu.Lock()
+			g.State = "retry_wait"
+			g.Error = describe(err).Error()
+			m.save(g)
+			m.mu.Unlock()
+		},
+	}
+	err := describe(fill.Run(g.ctx, nil))
+	if err == nil && g.Resource.Size != nil && g.body.Size() != *g.Resource.Size {
+		err = errLength
+	}
+	return err
+}
+
 func (m *Manager) startLocked(g *Generation) error {
 	ctx, finish, err := m.db.ApplicationWork(m.ctx, g.Resource.Application)
 	if err != nil {
@@ -1017,6 +876,7 @@ func (m *Manager) startLocked(g *Generation) error {
 	g.ctx = ctx
 	g.finishWork = finish
 	g.running = true
+	g.body.Reopen()
 	m.jobs++
 	m.wg.Add(1)
 	go m.run(g)
@@ -1025,34 +885,15 @@ func (m *Manager) startLocked(g *Generation) error {
 func (m *Manager) run(g *Generation) {
 	defer g.finishWork()
 	defer m.wg.Done()
-	var err error
-	for attempt := 0; ; attempt++ {
-		err = m.attempt(g)
-		if err == nil || !retryable(err) || g.ctx.Err() != nil || attempt+1 >= m.retryAttempts {
-			break
-		}
-		m.mu.Lock()
-		g.State = "retry_wait"
-		g.Error = err.Error()
-		m.save(g)
-		signal(g)
-		m.mu.Unlock()
-		wait := time.NewTimer(m.retryDelay(attempt))
-		select {
-		case <-g.ctx.Done():
-		case <-wait.C:
-		}
-		wait.Stop()
-	}
+	err := m.transfer(g)
 	if err == nil {
 		m.mu.Lock()
 		g.Received = time.Now()
 		g.State = "verifying"
-		signal(g)
 		m.mu.Unlock()
 		m.checkpoint("download.before_verify", g)
 		start := time.Now()
-		if !verifiedContext(g.ctx, g.file, g.Bytes, g.Resource.Hash) {
+		if ok, e := spool.HashMatches(g.ctx, g.body.File(), g.Bytes, g.Resource.Hash); !ok || e != nil {
 			err = errHashMismatch
 		}
 		m.mu.Lock()
@@ -1061,9 +902,9 @@ func (m *Manager) run(g *Generation) {
 	}
 	// Hash any blob already published for this digest before taking mu;
 	// publishLocked trusts this result only for the same unchanged inode.
-	var existing *fileCheck
+	var existing *spool.FileCheck
 	if err == nil {
-		existing, _ = checkFile(g.ctx, m.blobPath(g.Resource), g.Bytes, g.Resource.Hash)
+		existing, _ = spool.CheckFile(g.ctx, m.blobPath(g.Resource), g.Bytes, g.Resource.Hash)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1087,7 +928,7 @@ func (m *Manager) run(g *Generation) {
 		}
 	}
 	if err == nil {
-		if e := g.file.Sync(); e != nil {
+		if e := g.body.File().Sync(); e != nil {
 			err = &failure{message: "File fsync failed", category: "disk", cause: e}
 		}
 		if err == nil && !g.Retired && m.current[g.Resource.ID] == g {
@@ -1117,7 +958,7 @@ func (m *Manager) run(g *Generation) {
 		}
 	}
 	if err != nil {
-		var status upstreamHTTPError
+		var status spool.StatusError
 		if errors.As(err, &status) {
 			g.upstreamStatus = int(status)
 		}
@@ -1128,7 +969,7 @@ func (m *Manager) run(g *Generation) {
 		}
 		// Exhausted transient failures keep a resumable prefix; the next
 		// admission resumes it with Range. Integrity failures never do.
-		if g.ctx.Err() != nil || retryable(err) && g.Bytes > 0 && (g.ETag != "" || g.rangeable) {
+		if g.ctx.Err() != nil || spool.Retryable(err) && g.Bytes > 0 && (g.ETag != "" || g.rangeable) {
 			g.State = "interrupted"
 		}
 		m.save(g)
@@ -1139,10 +980,14 @@ func (m *Manager) run(g *Generation) {
 			m.db.RetireGeneration(g.Resource.Application, g.ID, time.Now())
 		}
 	}
-	signal(g)
-	if g.readers == 0 && g.done && g.file != nil && (g.State == "complete" || g.State == "interrupted") {
-		g.file.Close()
-		g.file = nil
+	// Readers see only the final outcome: verified content or a failure.
+	if g.State == "complete" {
+		g.body.Finish(nil)
+	} else {
+		g.body.Finish(err)
+	}
+	if g.readers == 0 && g.done && (g.State == "complete" || g.State == "interrupted") {
+		g.body.CloseFile()
 	}
 	if g.readers == 0 && (g.Retired || (g.State != "complete" && g.State != "interrupted")) {
 		m.removeLocked(g)
@@ -1197,18 +1042,25 @@ func (m *Manager) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, g := range m.all {
-		if g.file != nil {
-			g.file.Close()
-			g.file = nil
-		}
+		g.body.CloseFile()
 	}
 	return nil
+}
+
+// Files reports every generation for the shared capacity and disk metrics.
+func (m *Manager) Files() []spool.FileStatus {
+	views := m.Snapshot()
+	out := make([]spool.FileStatus, 0, len(views))
+	for _, v := range views {
+		out = append(out, spool.FileStatus{Scope: v.Resource.MetricScope(), Path: v.Path, Bytes: v.Bytes, State: v.State, Current: v.Current, Retired: v.Retired, ActiveWriter: v.ActiveWriter, Readers: v.Readers})
+	}
+	return out
 }
 
 // failureCategory classifies a download error by type, never by its text.
 // Generic upstream failures are refined by their transport cause.
 func failureCategory(err error) string {
-	var status upstreamHTTPError
+	var status spool.StatusError
 	var f *failure
 	switch {
 	case errors.Is(err, distributor.ErrUnsafeEncoding):
@@ -1237,23 +1089,11 @@ func (m *Manager) checkpoint(point string, g *Generation) {
 
 // WaitVerified waits for final size and digest verification without reading bytes.
 func (r *Reader) WaitVerified() error {
-	for {
-		if err := r.ctx.Err(); err != nil {
-			return err
+	if err := r.g.body.Wait(r.ctx); err != nil {
+		if ctxErr := r.ctx.Err(); ctxErr != nil {
+			return ctxErr
 		}
-		r.m.mu.Lock()
-		done, state, changed := r.g.done, r.g.State, r.g.changed
-		r.m.mu.Unlock()
-		if done {
-			if state == "complete" {
-				return nil
-			}
-			return errors.New("Download verification failed")
-		}
-		select {
-		case <-r.ctx.Done():
-			return r.ctx.Err()
-		case <-changed:
-		}
+		return errors.New("Download verification failed")
 	}
+	return nil
 }

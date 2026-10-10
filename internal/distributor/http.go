@@ -60,6 +60,9 @@ func (e *RequestError) Error() string {
 func (e *RequestError) Is(target error) bool { return target == ErrConnection && e.retryable }
 func (e *RequestError) Unwrap() error        { return e.cause }
 
+// Transient reports a failure another attempt may resolve (see ErrConnection).
+func (e *RequestError) Transient() bool { return e.retryable }
+
 // Classify reports the failure class of a request error or of a raw
 // transport/body read error.
 func Classify(err error) ErrorKind {

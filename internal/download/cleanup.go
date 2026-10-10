@@ -137,7 +137,6 @@ func (m *Manager) Cleanup(app, jobID string) error {
 			delete(m.current, g.Resource.ID)
 			m.checkpoint("cleanup.after_detach", g)
 		}
-		signal(g)
 		if e = m.removeLocked(g); e != nil {
 			return e
 		}

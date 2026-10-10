@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"github.com/PMExtra/RedApp/internal/distributor"
+	"github.com/PMExtra/RedApp/internal/spool"
 	"github.com/PMExtra/RedApp/internal/testutil"
 	"io"
 	"math"
@@ -89,7 +90,7 @@ func TestFailureCategoriesFollowErrorTypes(t *testing.T) {
 		{errLength, "length"},
 		{errTruncated, "length"},
 		{errBlobInvalid, "disk"},
-		{upstreamHTTPError(503), "http"},
+		{spool.StatusError(503), "http"},
 		{&failure{message: "Cache state commit failed", category: "database"}, "database"},
 		{&net.DNSError{Err: "no such host", Name: "upstream.example"}, "dns"},
 	} {
