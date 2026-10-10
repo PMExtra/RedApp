@@ -71,7 +71,9 @@ A request for `/<vendor>/<app>/<path>` fetches `<source URL>/<path>`.
 
 Several clients requesting the same missing file share one upstream download.
 
-Client request cache directives do not force upstream fetches; freshness is governed by rules and upstream headers.
+Client request cache directives (`Cache-Control: no-store`, `no-cache`, `max-age`, `Pragma`) are ignored: they never force an upstream fetch, and freshness is governed only by rules and upstream headers. `only-if-cached` is honoured and returns `504` on a miss.
+
+If the source marks a file as uncacheable, each concurrent client gets its own direct transfer, limited by the writer limit (`503 TRANSFER_CAPACITY` when exhausted). `503 CACHE_CONTENDED` is returned only when the cached copy keeps changing during a request.
 
 ### Freshness
 
