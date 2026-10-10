@@ -16,8 +16,12 @@ APP_ID = re.compile(r'[a-z0-9]+(?:-[a-z0-9]+)*/[a-z0-9]+(?:-[a-z0-9]+)*')
 
 
 def applications(root=ROOT):
+    """Return the validated builtin applications from the generated inventory."""
     if not (root / MANIFEST).is_file():
-        raise ValueError('Missing trusted generated inventory; run make installer-inventory before Python or isolated validation')
+        raise ValueError(
+            'Missing trusted generated inventory; '
+            'run make installer-inventory before Python or isolated validation'
+        )
     manifest = json.loads((root / MANIFEST).read_text(encoding="utf-8"))
     if manifest.get('schema_version') != 1:
         raise ValueError('Unsupported builtin application manifest schema')
@@ -27,7 +31,12 @@ def applications(root=ROOT):
     seen = set()
     for app in apps:
         app_id = app.get('id', '')
-        if not APP_ID.fullmatch(app_id) or any(len(part) > 63 for part in app_id.split('/')) or app_id.split('/')[0] in ('admin', 'api', 'assets', 'health') or app_id in seen:
+        if (
+            not APP_ID.fullmatch(app_id)
+            or any(len(part) > 63 for part in app_id.split('/'))
+            or app_id.split('/')[0] in ('admin', 'api', 'assets', 'health')
+            or app_id in seen
+        ):
             raise ValueError('Invalid or duplicate canonical application identity')
         seen.add(app_id)
         if app.get('installer_validator') not in VALIDATORS:
@@ -45,21 +54,36 @@ def applications(root=ROOT):
             if script.get('shell') not in shells:
                 raise ValueError('Installer interpreter does not match its reviewed file type')
             url = urllib.parse.urlsplit(source)
-            if url.scheme != 'https' or not url.hostname or url.username is not None or url.password is not None or url.fragment or url.query:
+            if (
+                url.scheme != 'https'
+                or not url.hostname
+                or url.username is not None
+                or url.password is not None
+                or url.fragment
+                or url.query
+            ):
                 raise ValueError('Official installer source must be a reviewed HTTPS URL')
     return apps
 
 
 def inventory(root=ROOT):
-    return [dict(application=app['id'], name=script['file'], url=script['source'])
-            for app in applications(root) for script in app['installers']]
+    """List every declared official installer as application/name/url rows."""
+    return [
+        dict(application=app['id'], name=script['file'], url=script['source'])
+        for app in applications(root)
+        for script in app['installers']
+    ]
 
 
 def allowed_paths(root=ROOT):
+    """Return the installer paths daily maintenance is allowed to change."""
     paths = set()
     for app in applications(root):
         base = 'installers/' + app['id']
         paths.add(base + '/provenance.json')
-        paths.update(f'{base}/{kind}/{script["file"]}' for script in app['installers']
-                     for kind in ('upstream', 'generated'))
+        paths.update(
+            f'{base}/{kind}/{script["file"]}'
+            for script in app['installers']
+            for kind in ('upstream', 'generated')
+        )
     return paths
