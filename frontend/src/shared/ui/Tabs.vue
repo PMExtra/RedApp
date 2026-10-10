@@ -2,13 +2,22 @@
 import { TabsContent, TabsList, TabsRoot, TabsTrigger } from "reka-ui";
 import type { TabItem } from "./types";
 
-/** In-page tabs; each panel is the slot named after the tab value. */
+/**
+ * In-page tabs; each panel is the slot named after the tab value. Hidden
+ * panels are unmounted unless `keepMounted` is set, which panels holding
+ * work in progress (a preview, a running job) need so switching tabs keeps it.
+ */
 const model = defineModel<string | undefined>();
-defineProps<{ items: TabItem[]; label?: string }>();
+defineProps<{ items: TabItem[]; label?: string; keepMounted?: boolean }>();
 </script>
 
 <template>
-  <TabsRoot v-model="model" :default-value="items[0]?.value" class="flex flex-col gap-4">
+  <TabsRoot
+    v-model="model"
+    :default-value="items[0]?.value"
+    :unmount-on-hide="!keepMounted"
+    class="flex flex-col gap-4"
+  >
     <TabsList :aria-label="label" class="flex gap-1 border-b border-border">
       <TabsTrigger
         v-for="item in items"

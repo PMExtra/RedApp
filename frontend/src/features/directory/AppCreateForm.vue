@@ -166,11 +166,7 @@ const submit = handleSubmit(async (values) => {
           :label="t('directory.fields.provider')"
           hide-label
         >
-          <RadioGroup
-            v-bind="field"
-            :options="providerOptions"
-            :aria-label="t('directory.fields.provider')"
-          />
+          <RadioGroup v-bind="field" :options="providerOptions" />
         </FormField>
       </Card>
 

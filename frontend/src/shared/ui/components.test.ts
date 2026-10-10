@@ -162,6 +162,53 @@ describe("Tabs", () => {
   });
 });
 
+describe("Tabs with keepMounted", () => {
+  it("keeps the state of hidden panels", async () => {
+    await renderWithApp(Harness, { props: { part: "keptTabs" } });
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: "Draft" }), "work in progress");
+    await user.click(screen.getByRole("tab", { name: "Second" }));
+    expect(screen.getByRole("tabpanel")).toHaveTextContent("Second panel");
+    expect(screen.queryByRole("textbox", { name: "Draft" })).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "First" }));
+    expect(screen.getByRole("textbox", { name: "Draft" })).toHaveValue("work in progress");
+  });
+});
+
+describe("Field controls", () => {
+  it("names, describes and flags the file picker button and the radio group", async () => {
+    await renderWithApp(Harness, { props: { part: "fields" } });
+    const button = screen.getByRole("button", { name: "Package Choose a file" });
+    expect(button).toHaveAccessibleDescription("A ZIP file. Required.");
+    expect(button).toHaveAttribute("aria-invalid", "true");
+    const group = screen.getByRole("radiogroup", { name: "Mode" });
+    expect(within(group).getByRole("radio", { name: "Alpha" })).toBeChecked();
+  });
+
+  it("announces every copy outside the button", async () => {
+    await renderWithApp(Harness, { props: { part: "fields" } });
+    const user = userEvent.setup();
+    const button = screen.getByRole("button", { name: "Copy" });
+    const region = within(button.parentElement as HTMLElement).getByRole("status");
+    expect(button).not.toContainElement(region);
+    let announcements = 0;
+    const observer = new MutationObserver(() => {
+      if (region.textContent === "Copied") announcements++;
+    });
+    observer.observe(region, { childList: true, characterData: true, subtree: true });
+    await user.click(button);
+    await waitFor(() => {
+      expect(announcements).toBe(1);
+    });
+    await user.click(button);
+    await waitFor(() => {
+      expect(announcements).toBe(2);
+    });
+    observer.disconnect();
+    expect(button).toHaveAccessibleName("Copy");
+  });
+});
+
 describe("CodeBlock", () => {
   it("copies the code and confirms it", async () => {
     await renderWithApp(CodeBlock, { props: { code: "curl -fsSL https://x/install.sh | sh" } });

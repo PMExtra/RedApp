@@ -55,7 +55,6 @@ const strategies = computed(() => [
           <RadioGroup
             v-bind="field"
             :options="strategies"
-            :aria-label="t('directory.source.strategy')"
             orientation="horizontal"
             :disabled="disabled"
           />

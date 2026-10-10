@@ -249,7 +249,7 @@ const save = useRevisionedMutation({
 
 ## 组件清单
 
-从 `@/shared/ui` 引入（表单字段从 `@/shared/forms`）。组件把 `id`、`aria-*` 等属性传给真正获得焦点的元素，所以 `<Field v-slot="{ control }"><Select v-bind="control" /></Field>` 同样有效。
+从 `@/shared/ui` 引入（表单字段从 `@/shared/forms`）。组件把 `id`、`aria-*` 等属性传给真正获得焦点的元素，所以 `<Field v-slot="{ control }"><Select v-bind="control" /></Field>` 同样有效。`control` 含指向字段标签的 `aria-labelledby`，`<label for>` 无法命名的控件（`RadioGroup`、`FilePicker`）也因此有名称。
 
 | 组件 | 用途与要点 |
 | --- | --- |
@@ -257,7 +257,7 @@ const save = useRevisionedMutation({
 | `Input`、`Textarea`、`NumberInput` | `v-model`；`NumberInput` 为 `number \| null`，带加减按钮与 `unit` |
 | `Select`、`Combobox` | `Select` 用 `options`；`Combobox` 用于异步建议：`v-model:search` 输入、服务端过滤，`@select` 选中，列表关闭或没有高亮可用选项（包括列表在打开时清空）时回车触发 `@submit`；忽略输入法组字时的回车 |
 | `Switch`、`Checkbox`、`RadioGroup` | `v-model`；`Checkbox` 支持 `indeterminate` |
-| `Tabs`、`NavTabs` | 页内标签（面板为同名插槽）；`NavTabs` 是路由标签（`aria-current`） |
+| `Tabs`、`NavTabs` | 页内标签（面板为同名插槽），隐藏的面板默认卸载，面板里有进行中的工作（预览、运行中的任务）时加 `keep-mounted`；`NavTabs` 是路由标签（`aria-current`） |
 | `Dialog`、`ConfirmDialog`、`ConfirmHost` | `Dialog` 有 `title`、`footer` 插槽、`persistent`；确认框优先用 `confirm()`，`ConfirmHost` 由壳层挂载 |
 | `Popover`、`Tooltip`、`DropdownMenu`、`DropdownMenuItem` | 菜单项 `@select`、`tone="danger"`；分隔线等用 Reka 的 `DropdownMenuSeparator` |
 | `Toaster` | `toast()`、`notifyError()`（`@/shared/lib`）；错误通知带可复制的请求 ID |
@@ -267,8 +267,8 @@ const save = useRevisionedMutation({
 | `AsyncState` | 查询的加载/错误（本地化消息 + 请求 ID + 重试）/空状态外框 |
 | `RevisionConflictAlert` | 409 冲突提示与“加载最新版本” |
 | `Field`、`FormField` | 标签、描述、错误与控件关联；`FormField` 绑定 vee-validate |
-| `FilePicker`、`ProgressBar` | 按钮或拖放选文件（`accept`、`multiple`）；确定/不确定进度 |
-| `CodeBlock`、`CopyButton` | 代码或命令加复制按钮，复制结果对读屏播报 |
+| `FilePicker`、`ProgressBar` | 按钮或拖放选文件（`accept`、`multiple`），`aria-labelledby`/`aria-describedby`/`aria-invalid` 落在按钮上，`id` 留在隐藏的文件输入上；确定/不确定进度 |
+| `CodeBlock`、`CopyButton` | 代码或命令加复制按钮，复制结果在按钮外的状态区域播报，重复复制会再次播报 |
 | `Breadcrumbs`、`PageHeader` | 页面 h1、描述、面包屑、操作区 |
 | `SideNav`、`TopNav`、`SkipLink` | 壳层导航；`SkipLink` 跳到 `#main-content` |
 | `LanguageSwitcher`、`ThemeToggle` | 写入偏好 store |
