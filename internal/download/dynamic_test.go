@@ -159,7 +159,7 @@ func TestDynamicEpochRecoveryPreservesHistoricalDataAndMetrics(t *testing.T) {
 	}
 	// Explicit historical cleanup is allowed while disabled/tombstoned, but a
 	// vendor edit after preview requires a new preview even in that state.
-	job, err := m.Preview(first.Application, map[string]bool{first.ID: true})
+	job, err := m.Preview(first.Application, map[string]bool{first.ID: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestDynamicEpochRecoveryPreservesHistoricalDataAndMetrics(t *testing.T) {
 	if err = m.Cleanup(first.Application, job.ID); !errors.Is(err, store.ErrSourceInactive) {
 		t.Fatalf("stale cleanup preview accepted: %v", err)
 	}
-	job, err = m.Preview(first.Application, map[string]bool{first.ID: true})
+	job, err = m.Preview(first.Application, map[string]bool{first.ID: true}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

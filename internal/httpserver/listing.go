@@ -3,18 +3,13 @@ package httpserver
 import (
 	"bytes"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
-	"strings"
-	"time"
 
-	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/jsoncheck"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -30,12 +25,6 @@ type listCursor struct {
 type listPage[T any] struct {
 	Items      []T     `json:"items"`
 	NextCursor *string `json:"next_cursor"`
-}
-type listedVersion struct {
-	Version   string    `json:"version"`
-	FirstSeen time.Time `json:"first_seen"`
-	Requests  int64     `json:"requests"`
-	Bytes     int64     `json:"bytes"`
 }
 
 func parseListQuery(r *http.Request, app, endpoint string, sourceEpoch ...int64) (limit int, version, last string, err error) {
@@ -100,89 +89,6 @@ func nextListCursor(app, endpoint, filter, last string, sourceEpoch ...int64) *s
 	raw, _ := json.Marshal(listCursor{Version: 1, Application: app, Endpoint: endpoint, Filter: filter, Last: last, SourceEpoch: epoch})
 	encoded := base64.RawURLEncoding.EncodeToString(raw)
 	return &encoded
-}
-
-func (s *Server) applicationList(w http.ResponseWriter, r *http.Request, app, endpoint string) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
-		fail(w, 405, "List endpoints require GET")
-		return
-	}
-	entry, ok := s.registry.LookupAny(app)
-	if !ok || entry.Protocol == nil || endpoint != "versions" && endpoint != "resources" {
-		fail(w, 404, "Application list not found")
-		return
-	}
-	if r.URL.Query().Has("page") {
-		s.numberedApplicationList(w, r, entry, endpoint)
-		return
-	}
-	limit, version, last, err := parseListQuery(r, app, endpoint, entry.SourceEpoch)
-	if err != nil {
-		fail(w, 400, err.Error())
-		return
-	}
-	if version != "" {
-		canonical, err := entry.Protocol.ValidateVersion(version)
-		if err != nil || canonical != version {
-			fail(w, 400, "Invalid canonical version filter")
-			return
-		}
-	}
-	if endpoint == "versions" {
-		if last != "" {
-			canonical, err := entry.Protocol.ValidateVersion(last)
-			if err != nil || canonical != last {
-				fail(w, 400, "Invalid version cursor")
-				return
-			}
-		}
-		rows, err := s.store.VersionPage(entry.StorageID(), last, limit+1)
-		if err != nil {
-			fail(w, 503, "Failed to read application versions")
-			return
-		}
-		page := listPage[listedVersion]{Items: make([]listedVersion, 0)}
-		if len(rows) > limit {
-			rows = rows[:limit]
-			page.NextCursor = nextListCursor(app, endpoint, "", rows[len(rows)-1].Version, entry.SourceEpoch)
-		}
-		for _, row := range rows {
-			page.Items = append(page.Items, listedVersion{Version: row.Version, FirstSeen: row.FirstSeen, Requests: row.ArtifactRequests, Bytes: row.DownstreamBytes})
-		}
-		reply(w, 200, page)
-		return
-	}
-	if last != "" {
-		_, err := hex.DecodeString(last)
-		if err != nil || (len(last) != 32 && len(last) != 64) || strings.ToLower(last) != last {
-			fail(w, 400, "Invalid resource cursor")
-			return
-		}
-	}
-	if s.downloads == nil {
-		fail(w, 503, "Download state is unavailable")
-		return
-	}
-	items := make([]download.View, 0)
-	views, err := s.resourceViews()
-	if err != nil {
-		fail(w, 503, "Resource state is unavailable")
-		return
-	}
-	for _, view := range views {
-		if view.Resource.Application == entry.StorageID() && (version == "" || view.Resource.Version == version) && view.ID > last {
-			items = append(items, view)
-		}
-	}
-	sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
-	page := listPage[download.View]{Items: items}
-	if len(items) > limit {
-		page.Items = items[:limit]
-		page.NextCursor = nextListCursor(app, endpoint, version, page.Items[limit-1].ID, entry.SourceEpoch)
-	}
-	page.Items = s.publicViews(page.Items)
-	reply(w, 200, page)
 }
 
 func (s *Server) eventList(w http.ResponseWriter, r *http.Request, app string) {

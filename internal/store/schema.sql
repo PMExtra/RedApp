@@ -292,6 +292,9 @@ CREATE TABLE cleanup_previews(
   created_at_s INTEGER NOT NULL,
   expires_at_s INTEGER NOT NULL,
   selection_json BLOB NOT NULL,
+  reclaimable_bytes INTEGER NOT NULL CHECK(reclaimable_bytes>=0),
+  active_generations INTEGER NOT NULL CHECK(active_generations>=0),
+  unknown_versions_json BLOB NOT NULL,
   retention_json BLOB,
   executed_at_s INTEGER,
   result_json BLOB

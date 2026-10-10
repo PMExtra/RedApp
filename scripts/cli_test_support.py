@@ -204,6 +204,41 @@ class Session:
         """Sign out; the CSRF token is kept so the request itself is accepted."""
         self.fetch("/admin/api/session", method="DELETE", expect=204)
 
+    # Directory fixtures. Tests of other areas create vendors and applications
+    # only through these helpers, so a change of the directory API is made here.
+
+    def create_vendor(self, vendor_id, name):
+        """Create an enabled vendor; ``name`` is ``{"en": ..., "zh-CN": ...}``."""
+        body = {"id": vendor_id, "name": name, "enabled": True}
+        return self.request("/admin/api/vendors", body, method="POST", expect=201)
+
+    def create_app(self, vendor_id, app_id, provider, base_url, name=None):
+        """Create an enabled application with one upstream base URL and a 60 s TTL.
+
+        HTTP cache applications take the URL as their only ``base_urls`` entry.
+        """
+        source = {"base_urls": [base_url]} if provider == "http-cache" else {"base_url": base_url}
+        body = {
+            "vendor": vendor_id,
+            "id": app_id,
+            "provider": provider,
+            "name": name or {"en": app_id, "zh-CN": app_id},
+            "cache_ttl_seconds": 60,
+            "enabled": True,
+            **source,
+        }
+        return self.request("/admin/api/apps", body, method="POST", expect=201)
+
+    def patch_app_configuration(self, key, values):
+        """Set configuration paths of application ``key``; return the new configuration.
+
+        The returned ``revision`` is the application revision used as ``If-Match``.
+        """
+        path = f"/admin/api/apps/{key}/configuration"
+        current = self.request(path)
+        body = {"set": values, "unset": []}
+        return self.request(path, body, method="PATCH", if_match=current["revision"])
+
 
 class RedAppServer:
     """One ``bin/redapp`` server process with a private working directory.

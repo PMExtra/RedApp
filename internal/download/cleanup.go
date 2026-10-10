@@ -13,14 +13,15 @@ import (
 )
 
 // Preview freezes exact generations owned by one registered application. The
-// client never submits a generation list at execution time.
-func (m *Manager) Preview(app string, ids map[string]bool) (Cleanup, error) {
-	return m.preview(app, ids, nil)
+// client never submits a generation list at execution time. unknown lists the
+// versions the selection could not compare; they are kept and recorded.
+func (m *Manager) Preview(app string, ids map[string]bool, unknown []string) (Cleanup, error) {
+	return m.preview(app, ids, unknown, nil)
 }
 func (m *Manager) PreviewRetention(app string, ids map[string]bool, guard store.RetentionGuard) (Cleanup, error) {
-	return m.preview(app, ids, &guard)
+	return m.preview(app, ids, nil, &guard)
 }
-func (m *Manager) preview(app string, ids map[string]bool, guard *store.RetentionGuard) (Cleanup, error) {
+func (m *Manager) preview(app string, ids map[string]bool, unknown []string, guard *store.RetentionGuard) (Cleanup, error) {
 	ctx, finish, err := m.db.ApplicationWork(context.Background(), app)
 	if err != nil {
 		return Cleanup{}, err
@@ -77,7 +78,7 @@ func (m *Manager) preview(app string, ids map[string]bool, guard *store.Retentio
 			job.ReclaimableBlobBytes += g.Bytes
 		}
 	}
-	row := store.CleanupPreview{Retention: guard, ID: job.ID, AppID: app, CreatedAt: now, ExpiresAt: job.Expires, Selection: []store.CleanupSelection{}}
+	row := store.CleanupPreview{Retention: guard, ID: job.ID, AppID: app, CreatedAt: now, ExpiresAt: job.Expires, Selection: []store.CleanupSelection{}, ReclaimableBytes: job.ReclaimableBlobBytes, ActiveGenerations: job.ActiveGenerations, UnknownVersions: unknown}
 	if _, _, dynamic := identity.ParseStorageID(app); dynamic {
 		source, err := m.db.Source(app)
 		if err != nil {

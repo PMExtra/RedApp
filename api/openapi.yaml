@@ -2963,7 +2963,10 @@ paths:
       operationId: listVersions
       tags: [releases]
       summary: List locally known versions of the current source epoch, newest first.
-      description: Ordered by the provider's version order (newest first). Available for `codex` and `claude-code`.
+      description: |
+        Ordered by the provider's version order (newest first); versions the provider cannot parse follow in string
+        order. A cursor is bound to the source epoch: after a source change it is `400 INVALID_CURSOR`. Available for
+        `codex` and `claude-code`.
       parameters:
         - $ref: '#/components/parameters/Limit50'
         - $ref: '#/components/parameters/Cursor'
@@ -3065,7 +3068,7 @@ paths:
                 value:
                   minimum_version: 0.50.0
                   source_epoch: 2
-      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, SOURCE_NOT_FOUND, VALIDATION_FAILED, ENTITY_DELETED]
+      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, SOURCE_NOT_FOUND, VALIDATION_FAILED, ENTITY_DELETED, SOURCE_CHANGED]
       responses:
         '201':
           description: Frozen preview.
@@ -3110,7 +3113,7 @@ paths:
       security:
         - sessionCookie: []
           csrfToken: []
-      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, PREVIEW_NOT_FOUND, PREVIEW_STALE]
+      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, PREVIEW_NOT_FOUND, PREVIEW_STALE, ENTITY_DELETED]
       responses:
         '200':
           description: Executed preview.
@@ -3181,13 +3184,13 @@ paths:
         Channels are verified first; if any channel cannot be verified nothing is selected (`502 CHANNELS_UNVERIFIED`).
         Keeps the newest `keep_latest` versions with a complete cached file in the current source epoch, plus versions
         a channel points to, versions in use and versions that cannot be compared; at most 100 versions are selected.
-        The preview expires after 10 minutes.
+        The preview expires after 10 minutes. A disabled application cannot be previewed (`409 APPLICATION_DISABLED`).
       parameters:
         - $ref: '#/components/parameters/IfMatch'
       security:
         - sessionCookie: []
           csrfToken: []
-      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, CHANNELS_UNVERIFIED, SOURCE_CHANGED, ENTITY_DELETED]
+      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, CHANNELS_UNVERIFIED, SOURCE_CHANGED, ENTITY_DELETED, APPLICATION_DISABLED, TRANSFER_CAPACITY]
       responses:
         '201':
           description: Frozen retention preview.
@@ -3297,14 +3300,15 @@ paths:
       tags: [releases]
       summary: Execute a retention preview.
       description: |
-        Re-checks policy, source and channels; if any changed, nothing is deleted (`409 PREVIEW_STALE`).
+        Re-checks policy, source and channels; if any changed, nothing is deleted (`409 PREVIEW_STALE`). A disabled
+        application is not executed (`409 APPLICATION_DISABLED`).
         Versions that became protected meanwhile are skipped and reported in `skipped`. The outcome is recorded in
         the retention status. Executing an executed preview returns its receipt.
       x-idempotency: The preview ID is the idempotency key; receipts are kept for 24 hours.
       security:
         - sessionCookie: []
           csrfToken: []
-      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, PREVIEW_NOT_FOUND, PREVIEW_STALE, CHANNELS_UNVERIFIED]
+      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, PREVIEW_NOT_FOUND, PREVIEW_STALE, CHANNELS_UNVERIFIED, ENTITY_DELETED, APPLICATION_DISABLED]
       responses:
         '200':
           description: Executed preview with receipt.
@@ -3933,7 +3937,8 @@ paths:
         `request_id` is a client-generated idempotency key: repeating the same request returns the existing job with `200`;
         reusing it with a different body, or after the job expired, returns `409 PREWARM_REQUEST_CONFLICT`.
         Finished jobs are kept for 24 hours; a restart marks a running job `interrupted`. Cancelling never cancels downloads
-        that public clients also wait for. Prewarm never counts as public downloads.
+        that public clients also wait for. Prewarm never counts as public downloads. A disabled application cannot be
+        prewarmed (`409 APPLICATION_DISABLED`).
       x-idempotency: '`request_id` (32 hex characters) per application, valid while the job is retained.'
       x-polling: The admin UI polls `getPrewarmJob` every 1.5 seconds while `state` is `running`.
       security:
@@ -3960,7 +3965,7 @@ paths:
                   indexes: [/releases/]
                   match: {type: glob, pattern: '/**/*.zip'}
                   limits: {max_files: 500, max_depth: 4, max_download_bytes: 21474836480, max_duration_seconds: 7200}
-      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, VALIDATION_FAILED, PREWARM_BUSY, PREWARM_REQUEST_CONFLICT, SOURCE_CHANGED, ENTITY_DELETED]
+      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, VALIDATION_FAILED, PREWARM_BUSY, PREWARM_REQUEST_CONFLICT, SOURCE_CHANGED, ENTITY_DELETED, APPLICATION_DISABLED]
       responses:
         '200':
           description: Existing job for a repeated `request_id`.
@@ -4129,7 +4134,7 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/PrewarmRetryRequest'
-      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, JOB_NOT_FOUND, OPERATION_IN_PROGRESS, PREWARM_BUSY, PREWARM_REQUEST_CONFLICT, SOURCE_CHANGED, ENTITY_DELETED]
+      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, VALIDATION_FAILED, JOB_NOT_FOUND, OPERATION_IN_PROGRESS, PREWARM_BUSY, PREWARM_REQUEST_CONFLICT, SOURCE_CHANGED, ENTITY_DELETED, APPLICATION_DISABLED]
       responses:
         '200':
           description: Existing job for a repeated `request_id`.
@@ -4233,7 +4238,7 @@ paths:
             encoding:
               file:
                 contentType: application/octet-stream
-      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, VALIDATION_FAILED, FILE_CONFLICT, TRANSFER_ID_IN_USE, TRANSFER_CANCELLED, ARTIFACT_TOO_LARGE, TRANSFER_CAPACITY, ENTITY_DELETED]
+      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, VALIDATION_FAILED, FILE_CONFLICT, TRANSFER_ID_IN_USE, TRANSFER_CANCELLED, ARTIFACT_TOO_LARGE, TRANSFER_CAPACITY, ENTITY_DELETED, SOURCE_CHANGED]
       responses:
         '201':
           description: Stored file.
@@ -4271,7 +4276,8 @@ paths:
       tags: [hosted]
       summary: Import a file once from an http(s) URL (create or replace).
       description: |
-        Same create/replace rules as `uploadHostedFile`. The URL must not contain credentials; at most 4 redirects are
+        Same create/replace rules as `uploadHostedFile`. The URL must not contain credentials or a fragment; its query
+        (for example a signed download token) is sent but never stored or returned. At most 4 redirects are
         followed, never from HTTPS to HTTP, and credentials and cookies are dropped on redirect. Uses the application's
         effective outbound proxy. The request returns when the file is stored; poll progress with `transfer_id`.
       x-timeout: Up to 5 minutes of streaming without a 60 s idle gap.
@@ -4292,7 +4298,7 @@ paths:
                 value:
                   path: tools/setup.exe
                   url: https://downloads.example.com/setup.exe
-      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, VALIDATION_FAILED, FILE_CONFLICT, TRANSFER_ID_IN_USE, TRANSFER_CANCELLED, ARTIFACT_TOO_LARGE, TRANSFER_CAPACITY, IMPORT_SOURCE_FAILED, ENTITY_DELETED]
+      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, VALIDATION_FAILED, FILE_CONFLICT, TRANSFER_ID_IN_USE, TRANSFER_CANCELLED, ARTIFACT_TOO_LARGE, TRANSFER_CAPACITY, IMPORT_SOURCE_FAILED, ENTITY_DELETED, SOURCE_CHANGED]
       responses:
         '201':
           description: Stored file.
@@ -4927,6 +4933,7 @@ components:
     VENDOR_NOT_EMPTY: {status: 409, retryable: false, description: The vendor still has applications.}
     BUILTIN_PROTECTED: {status: 409, retryable: false, description: Built-in vendors and applications cannot be deleted; disable them instead.}
     ENTITY_DELETED: {status: 409, retryable: false, description: The vendor or application is deleted or being deleted and is read-only.}
+    APPLICATION_DISABLED: {status: 409, retryable: false, description: The application or its vendor is disabled; enable it first.}
     APPLICATION_DELETE_PENDING: {status: 409, retryable: true, description: Deletion started but the application's work did not stop within 15 seconds; retry the deletion.}
     CATEGORY_AMBIGUOUS: {status: 409, retryable: false, description: A typed category name matches more than one existing category; choose one.}
     FILE_CONFLICT: {status: 409, retryable: false, description: 'Hosted file at the path changed: create found an existing file, or replace `expected_id` is not the current file.'}
@@ -5109,6 +5116,7 @@ components:
         - VENDOR_NOT_EMPTY
         - BUILTIN_PROTECTED
         - ENTITY_DELETED
+        - APPLICATION_DISABLED
         - APPLICATION_DELETE_PENDING
         - CATEGORY_AMBIGUOUS
         - FILE_CONFLICT
@@ -7996,7 +8004,11 @@ components:
           minLength: 1
           maxLength: 4096
         url:
-          $ref: '#/components/schemas/HttpUrl'
+          type: string
+          format: uri
+          maxLength: 8192
+          pattern: '^https?://'
+          description: Absolute http(s) URL without credentials or fragment; the query is kept.
         expected_id:
           $ref: '#/components/schemas/Uid'
     HostedTransfer:

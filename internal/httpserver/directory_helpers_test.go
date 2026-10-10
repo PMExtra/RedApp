@@ -66,7 +66,7 @@ func (h *harness) patchConfiguration(path string, body map[string]any, status in
 	return data
 }
 
-// multipartBody builds a multipart/form-data body from (name, filename, content) parts.
+// multipartForm builds a multipart/form-data body from (name, filename, content) parts.
 func multipartForm(t *testing.T, parts ...[3]string) (io.Reader, string) {
 	t.Helper()
 	var body bytes.Buffer

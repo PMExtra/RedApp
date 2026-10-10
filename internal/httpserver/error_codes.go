@@ -40,6 +40,7 @@ const (
 	codeVendorNotEmpty            errorCode = "VENDOR_NOT_EMPTY"
 	codeBuiltinProtected          errorCode = "BUILTIN_PROTECTED"
 	codeEntityDeleted             errorCode = "ENTITY_DELETED"
+	codeApplicationDisabled       errorCode = "APPLICATION_DISABLED"
 	codeApplicationDeletePending  errorCode = "APPLICATION_DELETE_PENDING"
 	codeCategoryAmbiguous         errorCode = "CATEGORY_AMBIGUOUS"
 	codeFileConflict              errorCode = "FILE_CONFLICT"
@@ -112,6 +113,7 @@ var errorCatalog = map[errorCode]errorClass{
 	codeVendorNotEmpty:            {409, false},
 	codeBuiltinProtected:          {409, false},
 	codeEntityDeleted:             {409, false},
+	codeApplicationDisabled:       {409, false},
 	codeApplicationDeletePending:  {409, true},
 	codeCategoryAmbiguous:         {409, false},
 	codeFileConflict:              {409, false},

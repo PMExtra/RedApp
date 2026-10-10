@@ -31,6 +31,9 @@ import (
 var ErrBusy = errors.New("Prewarm worker busy")
 var ErrInvalid = errors.New("Invalid prewarm input")
 
+// ErrRunning reports that a running job cannot be retried.
+var ErrRunning = errors.New("prewarm job is still running")
+
 type activeJob struct {
 	UID, ID string
 	Done    chan struct{}
@@ -127,16 +130,19 @@ func validate(entry application.Entry, in *warmplan.Input) error {
 	}
 	return nil
 }
-func (s *Service) Start(ctx context.Context, key string, in warmplan.Input, automatic bool) (store.PrewarmJob, error) {
+
+// Start starts a job. A repeated request ID returns the existing job with
+// created false.
+func (s *Service) Start(ctx context.Context, key string, in warmplan.Input, automatic bool) (store.PrewarmJob, bool, error) {
 	e, ok := s.Registry.Lookup(key)
 	if !ok || !e.Active() {
-		return store.PrewarmJob{}, store.ErrSourceInactive
+		return store.PrewarmJob{}, false, store.ErrSourceInactive
 	}
 	if err := s.DB.PrunePrewarm(); err != nil {
-		return store.PrewarmJob{}, err
+		return store.PrewarmJob{}, false, err
 	}
 	if err := validate(e, &in); err != nil {
-		return store.PrewarmJob{}, err
+		return store.PrewarmJob{}, false, err
 	}
 	inputHash := in
 	inputHash.RequestID = ""
@@ -146,31 +152,31 @@ func (s *Service) Start(ctx context.Context, key string, in warmplan.Input, auto
 	}{e.StorageID(), inputHash})
 	if old, err := s.DB.PrewarmRequest(e.UID, in.RequestID); err == nil {
 		if old.State != "running" && time.Now().After(old.Updated.Add(24*time.Hour)) {
-			return old, store.ErrExpired
+			return old, false, store.ErrExpired
 		}
 		if old.Fingerprint != hash {
-			return old, store.ErrConflict
+			return old, false, store.ErrConflict
 		}
-		return old, nil
+		return old, false, nil
 	}
 	jobID, err := fsutil.RandomID()
 	if err != nil {
-		return store.PrewarmJob{}, err
+		return store.PrewarmJob{}, false, err
 	}
 	current := &activeJob{UID: e.UID, ID: jobID, Done: make(chan struct{}), Budget: &warmplan.Budget{Max: in.Limits.MaxDownloadBytes}}
 	s.mu.Lock()
 	if s.closed.Load() {
 		s.mu.Unlock()
-		return store.PrewarmJob{}, context.Canceled
+		return store.PrewarmJob{}, false, context.Canceled
 	}
 	if !s.active.CompareAndSwap(nil, current) {
 		existing := s.active.Load()
 		s.mu.Unlock()
 		if existing != nil {
 			job, _ := s.DB.PrewarmJob(existing.UID, existing.ID)
-			return job, ErrBusy
+			return job, false, ErrBusy
 		}
-		return store.PrewarmJob{}, ErrBusy
+		return store.PrewarmJob{}, false, ErrBusy
 	}
 	s.wg.Add(1)
 	ctxWork, finish, err := s.DB.ApplicationWork(s.ctx, e.StorageID())
@@ -178,7 +184,7 @@ func (s *Service) Start(ctx context.Context, key string, in warmplan.Input, auto
 		s.active.Store(nil)
 		s.wg.Done()
 		s.mu.Unlock()
-		return store.PrewarmJob{}, err
+		return store.PrewarmJob{}, false, err
 	}
 	work, cancel := context.WithTimeout(ctxWork, time.Duration(in.Limits.MaxDurationSeconds)*time.Second)
 	current.Cancel = cancel
@@ -191,7 +197,7 @@ func (s *Service) Start(ctx context.Context, key string, in warmplan.Input, auto
 			s.active.Store(nil)
 			s.wg.Done()
 			s.mu.Unlock()
-			return job, err
+			return job, false, err
 		}
 		job.PolicyHash = fingerprint(cfg.Effective["prewarm"])
 	}
@@ -201,7 +207,7 @@ func (s *Service) Start(ctx context.Context, key string, in warmplan.Input, auto
 		s.active.Store(nil)
 		s.wg.Done()
 		s.mu.Unlock()
-		return job, err
+		return job, false, err
 	}
 	s.mu.Unlock()
 	go func() {
@@ -212,7 +218,7 @@ func (s *Service) Start(ctx context.Context, key string, in warmplan.Input, auto
 		defer finish()
 		s.run(work, e, job, current.Budget)
 	}()
-	return job, nil
+	return job, true, nil
 }
 func (s *Service) entry(job store.PrewarmJob) (application.Entry, error) {
 	for _, e := range s.Registry.Entries() {
@@ -441,14 +447,20 @@ func (s *Service) Cancel(uid, id string) error {
 	}
 	return nil
 }
-func (s *Service) Retry(ctx context.Context, key, id, requestID string) (store.PrewarmJob, error) {
+
+// Retry starts a job for the unsuccessful items of a finished job, with the
+// idempotency rules of Start. A missing or expired job returns sql.ErrNoRows.
+func (s *Service) Retry(ctx context.Context, key, id, requestID string) (store.PrewarmJob, bool, error) {
 	e, ok := s.Registry.Lookup(key)
 	if !ok {
-		return store.PrewarmJob{}, ErrInvalid
+		return store.PrewarmJob{}, false, store.ErrSourceInactive
 	}
-	old, err := s.DB.PrewarmJob(e.UID, id)
-	if err != nil || old.State == "running" {
-		return old, store.ErrConflict
+	old, err := s.Status(e.UID, id)
+	if err != nil {
+		return old, false, err
+	}
+	if old.State == "running" {
+		return old, false, ErrRunning
 	}
 	in := old.Input
 	in.RequestID = requestID
@@ -458,7 +470,7 @@ func (s *Service) Retry(ctx context.Context, key, id, requestID string) (store.P
 	for page := 1; ; page++ {
 		items, total, err := s.DB.PrewarmItems(e.UID, id, page, 100)
 		if err != nil {
-			return old, err
+			return old, false, err
 		}
 		for _, item := range items {
 			switch item.Status {
@@ -495,7 +507,7 @@ func (s *Service) Automatic(ctx context.Context) {
 			if err != nil {
 				return
 			}
-			job, startErr := s.Start(ctx, e.Descriptor.ID, warmplan.Input{RequestID: requestID, Target: channel, Platforms: policy.Platforms, Limits: warmplan.DefaultLimits()}, true)
+			job, _, startErr := s.Start(ctx, e.Descriptor.ID, warmplan.Input{RequestID: requestID, Target: channel, Platforms: policy.Platforms, Limits: warmplan.DefaultLimits()}, true)
 			if errors.Is(startErr, ErrBusy) {
 				return
 			}

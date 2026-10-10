@@ -85,7 +85,7 @@ func TestTwoApplicationsShareLimitsAndKeepCleanupSeparate(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer old.Close()
-	job, e := m.Preview(testApp, map[string]bool{resources["openai/codex"].ID: true})
+	job, e := m.Preview(testApp, map[string]bool{resources["openai/codex"].ID: true}, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -208,7 +208,7 @@ func TestLogicalBindingsReuseWithinApplicationAndSurviveMove(t *testing.T) {
 	if requests.Load() != 3 {
 		t.Fatal("repair redownloaded another application or could not reuse repaired content", requests.Load())
 	}
-	preview, e := m.Preview(testApp, map[string]bool{first.ID: true})
+	preview, e := m.Preview(testApp, map[string]bool{first.ID: true}, nil)
 	if e != nil {
 		t.Fatal(e)
 	}

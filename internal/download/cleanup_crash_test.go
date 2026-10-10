@@ -68,7 +68,7 @@ func TestCleanupCrashHelper(t *testing.T) {
 		json.NewEncoder(os.Stdout).Encode(ev)
 		os.Exit(91)
 	})
-	job, e := m.Preview(testApp, map[string]bool{r.ID: true})
+	job, e := m.Preview(testApp, map[string]bool{r.ID: true}, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -204,7 +204,7 @@ func TestCleanupTombstoneFailureDoesNotRetireCurrent(t *testing.T) {
 	m, db, _ := setup(t, c)
 	r := authorizedResource(t, m, c, data)
 	collect(t, m, r)
-	job, e := m.Preview(testApp, map[string]bool{r.ID: true})
+	job, e := m.Preview(testApp, map[string]bool{r.ID: true}, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -234,7 +234,7 @@ func TestCleanupDatabaseDeleteFailureRetainsRetryableGeneration(t *testing.T) {
 	r := authorizedResource(t, m, c, data)
 	collect(t, m, r)
 	old := m.current[r.ID]
-	job, e := m.Preview(testApp, map[string]bool{r.ID: true})
+	job, e := m.Preview(testApp, map[string]bool{r.ID: true}, nil)
 	if e != nil {
 		t.Fatal(e)
 	}

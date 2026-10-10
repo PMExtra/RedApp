@@ -55,9 +55,9 @@ func TestCounterReadsObserveBufferedIncrements(t *testing.T) {
 	s.AddVersion("openai/codex", "1.0.0", 2, 3)
 	global, _ := s.Counters()
 	app, _ := s.CountersFor("openai/codex")
-	page, _ := s.VersionPage("openai/codex", "", 10)
-	if global["upstream_bytes"] != 5 || app["upstream_bytes"] != 5 || len(page) != 1 || page[0].ArtifactRequests != 2 || page[0].DownstreamBytes != 3 {
-		t.Fatal(global, app, page)
+	versions, _ := s.VersionStats("openai/codex")
+	if global["upstream_bytes"] != 5 || app["upstream_bytes"] != 5 || len(versions) != 1 || versions["1.0.0"].ArtifactRequests != 2 || versions["1.0.0"].DownstreamBytes != 3 {
+		t.Fatal(global, app, versions)
 	}
 }
 
