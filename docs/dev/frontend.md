@@ -82,6 +82,9 @@ frontend/
 | `session` | 会话 store、登录表单、会话过期对话框、修改密码、账户菜单、`safeReturnPath` | 后台 |
 | `configuration` | 应用/厂商配置覆盖的查询与 PATCH、`FieldReset` | 后台（B、C 两个包共用） |
 | `proxy` | `ProxyFields`（全局、厂商、应用代理） | 后台（B、D 共用） |
+| `metrics` | 全局/应用指标查询、`MetricCards`、`HistoryChart`、`MetricHistoryDialog`，见下文 | 后台概览、应用版本页 |
+| `events` | `listEvents` 游标分页查询、`EventsTable` | 后台事件页 |
+| `settings` | 站点文本、公开地址、首页置顶、全局代理的查询与保存，各区块表单、`AppPicker`（`listApps` 搜索） | 后台设置页 |
 
 ## 新增页面、路由和功能
 
@@ -152,6 +155,29 @@ const save = useRevisionedMutation({
 - 首次导航读取 `GET /admin/api/session`；未登录跳转 `/admin/login?returnTo=...`，`safeReturnPath` 只接受同源 `/admin/...`。
 - 任何后台请求返回 401 `AUTH_REQUIRED`（或到达 `expires_at`）时会话变为 `expired`：页面不跳转，弹出登录对话框，草稿保留，登录后所有查询失效重取。标签页重新可见时重新读取会话。
 - 退出登录先通过 `confirmDiscardDrafts()` 询问未保存的草稿。修改密码成功后所有会话失效，回到登录页并提示。
+
+## 指标与历史图表
+
+`@/features/metrics` 同时服务全局概览和单个应用（`http-cache`、`codex`、`claude-code`）：
+
+| 出口 | 用途 |
+| --- | --- |
+| `useGlobalStatus({ refetchInterval })`、`useAppStatus(vendor, app, { refetchInterval })` | `getStatus` / `getAppStatus`；配合 `useAutoRefresh()` 每 5 秒轮询。刷新失败时 `data` 保留上一次快照，页面同时显示 `error` 作为警告 |
+| `MetricScope`、`GLOBAL_SCOPE`、`appScope(vendor, app)` | 指标归属：`{ kind: "global" }` 或 `{ kind: "app", vendor, app }` |
+| `<MetricCards :metrics :primary :scope @select>` | 按规范的 `group`（disk、traffic、speed、runtime、resources）分组；`primary` 中的键为常用指标，其余为折叠的诊断指标。默认 `GLOBAL_COMMON_METRICS`（16 项），应用页传 `APP_COMMON_METRICS`。`level` 设置标题层级 |
+| `<MetricHistoryDialog v-model:metric :scope>` | 设置 `metric` 打开对话框，关闭时置为 `undefined`；在对话框间保持所选范围 |
+| `<HistoryChart :metric :scope v-model:range>` | 不带对话框的历史图（uPlot）：24h/7d/30d（默认 7d），计数器可切换累计值与每段增量；缺失样本保持空缺；键盘（左右、Page Up/Down、Home/End、Esc）与触摸读数；摘要句与数据表作为无图替代 |
+| `useMetricHistory(scope, metric, range)` | `getHistory` / `getAppHistory` |
+| `useMetricLabels()`、`useMetricFormat()`、`formatMetricValue()` | 本地化名称（`metrics.labels.<key>`，缺失时回退到服务端英文 `label`）与按 `unit` 格式化（IEC 字节、字节/秒、计数、时长；未知为 `—`） |
+
+应用页示例：
+
+```vue
+<MetricCards :metrics="status.data.value.metrics" :primary="APP_COMMON_METRICS" :scope="appScope(vendor, app)" :level="3" @select="selected = $event" />
+<MetricHistoryDialog v-model:metric="selected" :scope="appScope(vendor, app)" />
+```
+
+图表颜色在绘制时从设计令牌（`--rd-primary`、`--rd-text-subtle`、`--rd-border`）读取，主题或语言切换后重绘。uPlot 只通过 CSSOM 设置样式，不违反 CSP。happy-dom 没有 canvas，测试中用 `vi.mock("uplot", …)` 替身（见 `OverviewPage.test.ts`）。
 
 ## 国际化
 
@@ -251,7 +277,7 @@ cd frontend && npx playwright install chromium
 REDAPP_E2E_URL=http://127.0.0.1:8080 REDAPP_E2E_PASSWORD=... npm run e2e
 ```
 
-  覆盖公开首页、后台 404 文档、登录—导航—退出，且要求控制台无错误（含 CSP 违规）。保存流程（站点设置）在相应页面完成后启用。
+  覆盖公开首页、后台 404 文档、登录—导航—退出，以及一次完整的保存流程（修改站点副标题、刷新后确认、再恢复原值），且要求控制台无错误（含 CSP 违规）。
 
 ## 命令
 
