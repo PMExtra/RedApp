@@ -1,0 +1,224 @@
+# 架构
+
+本文描述当前代码的结构。与代码不一致时以代码为准，并修正本文。
+
+## 概览
+
+RedApp 是单进程 Go 服务：一个二进制、一个 SQLite 数据库、一个数据目录。它为企业内网缓存并分发应用安装器和制品，提供公开目录页与管理后台。前端是嵌入二进制的 Vue SPA。
+
+```text
+客户端 ──HTTP──▶ httpserver ──▶ 领域服务（catalog / download / httpcache / hosted / prewarm …）
+                     │                 │
+                     │                 ├──▶ distributor ──▶ 上游（经三级代理）
+                     │                 └──▶ store（SQLite） + 数据目录 objects/
+                     └──▶ 嵌入的 SPA（internal/httpserver/web）
+```
+
+## 进程与启动
+
+`cmd/redapp` 的子命令：
+
+| 命令 | 作用 |
+| --- | --- |
+| `serve`（默认） | 启动服务 |
+| `version` | 输出版本与提交 |
+| `config validate` | 校验部署配置 |
+| `healthcheck` | 请求本机 `/health/ready`（容器健康检查用） |
+
+部署配置优先级：命令行参数 > 环境变量 > 配置文件 > 默认值。配置文件来自 `--config`、`REDAPP_CONFIG` 或可选的 `/etc/redapp/config.yaml`。部署配置只含监听地址、数据目录、可信代理和下载并发/大小上限；其余设置都在数据库中，由后台修改。`REDAPP_PUBLIC_URL` 是公共地址设置的环境默认值。
+
+`serve` 的启动顺序：
+
+1. `store.Preflight`：只读检查已有数据目录，schema 不匹配直接拒绝（见 [SQLite](#sqlite-schema)）。
+2. 获取 `<data>/instance.lock`（flock），保证同一数据目录只有一个实例；打开数据库。
+3. 同步嵌入的预置模板，恢复未完成的应用删除和待删除对象。
+4. 构建上游连接池、应用注册表、下载管理器、认证、指标历史、媒体、HTTP 缓存、托管文件服务。
+5. 首次启动时生成随机管理员密码并输出到日志。
+6. 启动后台循环和 HTTP 服务；收到 SIGINT/SIGTERM 后 15 秒内优雅退出。
+
+## 包与依赖方向
+
+依赖从上往下，下层不引用上层：
+
+| 层 | 包 | 职责 |
+| --- | --- | --- |
+| 入口 | `cmd/redapp` | 解析配置、组装依赖、启动服务和后台循环 |
+| | `cmd/preset-inventory` | 导出预置清单 JSON，供安装器维护脚本使用 |
+| HTTP | `internal/httpserver` | 路由、鉴权与 CSRF、请求解析、错误响应、SPA 与分发路径；嵌入前端产物 |
+| 编排 | `internal/apps/builtin` | 把编译期的发布协议与数据库中的应用组合成运行时注册表 |
+| | `internal/prewarm` | 单 worker 的有界预热任务 |
+| | `internal/releasemaintenance` | 定时保留最新 N 个版本，并触发自动预热 |
+| 领域 | `internal/catalog` | 渠道/元数据缓存与 TTL、合并重复请求、制品授权 |
+| | `internal/download` | 发布制品的下载引擎：代际、读写限额、续传、校验、清理与保留 |
+| | `internal/httpcache` | `http-cache` 应用的可变 HTTP 响应缓存 |
+| | `internal/hosted` | 管理员上传的托管文件 |
+| | `internal/history` | 指标采样与按小时 UTC 聚合 |
+| | `internal/auth` | 管理员密码、内存会话、CSRF、登录限速 |
+| | `internal/site` | 双语站点文本设置 |
+| | `internal/config` | 部署配置与公共地址 |
+| | `internal/configexchange` | 配置导入导出的文档格式与校验（不可信输入） |
+| 协议 | `internal/apps/codex` | Codex 发布元数据协议与版本规则 |
+| | `internal/apps/claude` | Claude 清单协议、平台规则与签名验证 |
+| | `internal/application` | Provider 定义与能力、应用快照、注册表、发布协议接口 |
+| | `internal/distributor` | 有界的上游 HTTP 客户端与按作用域的代理 transport |
+| 存储 | `internal/store` | SQLite schema 与全部持久化 |
+| 基础 | `internal/identity` | ID 校验、保留名、UID 与存储命名空间 |
+| | `internal/cachepolicy` | HTTP 缓存规则与自动清理规则的类型和校验 |
+| | `internal/warmplan` | 预热计划的上限与字节预算 |
+| | `internal/networkproxy` | 代理设置的数据类型与继承解析（不含 transport） |
+| | `internal/pathmatch` | 应用内相对路径匹配 |
+| | `internal/media` | 图标（SVG 白名单、PNG/JPEG 重编码）按内容哈希存储 |
+| | `internal/jsoncheck` | 拒绝重复键、过深嵌套和尾随数据 |
+| | `internal/yamlconfig` | 严格的单文档 YAML → JSON |
+| | `internal/instance` | 数据目录实例锁 |
+| 测试 | `internal/testutil` | 基于 httptest 的上游客户端（仅测试使用） |
+| 嵌入数据 | `presets/` | 内置厂商、应用、分类的 YAML 模板与图标 |
+| | `installers/` | 嵌入 generated 安装脚本、许可证和公钥（见 [installers.md](installers.md)） |
+
+不符合理想方向、待重构的依赖：`store` 引用 `configexchange` 和根目录的 `presets`；`distributor` 引用 `store`；多个包直接使用 `store.DB`（见[已知问题](#已知问题与重构方向)）。
+
+## 身份模型
+
+- **厂商（vendor）与应用（app）**：ID 都满足 `^[a-z0-9]+(?:-[a-z0-9]+)*$`，最长 63 字节。应用的完整键是 `<vendor>/<app>`，所有 API 和 UI 都用完整键，不推断默认应用。
+- **保留名**：厂商 ID 不能是 `admin`、`api`、`assets`、`health`、`all`（`internal/identity`），因为它们与顶级路由冲突。应用 ID 没有保留名。
+- **UID**：每个厂商和应用有 32 位小写十六进制的随机 UID，创建后不变。厂商 ID、应用 ID、所属厂商和 Provider 也不可修改。
+- **存储命名空间**：指标用 `app/<uid>`，生命周期内不变；缓存用 `app/<uid>-e<epoch>`。上游地址或回源策略变化时 `source_epoch` 递增，旧缓存自然失效。
+
+公开路由：
+
+| 路径 | 含义 |
+| --- | --- |
+| `/`、`/all` | 首页与全部应用（SPA） |
+| `/<vendor>` | 厂商页（厂商启用且未删除） |
+| `/<vendor>/<app>` | 应用详情与使用说明（SPA）；带尾部 `/` 时 308 重定向 |
+| `/<vendor>/<app>/<file_path>` | 分发路径：安装脚本、静态资产、渠道/元数据或制品 |
+| `/api/...`、`/admin/api/...` | 公开 API 与管理 API |
+| `/admin/...` | 后台 SPA；只有 `validUI` 白名单中的路径返回页面，其余 404 |
+
+## 提供者（Provider）
+
+Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](adr/0002-compile-time-providers.md)），同一列表也写进 schema 的 CHECK 约束：
+
+| Provider | 分发内容 | 服务方式 |
+| --- | --- | --- |
+| `info` | 无文件，只有详情和使用说明 | — |
+| `hosted` | 管理员上传的文件 | `hosted.Service`，`http.ServeContent`（支持 Range） |
+| `http-cache` | 任意上游路径的 HTTP 缓存，1–16 个上游，顺序/轮询/随机 | `httpcache.Service` |
+| `codex` | Codex 发布元数据和制品 | 发布协议 + `catalog` + `download` |
+| `claude-code` | Claude Code 签名清单和制品 | 发布协议 + `catalog` + `download` |
+
+发布类 Provider（codex、claude-code）实现 `application.Protocol` 接口：解析路径、校验/比较版本、解析渠道、获取并验证发布元数据、渲染。`internal/apps/builtin` 只接受预置中声明的 `codex-releases-v1` 和 `claude-manifest-v1` 协议。
+
+- **Codex**：`release.json` 中每个资产必须有 `sha256:` 摘要，资产 URL 只能指向配置的上游或官方地址，实际下载地址总是由配置的上游重新构造。
+- **Claude Code**：`manifest.json` 必须有分离签名 `manifest.json.sig`。服务端用嵌入的固定公钥（指纹 `31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE`）验证 OpenPGP RSA-4096/SHA-512 签名，拒绝额外数据包、未来时间和过期签名。原始清单与签名按原字节保存和返回。客户端只校验摘要，不自行验签。
+
+分发路径的解析顺序：托管文件和 http-cache 文件先被拦截；其余由应用条目的 `ParsePath` 依次匹配公开资产、安装脚本、descriptor 资产，最后交给发布协议。渠道/元数据请求走 `catalog.Represent`，制品请求走 `catalog.Authorize` 获得已授权的 `download.Resource` 后由下载引擎提供。
+
+## 下载引擎（`internal/download`）
+
+服务 codex、claude-code 的发布制品。
+
+- **资源身份**：`sha256(app \0 version \0 key)`，并与持久化的 `resources` 行（来源 URL、SHA-256、期望大小）和应用上游核对，其他应用不能借用缓存身份。
+- **代际（generation）**：每次下载是一个代际，状态包括 downloading、resuming、retry_wait、verifying、complete、failed、invalid、interrupted。每个资源最多一个当前代际（部分唯一索引）。
+- **读者与写者**：多个读者跟随同一个写者，边下载边读取。默认上限 16 个写者、512 个读者，单制品 4 GiB；`httpcache` 和 `hosted` 共用这组额度。
+- **续传**：带 `Range: bytes=N-`，强 ETag 时加 `If-Range`。只接受精确的 206、`Content-Range` 和相同 ETag；其他情况放弃续传，新建一个完整重下的代际。最多 3 次，每 1 MiB 记录进度。
+- **校验与发布**：写入 `objects/parts/<gen>.part`，完成后校验完整 SHA-256 和大小，fsync 后 rename 到 `objects/blobs/<sha256(app)>/<hash>.blob`，fsync 目录，再在数据库标记完成。校验失败的代际为 invalid。
+- **恢复**：启动时重新校验 blob，清理孤立的 part 和 blob。
+- **清理与保留**：手动清理先生成冻结的预览，执行只作用于预览中的代际；保留策略按应用保留最新 N 个版本，有效渠道、正在读写的代际和无法比较的版本受保护。
+- 下游响应目前由服务端自行流式输出，不支持客户端 Range。
+
+## HTTP 缓存引擎（`internal/httpcache`）
+
+服务 `http-cache` 应用：按 `(storage_id, path)` 缓存上游的可变 HTTP 响应。
+
+- 响应体存于 `objects/http/<id>.body`，临时文件 fsync 后 rename。
+- 回源带 `If-None-Match` 或 `If-Modified-Since` 重新验证；上游无 ETag 时生成 `"sha256-<hex>"`。
+- 新鲜度：上游 `s-maxage`/`max-age` 减去 `Age` 优先；只有完全没有 `Cache-Control` 时才用应用默认 TTL。路径规则（最多 32 条，首个匹配生效）可覆盖 TTL 和 `no-store`/`private`，但不缓存带 Cookie 的响应。可选在回源失败时返回旧内容。
+- 下游条件请求和 Range 由 `http.ServeContent` 处理；支持请求端 `no-cache`、`no-store`、`max-age`、`only-if-cached`。
+- 同一路径的并发回源合并为一次。
+- 这里的哈希只用于存储完整性，不用于授权。
+
+它与下载引擎各自实现了代际、临时文件发布、清理预览、恢复和指标，只共享读写额度（见[已知问题](#已知问题与重构方向)）。
+
+## 磁盘布局
+
+```text
+<data>/
+  instance.lock          # flock 实例锁，0600
+  state.sqlite(-wal,-shm)  # SQLite，WAL 模式
+  objects/
+    parts/               # 下载中的发布制品
+    blobs/<sha256(app)>/ # 已校验的发布制品
+    http/                # HTTP 缓存响应体
+    hosted/              # 托管文件
+    icons/               # 上传的图标
+```
+
+目录权限 `0700`，文件 `0600`。`/health/ready` 会在数据目录写入并删除一个临时文件来检查可写性。实例锁依赖 `flock`，只支持 Unix。
+
+## SQLite schema
+
+- schema 内嵌在 `internal/store/schema.sql`，版本常量 `store.SchemaVersion`（当前为 11）。
+- 新目录（只含实例锁或为空）创建全新 schema。已有数据库以只读、immutable 方式打开检查：版本必须完全一致，表和索引的 DDL 必须与内嵌 schema 一致，不允许未知表；否则拒绝启动，不改写、不删除。
+- 1.0 前没有迁移，规则见 [ADR 0001](adr/0001-pre-1.0-no-migrations.md)。
+- 连接参数：WAL、`synchronous=FULL`、外键开启、单连接。
+
+## 配置模型
+
+### 模板与稀疏覆盖
+
+- 内置厂商、应用和分类定义在 `presets/` 的 YAML 中（`<vendor>.yaml`、`<vendor>/<app>.yaml`、`_taxonomy.yaml`），嵌入二进制。启动时同步为模板快照。
+- 每个厂商/应用的配置二选一：**引用模板 + 稀疏覆盖**，或**独立 spec**。有效值 = 模板 spec 合并覆盖；`proxy`、`prewarm`、`retention` 整体替换，其他对象深度合并。
+- 修改用 `{revision, set, unset}`：`set` 写入覆盖，`unset` 删除覆盖、恢复模板值。JSON `null` 一律拒绝。
+- 可信的分发声明（`distribution`：安装器、资产、协议）只来自嵌入的预置，单独保存；导入的配置不能携带。
+
+### 三级代理继承
+
+代理按 应用 → 厂商 → 全局 解析：
+
+| 模式 | 含义 |
+| --- | --- |
+| `inherit` | 使用上一级设置（全局不能设为 inherit） |
+| `direct` | 直连，截断继承 |
+| `url` | 使用完整的代理 URL（http、https、socks5，可带凭据） |
+
+全局未设置时为直连。`url` 模式下 DNS 由代理解析。每个作用域有独立的 transport，切换设置不取消已在进行的请求。
+
+### 其他设置
+
+- **保留**：发布类应用可设 `keep_latest`（1–1000，默认 3）。
+- **预热**：按渠道和平台白名单选择要预先下载的制品。
+- **HTTP 缓存策略**：`http-cache` 应用的路径规则与自动清理规则（`internal/cachepolicy`）。
+- **导入导出**：ZIP 或单个 YAML，格式与 `presets/` 一致；有大小与数量上限，先预览再执行，失败整体回滚。
+
+## 后台循环
+
+| 循环 | 周期 | 位置 |
+| --- | --- | --- |
+| 指标采样 | 1 分钟 | `httpserver.SampleHistory` |
+| 发布保留 + 自动预热 | 15 分钟 | `releasemaintenance.Run` → `prewarm.Automatic` |
+| HTTP 缓存自动清理 | 15 分钟 | `httpcache.RunCleanup` |
+
+另有按需启动的 goroutine：每个下载代际、元数据获取、HTTP 缓存回源与刷新、单个预热任务、托管文件传输。过期会话和登录记录没有清理循环，在访问时惰性清除。
+
+## 安全边界
+
+摘要如下，完整说明见 [docs/guide/security.md](../guide/security.md)。
+
+- **上游信任**：只从配置的固定上游获取；Codex 依赖 HTTPS 和官方元数据中的摘要，Claude 额外验证固定公钥签名。下载完成并校验摘要后才发布缓存。回源强制 `Accept-Encoding: identity`，拒绝非 identity 编码（[ADR 0003](adr/0003-no-http-compression.md)）。
+- **管理认证**：单个管理员密码（bcrypt），内存会话（8 小时，`Path=/admin`、HttpOnly、SameSite=Strict），所有非 GET 请求要求 `X-CSRF-Token`，并检查 Origin。登录按 IP 限速。
+- **输入校验**：JSON 拒绝重复键和未知字段，有大小上限；查询参数白名单；SVG 按白名单解析，位图重编码。
+- **响应头**：全部响应带 `nosniff`、`X-Frame-Options: DENY`、`Cache-Control: no-store`；SPA 有严格 CSP。
+- **使用说明文档**：管理员编写的 HTML/JS，将在无同源权限的沙箱 iframe 中运行（[ADR 0006](adr/0006-sandboxed-usage-instructions.md)）。
+
+## 已知问题与重构方向
+
+| 问题 | 现状 | 方向 |
+| --- | --- | --- |
+| 两套缓存引擎 | `download` 与 `httpcache` 各自实现代际、临时文件发布、清理预览、恢复和指标 | 阶段 5：HTTP 缓存复用下载引擎的存储与发布机制 |
+| store 暴露 DB | `Store.DB` 是公开字段，`auth`、`history`、`httpcache`、`httpserver` 直接写 SQL | 阶段 5：SQL 收回 `internal/store`，按实体封装 |
+| 配置快照 CAS | 每次配置写入在全局锁下读取、克隆整份配置状态，事务内再与重读结果整体比较；任一实体的并发变化都会让本次写入失败，成本随配置规模增长。实体 revision 只是额外检查 | 阶段 5：按实体 CAS |
+| 手写路由 | `Server.ServeHTTP` 按前缀和字符串切分分发；错误码由 HTTP 状态推导；`request_id` 不进日志 | 阶段 3：`http.ServeMux` + 中间件、显式错误码、request_id 日志、OpenAPI 与契约测试 |
+| 锁内 I/O | 下载完成路径、认证、媒体、预热和目录写入在持锁期间做 I/O 或 bcrypt | 阶段 2/5：按[约定](conventions.md#并发)调整 |
+| 测试钩子与命名 | 生产结构体含测试钩子字段；部分测试文件以版本或评审轮次命名 | 阶段 2 |
+| 日志 | 只有入口使用标准库 `log`，无请求日志 | 阶段 3：`log/slog` |
