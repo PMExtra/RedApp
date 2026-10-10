@@ -19,6 +19,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/pathmatch"
+	"github.com/PMExtra/RedApp/internal/spool"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -46,6 +47,9 @@ func (b *testBudget) AcquireHTTPWriter() (func(), error) {
 	return func() { once.Do(func() { b.writers.Add(-1) }) }, nil
 }
 func (b *testBudget) MaxArtifactBytes() int64 { return b.limit }
+
+// fastRetry keeps the retry bounds of production with millisecond backoff.
+var fastRetry = spool.Retry{Attempts: 6, Base: time.Millisecond, Max: 10 * time.Millisecond}
 
 type fixture struct {
 	dir    string
@@ -92,7 +96,7 @@ func newFixture(t *testing.T, h http.Handler, ttl int) *fixture {
 	f := &fixture{dir: dir, db: db, app: app, vendor: vendor, budget: &testBudget{limit: 1024}}
 	f.entry = application.Entry{Descriptor: application.Descriptor{ID: app.Key, DefaultChannelTTLSeconds: ttl}, UID: app.UID, SourceEpoch: app.SourceEpoch, Revision: app.Revision, VendorRevision: vendor.Revision, RuntimeRevision: app.RuntimeRevision, VendorRuntimeRevision: vendor.RuntimeRevision, Provider: application.HttpCache, Enabled: true, Upstream: client}
 	f.clock.Store(time.Now().Unix())
-	f.s, err = New(dir, db, f.budget, WithClock(func() time.Time { return time.Unix(f.clock.Load(), 0).UTC() }))
+	f.s, err = New(dir, db, f.budget, WithClock(func() time.Time { return time.Unix(f.clock.Load(), 0).UTC() }), WithTransferPolicy(distributor.DefaultIdleTimeout, fastRetry))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,6 +111,23 @@ func (f *fixture) serve(t *testing.T, method string, headers http.Header) (*http
 	err := f.s.Serve(w, r, f.entry, "file")
 	return w, err
 }
+
+// serveAborting serves a GET whose response may be aborted after it started,
+// as the server does when a streamed body fails.
+func (f *fixture) serveAborting(t *testing.T, headers http.Header) (w *httptest.ResponseRecorder, err error, aborted bool) {
+	t.Helper()
+	defer func() {
+		if caught := recover(); caught != nil {
+			if caught != http.ErrAbortHandler {
+				panic(caught)
+			}
+			aborted = true
+		}
+	}()
+	w, err = f.serve(t, "GET", headers)
+	return w, err, false
+}
+
 func (f *fixture) rows(t *testing.T) []Row {
 	t.Helper()
 	rows, err := f.s.listRows(f.entry.StorageID())
@@ -114,6 +135,33 @@ func (f *fixture) rows(t *testing.T) []Row {
 		t.Fatal(err)
 	}
 	return rows
+}
+
+// consume reads a shared fetch result to the end as a client would, waits
+// for a streamed body to be published, and releases the result.
+func (f *fixture) consume(result fetchResult) (string, error) {
+	ctx := context.Background()
+	var body []byte
+	var err error
+	switch {
+	case result.stream != nil:
+		defer f.s.leaveStream(result.stream)
+		if body, err = io.ReadAll(result.stream.body.NewReader(ctx)); err == nil {
+			_, err = f.s.awaitPublication(ctx, result.stream)
+		}
+	case result.row != nil:
+		defer f.s.unpin(result.row.GenerationID)
+		file, _, openErr := f.s.bodies().Open(result.row.GenerationID)
+		if openErr != nil {
+			return "", openErr
+		}
+		defer file.Close()
+		body, err = io.ReadAll(file)
+	case result.response != nil:
+		defer result.response.Body.Close()
+		body, err = io.ReadAll(result.response.Body)
+	}
+	return string(body), err
 }
 
 func TestCacheValidatorsHeadRangeAndStaleFailures(t *testing.T) {
@@ -190,12 +238,23 @@ func TestCacheValidatorsHeadRangeAndStaleFailures(t *testing.T) {
 	if _, err = f.serve(t, "GET", http.Header{}); !errors.Is(err, ErrUpstream) {
 		t.Fatal("mismatched 304 accepted", err)
 	}
-	for _, m := range []int64{2, 4} {
-		mode.Store(m)
-		w, err := f.serve(t, "GET", http.Header{})
-		if err != nil || w.Body.String() != "contents" {
-			t.Fatal("stale fallback lost", m, w.Body.String(), err)
-		}
+	mode.Store(2)
+	if w, err := f.serve(t, "GET", http.Header{}); err != nil || w.Body.String() != "contents" {
+		t.Fatal("stale fallback lost", w.Body.String(), err)
+	}
+	// A response that fails after it started streaming cannot fall back: its
+	// client sees an aborted transfer and the stored body stays current.
+	stored := f.rows(t)[0]
+	mode.Store(4)
+	if _, err, aborted := f.serveAborting(t, http.Header{}); !aborted && err == nil {
+		t.Fatal("truncated response completed")
+	}
+	if rows := f.rows(t); len(rows) != 1 || rows[0].GenerationID != stored.GenerationID {
+		t.Fatal("truncated response replaced the stored body", rows)
+	}
+	mode.Store(2)
+	if w, err := f.serve(t, "GET", http.Header{}); err != nil || w.Body.String() != "contents" {
+		t.Fatal("stale fallback lost after a truncated response", w.Body.String(), err)
 	}
 	mode.Store(3)
 	_, err = f.serve(t, "GET", http.Header{})
@@ -417,7 +476,7 @@ func waitForFlightWaiters(t *testing.T, s *Service, n int) {
 		s.mu.Lock()
 		joined := 0
 		for _, f := range s.flights {
-			joined += len(f.waiters)
+			joined += f.waiters
 		}
 		s.mu.Unlock()
 		if joined == n {
@@ -426,6 +485,23 @@ func waitForFlightWaiters(t *testing.T, s *Service, n int) {
 		select {
 		case <-deadline.C:
 			t.Fatal("readers did not join the shared flight", joined)
+		case <-tick.C:
+		}
+	}
+}
+
+// waitFor polls in-memory state under a deadline until ready reports true;
+// correctness never depends on timing.
+func waitFor(t *testing.T, failure string, ready func() bool) {
+	t.Helper()
+	deadline := time.NewTimer(3 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for !ready() {
+		select {
+		case <-deadline.C:
+			t.Fatal(failure)
 		case <-tick.C:
 		}
 	}
@@ -442,7 +518,7 @@ func TestServeBoundsFetchAgainRetries(t *testing.T) {
 	// makes every joining caller retry with current storage state.
 	done := make(chan struct{})
 	close(done)
-	churned := &flight{done: done, finished: true, waiters: map[*fetchWaiter]bool{}, cancel: func() {}, result: fetchResult{row: &Row{GenerationID: "collected"}}}
+	churned := &flight{done: done, resolved: true, cancel: func() {}, result: fetchResult{row: &Row{GenerationID: "collected"}}}
 	f.s.mu.Lock()
 	f.s.flights[flightKey(f.entry, "file", "")] = churned
 	f.s.mu.Unlock()
@@ -540,8 +616,10 @@ func TestSourceRetirementFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	close(release)
-	if err := <-done; !errors.Is(err, store.ErrSourceInactive) {
-		t.Fatal("disabled transfer published", err)
+	// The request admitted before the change receives its response, which
+	// is never published for the disabled application.
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 	if len(f.rows(t)) != 0 {
 		t.Fatal("disabled generation persisted")
@@ -578,7 +656,7 @@ func TestCleanupAccessRecheckPinsReceiptAndRefreshFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	row, err := f.s.lookup(f.entry.StorageID(), "file")
+	row, err := f.s.lookup(context.Background(), f.entry.StorageID(), "file")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -613,8 +691,10 @@ func TestCleanupAccessRecheckPinsReceiptAndRefreshFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	close(release)
-	if err = <-done; !errors.Is(err, ErrUpstream) {
-		t.Fatal("retired refresh published", err)
+	// The admitted request still receives the changed body, which may no
+	// longer replace the entry the cleanup retired.
+	if err = <-done; err != nil {
+		t.Fatal(err)
 	}
 	if len(f.rows(t)) != 0 {
 		t.Fatal("cleanup resurrected current body")
@@ -686,27 +766,26 @@ func TestActiveSnapshotCountersAndNoStoreInterruptedBody(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { _, err := f.serve(t, "GET", http.Header{}); done <- err }()
 	<-entered
-	views, err := f.s.Snapshot()
-	if err != nil {
-		t.Fatal(err)
-	}
-	active := 0
-	for _, v := range views {
-		if v.ActiveWriter {
-			active++
+	// The writer is visible once the response headers arrived and while it
+	// waits for the rest of the body.
+	waitFor(t, "active HTTP transfer invisible", func() bool {
+		views, err := f.s.Files()
+		if err != nil {
+			t.Fatal(err)
 		}
-		if v.Resource.Version != "" || v.Resource.Hash != "" {
-			t.Fatal("HTTP invented release authorization")
+		active := 0
+		for _, v := range views {
+			if v.ActiveWriter && v.State == "downloading" && v.Scope == f.entry.MetricsID() {
+				active++
+			}
 		}
-	}
-	if active != 1 {
-		t.Fatal("active HTTP transfer invisible", views)
-	}
+		return active == 1
+	})
 	close(release)
-	if err = <-done; err != nil {
+	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.serve(t, "GET", http.Header{}); err != nil {
+	if _, err := f.serve(t, "GET", http.Header{}); err != nil {
 		t.Fatal(err)
 	}
 	counts, err := f.db.CountersFor(f.entry.MetricsID())
@@ -799,8 +878,14 @@ func TestSourceEpochIsolationAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer recovered.Close()
-	if rows, err := recovered.listRows(f.entry.StorageID()); err != nil || len(rows) != 0 {
-		t.Fatal("corrupt observed hash accepted", rows, err)
+	// Recovery does not hash bodies; their first use does and replaces the
+	// corrupt one with a fresh transfer.
+	w = httptest.NewRecorder()
+	if err = recovered.Serve(w, httptest.NewRequest("GET", "http://redapp/file", nil), f.entry, "file"); err != nil || w.Body.String() != "second" {
+		t.Fatal("corrupt observed hash accepted", w.Body.String(), err)
+	}
+	if rows, err := recovered.listRows(f.entry.StorageID()); err != nil || len(rows) != 1 || rows[0].GenerationID == current.GenerationID {
+		t.Fatal("corrupt body not replaced", rows, err)
 	}
 	if rows, err := recovered.listRows(oldEntry.StorageID()); err != nil || len(rows) != 1 {
 		t.Fatal("recovery deleted unrelated historical source", rows, err)

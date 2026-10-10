@@ -3,10 +3,12 @@ package httpcache
 import (
 	"context"
 	"errors"
+	"io"
+	"strings"
+
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/pathmatch"
 	"github.com/PMExtra/RedApp/internal/warmplan"
-	"strings"
 )
 
 // Warm is an admitted maintenance read, never a synthetic public GET or access touch.
@@ -41,17 +43,17 @@ func (s *Service) Warm(ctx context.Context, entry application.Entry, path string
 	if err != nil {
 		return item
 	}
-	f := fill{entry: entry, path: relative, policy: policy, warm: true, observe: budget.Consume, check: budget.CheckLength}
+	f := fill{entry: entry, path: relative, policy: policy, warm: true}
 	for tries := 0; tries < fetchAgainLimit; tries++ {
 		if ctx.Err() != nil {
 			item.Reason = "cancelled"
 			return item
 		}
-		old, err := s.lookup(entry.StorageID(), relative)
+		old, err := s.lookup(ctx, entry.StorageID(), relative)
 		if err != nil {
 			return item
 		}
-		result := s.warmCurrent(ctx, f, old)
+		result := s.warmCurrent(ctx, f, old, budget)
 		if old != nil {
 			s.unpin(old.GenerationID)
 		}
@@ -64,7 +66,7 @@ func (s *Service) Warm(ctx context.Context, entry application.Entry, path string
 	item.Reason = "generation_changed"
 	return item
 }
-func (s *Service) warmCurrent(ctx context.Context, f fill, old *Row) warmplan.Item {
+func (s *Service) warmCurrent(ctx context.Context, f fill, old *Row, budget *warmplan.Budget) warmplan.Item {
 	entry, path := f.entry, f.path
 	failed := warmplan.Item{Status: "failed", Reason: "upstream_failed"}
 	attempts, err := s.sourceAttempts(entry)
@@ -170,6 +172,9 @@ func (s *Service) warmCurrent(ctx context.Context, f fill, old *Row) warmplan.It
 		result.response.Body.Close()
 		return warmplan.Item{Status: "not_cacheable", Reason: result.blockReason}
 	}
+	if result.stream != nil {
+		return s.warmStream(ctx, result.stream, budget)
+	}
 	if result.row == nil {
 		return failed
 	}
@@ -179,6 +184,33 @@ func (s *Service) warmCurrent(ctx context.Context, f fill, old *Row) warmplan.It
 	}
 	if old != nil && result.row.GenerationID == old.GenerationID {
 		return warmplan.Item{Status: "not_modified"}
+	}
+	return warmplan.Item{Status: "downloaded"}
+}
+
+// warmStream reads a streamed body through the task's read budget. Leaving
+// early stops the fill only when no other reader, such as a public client,
+// still follows it.
+func (s *Service) warmStream(ctx context.Context, st *stream, budget *warmplan.Budget) warmplan.Item {
+	defer s.leaveStream(st)
+	if err := budget.CheckLength(st.body.Total()); err != nil {
+		return warmplan.Item{Status: "skipped", Reason: "read_limit"}
+	}
+	if _, err := io.Copy(io.Discard, budget.Reader(ctx, st.body.NewReader(ctx))); err != nil {
+		switch {
+		case errors.Is(err, warmplan.ErrLimited):
+			return warmplan.Item{Status: "skipped", Reason: "read_limit"}
+		case ctx.Err() != nil:
+			return warmplan.Item{Status: "failed", Reason: "cancelled"}
+		}
+		return warmplan.Item{Status: "failed", Reason: "upstream_failed"}
+	}
+	published, err := s.awaitPublication(ctx, st)
+	if err != nil {
+		return warmplan.Item{Status: "failed", Reason: "cancelled"}
+	}
+	if published == "" {
+		return warmplan.Item{Status: "failed", Reason: "upstream_failed"}
 	}
 	return warmplan.Item{Status: "downloaded"}
 }

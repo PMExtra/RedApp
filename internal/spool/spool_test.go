@@ -241,3 +241,46 @@ func TestCheckFileBindsResultToInode(t *testing.T) {
 		t.Fatal(missing, err)
 	}
 }
+
+func TestAwaitReportsBytesOrTheFinalFailure(t *testing.T) {
+	b := tempBody(t)
+	upstream := &chunks{next: make(chan []byte)}
+	fill := Fill{Body: b, Limit: 100, Retry: Retry{Attempts: 1}}
+	done := make(chan error, 1)
+	go func() { done <- fill.Run(context.Background(), &Segment{Body: upstream, Total: -1}) }()
+	awaited := make(chan error, 1)
+	go func() { awaited <- b.Await(context.Background(), 1) }()
+	upstream.next <- []byte("x")
+	if err := <-awaited; err != nil {
+		t.Fatal(err)
+	}
+	close(upstream.next)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("not published")
+	b.Finish(failure)
+	if err := b.Await(context.Background(), 1); err != failure {
+		t.Fatal("await hid a failure behind available bytes", err)
+	}
+}
+
+func TestFillDoesNotRetryWhatCannotResume(t *testing.T) {
+	opened := 0
+	fill := Fill{Body: tempBody(t), Limit: 100, Retry: Retry{Attempts: 5, Base: time.Millisecond, Max: time.Millisecond},
+		Open:      func(context.Context, int64) (Segment, error) { opened++; return Segment{}, nil },
+		Resumable: func() bool { return false },
+	}
+	interrupted := &chunks{next: make(chan []byte, 1), err: io.ErrUnexpectedEOF}
+	interrupted.next <- []byte("half")
+	close(interrupted.next)
+	err := fill.Run(context.Background(), &Segment{Body: interrupted, Total: 8})
+	var read *ReadError
+	if !errors.As(err, &read) || opened != 0 {
+		t.Fatal("an unresumable body was retried", err, opened)
+	}
+	r := fill.Body.NewReader(context.Background())
+	if pos, _ := r.Seek(2, io.SeekStart); pos != 2 || r.Offset() != 2 {
+		t.Fatal("reader offset", pos, r.Offset())
+	}
+}

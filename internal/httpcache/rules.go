@@ -48,10 +48,6 @@ type fill struct {
 	// attempts, when set, replaces the configured source order; a warm-up
 	// continues from the source whose HEAD response asked for a GET.
 	attempts []sourceAttempt
-	// observe is charged for each body chunk and check is given the declared
-	// length; either may fail this caller's wait without failing the flight.
-	observe func(int64) error
-	check   func(int64) error
 }
 
 func (f fill) decision() CacheDecision { return resolveCacheDecision(f.policy, f.entry, f.path) }

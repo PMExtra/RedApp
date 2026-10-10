@@ -72,7 +72,8 @@ func (b *Body) CloseFile() error {
 	return f.Close()
 }
 
-func (b *Body) setTotal(n int64) { b.mu.Lock(); b.total = n; b.mu.Unlock() }
+// SetTotal records the declared length of the whole file, or -1 while unknown.
+func (b *Body) SetTotal(n int64) { b.mu.Lock(); b.total = n; b.mu.Unlock() }
 
 // append writes p after the readable prefix and publishes it to readers. Only
 // the single writer appends, so the offset cannot move during the write.
@@ -119,6 +120,28 @@ func (b *Body) Wait(ctx context.Context) error {
 		b.mu.Unlock()
 		if done {
 			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-changed:
+		}
+	}
+}
+
+// Await blocks until at least n bytes are readable or the body finished. It
+// returns the failure of a finished body even when n bytes exist, so a caller
+// can still report it before sending anything.
+func (b *Body) Await(ctx context.Context, n int64) error {
+	for {
+		b.mu.Lock()
+		size, done, err, changed := b.size, b.done, b.err, b.changed
+		b.mu.Unlock()
+		if done {
+			return err
+		}
+		if size >= n {
+			return nil
 		}
 		select {
 		case <-ctx.Done():
@@ -179,6 +202,9 @@ func (r *Reader) Read(p []byte) (int, error) {
 		}
 	}
 }
+
+// Offset is the position of the next Read.
+func (r *Reader) Offset() int64 { return r.offset }
 
 // Seek positions the next Read. Seeking relative to the end requires a known
 // total length; the bytes need not have been written yet.

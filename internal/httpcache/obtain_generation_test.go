@@ -89,8 +89,7 @@ func TestCleanupSeparatesNewReaderFromRetiredGenerationFlight(t *testing.T) {
 	}
 }
 
-// Hold a completed cold fetch after publish has pinned its new generation but
-// before sharedFetch can expose the result and remove its original empty key.
+// Hold a completed cold fetch's writer after it published its entry.
 type publicationGateBudget struct {
 	*testBudget
 	published chan struct{}
@@ -151,37 +150,14 @@ func TestCleanupSeparatesColdReaderAfterColdFlightPublication(t *testing.T) {
 	if err != nil || result.RetiredFiles != 1 || len(f.rows(t)) != 0 {
 		t.Fatal(result, err)
 	}
-	policy, err := f.s.readPolicy(f.entry)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := &joinedContext{Context: context.Background(), joined: make(chan struct{})}
-	type outcome struct {
-		result fetchResult
-		err    error
-	}
-	followerDone := make(chan outcome, 1)
-	go func() {
-		result, err := f.s.sharedFetch(ctx, fill{entry: f.entry, path: "file", policy: policy}, nil)
-		followerDone <- outcome{result, err}
-	}()
-	<-ctx.joined
-	// The caller can initially share the leader's empty-generation key, but it
-	// must reject the retired result and retry independently after completion.
-	releaseOnce.Do(func() { close(gate.release) })
-	follower := <-followerDone
-	if follower.result.row != nil {
-		f.s.unpin(follower.result.row.GenerationID)
-	}
-	if !errors.Is(follower.err, ErrFetchAgain) {
-		t.Fatal("post-cleanup cold follower accepted a retired cold-flight result", follower)
-	}
-	// Serve retries ErrFetchAgain from its next lookup. A real cold HTTP request
-	// now obtains the new body independently; the original leader keeps its pin.
+	// The cold flight ended with its publication: a request admitted after
+	// the cleanup cannot join it and fetches the file anew, while the
+	// original reader keeps the body it was streaming.
 	cold, err := f.serve(t, "GET", http.Header{})
+	releaseOnce.Do(func() { close(gate.release) })
 	leader := <-leaderDone
 	if err != nil || cold.Body.String() != "new-body" || leader.err != nil || leader.body != "retired-body" {
-		t.Fatal("cold admission/leader pin boundary violated", cold.Body.String(), err, leader)
+		t.Fatal("cold admission/leader boundary violated", cold.Body.String(), err, leader)
 	}
 	rows := f.rows(t)
 	if len(rows) != 1 || rows[0].GenerationID == oldID || calls.Load() != 2 {
@@ -300,7 +276,7 @@ func TestColdLookupRetriesAfterAnotherFlightPublishes(t *testing.T) {
 		io.WriteString(w, "body")
 	}), 300)
 	// A caller observes a miss, then pauses before joining the shared fetch.
-	old, err := f.s.lookup(f.entry.StorageID(), "file")
+	old, err := f.s.lookup(context.Background(), f.entry.StorageID(), "file")
 	if err != nil || old != nil {
 		t.Fatal(old, err)
 	}
@@ -309,9 +285,7 @@ func TestColdLookupRetriesAfterAnotherFlightPublishes(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := f.s.sharedFetch(context.Background(), fill{entry: f.entry, path: "file"}, old)
-	if result.row != nil {
-		f.s.unpin(result.row.GenerationID)
-	}
+	f.consume(result)
 	if !errors.Is(err, ErrFetchAgain) || calls.Load() != 1 {
 		t.Fatal("late cold caller repeated an already published fetch", calls.Load(), err)
 	}

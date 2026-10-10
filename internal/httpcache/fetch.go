@@ -2,73 +2,67 @@ package httpcache
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/download"
-	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
 type fetchResult struct {
-	row            *Row           // A pinned stored generation.
-	staged         *fsutil.Staged // A sealed body not yet published.
+	row *Row // A pinned stored generation.
+	// stream is a response being cached while it is read; the receiver holds
+	// one reader slot and releases it with leaveStream.
+	stream         *stream
 	status         int
-	response       *http.Response
+	response       *http.Response // An unshared response for one reader.
 	stale          bool
 	oldUnavailable bool
 	blockReason    string
 }
 
-const upstreamOperationTimeout = 9 * time.Minute
-
-// fetchRun is one upstream transfer: the cache operation it serves, the
-// transfer row shown to administrators and, for a shared flight, the waiters
-// charged for its bytes.
+// fetchRun is one upstream operation for a cache operation. A shared run
+// serves a flight: a cacheable response becomes a stream, which takes over
+// the run's writer lease, the flight's cancellation and its work lifetime.
 type fetchRun struct {
 	fill
-	transferID string
-	flight     *flight // nil for an unshared transfer
+	shared  bool
+	key     string
+	cancel  context.CancelFunc
+	finish  func()
+	release func() // writer lease; nil once a stream or response owns it
 }
 
-// fetch transfers path from the configured sources. Without allowStore it never
-// publishes: it is an unconditional transfer (old must be nil) streamed only to
-// its caller. shared is the flight the transfer runs for, if any.
-func (s *Service) fetch(ctx context.Context, f fill, old *Row, allowStore bool, shared *flight) (out fetchResult, err error) {
+// fetch obtains path from the configured sources in strategy order, moving to
+// the next source only when one fails before responding. Without run.shared
+// it never stores: it is an unconditional transfer (old must be nil) streamed
+// only to its caller. There is no overall deadline; an upstream body fails
+// only by stalling for the idle timeout.
+func (s *Service) fetch(ctx context.Context, run *fetchRun, old *Row) (out fetchResult, err error) {
 	release, err := s.budget.AcquireHTTPWriter()
 	if err != nil {
 		return fetchResult{}, err
 	}
-	transferID, finish, err := s.startTransfer(f.entry, f.path)
-	if err != nil {
-		release()
-		return fetchResult{}, err
-	}
-	run := &fetchRun{fill: f, transferID: transferID, flight: shared}
-	// Internal budget exhaustion is an upstream failure; caller cancellation or
-	// shutdown is not. Keep the outer context for the final fallback decision.
-	upstreamCtx, cancel := context.WithTimeout(ctx, upstreamOperationTimeout)
-	releaseBudget := release
-	release = func() { cancel(); finish(); releaseBudget() }
+	run.release = release
 	defer func() {
-		if out.response == nil {
-			release()
-		} else {
-			out.response.Body = &leasedBody{ReadCloser: out.response.Body, release: release}
+		if run.release == nil {
+			return
 		}
+		if out.response != nil {
+			out.response.Body = &leasedBody{ReadCloser: out.response.Body, release: run.release}
+		} else {
+			run.release()
+		}
+		run.release = nil
 	}()
-	attempts := f.attempts
+	attempts := run.attempts
 	if attempts == nil {
-		if attempts, err = s.sourceAttempts(f.entry); err != nil {
+		if attempts, err = s.sourceAttempts(run.entry); err != nil {
 			return fetchResult{}, err
 		}
 	}
@@ -77,11 +71,7 @@ func (s *Service) fetch(ctx context.Context, f fill, old *Row, allowStore bool, 
 		if ctx.Err() != nil {
 			return fetchResult{}, ctx.Err()
 		}
-		if upstreamCtx.Err() != nil {
-			lastErr = upstreamCtx.Err()
-			break
-		}
-		result, retry, fetchErr := s.fetchAttempt(upstreamCtx, run, old, allowStore, attempt)
+		result, retry, fetchErr := s.fetchAttempt(ctx, run, old, attempt)
 		if result.oldUnavailable {
 			old = nil
 		}
@@ -90,7 +80,7 @@ func (s *Service) fetch(ctx context.Context, f fill, old *Row, allowStore bool, 
 		}
 		lastErr = fetchErr
 	}
-	return s.fallback(ctx, f, old, lastErr)
+	return s.fallback(ctx, run.fill, old, lastErr)
 }
 
 // Validators are source-specific. Even equal ETags from different configured
@@ -122,22 +112,26 @@ func validSourceNotModified(old *Row, resp *http.Response, initial string, sent 
 	return resp.Request == nil || resp.Request.Header.Get("If-None-Match") != "" || resp.Request.Header.Get("If-Modified-Since") != ""
 }
 
-func (s *Service) fetchAttempt(ctx context.Context, run *fetchRun, old *Row, allowStore bool, attempt sourceAttempt) (out fetchResult, retry bool, err error) {
+func (s *Service) get(ctx context.Context, client *distributor.Client, source string, headers http.Header) (*http.Response, error) {
+	return client.Send(ctx, distributor.Request{Method: http.MethodGet, URL: source, Header: headers, IdleTimeout: s.idleTimeout})
+}
+
+func (s *Service) fetchAttempt(ctx context.Context, run *fetchRun, old *Row, attempt sourceAttempt) (out fetchResult, retry bool, err error) {
 	source, err := attempt.Client.RelativeURL(run.path)
 	if err != nil {
 		return fetchResult{}, false, err
 	}
 	headers := sourceValidators(old, source)
-	resp, err := attempt.Client.Get(ctx, source, headers)
+	resp, err := s.get(ctx, attempt.Client, source, headers)
 	if err != nil {
 		if e := s.upstreamFailure(run.entry, run.path, 0); e != nil {
 			return fetchResult{}, false, e
 		}
 		return fetchResult{}, errors.Is(err, distributor.ErrConnection) || ctx.Err() != nil, err
 	}
-	resp.Body = &metricBody{ReadCloser: &sourceBody{ReadCloser: resp.Body}, s: s, app: run.entry.MetricsID(), transferID: run.transferID}
+	keep := false
 	defer func() {
-		if out.response != resp {
+		if !keep {
 			resp.Body.Close()
 		}
 	}()
@@ -180,39 +174,30 @@ func (s *Service) fetchAttempt(ctx context.Context, run *fetchRun, old *Row, all
 		return fetchResult{status: resp.StatusCode}, false, nil
 	}
 	blockReason := run.blockReason(resp.Header)
-	cacheable := blockReason == ""
-	if !cacheable || !allowStore {
-		if !cacheable {
-			if err = s.retire(old); err != nil {
-				return fetchResult{}, false, err
-			}
-		}
-		if resp.ContentLength > s.budget.MaxArtifactBytes() {
-			return fetchResult{}, false, download.ErrArtifactLimit
-		}
-		// Uncacheable responses stream only to this reader. Once downstream
-		// headers/body start, a failure cannot transparently change sources.
-		return fetchResult{response: resp, status: resp.StatusCode, blockReason: blockReason}, false, nil
+	if blockReason == "" && run.shared {
+		// From here on the response is bound to this source: the stream
+		// resumes only from it and never falls back to another source.
+		result, err := s.startStream(ctx, run, old, resp, source, attempt.Client)
+		keep = err == nil
+		return result, false, err
 	}
-	s.checkFetchLength(run.flight, resp.ContentLength)
-	if ctx.Err() != nil {
-		return fetchResult{}, false, ctx.Err()
-	}
-	result, err := s.spool(ctx, run, resp)
-	if err != nil {
-		var readErr *sourceReadError
-		retry := errors.As(err, &readErr) || ctx.Err() != nil
-		if retry {
-			if e := s.upstreamFailure(run.entry, run.path, resp.StatusCode); e != nil {
-				return fetchResult{}, false, e
-			}
+	if blockReason != "" {
+		if err = s.retire(old); err != nil {
+			return fetchResult{}, false, err
 		}
-		return fetchResult{}, retry, err
 	}
-	result.row.SourceURL = responseSourceURL(resp, source)
-	result, err = s.publish(run.fill, old, result)
-	result, err = s.recordOverride(run.fill, resp.Header, result, err)
-	return result, false, err
+	return s.direct(run, resp, blockReason, &keep)
+}
+
+// direct hands an uncacheable response to one reader. Once its headers and
+// body are sent, a failure cannot transparently change sources.
+func (s *Service) direct(run *fetchRun, resp *http.Response, blockReason string, keep *bool) (fetchResult, bool, error) {
+	if resp.ContentLength > s.budget.MaxArtifactBytes() {
+		return fetchResult{}, false, download.ErrArtifactLimit
+	}
+	resp.Body = &upstreamBody{ReadCloser: resp.Body, s: s, app: run.entry.MetricsID()}
+	*keep = true
+	return fetchResult{response: resp, status: resp.StatusCode, blockReason: blockReason}, false, nil
 }
 
 // The caller owns the writer lease. A newly uncacheable 304 requires an
@@ -222,46 +207,31 @@ func (s *Service) fetchUnconditional(ctx context.Context, run *fetchRun, attempt
 	if err != nil {
 		return fetchResult{}, false, err
 	}
-	resp, err := attempt.Client.Get(ctx, source, nil)
+	resp, err := s.get(ctx, attempt.Client, source, nil)
 	if err != nil {
 		if e := s.upstreamFailure(run.entry, run.path, 0); e != nil {
 			return fetchResult{}, false, e
 		}
 		return fetchResult{}, errors.Is(err, distributor.ErrConnection) || ctx.Err() != nil, err
 	}
-	resp.Body = &metricBody{ReadCloser: resp.Body, s: s, app: run.entry.MetricsID(), transferID: run.transferID}
+	keep := false
+	defer func() {
+		if !keep {
+			resp.Body.Close()
+		}
+	}()
 	if resp.StatusCode >= 500 && resp.StatusCode <= 599 {
-		resp.Body.Close()
 		if e := s.upstreamFailure(run.entry, run.path, resp.StatusCode); e != nil {
 			return fetchResult{}, false, e
 		}
 		return fetchResult{}, true, ErrUpstream
 	}
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
 		return fetchResult{status: resp.StatusCode}, false, nil
 	}
-	if resp.ContentLength > s.budget.MaxArtifactBytes() {
-		resp.Body.Close()
-		return fetchResult{}, false, download.ErrArtifactLimit
-	}
-	return fetchResult{response: resp, status: resp.StatusCode, blockReason: run.blockReason(resp.Header)}, false, nil
+	return s.direct(run, resp, run.blockReason(resp.Header), &keep)
 }
 
-type sourceReadError struct{ err error }
-
-func (e *sourceReadError) Error() string { return "Upstream body did not complete" }
-func (e *sourceReadError) Unwrap() error { return e.err }
-
-type sourceBody struct{ io.ReadCloser }
-
-func (b *sourceBody) Read(p []byte) (int, error) {
-	n, err := b.ReadCloser.Read(p)
-	if err != nil && !errors.Is(err, io.EOF) {
-		err = &sourceReadError{err}
-	}
-	return n, err
-}
 func (s *Service) fallback(ctx context.Context, f fill, old *Row, cause error) (fetchResult, error) {
 	if ctx.Err() != nil {
 		return fetchResult{}, ctx.Err()
@@ -288,88 +258,7 @@ func (s *Service) fallback(ctx context.Context, f fill, old *Row, cause error) (
 	}
 	return fetchResult{row: row, status: http.StatusOK, stale: true}, nil
 }
-func (s *Service) spool(ctx context.Context, run *fetchRun, resp *http.Response) (fetchResult, error) {
-	limit := s.budget.MaxArtifactBytes()
-	if resp.ContentLength > limit {
-		return fetchResult{}, download.ErrArtifactLimit
-	}
-	id, err := fsutil.RandomID()
-	if err != nil {
-		return fetchResult{}, err
-	}
-	path := filepath.Join(s.dir, id+".tmp")
-	s.mu.Lock()
-	if t := s.transfers[run.transferID]; t != nil {
-		t.filePath = path
-		t.diskBytes = 0 // A retry uses a new complete staging body, never a partial continuation.
-	}
-	s.mu.Unlock()
-	f, err := fsutil.CreateStaged(path)
-	if err != nil {
-		return fetchResult{}, err
-	}
-	keep := false
-	defer func() {
-		if !keep {
-			f.Discard()
-		}
-	}()
-	hash := sha256.New()
-	n, err := io.Copy(io.MultiWriter(f, hash, fetchObserver{s: s, flight: run.flight}, &spoolMeter{s: s, id: run.transferID}), io.LimitReader(resp.Body, limit+1))
-	if err != nil {
-		return fetchResult{}, err
-	}
-	if ctx.Err() != nil {
-		return fetchResult{}, ctx.Err()
-	}
-	if n > limit {
-		return fetchResult{}, download.ErrArtifactLimit
-	}
-	if resp.ContentLength >= 0 && n != resp.ContentLength {
-		return fetchResult{}, &sourceReadError{io.ErrUnexpectedEOF}
-	}
-	if err = f.Seal(); err != nil {
-		return fetchResult{}, err
-	}
-	keep = true
-	now := s.now().UTC()
-	row := &Row{GenerationID: id, SizeBytes: n, SHA256: hex.EncodeToString(hash.Sum(nil)), FetchedAt: now, ValidatedAt: now, headers: representationHeaders(resp.Header)}
-	return fetchResult{row: row, staged: f, status: resp.StatusCode}, nil
-}
-func (s *Service) publish(f fill, old *Row, result fetchResult) (fetchResult, error) {
-	r := result.row
-	r.storageID = f.entry.StorageID()
-	r.Path = f.path
-	r.current = true
-	r.FreshUntil = f.freshness(r.headers, r.ValidatedAt)
-	// The temporary row is not a pinned persistent generation yet.
-	result.row = nil
-	defer result.staged.Discard()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := result.staged.Publish(s.bodyPath(r.GenerationID)); err != nil {
-		return fetchResult{}, err
-	}
-	headers, _ := json.Marshal(r.headers)
-	replaces := ""
-	if old != nil {
-		replaces = old.GenerationID
-	}
-	err := s.db.PublishHTTPCacheEntry(store.HTTPCacheEntry{ID: r.GenerationID, StorageID: r.storageID, Path: f.path, SourceURL: r.SourceURL, SHA256: r.SHA256, SizeBytes: r.SizeBytes, Headers: headers, FetchedAt: r.FetchedAt, ValidatedAt: r.ValidatedAt, FreshUntil: r.FreshUntil}, fence(f.entry), replaces, s.now())
-	if err != nil {
-		fsutil.Remove(s.bodyPath(r.GenerationID))
-		if errors.Is(err, store.ErrConflict) {
-			err = ErrUpstream
-		}
-		return fetchResult{}, err
-	}
-	s.pins[r.GenerationID]++
-	r.ETag = r.headers.Get("ETag")
-	if r.ETag == "" {
-		r.ETag = `"sha256-` + r.SHA256 + `"`
-	}
-	return fetchResult{row: r, status: http.StatusOK}, nil
-}
+
 func (s *Service) revalidate(f fill, old *Row, headers http.Header) (fetchResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -400,13 +289,3 @@ type leasedBody struct {
 }
 
 func (b *leasedBody) Close() error { err := b.ReadCloser.Close(); b.release(); return err }
-
-type fetchObserver struct {
-	s      *Service
-	flight *flight
-}
-
-func (o fetchObserver) Write(p []byte) (int, error) {
-	o.s.observeFetch(o.flight, int64(len(p)))
-	return len(p), nil
-}

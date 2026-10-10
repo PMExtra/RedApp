@@ -1,17 +1,18 @@
 // Package httpcache stores mutable HTTP representations independently of release
 // metadata. Observed content hashes protect storage, not publisher authenticity.
+//
+// A miss or a changed representation streams: one shared upstream fill writes
+// a part file through a spool.Body that every concurrent reader follows, and
+// only a complete body becomes a stored entry. Stored entries are pinned while
+// they are read and collected once retired and unpinned.
 package httpcache
 
 import (
 	"container/list"
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
-	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,9 +22,11 @@ import (
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/identity"
+	"github.com/PMExtra/RedApp/internal/spool"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -76,35 +79,6 @@ func rowsFromEntries(entries []store.HTTPCacheEntry) ([]Row, error) {
 	return out, nil
 }
 
-type fetchWaiter struct {
-	observe func(int64) error
-	check   func(int64) error
-	failed  chan struct{}
-	err     error
-}
-type flight struct {
-	releaseOnce sync.Once
-	waiters     map[*fetchWaiter]bool
-	cancel      context.CancelFunc
-	result      fetchResult
-	finished    bool
-	claimed     bool
-	done        chan struct{}
-	rowID       string
-	err         error
-	retry       bool
-	stale       bool
-}
-
-type transfer struct {
-	filePath  string
-	id, path  string
-	entry     application.Entry
-	started   time.Time
-	bytes     int64
-	diskBytes int64
-}
-
 type Service struct {
 	sourceCursors   map[string]*list.Element
 	sourceOrder     list.List
@@ -113,19 +87,27 @@ type Service struct {
 	cleanupCursors  map[string]cleanupCursor
 	refreshRunning  bool
 	previewBuilders int
-	readers         map[string]int
-	transfers       map[string]*transfer
 	dir             string
 	db              *store.Store
 	budget          download.Budget
-	mu              sync.Mutex
-	flights         map[string]*flight
-	pins            map[string]int
-	closed          bool
-	ctx             context.Context
-	cancel          context.CancelFunc
-	wg              sync.WaitGroup
-	now             func() time.Time
+	// Upstream transfer policy of streamed fills: a body read waiting
+	// idleTimeout without bytes fails an attempt; retry bounds resumption.
+	idleTimeout time.Duration
+	retry       spool.Retry
+	// mu guards the maps below. Store calls made under mu keep entry rows,
+	// pins and collection consistent; the longest is one entry publication.
+	mu       sync.Mutex
+	flights  map[string]*flight
+	streams  map[string]*stream // fills not yet released, by entry ID
+	pins     map[string]int     // stored entry ID -> holders
+	readers  map[string]int     // public responses by storage ID and path
+	verified map[string]bool    // entries whose body this process verified or wrote
+	checks   spool.Checks       // lazy body verifications by entry ID
+	closed   bool
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	now      func() time.Time
 }
 
 // Option configures a Service at construction.
@@ -134,6 +116,12 @@ type Option func(*Service)
 // WithClock replaces the wall clock used for freshness, access buckets and
 // maintenance previews.
 func WithClock(now func() time.Time) Option { return func(s *Service) { s.now = now } }
+
+// WithTransferPolicy replaces the idle read timeout and the retry bounds of
+// streamed upstream fills.
+func WithTransferPolicy(idle time.Duration, retry spool.Retry) Option {
+	return func(s *Service) { s.idleTimeout, s.retry = idle, retry }
+}
 
 func New(dir string, db *store.Store, budget download.Budget, options ...Option) (*Service, error) {
 	if db == nil || budget == nil || budget.MaxArtifactBytes() <= 0 {
@@ -145,7 +133,9 @@ func New(dir string, db *store.Store, budget download.Budget, options ...Option)
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Service{dir: filepath.Join(dir, "objects", "http"), db: db, budget: budget, flights: map[string]*flight{}, transfers: map[string]*transfer{}, pins: map[string]int{}, readers: map[string]int{}, ctx: ctx, cancel: cancel, now: time.Now, cleanupCursors: map[string]cleanupCursor{}}
+	s := &Service{dir: filepath.Join(dir, "objects", "http"), db: db, budget: budget, idleTimeout: distributor.DefaultIdleTimeout, retry: spool.DefaultRetry(),
+		flights: map[string]*flight{}, streams: map[string]*stream{}, pins: map[string]int{}, readers: map[string]int{}, verified: map[string]bool{},
+		ctx: ctx, cancel: cancel, now: time.Now, cleanupCursors: map[string]cleanupCursor{}}
 	for _, option := range options {
 		option(s)
 	}
@@ -192,36 +182,91 @@ func (s *Service) listRows(storageID string) ([]Row, error) {
 	return rowsFromEntries(entries)
 }
 
-func (s *Service) lookup(storageID, path string) (*Row, error) {
+func (s *Service) bodyPath(id string) string { return filepath.Join(s.dir, id+".body") }
+func (s *Service) partPath(id string) string { return filepath.Join(s.dir, id+".part") }
+
+// lookup returns the pinned current entry of path, or nil. An entry recovered
+// from a previous run is hashed once before its first use; callers wait for
+// that shared check without holding mu.
+func (s *Service) lookup(ctx context.Context, storageID, path string) (*Row, error) {
+	for {
+		row, check, err := s.lookupOnce(storageID, path)
+		if check == nil {
+			return row, err
+		}
+		if err = check.Wait(ctx); ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+}
+
+func (s *Service) lookupOnce(storageID, path string) (*Row, *spool.Check, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, err := s.db.CurrentHTTPCacheEntry(storageID, path)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	row, err := rowFromEntry(e)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	size, statErr := s.bodies().Size(row.GenerationID)
 	if os.IsNotExist(statErr) || (statErr == nil && size != row.SizeBytes) {
 		if err = s.db.RetireHTTPCacheEntry(row.GenerationID, s.now()); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		if err = s.collectLocked(row.GenerationID); err != nil {
-			return nil, err
-		}
-		return nil, nil
+		return nil, nil, s.collectLocked(row.GenerationID)
 	}
 	if statErr != nil {
-		return nil, statErr
+		return nil, nil, statErr
+	}
+	if !s.verified[row.GenerationID] {
+		check, err := s.verifyLocked(row)
+		return nil, check, err
 	}
 	s.pins[row.GenerationID]++
-	return row, nil
+	return row, nil, nil
 }
+
+// verifyLocked starts, or joins, the whole-body check of an entry this process
+// did not write. A body that is missing or does not match its observed hash
+// is retired; the check runs under the service context, so a waiter that
+// gives up does not cancel it for the others.
+func (s *Service) verifyLocked(row *Row) (*spool.Check, error) {
+	id := row.GenerationID
+	if check := s.checks.Pending(id); check != nil {
+		return check, nil
+	}
+	if s.closed {
+		return nil, ErrClosed
+	}
+	check := s.checks.Start(id)
+	path, size, digest := s.bodyPath(id), row.SizeBytes, row.SHA256
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		result, err := spool.CheckFile(s.ctx, path, size, digest)
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if err == nil {
+			if st, statErr := os.Lstat(path); result != nil && result.Valid && statErr == nil && result.Matches(st) {
+				s.verified[id] = true
+			} else if err = s.db.RetireHTTPCacheEntry(id, s.now()); err == nil {
+				err = s.collectLocked(id)
+			}
+		}
+		s.checks.Finish(id, check, err)
+	}()
+	return check, nil
+}
+
 func (s *Service) pin(id string) (*Row, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -261,7 +306,8 @@ func (s *Service) touch(r *Row) error {
 	r.accessBucket = bucket
 	return nil
 }
-func (s *Service) bodyPath(id string) string { return filepath.Join(s.dir, id+".body") }
+
+// collectLocked deletes a retired entry's body and row once nothing pins it.
 func (s *Service) collectLocked(id string) error {
 	if s.pins[id] > 0 {
 		return nil
@@ -280,15 +326,20 @@ func (s *Service) collectLocked(id string) error {
 	if _, err = s.db.DeleteRetiredHTTPCacheEntry(id); err != nil {
 		return err
 	}
+	delete(s.verified, id)
 	if removed && e.SizeBytes > 0 {
-		metric := e.StorageID
-		if uid, _, ok := identity.ParseStorageID(e.StorageID); ok {
-			metric = identity.MetricsID(uid)
-		}
-		return s.db.AddFor(metric, "cleanup_freed_bytes", e.SizeBytes)
+		return s.db.AddFor(metricScope(e.StorageID), "cleanup_freed_bytes", e.SizeBytes)
 	}
 	return nil
 }
+
+func metricScope(storageID string) string {
+	if uid, _, ok := identity.ParseStorageID(storageID); ok {
+		return identity.MetricsID(uid)
+	}
+	return storageID
+}
+
 func (s *Service) retire(r *Row) error {
 	if r == nil {
 		return nil
@@ -301,6 +352,10 @@ func (s *Service) retire(r *Row) error {
 	}
 	return err
 }
+
+// recover removes what a previous process left unfinished: retired entries,
+// part files of interrupted fills and bodies without an entry. Current bodies
+// are not hashed here; lookup verifies each before its first use.
 func (s *Service) recover() error {
 	entries, err := s.db.AllHTTPCacheEntries()
 	if err != nil {
@@ -308,25 +363,12 @@ func (s *Service) recover() error {
 	}
 	keep := map[string]bool{}
 	for _, e := range entries {
-		if len(e.ID) != 32 || strings.Trim(e.ID, "0123456789abcdef") != "" {
+		if !bodyID.MatchString(e.ID) {
 			return errors.New("Invalid HTTP cache file identity")
 		}
 		if e.Current {
-			f, err := fsutil.OpenRegular(s.bodyPath(e.ID))
-			if err == nil {
-				h := sha256.New()
-				n, readErr := io.Copy(h, f)
-				f.Close()
-				if readErr == nil && n == e.SizeBytes && hex.EncodeToString(h.Sum(nil)) == e.SHA256 {
-					keep[e.ID+".body"] = true
-					continue
-				}
-			} else if !errors.Is(err, fs.ErrNotExist) {
-				return err
-			}
-			if err = s.db.RetireHTTPCacheEntry(e.ID, s.now()); err != nil {
-				return err
-			}
+			keep[e.ID+".body"] = true
+			continue
 		}
 		if err = s.collectLocked(e.ID); err != nil {
 			return err
@@ -338,17 +380,15 @@ func (s *Service) recover() error {
 	}
 	for _, f := range files {
 		name := f.Name()
-		id := strings.TrimSuffix(strings.TrimSuffix(name, ".body"), ".tmp")
-		if len(id) != 32 || strings.Trim(id, "0123456789abcdef") != "" || name != id+".body" && name != id+".tmp" {
+		id, suffix, _ := strings.Cut(name, ".")
+		if !bodyID.MatchString(id) || suffix != "body" && suffix != "part" && suffix != "tmp" || keep[name] {
 			continue
 		}
-		if !keep[name] {
-			if f.Type()&os.ModeSymlink != 0 || f.IsDir() {
-				return errors.New("Unexpected nonregular HTTP cache file")
-			}
-			if _, err = fsutil.Remove(filepath.Join(s.dir, name)); err != nil {
-				return err
-			}
+		if f.Type()&os.ModeSymlink != 0 || f.IsDir() {
+			return errors.New("Unexpected nonregular HTTP cache file")
+		}
+		if _, err = fsutil.Remove(filepath.Join(s.dir, name)); err != nil {
+			return err
 		}
 	}
 	return s.recoverPreviews(context.Background())

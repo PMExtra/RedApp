@@ -10,24 +10,24 @@ import (
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
-	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/history"
 	"github.com/PMExtra/RedApp/internal/identity"
+	"github.com/PMExtra/RedApp/internal/spool"
 )
 
-// resourceViews is the shared status/listing boundary. The GeneralHttp cache can
-// append its owned snapshots here without changing metric ownership or callers.
-func (s *Server) resourceViews() ([]download.View, error) {
-	views := []download.View{}
+// resourceViews lists the files of both cache engines for the capacity and
+// disk metrics.
+func (s *Server) resourceViews() ([]spool.FileStatus, error) {
+	views := []spool.FileStatus{}
 	if s.downloads != nil {
-		views = s.downloads.Snapshot()
+		views = s.downloads.Files()
 	}
 	if s.httpCache != nil {
-		httpViews, err := s.httpCache.Snapshot()
+		files, err := s.httpCache.Files()
 		if err != nil {
 			return nil, err
 		}
-		views = append(views, httpViews...)
+		views = append(views, files...)
 	}
 	return views, nil
 }
@@ -187,7 +187,7 @@ func number(value any) float64 {
 
 // diskMetrics fills the disk.* metrics: allocated blocks of the data directory
 // classified by resource state, logical sizes and free file system space.
-func (s *Server) diskMetrics(views []download.View, values map[string]float64) error {
+func (s *Server) diskMetrics(views []spool.FileStatus, values map[string]float64) error {
 	var complete, temp, pending, total, logical, allocatedCache, allocatedTemp, allocatedPending int64
 	classes := map[string]string{}
 	fileBytes := map[string]int64{}
@@ -257,7 +257,7 @@ func (s *Server) diskMetrics(views []download.View, values map[string]float64) e
 }
 
 // resourceMetrics adds the resources.* metrics of views.
-func resourceMetrics(views []download.View, values map[string]float64) {
+func resourceMetrics(views []spool.FileStatus, values map[string]float64) {
 	for _, view := range views {
 		values["resources.total"]++
 		values["resources.readers"] += float64(view.Readers)
@@ -283,9 +283,9 @@ func (s *Server) appMetrics(entry application.Entry) ([]history.Metric, error) {
 	if err != nil {
 		return nil, err
 	}
-	views := make([]download.View, 0)
+	views := make([]spool.FileStatus, 0)
 	for _, v := range all {
-		if v.Resource.MetricScope() == entry.MetricsID() {
+		if v.Scope == entry.MetricsID() {
 			views = append(views, v)
 		}
 	}

@@ -73,6 +73,6 @@ func (b localBodies) Delete(id string) (bool, error) {
 	return fsutil.Remove(path)
 }
 
-// Staging, fsync, atomic local publication and crash recovery remain in the
-// local cache implementation. A future backend must define its own commit and
+// Part files, fsync, atomic local publication and crash recovery remain in the
+// local cache implementation (stream.go, service.go). A future backend must define its own commit and
 // abandoned-upload lifecycle instead of emulating POSIX rename guarantees.

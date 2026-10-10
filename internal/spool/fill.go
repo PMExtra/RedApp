@@ -110,6 +110,9 @@ type Fill struct {
 	Progress func(size int64) error
 	// Retrying runs before the wait that precedes another attempt.
 	Retrying func(err error)
+	// Resumable, when set, reports whether the bytes already written can be
+	// continued; a failed attempt is not retried when it reports false.
+	Resumable func() bool
 }
 
 // Run fills the body. first, when set, is the response of the first attempt,
@@ -122,7 +125,7 @@ func (f *Fill) Run(ctx context.Context, first *Segment) error {
 		if err == nil {
 			return nil
 		}
-		if !Retryable(err) || ctx.Err() != nil || attempt+1 >= f.Retry.Attempts {
+		if !Retryable(err) || ctx.Err() != nil || attempt+1 >= f.Retry.Attempts || f.Resumable != nil && !f.Resumable() {
 			return err
 		}
 		if f.Retrying != nil {
@@ -150,7 +153,7 @@ func (f *Fill) attempt(ctx context.Context, segment *Segment) error {
 		if segment.Total != offset {
 			return ErrUnsafeResume
 		}
-		f.Body.setTotal(offset)
+		f.Body.SetTotal(offset)
 		return nil
 	}
 	defer segment.Body.Close()
@@ -159,7 +162,7 @@ func (f *Fill) attempt(ctx context.Context, segment *Segment) error {
 		return ErrLength
 	}
 	if total >= 0 {
-		f.Body.setTotal(total)
+		f.Body.SetTotal(total)
 	}
 	buf := make([]byte, 64<<10)
 	for {
@@ -197,7 +200,7 @@ func (f *Fill) attempt(ctx context.Context, segment *Segment) error {
 	if total >= 0 && offset != total {
 		return ErrTruncated
 	}
-	f.Body.setTotal(offset)
+	f.Body.SetTotal(offset)
 	return nil
 }
 

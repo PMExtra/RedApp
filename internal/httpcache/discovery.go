@@ -192,7 +192,7 @@ func (s *Service) Discover(ctx context.Context, entry application.Entry, indexes
 				if resp.ContentLength >= 0 {
 					body = io.LimitReader(body, resp.ContentLength)
 				}
-				body = &metricBody{ReadCloser: readerCloser{Reader: body, Closer: resp.Body}, s: s, app: entry.MetricsID()}
+				body = &upstreamBody{ReadCloser: readerCloser{Reader: body, Closer: resp.Body}, s: s, app: entry.MetricsID()}
 				respBody, err = io.ReadAll(io.LimitReader(body, min(int64(2<<20), s.budget.MaxArtifactBytes())+1))
 				resp.Body.Close()
 				writer()

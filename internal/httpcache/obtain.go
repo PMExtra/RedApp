@@ -4,10 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"github.com/PMExtra/RedApp/internal/application"
 	"io"
 	"strconv"
 	"sync"
+
+	"github.com/PMExtra/RedApp/internal/application"
 )
 
 var ErrFetchAgain = errors.New("HTTP cache fetch must be retried with current storage state")
@@ -29,8 +30,28 @@ func flightKey(entry application.Entry, path, generation string) string {
 	return entry.StorageID() + "\x00" + path + "\x00" + strconv.FormatInt(entry.RuntimeRevision, 10) + "/" + strconv.FormatInt(entry.VendorRuntimeRevision, 10) + "\x00" + generation
 }
 
-// Flights own the upstream context. A caller relinquishes only its waiter;
-// cancellation closes the upstream when no admitted waiter remains.
+// flight is one shared upstream operation for a path, keyed by the admitted
+// application snapshot and the entry it replaces. It resolves once the
+// response headers decided the outcome; a streamed outcome keeps the flight
+// joinable until the stream's fill ends.
+type flight struct {
+	releaseOnce sync.Once
+	// waiters counts callers that joined before resolution and have not taken
+	// their outcome. A streamed resolution reserves one reader slot for each.
+	waiters  int
+	cancel   context.CancelFunc
+	result   fetchResult
+	err      error
+	retry    bool
+	resolved bool
+	claimed  bool
+	done     chan struct{}
+}
+
+// sharedFetch obtains path once for all concurrent callers. Flights own the
+// upstream context: a caller relinquishes only its own wait, and the upstream
+// stops when no caller or reader remains. A streamed result holds a reader
+// slot that the caller releases with leaveStream.
 func (s *Service) sharedFetch(ctx context.Context, f fill, old *Row) (fetchResult, error) {
 	entry, path := f.entry, f.path
 	generation := ""
@@ -38,11 +59,11 @@ func (s *Service) sharedFetch(ctx context.Context, f fill, old *Row) (fetchResul
 		generation = old.GenerationID
 	}
 	key := flightKey(entry, path, generation)
-	waiter := &fetchWaiter{failed: make(chan struct{}), observe: f.observe, check: f.check}
 	s.mu.Lock()
 	current := s.flights[key]
 	leader := current == nil
-	if leader {
+	switch {
+	case leader:
 		if s.closed {
 			s.mu.Unlock()
 			return fetchResult{}, ErrClosed
@@ -64,47 +85,59 @@ func (s *Service) sharedFetch(ctx context.Context, f fill, old *Row) (fetchResul
 		}
 		workCtx, cancel := context.WithCancel(workCtx)
 		stop := context.AfterFunc(s.ctx, cancel)
-		current = &flight{done: make(chan struct{}), waiters: map[*fetchWaiter]bool{}, cancel: cancel}
+		current = &flight{done: make(chan struct{}), cancel: cancel}
 		s.flights[key] = current
 		s.wg.Add(1)
 		// Retain old independently of the caller whose cancellation may release its pin.
 		if old != nil {
 			s.pins[old.GenerationID]++
 		}
-		// The flight runs with the leader's policy, mode and source order. Budget
-		// callbacks stay on each waiter, so one exhausted budget only ends that wait.
-		shared := fill{entry: entry, path: path, policy: f.policy, warm: f.warm, attempts: f.attempts}
-		go s.runFetch(workCtx, shared, old, key, current, func() { stop(); cancel(); finish() })
+		// The flight runs with the leader's policy, mode and source order.
+		run := &fetchRun{fill: fill{entry: entry, path: path, policy: f.policy, warm: f.warm, attempts: f.attempts}, shared: true, key: key, cancel: cancel, finish: func() { stop(); cancel(); finish() }}
+		go s.runFetch(workCtx, run, old, current)
+	case current.resolved && current.result.stream != nil:
+		// Only a stream that is still being written keeps a resolved flight
+		// joinable; the late caller becomes another reader.
+		st := current.result.stream
+		st.readers++
+		s.mu.Unlock()
+		if err := s.countFollower(f); err != nil {
+			s.leaveStream(st)
+			return fetchResult{}, err
+		}
+		return fetchResult{stream: st, status: current.result.status}, nil
 	}
-	current.waiters[waiter] = true
+	current.waiters++
 	s.mu.Unlock()
-	defer s.leaveFetch(current, waiter)
 	select {
 	case <-ctx.Done():
+		s.leaveFlight(current, false)
 		return fetchResult{}, ctx.Err()
-	case <-waiter.failed:
-		return fetchResult{}, waiter.err
 	case <-current.done:
 	}
-	s.mu.Lock()
-	if waiter.err != nil {
-		err := waiter.err
-		s.mu.Unlock()
-		return fetchResult{}, err
-	}
-	result := current.result
-	err := current.err
-	retry := current.retry
-	if result.response != nil {
-		if current.claimed {
-			s.mu.Unlock()
-			return fetchResult{blockReason: result.blockReason}, errUncacheableFlight
+	result, err, retry := current.result, current.err, current.retry
+	if result.stream != nil {
+		// The resolution reserved this caller's reader slot.
+		s.leaveFlight(current, true)
+		if !leader {
+			if err := s.countFollower(f); err != nil {
+				s.leaveStream(result.stream)
+				return fetchResult{}, err
+			}
 		}
+		return fetchResult{stream: result.stream, status: result.status}, nil
+	}
+	defer s.leaveFlight(current, false)
+	if result.response != nil {
+		s.mu.Lock()
+		claimed := current.claimed
 		current.claimed = true
 		s.mu.Unlock()
+		if claimed {
+			return fetchResult{blockReason: result.blockReason}, errUncacheableFlight
+		}
 		return result, err
 	}
-	s.mu.Unlock()
 	if retry {
 		return fetchResult{}, ErrFetchAgain
 	}
@@ -125,8 +158,8 @@ func (s *Service) sharedFetch(ctx context.Context, f fill, old *Row) (fetchResul
 		s.unpin(row.GenerationID)
 		return fetchResult{}, ErrFetchAgain
 	}
-	if !leader && !f.warm {
-		if err = s.db.AddFor(entry.MetricsID(), "shared_follower_requests", 1); err != nil {
+	if !leader {
+		if err = s.countFollower(f); err != nil {
 			s.unpin(row.GenerationID)
 			return fetchResult{}, err
 		}
@@ -134,51 +167,94 @@ func (s *Service) sharedFetch(ctx context.Context, f fill, old *Row) (fetchResul
 	result.row = row
 	return result, nil
 }
-func (s *Service) runFetch(ctx context.Context, fl fill, old *Row, key string, f *flight, finish func()) {
+
+func (s *Service) countFollower(f fill) error {
+	if f.warm {
+		return nil
+	}
+	return s.db.AddFor(f.entry.MetricsID(), "shared_follower_requests", 1)
+}
+
+func (s *Service) runFetch(ctx context.Context, run *fetchRun, old *Row, f *flight) {
 	defer s.wg.Done()
 	if old != nil {
 		defer s.unpin(old.GenerationID)
 	}
 	result := fetchResult{}
 	var err error
-	if !fl.warm {
-		err = s.db.AddFor(fl.entry.MetricsID(), "miss_requests", 1)
+	if !run.warm {
+		err = s.db.AddFor(run.entry.MetricsID(), "miss_requests", 1)
 	}
 	if err == nil {
-		result, err = s.fetch(ctx, fl, old, true, f)
+		result, err = s.fetch(ctx, run, old)
 	}
-	if result.response != nil {
-		result.response.Body = &finishBody{ReadCloser: result.response.Body, finish: finish}
-	} else {
-		finish()
+	switch {
+	case result.response != nil:
+		result.response.Body = &finishBody{ReadCloser: result.response.Body, finish: run.finish}
+	case result.stream == nil:
+		run.finish()
 	}
 	s.mu.Lock()
 	f.result = result
 	f.err = err
 	f.retry = errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
-	f.finished = true
-	delete(s.flights, key)
+	f.resolved = true
+	st := result.stream
+	if st == nil || st.finished || st.published != "" {
+		delete(s.flights, run.key)
+	}
+	var stop, closeFile bool
+	if st != nil {
+		// Hand one reader slot to each waiter, then release the flight's own.
+		st.readers += f.waiters
+		stop, closeFile = s.dropReaderLocked(st)
+	}
 	close(f.done)
-	unused := len(f.waiters) == 0
+	unused := f.waiters == 0
 	s.mu.Unlock()
-	if unused {
+	if st != nil {
+		st.drop(stop, closeFile)
+	} else if unused {
 		s.releaseFetchResult(f)
 	}
 }
-func (s *Service) leaveFetch(f *flight, w *fetchWaiter) {
+
+// leaveFlight ends one caller's wait. took reports that the caller kept the
+// reader slot a streamed resolution reserved for it. The last caller to leave
+// an unresolved flight cancels its upstream operation.
+func (s *Service) leaveFlight(f *flight, took bool) {
 	s.mu.Lock()
-	delete(f.waiters, w)
-	empty := len(f.waiters) == 0
-	finished := f.finished
-	s.mu.Unlock()
-	if empty {
-		if !finished {
-			f.cancel()
-			<-f.done
-		}
-		s.releaseFetchResult(f)
+	f.waiters--
+	empty := f.waiters == 0
+	resolved := f.resolved
+	st := f.result.stream
+	var stop, closeFile bool
+	if resolved && st != nil && !took {
+		stop, closeFile = s.dropReaderLocked(st)
 	}
+	s.mu.Unlock()
+	if st != nil {
+		st.drop(stop, closeFile)
+		return
+	}
+	if !empty {
+		return
+	}
+	if !resolved {
+		f.cancel()
+		<-f.done
+		s.mu.Lock()
+		empty = f.waiters == 0
+		st = f.result.stream
+		s.mu.Unlock()
+		if st != nil || !empty {
+			// A stream resolved concurrently; its cancelled fill cleans up itself.
+			return
+		}
+	}
+	s.releaseFetchResult(f)
 }
+
 func (s *Service) releaseFetchResult(f *flight) {
 	f.releaseOnce.Do(func() {
 		if f.result.row != nil {
@@ -190,29 +266,6 @@ func (s *Service) releaseFetchResult(f *flight) {
 	})
 }
 
-func (s *Service) observeFetch(f *flight, n int64) {
-	if f == nil {
-		return
-	}
-	s.mu.Lock()
-	remaining := 0
-	for w := range f.waiters {
-		if w.err == nil && w.observe != nil {
-			if err := w.observe(n); err != nil {
-				w.err = err
-				close(w.failed)
-			}
-		}
-		if w.err == nil {
-			remaining++
-		}
-	}
-	s.mu.Unlock()
-	if remaining == 0 {
-		f.cancel()
-	}
-}
-
 type finishBody struct {
 	io.ReadCloser
 	once   sync.Once
@@ -220,26 +273,3 @@ type finishBody struct {
 }
 
 func (b *finishBody) Close() error { err := b.ReadCloser.Close(); b.once.Do(b.finish); return err }
-
-func (s *Service) checkFetchLength(f *flight, n int64) {
-	if f == nil {
-		return
-	}
-	s.mu.Lock()
-	remaining := 0
-	for w := range f.waiters {
-		if w.err == nil && w.check != nil {
-			if err := w.check(n); err != nil {
-				w.err = err
-				close(w.failed)
-			}
-		}
-		if w.err == nil {
-			remaining++
-		}
-	}
-	s.mu.Unlock()
-	if remaining == 0 {
-		f.cancel()
-	}
-}

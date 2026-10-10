@@ -217,7 +217,7 @@ func (s *Service) refreshExisting(ctx context.Context, entry application.Entry, 
 			item.Reason = "generation_changed"
 			return item, ErrFetchContended
 		}
-		old, err := s.lookup(entry.StorageID(), relative)
+		old, err := s.lookup(ctx, entry.StorageID(), relative)
 		if err != nil {
 			return item, err
 		}
@@ -243,6 +243,21 @@ func (s *Service) refreshExisting(ctx context.Context, entry application.Entry, 
 		if err != nil && !uncacheable {
 			item.Reason = "refresh_failed"
 			return item, err
+		}
+		if result.stream != nil {
+			// The changed body is cached while it streams; the refresh reports
+			// it once the new entry is published.
+			published, err := s.awaitPublication(ctx, result.stream)
+			s.leaveStream(result.stream)
+			if err != nil || published == "" {
+				item.Reason = "refresh_failed"
+				if err == nil {
+					err = ErrUpstream
+				}
+				return item, err
+			}
+			item.GenerationID, item.Status = published, "refreshed"
+			return item, nil
 		}
 		if result.response != nil || uncacheable {
 			if result.response != nil {
