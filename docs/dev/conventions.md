@@ -15,7 +15,7 @@
 
 - 错误消息用小写开头、不带句末标点，描述“做什么失败了”：`fmt.Errorf("open state database: %w", err)`。**【目标】** 现有不少错误以大写开头，因为它们被直接返回给客户端；阶段 3 改为显式错误码后统一（阶段 2/3）。
 - 包装底层错误一律用 `%w`，保留错误链。
-- 调用方需要区分的错误，定义 sentinel（`var ErrRevisionConflict = errors.New(...)`）或带字段的类型化错误，用 `errors.Is` / `errors.As` 判断。
+- 调用方需要区分的错误，定义 sentinel（`var ErrConflict = errors.New(...)`）或带字段的类型化错误，用 `errors.Is` / `errors.As` 判断。
 - **禁止按错误文本分类**，例如 `strings.Contains(err.Error(), "SHA256")` 或比较已持久化的错误字符串。需要持久化错误类别时，单独存一个稳定的代码字段。
 - 内部错误文本不直接返回给 HTTP 客户端；对外只给稳定的错误码和面向用户的消息（见下文 HTTP API）。
 

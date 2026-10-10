@@ -70,7 +70,7 @@ RedApp 是单进程 Go 服务：一个二进制、一个 SQLite 数据库、一�
 | | `internal/media` | 图标（SVG 白名单、PNG/JPEG 重编码）按内容哈希存储 |
 | | `internal/jsoncheck` | 拒绝重复键、过深嵌套和尾随数据 |
 | | `internal/yamlconfig` | 严格的单文档 YAML → JSON |
-| | `internal/instance` | 数据目录实例锁 |
+| | `internal/instance` | 数据目录实例锁与只读的持锁检查 |
 | 测试 | `internal/testutil` | 基于 httptest 的上游客户端（仅测试使用） |
 | 嵌入数据 | `presets/` | 内置厂商、应用、分类的 YAML 模板与图标 |
 | | `installers/` | 嵌入 generated 安装脚本、许可证和公钥（见 [installers.md](installers.md)） |
@@ -227,5 +227,6 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 | 手写路由 | `Server.ServeHTTP` 按前缀和字符串切分分发；错误码由 HTTP 状态推导；`request_id` 不进日志 | 阶段 3：`http.ServeMux` + 中间件、显式错误码、request_id 日志、OpenAPI 与契约测试 |
 | HTTP 缓存冷请求 | 冷请求必须先完整落盘才响应，单次下载在全部来源上合计最长 9 分钟；慢速链路上的超大文件会失败，前置反代也可能先超时 | 阶段 5：复用下载引擎边下边读后取消总时限 |
 | 锁内 I/O | 下载进度保存和数据库调用仍在 `Manager.mu` 内（整文件哈希和 bcrypt 已移出）；媒体、预热和目录写入在持锁期间做 I/O | 阶段 2/5：按[约定](conventions.md#并发)调整 |
-| 测试钩子与命名 | 生产结构体含测试钩子字段；部分测试文件以版本或评审轮次命名 | 阶段 2 |
+| 测试钩子 | `store` 已改用构造选项注入故障；`download.Manager.testFault` 与 `httpserver.Server.testConfigurationPrepare` 仍是生产结构体字段 | 阶段 2（download）、阶段 3（httpserver） |
+| 无 UID 的静态测试条目 | `builtin.New` 和多个包的测试用没有 UID 的 `application.Entry`；`Entry.StorageID`/`MetricsID`/`Active`、`store.checkSourceActive`、`catalog.CandidatesForSource` 为它们保留了分支 | 测试改用真实目录后删除这些分支 |
 | 日志 | 只有入口使用标准库 `log`，无请求日志 | 阶段 3：`log/slog` |
