@@ -213,10 +213,6 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 		w.Write(asset.Body)
 		return true
 	}
-	if endpoint == "settings/homepage" {
-		s.homepageAPI(w, r)
-		return true
-	}
 	if len(parts) == 3 && parts[0] == "vendors" && parts[2] == "admin-notes" {
 		s.adminNotesAPI(w, r, "vendor", parts[1])
 		return true
