@@ -69,7 +69,7 @@ python3 scripts/test-installers.py --platform shell
    - 下载器只允许 HTTPS→HTTPS 跳转（最多 5 次），拒绝 HTTP 降级、URL 凭据和私网/回环/metadata 地址；DNS 结果和实际 socket 对端都要检查。
    - 只使用系统 TLS 信任，不继承环境代理。
    - 任一脚本获取失败时，仍汇总报告所有脚本结果，然后任务失败。
-2. **validate**：无变化时直接结束。有变化时在无网络、无凭据、无 capabilities、只读源码的容器（`.github/installer-check/Dockerfile`）里应用 patch 并运行 Shell 测试。容器不含 PowerShell。
+2. **validate**：无变化时直接结束。有变化时在无网络、无凭据、无 capabilities、只读源码的容器（`.github/installer-check/Dockerfile`）里应用 patch 并运行 Shell 测试。容器不含 PowerShell。该镜像的 Ubuntu 基础镜像按摘要固定，构建时不 `--pull`；apt 软件包仍取自构建当时的发行版仓库。
 3. **package**：回到可信主机重新应用 patch，比对容器结果，只打包允许的文件（声明的 `upstream/` 脚本、对应 `generated/` 文件和 `provenance.json`）。公钥、许可证、patch、descriptor、代码和 workflow 不在允许集合内。
 4. **Windows 门禁**：复用 `.github/workflows/windows-installers.yml`，在 Windows Server 2022 上核对候选 ZIP 的摘要和文件集合，然后用 PowerShell 7 和 Windows PowerShell 5.1 解析并运行全部 ps1 的无害行为测试。该任务只有 `contents: read`。
 5. **draft-pr**：只有 Linux 和 Windows 都成功后才执行。使用短期 `GITHUB_TOKEN`，每个应用各自创建草稿 PR，分支为 `automation/installer-updates/<vendor>/<app>/<内容摘要>`。

@@ -11,8 +11,11 @@ from release_checks import require, require_commit, require_version
 
 
 def existing_digest(image):
-    result = subprocess.run(['docker', 'buildx', 'imagetools', 'inspect', image,
-                             '--format', '{{.Manifest.Digest}}'], capture_output=True, text=True)
+    """Return the manifest digest of an existing image tag, or None if it is absent."""
+    result = subprocess.run(
+        ['docker', 'buildx', 'imagetools', 'inspect', image, '--format', '{{.Manifest.Digest}}'],
+        capture_output=True, text=True,
+    )
     if result.returncode == 0:
         return result.stdout.strip()
     require('not found' in result.stderr.lower(), result.stderr)
@@ -27,10 +30,15 @@ if __name__ == '__main__':
     require(re.fullmatch(r'sha256:[0-9a-f]{64}', digest), f'invalid image digest {digest!r}')
     require(os.environ['GITHUB_REF_NAME'] == 'v' + version, 'Tag does not match VERSION')
     url = f'https://api.github.com/repos/{os.environ["GITHUB_REPOSITORY"]}/git/ref/heads/main'
-    request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
-                                                  'Accept': 'application/vnd.github+json'})
+    request = urllib.request.Request(url, headers={
+        'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+        'Accept': 'application/vnd.github+json',
+    })
     with urllib.request.urlopen(request, timeout=30) as response:
-        require(json.load(response)['object']['sha'] == sha, 'main advanced; refuse stale rolling-tag promotion')
+        require(
+            json.load(response)['object']['sha'] == sha,
+            'main advanced; refuse stale rolling-tag promotion',
+        )
     repository = 'ghcr.io/pmextra/redapp'
     tags = ['v' + version, version, '.'.join(version.split('.')[:2]), 'latest']
     pending = []

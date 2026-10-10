@@ -11,6 +11,7 @@ import (
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/cachepolicy"
+	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/pathmatch"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -84,7 +85,7 @@ func scanMaintenance(row scanner) (MaintenancePreview, error) {
 	var created, expires int64
 	var executed sql.NullInt64
 	var criteria, result []byte
-	err := row.Scan(&p.ID, &p.storageID, &p.Kind, &p.State, &p.fence.AppRevision, &p.fence.VendorRevision, &created, &expires, &criteria, &executed, &result, &p.ScannedFiles, &p.SelectedFiles, &p.SelectedBytes, &p.CompletedFiles, &p.FailedFiles)
+	err := row.Scan(&p.ID, &p.storageID, &p.Kind, &p.State, &p.fence.AppRuntimeRevision, &p.fence.VendorRuntimeRevision, &created, &expires, &criteria, &executed, &result, &p.ScannedFiles, &p.SelectedFiles, &p.SelectedBytes, &p.CompletedFiles, &p.FailedFiles)
 	if err != nil {
 		return p, err
 	}
@@ -124,9 +125,6 @@ func (s *Service) LookupPreview(storageID, kind, id string) (MaintenancePreview,
 	return p, s.validatePreview(p, kind)
 }
 
-func (s *Service) BuildPreview(ctx context.Context, entry application.Entry, kind string, criteria PreviewCriteria) (MaintenancePreview, error) {
-	return s.buildPreview(ctx, entry, kind, criteria, buildOptions{})
-}
 func (s *Service) buildPreview(ctx context.Context, entry application.Entry, kind string, criteria PreviewCriteria, options buildOptions) (out MaintenancePreview, buildErr error) {
 	ctx, finish, err := s.db.ApplicationWork(ctx, entry.StorageID())
 	if err != nil {
@@ -149,7 +147,7 @@ func (s *Service) buildPreview(ctx context.Context, entry application.Entry, kin
 	}
 	matcher, err := pathmatch.Compile(criteria.Match)
 	if err != nil {
-		return out, fmt.Errorf("%w: %v", ErrInvalidCleanup, err)
+		return out, fmt.Errorf("%w: %w", ErrInvalidCleanup, err)
 	}
 	if criteria.Path != "" && pathmatch.ValidatePath("/"+criteria.Path) != nil {
 		return out, ErrInvalidPreview
@@ -176,7 +174,10 @@ func (s *Service) buildPreview(ctx context.Context, entry application.Entry, kin
 	}
 	now := s.now().UTC()
 	raw, _ := json.Marshal(criteria)
-	id := randomID()
+	id, err := fsutil.RandomID()
+	if err != nil {
+		return out, err
+	}
 	_, err = tx.Exec(`INSERT INTO http_cleanup_previews(id,storage_id,kind,state,app_revision,vendor_revision,created_at_s,expires_at_s,selection_json,high_water) VALUES(?,?,?,'building',?,?,?,?,?,?)`, id, entry.StorageID(), kind, entry.Revision, entry.VendorRevision, now.Unix(), now.Add(10*time.Minute).Unix(), raw, highWater)
 	if err != nil {
 		return out, err

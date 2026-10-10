@@ -15,10 +15,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/PMExtra/RedApp/internal/cachepolicy"
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/presets"
-	"github.com/mattn/go-sqlite3"
 )
 
 var (
@@ -118,36 +116,33 @@ type Application struct {
 func (a Application) StorageID() string { return identity.StorageID(a.UID, a.SourceEpoch) }
 func (a Application) MetricsID() string { return identity.MetricsID(a.UID) }
 
-type ApplicationSeed struct {
-	VendorID string
-	ApplicationInput
-}
-
-// SourceFence captures admission eligibility, including a vendor's enable/disable
-// runtime revision. The legacy AppRevision/VendorRevision field names now
-// contain runtime_revision values, never administrative configuration revisions.
-// A source epoch alone cannot fence work admitted before disable/enable.
-type SourceFence struct{ AppRevision, VendorRevision int64 }
+// SourceFence captures the runtime revisions of an application and its vendor
+// when work was admitted. A source epoch alone cannot fence work admitted
+// before a disable and re-enable, and configuration revisions change on edits
+// that do not affect admission.
+type SourceFence struct{ AppRuntimeRevision, VendorRuntimeRevision int64 }
 
 // Provider/BaseURL/BaseURLs/SourceStrategy/CreatedAt are the immutable source
 // snapshot. The revision and
 // Active fields describe its current eligibility, not its historical eligibility.
 type SourceRecord struct {
-	AppUID         string    `json:"app_uid"`
-	Epoch          int64     `json:"epoch"`
-	Provider       string    `json:"provider"`
-	BaseURL        string    `json:"base_url"`
-	BaseURLs       []string  `json:"base_urls"`
-	SourceStrategy string    `json:"source_strategy"`
-	CreatedAt      time.Time `json:"created_at"`
-	AppRevision    int64     `json:"app_revision"`
-	VendorRevision int64     `json:"vendor_revision"`
-	Active         bool      `json:"active"`
+	AppUID                string    `json:"app_uid"`
+	Epoch                 int64     `json:"epoch"`
+	Provider              string    `json:"provider"`
+	BaseURL               string    `json:"base_url"`
+	BaseURLs              []string  `json:"base_urls"`
+	SourceStrategy        string    `json:"source_strategy"`
+	CreatedAt             time.Time `json:"created_at"`
+	AppRuntimeRevision    int64     `json:"app_runtime_revision"`
+	VendorRuntimeRevision int64     `json:"vendor_runtime_revision"`
+	Active                bool      `json:"active"`
 }
 
-func (r SourceRecord) StorageID() string  { return identity.StorageID(r.AppUID, r.Epoch) }
-func (r SourceRecord) MetricsID() string  { return identity.MetricsID(r.AppUID) }
-func (r SourceRecord) Fence() SourceFence { return SourceFence{r.AppRevision, r.VendorRevision} }
+func (r SourceRecord) StorageID() string { return identity.StorageID(r.AppUID, r.Epoch) }
+func (r SourceRecord) MetricsID() string { return identity.MetricsID(r.AppUID) }
+func (r SourceRecord) Fence() SourceFence {
+	return SourceFence{r.AppRuntimeRevision, r.VendorRuntimeRevision}
+}
 
 var iconPath = regexp.MustCompile(`^/assets/icons/[0-9a-f]{64}\.(?:png|jpg|svg)$`)
 
@@ -269,24 +264,16 @@ func normalizeDirectoryBase(value string) (string, error) {
 	return u.String(), nil
 }
 
-func directoryError(err error) error {
-	var sqliteErr sqlite3.Error
-	if errors.As(err, &sqliteErr) && (sqliteErr.ExtendedCode == sqlite3.ErrConstraintUnique || sqliteErr.ExtendedCode == sqlite3.ErrConstraintPrimaryKey) {
-		return fmt.Errorf("%w: %v", ErrDirectoryExists, err)
-	}
-	return err
-}
-
 type directoryQuerier interface{ QueryRow(string, ...any) *sql.Row }
 type directoryScanner interface{ Scan(...any) error }
 
-const vendorColumns = `uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,enabled,revision,deleted_at_s,icon_en,icon_zh_cn,runtime_revision`
+const vendorColumns = `uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,icon_en,icon_zh_cn,enabled,revision,runtime_revision,deleted_at_s`
 const applicationColumns = `a.uid,a.id,v.id||'/'||a.id,a.vendor_uid,v.id,a.name_en,a.name_zh_cn,a.description_en,a.description_zh_cn,a.icon,a.provider,a.base_url,a.base_urls_json,a.source_strategy,a.cache_ttl_seconds,a.enabled,a.revision,a.source_epoch,a.deleted_at_s,a.runtime_revision,EXISTS(SELECT 1 FROM template_snapshots t WHERE t.kind='App' AND t.canonical_key=v.id||'/'||a.id),COALESCE((SELECT json_group_array(category_id) FROM (SELECT category_id FROM application_categories WHERE app_uid=a.uid ORDER BY category_id)),'[]'),COALESCE((SELECT json_group_array(tag) FROM (SELECT tag FROM application_tags WHERE app_uid=a.uid ORDER BY ordinal)),'[]')`
 
 func scanVendor(row directoryScanner) (Vendor, error) {
 	var v Vendor
 	var deleted sql.NullInt64
-	err := row.Scan(&v.UID, &v.ID, &v.Name.En, &v.Name.ZhCN, &v.Description.En, &v.Description.ZhCN, &v.Icon, &v.Enabled, &v.Revision, &deleted, &v.LocalizedIcons.En, &v.LocalizedIcons.ZhCN, &v.RuntimeRevision)
+	err := row.Scan(&v.UID, &v.ID, &v.Name.En, &v.Name.ZhCN, &v.Description.En, &v.Description.ZhCN, &v.Icon, &v.LocalizedIcons.En, &v.LocalizedIcons.ZhCN, &v.Enabled, &v.Revision, &v.RuntimeRevision, &deleted)
 	_, v.HasTemplate = BuiltinVendorTemplate(v.ID)
 	v.DeletedAt = timePointer(deleted)
 	return v, err
@@ -365,25 +352,6 @@ func (s *Store) Applications(includeDeleted bool) ([]Application, error) {
 	return result, rows.Err()
 }
 
-func createVendor(tx *sql.Tx, in VendorInput) (Vendor, error) {
-	if err := validateVendor(in); err != nil {
-		return Vendor{}, err
-	}
-	uid, err := identity.NewUID()
-	if err != nil {
-		return Vendor{}, err
-	}
-	_, err = tx.Exec(`INSERT INTO vendors(`+vendorColumns+`) VALUES(?,?,?,?,?,?,?,?,1,NULL,?,?,1)`, uid, in.ID, in.Name.En, in.Name.ZhCN, in.Description.En, in.Description.ZhCN, in.Icon, in.Enabled, in.LocalizedIcons.En, in.LocalizedIcons.ZhCN)
-	if err != nil {
-		return Vendor{}, directoryError(err)
-	}
-	v, err := readVendor(tx, in.ID)
-	if err != nil {
-		return v, err
-	}
-	_, err = tx.Exec(`INSERT INTO vendor_config VALUES(?,NULL,?,?)`, uid, encode(Object{}), encode(vendorSpec(v)))
-	return v, err
-}
 func (s *Store) CreateVendor(in VendorInput) (Vendor, error) {
 	return s.CreateConfiguredVendor(in, nil)
 }
@@ -423,42 +391,6 @@ func (st *configurationState) softDeleteVendor(id string, revision int64) error 
 	return sql.ErrNoRows
 }
 
-func createApplication(tx *sql.Tx, vendorID string, in ApplicationInput) (Application, error) {
-	if err := validateApplication(&in); err != nil {
-		return Application{}, err
-	}
-	v, err := readVendor(tx, vendorID)
-	if err != nil {
-		return Application{}, err
-	}
-	if v.DeletedAt != nil {
-		return Application{}, ErrDirectoryDeleted
-	}
-	uid, err := identity.NewUID()
-	if err != nil {
-		return Application{}, err
-	}
-	bases, err := json.Marshal(in.BaseURLs)
-	if err != nil {
-		return Application{}, err
-	}
-	_, err = tx.Exec(`INSERT INTO applications(uid,vendor_uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,provider,base_url,base_urls_json,source_strategy,cache_ttl_seconds,enabled,revision,source_epoch,deleted_at_s) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,1,NULL)`, uid, v.UID, in.ID, in.Name.En, in.Name.ZhCN, in.Description.En, in.Description.ZhCN, in.Icon, in.Provider, in.BaseURL, string(bases), in.SourceStrategy, in.CacheTTLSeconds, in.Enabled)
-	if err != nil {
-		return Application{}, directoryError(err)
-	}
-	if in.Provider != "info" && in.Provider != "hosted" {
-		_, err = tx.Exec(`INSERT INTO application_sources(app_uid,epoch,provider,base_url,base_urls_json,source_strategy,created_at_s) VALUES(?,1,?,?,?,?,?)`, uid, in.Provider, in.BaseURL, string(bases), in.SourceStrategy, time.Now().UTC().Unix())
-	}
-	if err != nil {
-		return Application{}, err
-	}
-	a, err := readApplication(tx, vendorID+"/"+in.ID)
-	if err != nil {
-		return a, err
-	}
-	_, err = tx.Exec(`INSERT INTO application_config VALUES(?,NULL,?,?)`, uid, encode(Object{}), encode(appSpec(a, LocalizedText{}, cachepolicy.Empty())))
-	return a, err
-}
 func (s *Store) CreateApplication(vendorID string, in ApplicationInput) (Application, error) {
 	return s.CreateConfiguredApplication(vendorID, in, nil)
 }
@@ -526,42 +458,6 @@ func (st *configurationState) softDeleteApplication(key string, revision int64) 
 	return sql.ErrNoRows
 }
 
-// SeedDirectory runs exactly once, atomically with its completion marker. Empty
-// seeds are valid and intentional; deleted defaults are never resurrected.
-func (s *Store) SeedDirectory(vendors []VendorInput, apps []ApplicationSeed) error {
-	s.configMu.Lock()
-	defer s.configMu.Unlock()
-	if s.prepareConfiguration != nil {
-		return errors.New("SeedDirectory is initialization-only before publication installation")
-	}
-	tx, err := s.DB.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var seeded bool
-	if err = tx.QueryRow(`SELECT seeded FROM directory_state WHERE id=1`).Scan(&seeded); err != nil {
-		return err
-	}
-	if seeded {
-		return nil
-	}
-	for _, v := range vendors {
-		if _, err = createVendor(tx, v); err != nil {
-			return err
-		}
-	}
-	for _, a := range apps {
-		if _, err = createApplication(tx, a.VendorID, a.ApplicationInput); err != nil {
-			return err
-		}
-	}
-	if _, err = tx.Exec(`UPDATE directory_state SET seeded=1 WHERE id=1`); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
 const sourceColumns = `src.app_uid,src.epoch,src.provider,src.base_url,src.base_urls_json,src.source_strategy,src.created_at_s,a.runtime_revision,v.runtime_revision,(a.enabled=1 AND v.enabled=1 AND a.deleted_at_s IS NULL AND v.deleted_at_s IS NULL AND src.epoch=a.source_epoch)`
 const sourceJoin = ` FROM application_sources src JOIN applications a ON a.uid=src.app_uid JOIN vendors v ON v.uid=a.vendor_uid`
 
@@ -569,7 +465,7 @@ func scanSource(row directoryScanner) (SourceRecord, error) {
 	var r SourceRecord
 	var created int64
 	var bases []byte
-	err := row.Scan(&r.AppUID, &r.Epoch, &r.Provider, &r.BaseURL, &bases, &r.SourceStrategy, &created, &r.AppRevision, &r.VendorRevision, &r.Active)
+	err := row.Scan(&r.AppUID, &r.Epoch, &r.Provider, &r.BaseURL, &bases, &r.SourceStrategy, &created, &r.AppRuntimeRevision, &r.VendorRuntimeRevision, &r.Active)
 	if err == nil {
 		err = json.Unmarshal(bases, &r.BaseURLs)
 	}
@@ -642,13 +538,9 @@ func (s *Store) SourceActive(storageID string) (bool, error) {
 	return err == nil, err
 }
 
-// Only reviewed embedded images may bypass uploaded-image paths. Legacy routes
-// remain accepted for existing data, independently of new template display URLs.
+// Only reviewed embedded images may bypass uploaded-image paths.
 func builtinTemplateIcon(path string) bool {
-	if _, ok := presets.Embedded().Image(path); ok {
-		return true
-	}
-	_, ok := presets.LegacyImage(path)
+	_, ok := presets.Embedded().Image(path)
 	return ok
 }
 

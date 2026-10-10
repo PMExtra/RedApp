@@ -1,19 +1,13 @@
 package distributor
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"github.com/PMExtra/RedApp/internal/networkproxy"
 	"github.com/PMExtra/RedApp/internal/store"
-	"net"
 	"net/http"
-	"net/url"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 type proxyConfig struct {
@@ -58,21 +52,14 @@ type Pool struct {
 	proxyRevision int64
 	transports    atomic.Pointer[transportSet]
 	scopes        atomic.Pointer[scopeSnapshot]
+	net           network
 }
 
-type transportSet struct {
-	public     *http.Transport
-	configured *http.Transport
-}
+func NewPool() *Pool { return newPool(systemNetwork) }
 
-func (s *transportSet) closeIdle() {
-	s.public.CloseIdleConnections()
-	s.configured.CloseIdleConnections()
-}
-
-func NewPool() *Pool {
-	p := &Pool{}
-	transports, _ := transportsFor(proxyConfig{})
+func newPool(n network) *Pool {
+	p := &Pool{net: n}
+	transports, _ := n.transports(proxyConfig{})
 	p.transports.Store(transports)
 	return p
 }
@@ -99,6 +86,23 @@ type transportReference struct {
 	vendorUID  string
 }
 
+// set returns the transports of the reference's current proxy setting.
+func (r transportReference) set() (*transportSet, error) {
+	if r.appUID == "" {
+		return r.pool.transports.Load(), nil
+	}
+	snapshot := r.pool.scopes.Load()
+	if snapshot == nil {
+		return nil, errors.New("unknown application transport scope")
+	}
+	scope, ok := snapshot.scopes[r.appUID]
+	if !ok || !scope.allowed || scope.vendorUID != r.vendorUID {
+		return nil, errors.New("inactive application transport scope")
+	}
+	return scope.transports, nil
+}
+
+// Load is the transport for the source host itself.
 func (r transportReference) Load() *http.Transport {
 	t := r.pool.transports.Load()
 	if r.configured {
@@ -107,46 +111,24 @@ func (r transportReference) Load() *http.Transport {
 	return t.public
 }
 
-type transportSwitch struct{ current transportReference }
+// transportSwitch resolves the proxy setting on every hop, so a settings
+// change applies to new requests without rebuilding clients. base is the
+// configured source host used for the redirect address policy.
+type transportSwitch struct {
+	current transportReference
+	base    string
+}
 
 func (s *transportSwitch) RoundTrip(r *http.Request) (*http.Response, error) {
-	if s.current.appUID != "" {
-		snapshot := s.current.pool.scopes.Load()
-		if snapshot == nil {
-			return nil, errors.New("Unknown application transport scope")
-		}
-		scope, ok := snapshot.scopes[s.current.appUID]
-		if !ok || !scope.allowed || scope.vendorUID != s.current.vendorUID {
-			return nil, errors.New("Inactive application transport scope")
-		}
-		transport := scope.transports.public
-		if s.current.configured {
-			transport = scope.transports.configured
-		}
-		return transport.RoundTrip(r)
+	set, err := s.current.set()
+	if err != nil {
+		return nil, err
 	}
-	return s.current.Load().RoundTrip(r)
-}
-
-// These delegates retain the original client API. The state belongs to Pool,
-// so siblings and a pool with no clients have the same settings behavior.
-func (c *Client) LoadProxy(db *store.Store) error {
-	if c.pool == nil {
-		return errors.New("Upstream transport is not configurable")
+	transport, err := set.forRequest(r, s.current.pool.net, s.current.configured, s.base)
+	if err != nil {
+		return nil, err
 	}
-	return c.pool.LoadProxy(db)
-}
-func (c *Client) Proxy() ProxyView {
-	if c.pool == nil {
-		return ProxyView{DNS: "local"}
-	}
-	return c.pool.Proxy()
-}
-func (c *Client) SetProxy(update ProxyUpdate, expected int64) error {
-	if c.pool == nil {
-		return errors.New("Upstream proxy settings are unavailable")
-	}
-	return c.pool.SetProxy(update, expected)
+	return transport.RoundTrip(r)
 }
 
 func (c *Pool) LoadProxy(db *store.Store) error {
@@ -192,92 +174,6 @@ func (c *Pool) SetProxy(update ProxyUpdate, expected int64) error {
 	return err
 }
 
-func transportsFor(conf proxyConfig) (*transportSet, error) {
-	public, err := transportForMode(conf, false)
-	if err != nil {
-		return nil, err
-	}
-	configured, err := transportForMode(conf, true)
-	if err != nil {
-		public.CloseIdleConnections()
-		return nil, err
-	}
-	return &transportSet{public: public, configured: configured}, nil
-}
-
-func transportFor(conf proxyConfig) (*http.Transport, error) {
-	return transportForMode(conf, false)
-}
-
-func transportForMode(conf proxyConfig, configured bool) (*http.Transport, error) {
-	tr := &http.Transport{Proxy: nil, DisableCompression: true, MaxIdleConns: 16, MaxConnsPerHost: 16, ResponseHeaderTimeout: 30 * time.Second, TLSHandshakeTimeout: 10 * time.Second, DialContext: directDial}
-	if conf.Server == "" {
-		if configured {
-			tr.DialContext = configuredDial
-		}
-		return tr, nil
-	}
-	u, err := url.Parse(conf.Server)
-	if err != nil || u.Hostname() == "" || u.Opaque != "" || u.Path != "" || u.RawQuery != "" || u.ForceQuery || strings.Contains(conf.Server, "#") || len(conf.Server) > 4096 || u.Fragment != "" || (u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "socks5") || strings.ContainsAny(conf.Server, "\r\n\t ") {
-		return nil, errors.New("Proxy server must be an HTTP, HTTPS, or SOCKS5 URL without path, query, or fragment")
-	}
-	port, portErr := strconv.Atoi(u.Port())
-	if portErr != nil || port < 1 || port > 65535 {
-		return nil, errors.New("Proxy server requires an explicit port")
-	}
-	if u.User != nil {
-		password, _ := u.User.Password()
-		if len(u.User.Username()) > 255 || len(password) > 255 || strings.ContainsAny(u.User.Username()+password, "\r\n\x00") {
-			return nil, errors.New("Invalid proxy credentials")
-		}
-	}
-	tr.Proxy = http.ProxyURL(u)
-	tr.DialContext = (&net.Dialer{Timeout: 10 * time.Second}).DialContext
-	// net/http's SOCKS5 transport sends the original destination hostname to
-	// the proxy. Proxy-side DNS cannot be inspected by this process.
-	return tr, nil
-}
-
-func directDial(ctx context.Context, network, addr string) (net.Conn, error) {
-	return resolvedDial(ctx, network, addr, true)
-}
-
-func configuredDial(ctx context.Context, network, addr string) (net.Conn, error) {
-	return resolvedDial(ctx, network, addr, false)
-}
-
-func resolvedDial(ctx context.Context, network, addr string, requirePublic bool) (net.Conn, error) {
-	host, port, e := net.SplitHostPort(addr)
-	if e != nil {
-		return nil, e
-	}
-	// Requests have no overall deadline, so name resolution is bounded here
-	// like the dial itself.
-	lookupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	ips, e := net.DefaultResolver.LookupIPAddr(lookupCtx, host)
-	cancel()
-	if e != nil {
-		return nil, e
-	}
-	if len(ips) == 0 {
-		return nil, &net.DNSError{Err: "DNS returned no addresses", Name: host, IsNotFound: true}
-	}
-	for _, ip := range ips {
-		if requirePublic && !publicIP(ip.IP) {
-			return nil, errors.New("Upstream DNS resolves to a nonpublic address")
-		}
-	}
-	var last error
-	for _, ip := range ips {
-		conn, e := (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
-		if e == nil {
-			return conn, nil
-		}
-		last = e
-	}
-	return nil, last
-}
-
 type scopedTransport struct {
 	vendorUID  string
 	allowed    bool
@@ -315,7 +211,7 @@ func (p *Pool) PrepareConfiguration(snapshot store.DirectorySnapshot) (*ProxyPub
 				return tr, nil
 			}
 		}
-		tr, err := transportsFor(proxyConfig{Server: c.URL})
+		tr, err := p.net.transports(proxyConfig{Server: c.URL})
 		if err != nil {
 			return nil, invalidProxy("Invalid proxy settings")
 		}

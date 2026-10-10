@@ -166,7 +166,7 @@ func TestGeneralHTTPCacheAdminHistoricalSourceCleanup(t *testing.T) {
 	selection := map[string]any{"basis": "fetched_at", "before": time.Now().UTC().Add(-time.Minute)}
 	h.request("POST", api+"/cache/cleanup/preview?source_epoch=1", selection, 403, map[string]string{"X-CSRF-Token": ""})
 	body, _ = h.request("POST", api+"/cache/cleanup/preview?source_epoch=1", selection, 200, nil)
-	preview := directoryDecode[httpcache.CleanupPreview](t, body, "job")
+	preview := directoryDecode[httpcache.MaintenancePreview](t, body, "job")
 	if preview.SelectedFiles != 1 || preview.SelectedBytes != int64(len("old source file")) {
 		t.Fatal("historical cleanup did not snapshot only its selected source", preview)
 	}

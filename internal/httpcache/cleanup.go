@@ -11,8 +11,6 @@ import (
 	"github.com/PMExtra/RedApp/internal/pathmatch"
 )
 
-type CleanupPreview = MaintenancePreview
-
 type CleanupResult struct {
 	SelectedFiles   int   `json:"selected_files"`
 	RetiredFiles    int   `json:"retired_files"`
@@ -21,25 +19,15 @@ type CleanupResult struct {
 	RetiredBytes    int64 `json:"retired_bytes"`
 }
 
-func (s *Service) Preview(entry application.Entry, basis string, before time.Time) (CleanupPreview, error) {
-	return s.PreviewPattern(entry, basis, before, pathmatch.Spec{Type: "glob", Pattern: "/"})
-}
-func (s *Service) PreviewPattern(entry application.Entry, basis string, before time.Time, match pathmatch.Spec) (CleanupPreview, error) {
-	return s.PreviewPatternContext(context.Background(), entry, basis, before, match)
-}
-func (s *Service) PreviewPatternContext(ctx context.Context, entry application.Entry, basis string, before time.Time, match pathmatch.Spec) (CleanupPreview, error) {
-	return s.BuildPreview(ctx, entry, "cleanup", PreviewCriteria{Match: match, Basis: basis, Before: before})
-}
-func (s *Service) Execute(entry application.Entry, id string) (CleanupResult, error) {
-	return s.ExecuteContext(context.Background(), entry, id)
-}
-func (s *Service) execute(ctx context.Context, entry application.Entry, id string) (CleanupResult, error) {
-	return s.ExecuteContext(ctx, entry, id)
+// PreviewCleanup freezes the current files matching match whose basis time
+// ("fetched_at" or "last_access") is before the cutoff.
+func (s *Service) PreviewCleanup(ctx context.Context, entry application.Entry, basis string, before time.Time, match pathmatch.Spec) (MaintenancePreview, error) {
+	return s.buildPreview(ctx, entry, "cleanup", PreviewCriteria{Match: match, Basis: basis, Before: before}, buildOptions{})
 }
 
-// ExecuteContext processes the whole frozen set using transactions of at most
+// ExecuteCleanup processes the whole frozen set using transactions of at most
 // 100 items. New generations can never enter an already-built preview.
-func (s *Service) ExecuteContext(ctx context.Context, entry application.Entry, id string) (out CleanupResult, resultErr error) {
+func (s *Service) ExecuteCleanup(ctx context.Context, entry application.Entry, id string) (out CleanupResult, resultErr error) {
 	ctx, finish, err := s.db.ApplicationWork(ctx, entry.StorageID())
 	if err != nil {
 		return out, err

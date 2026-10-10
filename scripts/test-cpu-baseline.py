@@ -17,12 +17,17 @@ from release_checks import require
 
 
 def run(*args):
+    """Run a command and return its combined text output, raising on failure."""
     return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT)
 
 
 def check(image, version, revision, qemu):
+    """Verify the image binary's ISA baseline and serve it under an AVX-less CPU model."""
     info = json.loads(run('docker', 'image', 'inspect', image))[0]
-    require((info['Os'], info['Architecture']) == ('linux', 'amd64'), 'Image platform is not linux/amd64')
+    require(
+        (info['Os'], info['Architecture']) == ('linux', 'amd64'),
+        'Image platform is not linux/amd64',
+    )
     require(info['Config'].get('Entrypoint') == ['/redapp'], 'Unexpected image entrypoint')
     require(info['Config'].get('Cmd') == ['serve'], 'Unexpected image default command')
     with tempfile.TemporaryDirectory(prefix='redapp-cpu-') as directory:
@@ -35,11 +40,17 @@ def check(image, version, revision, qemu):
         finally:
             run('docker', 'rm', '-v', container)
         require(os.access(binary, os.X_OK), 'Image binary is not executable')
-        require('Advanced Micro Devices X86-64' in run('readelf', '-h', str(binary)), 'Image binary is not x86-64')
+        require(
+            'Advanced Micro Devices X86-64' in run('readelf', '-h', str(binary)),
+            'Image binary is not x86-64',
+        )
         require('INTERP' not in run('readelf', '-l', str(binary)), 'Expected a static binary')
         notes = run('readelf', '-n', str(binary))
         isa = [line.strip() for line in notes.splitlines() if 'x86 ISA needed:' in line]
-        require(isa == ['Properties: x86 ISA needed: x86-64-baseline'], f'Unexpected x86 ISA requirement: {isa}')
+        require(
+            isa == ['Properties: x86 ISA needed: x86-64-baseline'],
+            f'Unexpected x86 ISA requirement: {isa}',
+        )
         command = [qemu, '-cpu', 'Nehalem', str(binary)]
         expected = f'RedApp {version} (commit {revision})\n'
         require(run(*command, 'version') == expected, 'Unexpected version output under Nehalem')
@@ -63,13 +74,20 @@ def check(image, version, revision, qemu):
                 while True:
                     require(process.poll() is None, f'Serve exited with {process.returncode}')
                     try:
-                        with opener.open(f'http://127.0.0.1:{port}/health/ready', timeout=1) as response:
-                            require(response.status == 200, f'Readiness returned HTTP {response.status}')
+                        with opener.open(
+                            f'http://127.0.0.1:{port}/health/ready', timeout=1
+                        ) as response:
+                            require(
+                                response.status == 200,
+                                f'Readiness returned HTTP {response.status}',
+                            )
                         break
                     except (OSError, urllib.error.URLError):
                         require(time.monotonic() < deadline, 'Serve did not become healthy')
                         time.sleep(0.2)
-                healthcheck = subprocess.run(command + ['healthcheck'], env=env, capture_output=True, timeout=10)
+                healthcheck = subprocess.run(
+                    command + ['healthcheck'], env=env, capture_output=True, timeout=10
+                )
                 require(healthcheck.returncode == 0, 'Healthcheck failed')
                 process.terminate()
                 require(process.wait(timeout=10) == 0, 'Serve did not shut down cleanly')
@@ -78,7 +96,10 @@ def check(image, version, revision, qemu):
                     process.kill()
                     process.wait()
         require('RedApp started:' in (root / 'serve.log').read_text(), 'Serve log lacks startup line')
-    print('Exact amd64 image: ELF baseline, Nehalem/no-AVX version, default serve, health and clean shutdown passed')
+    print(
+        'Exact amd64 image: ELF baseline, Nehalem/no-AVX version, '
+        'default serve, health and clean shutdown passed'
+    )
 
 
 if __name__ == '__main__':

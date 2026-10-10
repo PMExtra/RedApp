@@ -38,7 +38,7 @@ func TestManagerProcessHelper(t *testing.T) {
 		os.Exit(4)
 	}
 	hash := os.Getenv("REDAPP_DOWNLOAD_HASH")
-	source := c.URL("asset")
+	source := testutil.SourceURL(c, "asset")
 	r := Resource{Application: testApp, Version: "0.1.0", Key: "asset", ID: LogicalIdentity(testApp, "0.1.0", "asset"), Source: source, Hash: hash}
 	authorize(t, m, r)
 	rd, _, e := m.Acquire(context.Background(), r)
@@ -65,7 +65,7 @@ func TestSIGKILLReleasesLockAndResumesDiskPrefix(t *testing.T) {
 			return
 		}
 		if r.Header.Get("Range") != "bytes=8192-" || r.Header.Get("If-Range") != "\"stable\"" {
-			t.Errorf("崩溃恢复请求不正确: %+v", r.Header)
+			t.Errorf("wrong resume request after crash: %+v", r.Header)
 		}
 		w.Header().Set("Content-Range", fmt.Sprintf("bytes 8192-%d/%d", len(data)-1, len(data)))
 		w.WriteHeader(206)
@@ -88,7 +88,7 @@ func TestSIGKILLReleasesLockAndResumesDiskPrefix(t *testing.T) {
 	}
 	if g, e := instance.Acquire(dir); e == nil {
 		g.Close()
-		t.Fatal("运行时第二实例取得锁")
+		t.Fatal("second instance acquired the lock while running")
 	}
 	cmd.Process.Kill()
 	cmd.Wait()
@@ -108,6 +108,6 @@ func TestSIGKILLReleasesLockAndResumesDiskPrefix(t *testing.T) {
 	}
 	defer m.Close()
 	if !bytes.Equal(collect(t, m, r), data) || count.Load() != 2 {
-		t.Fatal("SIGKILL 后未安全续传")
+		t.Fatal("no safe resume after SIGKILL")
 	}
 }

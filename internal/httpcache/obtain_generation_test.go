@@ -55,11 +55,11 @@ func TestCleanupSeparatesNewReaderFromRetiredGenerationFlight(t *testing.T) {
 	leaderDone, coldDone := make(chan reply, 1), make(chan reply, 1)
 	go serve(leaderDone)
 	<-leaderEntered
-	preview, err := f.s.Preview(f.entry, "fetched_at", f.s.now())
+	preview, err := f.s.PreviewCleanup(context.Background(), f.entry, "fetched_at", f.s.now(), allPaths)
 	if err != nil || preview.SelectedFiles != 1 {
 		t.Fatal(preview, err)
 	}
-	result, err := f.s.Execute(f.entry, preview.ID)
+	result, err := f.s.ExecuteCleanup(context.Background(), f.entry, preview.ID)
 	if err != nil || result.RetiredFiles != 1 || len(f.rows(t)) != 0 {
 		t.Fatal(result, err)
 	}
@@ -143,11 +143,11 @@ func TestCleanupSeparatesColdReaderAfterColdFlightPublication(t *testing.T) {
 	<-gate.published
 	oldID := f.rows(t)[0].GenerationID
 	f.clock.Add(1)
-	preview, err := f.s.Preview(f.entry, "fetched_at", f.s.now())
+	preview, err := f.s.PreviewCleanup(context.Background(), f.entry, "fetched_at", f.s.now(), allPaths)
 	if err != nil || preview.SelectedFiles != 1 {
 		t.Fatal(preview, err)
 	}
-	result, err := f.s.Execute(f.entry, preview.ID)
+	result, err := f.s.ExecuteCleanup(context.Background(), f.entry, preview.ID)
 	if err != nil || result.RetiredFiles != 1 || len(f.rows(t)) != 0 {
 		t.Fatal(result, err)
 	}
@@ -155,14 +155,14 @@ func TestCleanupSeparatesColdReaderAfterColdFlightPublication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := &joinedContext{Context: context.WithValue(context.Background(), policyContextKey{}, policy), joined: make(chan struct{})}
+	ctx := &joinedContext{Context: context.Background(), joined: make(chan struct{})}
 	type outcome struct {
 		result fetchResult
 		err    error
 	}
 	followerDone := make(chan outcome, 1)
 	go func() {
-		result, err := f.s.sharedFetch(ctx, f.entry, "file", nil)
+		result, err := f.s.sharedFetch(ctx, fill{entry: f.entry, path: "file", policy: policy}, nil)
 		followerDone <- outcome{result, err}
 	}()
 	<-ctx.joined
@@ -308,7 +308,7 @@ func TestColdLookupRetriesAfterAnotherFlightPublishes(t *testing.T) {
 	if _, err = f.serve(t, "GET", http.Header{}); err != nil {
 		t.Fatal(err)
 	}
-	result, err := f.s.sharedFetch(context.Background(), f.entry, "file", old)
+	result, err := f.s.sharedFetch(context.Background(), fill{entry: f.entry, path: "file"}, old)
 	if result.row != nil {
 		f.s.unpin(result.row.GenerationID)
 	}

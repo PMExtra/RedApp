@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/PMExtra/RedApp/presets"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -53,10 +54,12 @@ func newDirectoryHarness(t *testing.T, dir string, configure ...func(*Server)) *
 // A pre-opened current-schema store preserves real login/CSRF/restart coverage.
 func newDirectoryHarnessWithStore(t *testing.T, dir string, db *store.Store, configure ...func(*Server)) *directoryHarness {
 	t.Helper()
-	var initialized bool
-	if err := db.DB.QueryRow(`SELECT seeded FROM directory_state WHERE id=1`).Scan(&initialized); err != nil {
+	// A directory that already has vendors was initialized by an earlier harness.
+	existing, err := db.Vendors(true)
+	if err != nil {
 		t.Fatal(err)
 	}
+	initialized := len(existing) != 0
 	if err := db.EnsureEntityTemplates(); err != nil {
 		t.Fatal(err)
 	}
@@ -533,8 +536,8 @@ func TestDirectoryHTTPIconUploadAndPublicBoundary(t *testing.T) {
 func TestDirectoryOpenAISharedIconAndEnabledOnlyPATCH(t *testing.T) {
 	h := newDirectoryHarness(t, t.TempDir())
 	h.login(h.password)
-	icon, _ := h.request("GET", "/assets/builtin/openai.svg", nil, 200, nil)
-	codex, _ := h.request("GET", "/openai/codex/icon.svg", nil, 200, nil)
+	icon, _ := h.request("GET", presets.ImagePrefix+"builtin/openai.svg", nil, 200, nil)
+	codex, _ := h.request("GET", presets.ImagePrefix+"openai/codex/icon.svg", nil, 200, nil)
 	if !bytes.Equal(icon, codex) {
 		t.Fatal("vendor and application icon bytes differ")
 	}
@@ -552,8 +555,7 @@ func TestDirectoryOpenAISharedIconAndEnabledOnlyPATCH(t *testing.T) {
 		t.Fatal("enabled patch changed app fields", changedApp)
 	}
 	h.request("PATCH", "/admin/api/apps/openai/codex", map[string]any{"revision": a.Revision, "enabled": true}, 409, nil)
-	h.request("GET", "/openai/codex/icon.svg", nil, 404, nil)
-	independent, _ := h.request("GET", "/assets/builtin/openai.svg", nil, 200, nil)
+	independent, _ := h.request("GET", presets.ImagePrefix+"builtin/openai.svg", nil, 200, nil)
 	if !bytes.Equal(icon, independent) {
 		t.Fatal("vendor icon depends on application state")
 	}

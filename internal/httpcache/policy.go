@@ -1,15 +1,12 @@
 package httpcache
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/PMExtra/RedApp/internal/application"
-	"github.com/PMExtra/RedApp/internal/cachepolicy"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -84,15 +81,6 @@ func cacheBlockReason(h http.Header, decision CacheDecision) string {
 
 func eligible(h http.Header) bool { return cacheBlockReason(h, CacheDecision{}) == "" }
 
-func contextEligible(ctx context.Context, entry application.Entry, path string, h http.Header) bool {
-	return cacheBlockReason(h, contextCacheDecision(ctx, entry, path)) == ""
-}
-
-func contextStaleFallback(ctx context.Context) bool {
-	policy, _ := ctx.Value(policyContextKey{}).(*cachepolicy.Policy)
-	return policy == nil || policy.StaleFallback()
-}
-
 // Only directive names enter events. Field-name arguments (private="...") and
 // all other response header values can contain source-specific sensitive data.
 func overrideDirectives(h http.Header) []string {
@@ -106,16 +94,16 @@ func overrideDirectives(h http.Header) []string {
 	return out
 }
 
-func (s *Service) recordOverride(ctx context.Context, entry application.Entry, path string, h http.Header, result fetchResult, err error) (fetchResult, error) {
+func (s *Service) recordOverride(f fill, h http.Header, result fetchResult, err error) (fetchResult, error) {
 	if err != nil || result.row == nil {
 		return result, err
 	}
-	decision := contextCacheDecision(ctx, entry, path)
+	decision := f.decision()
 	overrides := overrideDirectives(h)
 	if !decision.Explicit || decision.TTLSeconds == 0 || len(overrides) == 0 {
 		return result, nil
 	}
-	err = s.db.RecordEvent(store.Event{AppID: entry.MetricsID(), ResourceKey: path, Category: "warning", Code: "cache_rule_override", Message: fmt.Sprintf("Cache rule %q at revision %d overrides source Cache-Control: %s", decision.RuleID, decision.Revision, strings.Join(overrides, ", "))})
+	err = s.db.RecordEvent(store.Event{AppID: f.entry.MetricsID(), ResourceKey: f.path, Category: "warning", Code: "cache_rule_override", Message: fmt.Sprintf("Cache rule %q at revision %d overrides source Cache-Control: %s", decision.RuleID, decision.Revision, strings.Join(overrides, ", "))})
 	if err != nil {
 		s.unpin(result.row.GenerationID)
 		return fetchResult{}, err

@@ -39,7 +39,7 @@ func (s *Store) ReadHTTPPolicy(key string) (cachepolicy.Config, int64, error) {
 		return config, app.Revision, err
 	}
 	var raw []byte
-	err = tx.QueryRow(`SELECT payload FROM settings WHERE scope='app' AND app_id=? AND key='http_policy'`, app.MetricsID()).Scan(&raw)
+	err = tx.QueryRow(`SELECT payload FROM application_http_policies WHERE app_uid=?`, app.UID).Scan(&raw)
 	if err == sql.ErrNoRows {
 		return config, app.Revision, tx.Commit()
 	}

@@ -91,12 +91,14 @@ func Compare(a, b string) (int, error) {
 }
 
 type Protocol struct {
-	upstream       *distributor.Client
-	verifyManifest func([]byte, []byte) error
+	upstream *distributor.Client
+	verify   verifier
 }
 
-func NewProtocol(upstream *distributor.Client) *Protocol {
-	return &Protocol{upstream: upstream, verifyManifest: Verify}
+func NewProtocol(upstream *distributor.Client) *Protocol { return newProtocol(upstream, Verify) }
+
+func newProtocol(upstream *distributor.Client, verify verifier) *Protocol {
+	return &Protocol{upstream: upstream, verify: verify}
 }
 func (p *Protocol) ValidateVersion(v string) (string, error) {
 	if !ValidVersion(v) {
@@ -142,16 +144,14 @@ func (p *Protocol) FetchRelease(ctx context.Context, version string) (applicatio
 	}
 	signature, err := application.ReadBody(ctx, p.upstream, version+"/manifest.json.sig", 16<<10)
 	if err != nil {
+		// The cause is formatted, not wrapped: a missing signature must stay an
+		// upstream failure and never match application.ErrNotFound.
 		return application.Envelope{}, fmt.Errorf("%w: signed manifest requires a valid signature: %v", application.ErrUpstream, err)
 	}
 	return application.Envelope{Raw: raw, Signature: signature}, nil
 }
 func (p *Protocol) VerifyRelease(version string, envelope application.Envelope) (application.Release, error) {
-	verify := p.verifyManifest
-	if verify == nil {
-		verify = Verify
-	}
-	if err := verify(envelope.Raw, envelope.Signature); err != nil {
+	if err := p.verify(envelope.Raw, envelope.Signature); err != nil {
 		return application.Release{}, err
 	}
 	m, err := parse(envelope.Raw, version)
@@ -168,7 +168,11 @@ func (p *Protocol) VerifyRelease(version string, envelope application.Envelope) 
 		a := m.Platforms[platform]
 		key := platform + "/" + a.Binary
 		size := a.Size
-		out.Artifacts = append(out.Artifacts, application.VerifiedArtifact{Key: key, Source: p.upstream.URL(version + "/" + key), SHA256: a.Checksum, Size: &size})
+		source, err := p.upstream.RelativeURL(version + "/" + key)
+		if err != nil {
+			return application.Release{}, fmt.Errorf("artifact %s source: %w", key, err)
+		}
+		out.Artifacts = append(out.Artifacts, application.VerifiedArtifact{Key: key, Source: source, SHA256: a.Checksum, Size: &size})
 	}
 	return out, nil
 }

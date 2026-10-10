@@ -1,5 +1,5 @@
 #!/bin/sh
-# 离线重建 Dockerfile runtime 阶段；不需要拉取外部镜像。
+# 未指定 REDAPP_TEST_IMAGE 时，用根 Dockerfile 的 prebuilt runtime 阶段离线打包 bin/redapp；不需要拉取外部镜像（需要 BuildKit）。
 set -eu
 task_root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 task_temp=$(mktemp -d)
@@ -29,19 +29,10 @@ cp "$task_root/bin/redapp" "$task_temp/redapp"
 cp /etc/ssl/certs/ca-certificates.crt "$task_temp/ca-certificates.crt"
 mkdir "$task_temp/data"
 chmod 0700 "$task_temp/data"
-cat > "$task_temp/Dockerfile" <<'DOCKER'
-FROM scratch
-COPY redapp /redapp
-COPY ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --chown=65532:65532 data /var/lib/redapp
-USER 65532:65532
-VOLUME ["/var/lib/redapp"]
-EXPOSE 8080
-HEALTHCHECK --interval=2s --timeout=5s --start-period=1s --retries=5 CMD ["/redapp", "healthcheck"]
-ENTRYPOINT ["/redapp"]
-CMD ["serve"]
-DOCKER
-docker build -t "$task_image" "$task_temp" >/dev/null
+# A private DOCKER_CONFIG must still find user-installed CLI plugins such as buildx.
+if [ -d "${HOME:-}/.docker/cli-plugins" ]; then ln -s "$HOME/.docker/cli-plugins" "$DOCKER_CONFIG/cli-plugins"; fi
+DOCKER_BUILDKIT=1 docker build -f "$task_root/Dockerfile" --target runtime --build-arg RUNTIME_FILES=prebuilt \
+  -t "$task_image" "$task_temp" >/dev/null
 fi
 # Verify actual /etc discovery and one-file selection without starting a service.
 cat > "$task_temp/config.yaml" <<'CONFIG'
@@ -49,16 +40,16 @@ cat > "$task_temp/config.yaml" <<'CONFIG'
 listen: ':8181'
 download_limits: {max_writers: 20, max_readers: 600, max_artifact_bytes: '4GiB'}
 CONFIG
-cat > "$task_temp/selected.json" <<'CONFIG'
+cat > "$task_temp/selected.yaml" <<'CONFIG'
 {"listen":":8282","download_limits":{"max_writers":20,"max_readers":600,"max_artifact_bytes":"4gb"}}
 CONFIG
 printf '%s\n' 'listen: [' > "$task_temp/invalid.yaml"
-chmod 0644 "$task_temp/config.yaml" "$task_temp/selected.json" "$task_temp/invalid.yaml"
+chmod 0644 "$task_temp/config.yaml" "$task_temp/selected.yaml" "$task_temp/invalid.yaml"
 docker_run --rm --network none --read-only -v "$task_temp/config.yaml:/etc/redapp/config.yaml:ro" "$task_image" config validate
-# Invalid default YAML must not be read when an env path selects JSON.
-docker_run --rm --network none --read-only -v "$task_temp/invalid.yaml:/etc/redapp/config.yaml:ro" -v "$task_temp/selected.json:/selected.json:ro" -e REDAPP_CONFIG=/selected.json "$task_image" config validate
+# Invalid default YAML must not be read when an env path selects another file.
+docker_run --rm --network none --read-only -v "$task_temp/invalid.yaml:/etc/redapp/config.yaml:ro" -v "$task_temp/selected.yaml:/env-selected.yaml:ro" -e REDAPP_CONFIG=/env-selected.yaml "$task_image" config validate
 # CLI selection overrides a missing env path as well as the invalid default.
-docker_run --rm --network none --read-only -v "$task_temp/invalid.yaml:/etc/redapp/config.yaml:ro" -v "$task_temp/config.yaml:/selected.yaml:ro" -e REDAPP_CONFIG=/missing.json "$task_image" config validate --config /selected.yaml
+docker_run --rm --network none --read-only -v "$task_temp/invalid.yaml:/etc/redapp/config.yaml:ro" -v "$task_temp/config.yaml:/selected.yaml:ro" -e REDAPP_CONFIG=/missing.yaml "$task_image" config validate --config /selected.yaml
 if docker_run --rm --network none --read-only -v "$task_temp/invalid.yaml:/etc/redapp/config.yaml:ro" "$task_image" config validate >"$task_temp/invalid.log" 2>&1; then
   echo 'Invalid automatic YAML was ignored' >&2; exit 1
 fi
@@ -130,9 +121,10 @@ import sqlite3
 import sys
 with sqlite3.connect('file:' + sys.argv[1] + '?mode=ro&immutable=1', uri=True) as db:
     # Explicit check: assert would vanish under python -O / PYTHONOPTIMIZE.
-    versions = db.execute('SELECT version FROM schema_version').fetchall()
-    if versions != [(11,)]:
-        sys.exit(f'Unexpected persisted schema versions: {versions}')
-print('Fresh schema 11 persisted through runtime restart/recreation')
+    application_id = db.execute('PRAGMA application_id').fetchone()[0]
+    user_version = db.execute('PRAGMA user_version').fetchone()[0]
+    if (application_id, user_version) != (0x52644170, 12):
+        sys.exit(f'Unexpected persisted schema identity: {application_id:#x} v{user_version}')
+print('Fresh schema 12 persisted through runtime restart/recreation')
 PY
-echo "Docker runtime (${REDAPP_TEST_PLATFORM:-host})：无配置默认启动、YAML/JSON单文件选择/失败保护、新writer/reader字段和容量简写、环境变量改路径/端口、禁用网络、非 root、只读根、持久性/健康/实例锁/崩溃恢复通过。"
+echo "Docker runtime (${REDAPP_TEST_PLATFORM:-host})：无配置默认启动、YAML 单文件选择/失败保护、新writer/reader字段和容量简写、环境变量改路径/端口、禁用网络、非 root、只读根、持久性/健康/实例锁/崩溃恢复通过。"

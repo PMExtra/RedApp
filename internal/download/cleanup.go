@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -33,8 +34,12 @@ func (m *Manager) preview(app string, ids map[string]bool, guard *store.Retentio
 	if e := m.db.DeleteExpiredCleanupPreviews(time.Now()); e != nil {
 		return Cleanup{}, e
 	}
+	jobID, err := fsutil.RandomID()
+	if err != nil {
+		return Cleanup{}, err
+	}
 	now := time.Now()
-	job := Cleanup{ID: id(), Application: app, Created: now, Expires: now.Add(10 * time.Minute), Selected: []Selection{}}
+	job := Cleanup{ID: jobID, Application: app, Created: now, Expires: now.Add(10 * time.Minute), Selected: []Selection{}}
 	selected := map[string]bool{}
 	for rid, g := range m.current {
 		if err := ctx.Err(); err != nil {
@@ -142,6 +147,6 @@ func (m *Manager) Cleanup(app, jobID string) error {
 			return e
 		}
 	}
-	m.checkpoint("cleanup.after_job_delete", nil) // Kept fault barrier name; the row is now a 24-hour receipt.
+	m.checkpoint("cleanup.after_receipt", nil)
 	return nil
 }

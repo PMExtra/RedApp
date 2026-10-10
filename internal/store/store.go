@@ -6,23 +6,30 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
-	_ "github.com/mattn/go-sqlite3"
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strings"
 	"sync"
-	"syscall"
 	"time"
 
+	_ "github.com/mattn/go-sqlite3"
+
 	"github.com/PMExtra/RedApp/internal/identity"
+	"github.com/PMExtra/RedApp/internal/instance"
 	"github.com/PMExtra/RedApp/presets"
 )
 
-const SchemaVersion = 11
+// SchemaVersion is stored in PRAGMA user_version. Before 1.0 every schema
+// change increments it and older directories are refused (ADR 0001).
+const SchemaVersion = 12
 
-var ErrFreshDirectory = errors.New("This data directory belongs to an old or unknown database; use a new empty data directory. Configuration, cache and history are not migrated. Keep the old directory unchanged")
+// applicationID ("RdAp") is stored in PRAGMA application_id so that a foreign
+// SQLite file whose user_version happens to match is still refused.
+const applicationID = 0x52644170
+
+const databaseName = "state.sqlite"
+
+var ErrIncompatibleDirectory = errors.New("This data directory belongs to another RedApp schema version or is not a RedApp data directory; use a new empty data directory. Data is never migrated and the old directory is left unchanged")
 var ErrConflict = errors.New("Setting revision changed; reload before saving")
 var ErrImmutableRelease = errors.New("Trusted release resource bindings changed")
 var ErrExpired = errors.New("Cleanup preview expired")
@@ -38,8 +45,13 @@ type Store struct {
 	configMu              sync.Mutex
 	validateDistributions func([]presets.Descriptor) error
 	prepareConfiguration  func(DirectorySnapshot) (ConfigurationPublication, error)
-	configurationFault    func(string, *sql.Tx) error // Test-only deterministic fault/synchronization seam.
+	// beforeCommit runs inside every configuration transaction just before it
+	// commits. Only openStore options set it.
+	beforeCommit func(*sql.Tx) error
 }
+
+// option configures a Store at construction; production uses none.
+type option func(*Store)
 
 func ValidAppID(app string) bool {
 	return identity.ValidKey(app)
@@ -48,41 +60,27 @@ func sqliteURL(path string, query string) string {
 	return (&url.URL{Scheme: "file", Path: path}).String() + "?" + query
 }
 
-// Open checks the immutable main-file schema before any writable connection.
-// Only the exact current schema is accepted; old or unknown directories are refused without modification.
-func Open(dir string) (*Store, error) {
-	path, err := filepath.Abs(filepath.Join(dir, "state.sqlite"))
+// Open creates the schema in a new empty directory or opens a directory whose
+// database has exactly SchemaVersion. Any other directory is refused without
+// modification. The caller must hold the directory's instance lock.
+func Open(dir string) (*Store, error) { return openStore(dir) }
+
+func openStore(dir string, options ...option) (*Store, error) {
+	path, err := filepath.Abs(filepath.Join(dir, databaseName))
 	if err != nil {
 		return nil, err
 	}
-	info, err := os.Lstat(path)
-	fresh := errors.Is(err, os.ErrNotExist)
-	if err != nil && !fresh {
+	fresh, err := inspectDirectory(dir, path)
+	if err != nil {
 		return nil, err
 	}
-	if !fresh {
-		if !info.Mode().IsRegular() {
-			return nil, ErrFreshDirectory
-		}
-		if err = probeExisting(path); err != nil {
+	if fresh {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
+		if err != nil {
 			return nil, err
 		}
-	} else {
-		entries, e := os.ReadDir(dir)
-		if e != nil {
-			return nil, e
-		}
-		for _, entry := range entries {
-			if entry.Name() != "instance.lock" {
-				return nil, ErrFreshDirectory
-			}
-		}
-		f, e := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
-		if e != nil {
-			return nil, e
-		}
-		if e = f.Close(); e != nil {
-			return nil, e
+		if err = f.Close(); err != nil {
+			return nil, err
 		}
 	}
 	db, err := sql.Open("sqlite3", sqliteURL(path, "mode=rw&_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on&_synchronous=FULL"))
@@ -91,113 +89,138 @@ func Open(dir string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	if fresh {
-		tx, e := db.Begin()
-		if e == nil {
-			_, e = tx.Exec(schema)
-			if e == nil {
-				e = tx.Commit()
-			}
-			tx.Rollback()
-		}
-		err = e
+		err = createSchema(db)
 	} else {
-		err = db.Ping()
-	}
-	if err == nil {
-		// Validate the authoritative WAL view before readiness too. This is a
-		// read-only check after the main file established schema ownership.
-		err = checkSchema(db)
-	}
-	if err == nil {
-		// Persist the immutable schema to the main file before a first successful
-		// startup. Later WAL transactions contain data only, so read-only preflight
-		// needs no writable sidecar or full database copy.
-		var busy, frames, checkpointed int
-		err = db.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &frames, &checkpointed)
-		if err == nil && busy != 0 {
-			err = errors.New("Initial schema checkpoint is busy")
-		}
+		// The read-only probe saw the main file; confirm the WAL view agrees.
+		err = checkVersion(db)
 	}
 	if err != nil {
 		db.Close()
 		return nil, err
 	}
 	s := &Store{DB: db, rates: rates{started: time.Now()}}
+	for _, apply := range options {
+		apply(s)
+	}
 	if err = s.loadApplicationDeletionGates(); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return s, nil
 }
+
+// createSchema writes the schema and version in one transaction and then
+// checkpoints them into the main file, so the immutable read-only probe of a
+// later start sees them even if the process dies with data left in the WAL.
+func createSchema(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec(schema); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(fmt.Sprintf("PRAGMA application_id=%d; PRAGMA user_version=%d", applicationID, SchemaVersion)); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	var busy, frames, checkpointed int
+	if err = db.QueryRow("PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &frames, &checkpointed); err != nil {
+		return err
+	}
+	if busy != 0 {
+		return errors.New("Initial schema checkpoint is busy")
+	}
+	return nil
+}
+
+// Preflight checks a data directory before the instance lock is acquired. It
+// creates and modifies nothing, so a refused directory stays byte-for-byte
+// unchanged; Open repeats the check under the lock.
+func Preflight(dir string) error {
+	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	// A live owner may be writing the database, which the immutable probe
+	// cannot read consistently; report the owner instead.
+	if err := instance.Check(dir); err != nil {
+		return err
+	}
+	path, err := filepath.Abs(filepath.Join(dir, databaseName))
+	if err != nil {
+		return err
+	}
+	_, err = inspectDirectory(dir, path)
+	return err
+}
+
+// inspectDirectory reports whether dir is new (no database and nothing but the
+// instance lock) or holds a database of this schema version.
+func inspectDirectory(dir, path string) (fresh bool, err error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return false, err
+		}
+		for _, entry := range entries {
+			if entry.Name() != instance.LockName {
+				return false, ErrIncompatibleDirectory
+			}
+		}
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.Mode().IsRegular() {
+		return false, ErrIncompatibleDirectory
+	}
+	return false, probeExisting(path)
+}
+
+// probeExisting reads the version of an existing database. immutable=1 makes
+// SQLite read only the main file and never create or update WAL, SHM or journal
+// files; the version is checkpointed into the main file at creation.
 func probeExisting(path string) error {
-	// immutable=1 guarantees SQLite neither creates nor updates WAL/SHM/journal
-	// files. It deliberately reads the main file, whose schema is checkpointed
-	// before startup, including after the supported atomic upgrade.
-	for _, suffix := range []string{"", "-wal", "-shm"} {
+	for _, suffix := range []string{"-wal", "-shm"} {
 		info, err := os.Lstat(path + suffix)
-		if errors.Is(err, os.ErrNotExist) && suffix != "" {
+		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
 			return err
 		}
 		if !info.Mode().IsRegular() {
-			return ErrFreshDirectory
+			return ErrIncompatibleDirectory
 		}
 	}
 	db, err := sql.Open("sqlite3", sqliteURL(path, "mode=ro&immutable=1&_query_only=on"))
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrFreshDirectory, err)
+		return fmt.Errorf("%w: %v", ErrIncompatibleDirectory, err)
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	if checkSchema(db) != nil {
-		return ErrFreshDirectory
-	}
-	return checkReservedVendor(db)
+	return checkVersion(db)
 }
-func checkSchema(db *sql.DB) error { return checkSchemaDefinition(db, schema, SchemaVersion) }
-func checkSchemaDefinition(db *sql.DB, definition string, expectedVersion int) error {
-	var count, version int
-	if err := db.QueryRow("SELECT COUNT(*),COALESCE(MAX(version),0) FROM schema_version").Scan(&count, &version); err != nil || count != 1 || version != expectedVersion {
-		return ErrFreshDirectory
+
+func checkVersion(db *sql.DB) error {
+	var app, version int
+	if err := db.QueryRow("PRAGMA application_id").Scan(&app); err != nil {
+		return fmt.Errorf("%w: %v", ErrIncompatibleDirectory, err)
 	}
-	// A version marker alone is not enough to authorize opening an unknown
-	// database read/write. Require the table and constraint definitions written
-	// by this schema; auxiliary diagnostic triggers are intentionally ignored.
-	required := map[string]string{}
-	for _, match := range regexp.MustCompile(`(?s)CREATE (?:UNIQUE )?(?:TABLE|INDEX)\s+([a-z_]+)[^;]*;`).FindAllStringSubmatch(definition, -1) {
-		required[match[1]] = strings.Join(strings.Fields(strings.TrimSuffix(match[0], ";")), " ")
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		return fmt.Errorf("%w: %v", ErrIncompatibleDirectory, err)
 	}
-	rows, err := db.Query("SELECT type,name,sql FROM sqlite_schema WHERE type IN ('table','index') AND name NOT LIKE 'sqlite_%'")
-	if err != nil {
-		return ErrFreshDirectory
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var kind, name, definition string
-		if rows.Scan(&kind, &name, &definition) != nil {
-			return ErrFreshDirectory
-		}
-		expected, ok := required[name]
-		if !ok {
-			if kind == "table" {
-				return ErrFreshDirectory
-			}
-			continue
-		}
-		definition = strings.Replace(definition, `CREATE TABLE "applications"`, `CREATE TABLE applications`, 1)
-		definition = strings.Replace(definition, `CREATE TABLE "application_sources"`, `CREATE TABLE application_sources`, 1)
-		if strings.Join(strings.Fields(definition), " ") != expected {
-			return ErrFreshDirectory
-		}
-		delete(required, name)
-	}
-	if rows.Err() != nil || len(required) != 0 {
-		return ErrFreshDirectory
+	if app != applicationID || version != SchemaVersion {
+		return ErrIncompatibleDirectory
 	}
 	return nil
 }
+
 func requireApp(app string) error {
 	if !ValidAppID(app) {
 		return errors.New("Canonical vendor/app identity is required")
@@ -216,72 +239,4 @@ func timePointer(t sql.NullInt64) *time.Time {
 	}
 	v := time.Unix(t.Int64, 0).UTC()
 	return &v
-}
-
-// Preflight may be called before acquiring an instance lock; it does not create
-// or modify any file in the data directory. Open repeats it under that lock.
-func Preflight(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	// Observe an existing kernel lock without creating the lock file. This
-	// refuses a live writer's directory and preserves the useful
-	// "already owned" diagnostic before the CLI's exclusive Acquire call.
-	lock, lockErr := os.OpenFile(filepath.Join(dir, "instance.lock"), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if lockErr == nil {
-		defer lock.Close()
-		info, err := lock.Stat()
-		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return errors.New("Instance lock must be a regular file")
-		}
-		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err != nil {
-			return fmt.Errorf("Data directory is already owned by another instance: %w", err)
-		}
-	} else if !errors.Is(lockErr, os.ErrNotExist) {
-		return lockErr
-	}
-	hasDB := false
-	for _, entry := range entries {
-		if entry.Name() == "state.sqlite" {
-			hasDB = true
-		}
-	}
-	if hasDB {
-		path, err := filepath.Abs(filepath.Join(dir, "state.sqlite"))
-		if err != nil {
-			return err
-		}
-		info, err := os.Lstat(path)
-		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return ErrFreshDirectory
-		}
-		return probeExisting(path)
-	}
-	for _, entry := range entries {
-		if entry.Name() != "instance.lock" {
-			return ErrFreshDirectory
-		}
-	}
-	return nil
-}
-
-func checkReservedVendor(db *sql.DB) error {
-	var count int
-	if err := db.QueryRow(`SELECT count(*) FROM vendors WHERE id='all'`).Scan(&count); err != nil {
-		return err
-	}
-	if count != 0 {
-		return ErrFreshDirectory
-	}
-	return nil
 }

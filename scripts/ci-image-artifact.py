@@ -10,19 +10,26 @@ from release_checks import require, require_commit, require_version
 
 
 def checked_metadata(directory, version, revision, arch):
+    """Validate the artifact identity and return its expected metadata."""
     require_version(version)
     require_commit(revision)
     require(arch in ('amd64', 'arm64'), 'Unsupported architecture')
-    return {'version': version, 'revision': revision, 'architecture': arch,
-            'image_tag': f'redapp:ci-{revision}-{arch}'}
+    return {
+        'version': version,
+        'revision': revision,
+        'architecture': arch,
+        'image_tag': f'redapp:ci-{revision}-{arch}',
+    }
 
 
 def checksum(path):
+    """Return the SHA-256 hex digest of a file."""
     with path.open("rb") as source:
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
 def run(args):
+    """Record or verify the image archive and check the loaded image identity."""
     expected = checked_metadata(args.directory, args.version, args.revision, args.arch)
     archive = args.directory / 'image.tar'
     if args.mode == 'record':
@@ -34,7 +41,9 @@ def run(args):
         require(all(metadata.get(k) == v for k, v in expected.items()), 'Artifact identity mismatch')
         require(metadata.get('sha256') == checksum(archive), 'Artifact checksum mismatch')
         subprocess.run(['docker', 'load', '-i', str(archive)], check=True)
-    info = json.loads(subprocess.check_output(['docker', 'image', 'inspect', expected['image_tag']]))[0]
+    info = json.loads(
+        subprocess.check_output(['docker', 'image', 'inspect', expected['image_tag']])
+    )[0]
     require(info['Os'] == 'linux' and info['Architecture'] == args.arch, 'Image platform mismatch')
     labels = info['Config'].get('Labels') or {}
     require(labels.get('org.opencontainers.image.version') == args.version, 'Image version mismatch')

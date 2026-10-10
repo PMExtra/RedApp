@@ -30,8 +30,8 @@ func TestOptionalFileDefaultsAndProxyTrust(t *testing.T) {
 	cleanEnvironment(t)
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	// The JSON sibling must never be automatically discovered.
-	writeConfig(t, filepath.Join(dir, "config.json"), `{"listen":":9191"}`)
+	// Only the default path is discovered, never a sibling in the same directory.
+	writeConfig(t, filepath.Join(dir, "redapp.yaml"), "listen: ':9191'\n")
 	c, err := load("", path, nil)
 	if err != nil || c.SchemaVersion != 1 || c.DataDir != "/var/lib/redapp" || c.Listen != ":8080" || c.DownloadLimits != (DownloadLimits{16, 512, 4 << 30}) {
 		t.Fatal(c, err)
@@ -57,22 +57,22 @@ func TestOptionalFileDefaultsAndProxyTrust(t *testing.T) {
 func TestOneSelectedFileAndFieldPrecedence(t *testing.T) {
 	cleanEnvironment(t)
 	dir := t.TempDir()
-	defaultPath, envPath, cliPath := filepath.Join(dir, "config.yaml"), filepath.Join(dir, "env.json"), filepath.Join(dir, "cli.yaml")
+	defaultPath, envPath, cliPath := filepath.Join(dir, "config.yaml"), filepath.Join(dir, "env.yaml"), filepath.Join(dir, "cli.yaml")
 	writeConfig(t, defaultPath, "# automatically loaded YAML\nlisten: ':9091'\ndata_dir: /default-data\ndownload_limits:\n  max_readers: 600\n")
 	c, err := load("", defaultPath, nil)
 	if err != nil || c.DataDir != "/default-data" || c.Listen != ":9091" || c.DownloadLimits.MaxReaders != 600 {
 		t.Fatal(c, err)
 	}
-	writeConfig(t, envPath, `{"data_dir":"/file-data","trusted_proxies":["10.0.0.0/8"],"download_limits":{"max_readers":700}}`)
+	writeConfig(t, envPath, "data_dir: /file-data\ntrusted_proxies: [10.0.0.0/8]\ndownload_limits: {max_readers: 700}\n")
 	t.Setenv("REDAPP_CONFIG", envPath)
 	c, err = load("", defaultPath, nil)
 	if err != nil || c.DataDir != "/file-data" || c.Listen != ":8080" {
-		t.Fatalf("selected JSON merged with default YAML: %+v %v", c, err)
+		t.Fatalf("selected file merged with default file: %+v %v", c, err)
 	}
 	// Neither an invalid default file nor an invalid env path is read when CLI selects a file.
 	writeConfig(t, defaultPath, "invalid: [")
 	writeConfig(t, cliPath, "data_dir: /cli-file-data\ndownload_limits: {max_readers: 800, max_artifact_bytes: '4GiB'}\n")
-	t.Setenv("REDAPP_CONFIG", filepath.Join(dir, "missing.json"))
+	t.Setenv("REDAPP_CONFIG", filepath.Join(dir, "missing.yaml"))
 	c, err = load(cliPath, defaultPath, nil)
 	if err != nil || c.DataDir != "/cli-file-data" || c.DownloadLimits.MaxReaders != 800 || c.DownloadLimits.MaxArtifactBytes != 4<<30 {
 		t.Fatal(c, err)

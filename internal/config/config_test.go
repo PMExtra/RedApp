@@ -14,7 +14,8 @@ func TestDeploymentIsStrictAndValidationDoesNotTouchData(t *testing.T) {
 	t.Setenv("REDAPP_PUBLIC_URL", "https://Downloads.Example.com/")
 	dir := t.TempDir()
 	data := filepath.Join(dir, "uncreated")
-	path := filepath.Join(dir, "config.json")
+	// YAML flow syntax keeps the field edits below simple.
+	path := filepath.Join(dir, "config.yaml")
 	base := `{"schema_version":1,"data_dir":` + quoted(data) + `}`
 	if err := os.WriteFile(path, []byte(base), 0600); err != nil {
 		t.Fatal(err)

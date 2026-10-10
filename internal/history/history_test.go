@@ -330,7 +330,8 @@ func TestScopedHistoryAggregationAndUnknownRetention(t *testing.T) {
 		}
 	}
 	// History keys deliberately have no foreign key to the active definitions.
-	for _, metric := range []string{"retired.unknown", "counters.reuse_requests", "events.recent_total"} {
+	unknown := []string{"retired.unknown", "counters.reuse_requests"}
+	for _, metric := range unknown {
 		if _, err := db.DB.Exec("INSERT INTO metric_samples VALUES(?,?,?,?,?,?,?,?,?)", "global", "", metric, base.Unix(), base.Unix(), "old", 4, nil, 0); err != nil {
 			t.Fatal(err)
 		}
@@ -356,19 +357,17 @@ func TestScopedHistoryAggregationAndUnknownRetention(t *testing.T) {
 		}
 	}
 	value(t, point(t, h, key, "7d", now, base).Delta, 12)
-	for _, key := range []string{"counters.reuse_requests", "events.recent_total"} {
-		retired, err := h.Query(key, "7d", now)
-		if err != nil || !retired.Retired {
-			t.Fatal("retired historical metadata unavailable", key, err)
+	for _, key := range unknown {
+		if _, err := h.Query(key, "7d", now); err == nil {
+			t.Fatal("unknown metric queried", key)
 		}
-		value(t, point(t, h, key, "7d", now, base).Last, 4)
 		if err := h.Record(now, []Metric{observation(key, 5)}); err == nil {
-			t.Fatal("retired observation accepted", key)
+			t.Fatal("unknown observation accepted", key)
 		}
 	}
 
 	var n int
-	if err := db.DB.QueryRow("SELECT COUNT(*) FROM metric_samples WHERE metric='retired.unknown'").Scan(&n); err != nil || n != 1 {
+	if err := db.DB.QueryRow("SELECT COUNT(*) FROM metric_samples WHERE metric IN ('retired.unknown','counters.reuse_requests')").Scan(&n); err != nil || n != 2 {
 		t.Fatal("unknown history eagerly removed", n, err)
 	}
 	if _, err := h.QueryFor("openai/codex", "runtime.memory_bytes", "24h", now); err == nil {
@@ -377,17 +376,11 @@ func TestScopedHistoryAggregationAndUnknownRetention(t *testing.T) {
 	if err := h.Maintain(base.Add(25 * time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	db.DB.QueryRow("SELECT COUNT(*) FROM metric_samples WHERE metric='retired.unknown'").Scan(&n)
+	db.DB.QueryRow("SELECT COUNT(*) FROM metric_samples WHERE metric IN ('retired.unknown','counters.reuse_requests')").Scan(&n)
 	if n != 0 {
 		t.Fatal("unknown history did not naturally expire")
 	}
-	for _, key := range []string{"counters.reuse_requests", "events.recent_total"} {
-		value(t, point(t, h, key, "30d", base.Add(25*time.Hour), base).Last, 4)
-	}
-	if err := h.Maintain(base.Add(31 * 24 * time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.DB.QueryRow("SELECT COUNT(*) FROM metric_hours WHERE metric IN ('counters.reuse_requests','events.recent_total')").Scan(&n); err != nil || n != 0 {
-		t.Fatal("retired hourly history did not naturally expire", n, err)
+	if err := db.DB.QueryRow("SELECT COUNT(*) FROM metric_hours WHERE metric IN ('retired.unknown','counters.reuse_requests')").Scan(&n); err != nil || n != 0 {
+		t.Fatal("unknown history was aggregated", n, err)
 	}
 }

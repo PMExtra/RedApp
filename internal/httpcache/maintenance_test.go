@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/PMExtra/RedApp/internal/pathmatch"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -27,7 +26,7 @@ func seedMaintenanceRows(t *testing.T, f *fixture, count int) {
 	defer tx.Rollback()
 	old := f.s.now().Add(-time.Hour).Unix()
 	for i := 0; i < count; i++ {
-		_, err = tx.Exec(`INSERT INTO http_cache_generations(id,storage_id,path,sha256,size_bytes,fetched_at_s,validated_at_s,last_access_bucket_s,fresh_until_s,headers_json,is_current) VALUES(?,?,?,?,7,?,?,0,?,'{}',1)`, randomID(), f.entry.StorageID(), fmt.Sprintf("seed/%06d", i), strings.Repeat("a", 64), old, old, old)
+		_, err = tx.Exec(`INSERT INTO http_cache_generations(id,storage_id,path,sha256,size_bytes,fetched_at_s,validated_at_s,last_access_bucket_s,fresh_until_s,headers_json,is_current) VALUES(?,?,?,?,7,?,?,0,?,'{}',1)`, testID(t), f.entry.StorageID(), fmt.Sprintf("seed/%06d", i), strings.Repeat("a", 64), old, old, old)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -49,7 +48,7 @@ func TestMaintenancePaginationFrozenBoundaryAndWholeCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	preview, err := f.s.Preview(f.entry, "fetched_at", f.s.now())
+	preview, err := f.s.PreviewCleanup(context.Background(), f.entry, "fetched_at", f.s.now(), allPaths)
 	if err != nil || preview.SelectedFiles != 1205 || preview.SelectedBytes != 1205*7 || preview.ScannedFiles != 1205 {
 		t.Fatal(preview, err)
 	}
@@ -90,7 +89,7 @@ func TestMaintenancePaginationFrozenBoundaryAndWholeCleanup(t *testing.T) {
 	if _, err = f.s.PreviewItems(f.entry.StorageID(), "cleanup", preview.ID, "01", 25); !errors.Is(err, ErrInvalidPreview) {
 		t.Fatal("noncanonical cursor", err)
 	}
-	result, err := f.s.ExecuteContext(context.Background(), f.entry, preview.ID)
+	result, err := f.s.ExecuteCleanup(context.Background(), f.entry, preview.ID)
 	if err != nil || result.RetiredFiles != 1205 || result.RetiredBytes != 1205*7 {
 		t.Fatal(result, err)
 	}
@@ -98,7 +97,7 @@ func TestMaintenancePaginationFrozenBoundaryAndWholeCleanup(t *testing.T) {
 	if len(rows) != 1 || rows[0].Path != "late/file" {
 		t.Fatal("cleanup affected an unfrozen insertion", rows)
 	}
-	again, err := f.s.Execute(f.entry, preview.ID)
+	again, err := f.s.ExecuteCleanup(context.Background(), f.entry, preview.ID)
 	if err != nil || again != result {
 		t.Fatal("receipt not idempotent", again, err)
 	}
@@ -111,7 +110,7 @@ func TestMaintenancePaginationFrozenBoundaryAndWholeCleanup(t *testing.T) {
 func TestMaintenanceReceiptsExpiryPruningAndRestart(t *testing.T) {
 	f := newFixture(t, http.NotFoundHandler(), 300)
 	seedMaintenanceRows(t, f, 1205)
-	preview, err := f.s.BuildPreview(context.Background(), f.entry, "refresh", PreviewCriteria{Match: pathmatch.Spec{Type: "glob", Pattern: "/"}})
+	preview, err := f.s.PreviewRefresh(context.Background(), f.entry, allPaths)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +158,7 @@ func TestMaintenanceReceiptsExpiryPruningAndRestart(t *testing.T) {
 	if headers != 0 {
 		t.Fatal("empty expired header retained")
 	}
-	ready, err := f.s.Preview(f.entry, "fetched_at", f.s.now())
+	ready, err := f.s.PreviewCleanup(context.Background(), f.entry, "fetched_at", f.s.now(), allPaths)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +175,7 @@ func TestCleanupCommittedBatchSurvivesPhysicalDeleteFailure(t *testing.T) {
 	}
 	row := f.rows(t)[0]
 	f.clock.Add(60)
-	preview, err := f.s.Preview(f.entry, "fetched_at", f.s.now())
+	preview, err := f.s.PreviewCleanup(context.Background(), f.entry, "fetched_at", f.s.now(), allPaths)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +189,7 @@ func TestCleanupCommittedBatchSurvivesPhysicalDeleteFailure(t *testing.T) {
 	if err = os.WriteFile(filepath.Join(body, "prevent-unlink"), []byte("x"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	result, err := f.s.Execute(f.entry, preview.ID)
+	result, err := f.s.ExecuteCleanup(context.Background(), f.entry, preview.ID)
 	if err == nil || result.RetiredFiles != 1 || result.RetiredBytes != 4 {
 		t.Fatal("committed retirement omitted", result, err)
 	}
@@ -211,25 +210,25 @@ func TestMaintenanceBuildCapacityAndCancellation(t *testing.T) {
 		}
 		releases = append(releases, release)
 	}
-	if _, err := f.s.Preview(f.entry, "fetched_at", f.s.now()); !errors.Is(err, ErrPreviewBusy) {
+	if _, err := f.s.PreviewCleanup(context.Background(), f.entry, "fetched_at", f.s.now(), allPaths); !errors.Is(err, ErrPreviewBusy) {
 		t.Fatal("builder cap bypassed", err)
 	}
 	for _, release := range releases {
 		release()
 	}
-	preview, err := f.s.Preview(f.entry, "fetched_at", f.s.now())
+	preview, err := f.s.PreviewCleanup(context.Background(), f.entry, "fetched_at", f.s.now(), allPaths)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err = f.s.ExecuteContext(ctx, f.entry, preview.ID); !errors.Is(err, context.Canceled) {
+	if _, err = f.s.ExecuteCleanup(ctx, f.entry, preview.ID); !errors.Is(err, context.Canceled) {
 		t.Fatal("cancelled cleanup ran", err)
 	}
 	if err = f.s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.s.Preview(f.entry, "fetched_at", f.s.now()); !errors.Is(err, ErrClosed) {
+	if _, err = f.s.PreviewCleanup(context.Background(), f.entry, "fetched_at", f.s.now(), allPaths); !errors.Is(err, ErrClosed) {
 		t.Fatal("closed service admitted builder", err)
 	}
 }

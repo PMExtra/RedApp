@@ -99,7 +99,7 @@ func TestPatternPreviewFreezesMatchAndPolicyRevision(t *testing.T) {
 	}
 	f.clock.Add(300)
 	match := pathmatch.Spec{Type: "glob", Pattern: "/reports/"}
-	preview, err := f.s.PreviewPattern(f.entry, "fetched_at", f.s.now().Add(-time.Second), match)
+	preview, err := f.s.PreviewCleanup(context.Background(), f.entry, "fetched_at", f.s.now().Add(-time.Second), match)
 	if err != nil || preview.SelectedFiles != 2 || preview.Match != match {
 		t.Fatal(preview, err)
 	}
@@ -114,14 +114,14 @@ func TestPatternPreviewFreezesMatchAndPolicyRevision(t *testing.T) {
 	config := cachepolicy.Empty()
 	config.Rules = []cachepolicy.CacheRule{{Match: pathmatch.Spec{Type: "glob", Pattern: "/"}, TTLSeconds: 300}}
 	setPolicy(t, f, config)
-	if _, err = f.s.Execute(f.entry, preview.ID); !errors.Is(err, store.ErrSourceInactive) {
+	if _, err = f.s.ExecuteCleanup(context.Background(), f.entry, preview.ID); !errors.Is(err, store.ErrSourceInactive) {
 		t.Fatal("policy edit did not fence old preview", err)
 	}
-	preview, err = f.s.PreviewPattern(f.entry, "fetched_at", f.s.now().Add(-time.Second), pathmatch.Spec{Type: "re2", Pattern: `/reports/[a-z]+\.txt`})
+	preview, err = f.s.PreviewCleanup(context.Background(), f.entry, "fetched_at", f.s.now().Add(-time.Second), pathmatch.Spec{Type: "re2", Pattern: `/reports/[a-z]+\.txt`})
 	if err != nil || preview.SelectedFiles != 1 {
 		t.Fatal("full regex selected directory descendants", preview, err)
 	}
-	if _, err = f.s.PreviewPattern(f.entry, "fetched_at", f.s.now(), pathmatch.Spec{Type: "glob", Pattern: "["}); !errors.Is(err, ErrInvalidCleanup) {
+	if _, err = f.s.PreviewCleanup(context.Background(), f.entry, "fetched_at", f.s.now(), pathmatch.Spec{Type: "glob", Pattern: "["}); !errors.Is(err, ErrInvalidCleanup) {
 		t.Fatal("invalid match accepted", err)
 	}
 }
@@ -156,7 +156,7 @@ func TestAutomaticFirstMatchAndAccessRecheck(t *testing.T) {
 	if _, err = f.serve(t, "GET", http.Header{}); err != nil {
 		t.Fatal(err)
 	}
-	result, err := f.s.execute(context.Background(), f.entry, id)
+	result, err := f.s.ExecuteCleanup(context.Background(), f.entry, id)
 	if err != nil || result.SkippedAccessed != 1 || result.RetiredFiles != 0 {
 		t.Fatal("recent access lost", result, err)
 	}
@@ -180,7 +180,7 @@ func TestAutomaticFirstMatchAndAccessRecheck(t *testing.T) {
 	f.entry.Revision = changed.Revision
 	f.entry.RuntimeRevision = changed.RuntimeRevision
 	f.entry.Enabled = false
-	if _, err = f.s.execute(context.Background(), f.entry, id); !errors.Is(err, store.ErrSourceInactive) {
+	if _, err = f.s.ExecuteCleanup(context.Background(), f.entry, id); !errors.Is(err, store.ErrSourceInactive) {
 		t.Fatal("disabled source auto cleaned", err)
 	}
 	f.s.cleanupPass(context.Background(), registryFor(t, f.entry), func(err error) { t.Error(err) })
@@ -201,7 +201,7 @@ func TestAutomaticBoundsCursorAndEmptyDefault(t *testing.T) {
 		if i >= 1000 {
 			path = fmt.Sprintf("zzz/%04d", i-1000)
 		}
-		_, err = tx.Exec(`INSERT INTO http_cache_generations(id,storage_id,path,sha256,size_bytes,fetched_at_s,validated_at_s,last_access_bucket_s,fresh_until_s,headers_json,is_current) VALUES(?,?,?,?,0,?,?,0,?,'{}',1)`, randomID(), f.entry.StorageID(), path, strings.Repeat("a", 64), old, old, old)
+		_, err = tx.Exec(`INSERT INTO http_cache_generations(id,storage_id,path,sha256,size_bytes,fetched_at_s,validated_at_s,last_access_bucket_s,fresh_until_s,headers_json,is_current) VALUES(?,?,?,?,0,?,?,0,?,'{}',1)`, testID(t), f.entry.StorageID(), path, strings.Repeat("a", 64), old, old, old)
 		if err != nil {
 			tx.Rollback()
 			t.Fatal(err)

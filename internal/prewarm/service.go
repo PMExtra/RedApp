@@ -3,7 +3,6 @@ package prewarm
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -12,6 +11,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/catalog"
 	"github.com/PMExtra/RedApp/internal/download"
+	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/httpcache"
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/pathmatch"
@@ -59,7 +59,6 @@ func New(db *store.Store, registry *application.Registry, catalog *catalog.Servi
 	return &Service{DB: db, Registry: registry, Catalog: catalog, Downloads: downloads, HTTP: http, ctx: ctx, cancel: cancel}, nil
 }
 func (s *Service) Close() { s.mu.Lock(); s.closed.Store(true); s.cancel(); s.mu.Unlock(); s.wg.Wait() }
-func randomID() string    { var raw [16]byte; _, _ = rand.Read(raw[:]); return hex.EncodeToString(raw[:]) }
 func fingerprint(value any) string {
 	raw, _ := json.Marshal(value)
 	hash := sha256.Sum256(raw)
@@ -154,20 +153,38 @@ func (s *Service) Start(ctx context.Context, key string, in warmplan.Input, auto
 		}
 		return old, nil
 	}
-	current := &activeJob{UID: e.UID, ID: randomID(), Done: make(chan struct{}), Budget: &warmplan.Budget{Max: in.Limits.MaxDownloadBytes}}
-	s.mu.Lock()
-	if s.closed.Load() {
-		s.mu.Unlock()
-		return store.PrewarmJob{}, context.Canceled
+	jobID, err := fsutil.RandomID()
+	if err != nil {
+		return store.PrewarmJob{}, err
 	}
-	if !s.active.CompareAndSwap(nil, current) {
+	current := &activeJob{UID: e.UID, ID: jobID, Done: make(chan struct{}), Budget: &warmplan.Budget{Max: in.Limits.MaxDownloadBytes}}
+	s.mu.Lock()
+	for {
+		if s.closed.Load() {
+			s.mu.Unlock()
+			return store.PrewarmJob{}, context.Canceled
+		}
+		if s.active.CompareAndSwap(nil, current) {
+			break
+		}
 		existing := s.active.Load()
 		s.mu.Unlock()
-		if existing != nil {
-			job, _ := s.DB.PrewarmJob(existing.UID, existing.ID)
+		if existing == nil {
+			s.mu.Lock()
+			continue
+		}
+		job, _ := s.DB.PrewarmJob(existing.UID, existing.ID)
+		if job.ID == "" || job.State == "running" {
 			return job, ErrBusy
 		}
-		return store.PrewarmJob{}, ErrBusy
+		// The worker persists the terminal state before it releases the slot;
+		// wait for that release instead of reporting a finished job as busy.
+		select {
+		case <-existing.Done:
+		case <-ctx.Done():
+			return store.PrewarmJob{}, ctx.Err()
+		}
+		s.mu.Lock()
 	}
 	s.wg.Add(1)
 	ctxWork, finish, err := s.DB.ApplicationWork(s.ctx, e.StorageID())
@@ -179,7 +196,7 @@ func (s *Service) Start(ctx context.Context, key string, in warmplan.Input, auto
 	}
 	work, cancel := context.WithTimeout(ctxWork, time.Duration(in.Limits.MaxDurationSeconds)*time.Second)
 	current.Cancel = cancel
-	job := store.PrewarmJob{SourceFence: store.SourceFence{AppRevision: e.RuntimeRevision, VendorRevision: e.VendorRuntimeRevision}, ID: current.ID, AppUID: e.UID, StorageID: e.StorageID(), RequestID: in.RequestID, Fingerprint: hash, State: "running", Created: time.Now().UTC(), Updated: time.Now().UTC(), Input: in, Target: in.Target, Platforms: in.Platforms, Limits: in.Limits, Ignored: map[string]int{}, Automatic: automatic}
+	job := store.PrewarmJob{SourceFence: store.SourceFence{AppRuntimeRevision: e.RuntimeRevision, VendorRuntimeRevision: e.VendorRuntimeRevision}, ID: current.ID, AppUID: e.UID, StorageID: e.StorageID(), RequestID: in.RequestID, Fingerprint: hash, State: "running", Created: time.Now().UTC(), Updated: time.Now().UTC(), Input: in, Target: in.Target, Platforms: in.Platforms, Limits: in.Limits, Ignored: map[string]int{}, Automatic: automatic}
 	if automatic {
 		cfg, err := s.DB.ApplicationConfiguration(key)
 		if err != nil {
@@ -214,7 +231,7 @@ func (s *Service) Start(ctx context.Context, key string, in warmplan.Input, auto
 func (s *Service) entry(job store.PrewarmJob) (application.Entry, error) {
 	for _, e := range s.Registry.Entries() {
 		if e.UID == job.AppUID {
-			if e.StorageID() != job.StorageID || e.RuntimeRevision != job.AppRevision || e.VendorRuntimeRevision != job.VendorRevision || !e.Active() {
+			if e.StorageID() != job.StorageID || e.RuntimeRevision != job.AppRuntimeRevision || e.VendorRuntimeRevision != job.VendorRuntimeRevision || !e.Active() {
 				return e, store.ErrSourceInactive
 			}
 			if job.Automatic {
@@ -403,6 +420,20 @@ func (s *Service) warmRelease(ctx context.Context, entry application.Entry, vers
 	item.Status = "downloaded"
 	return item
 }
+
+// Wait blocks until the job is no longer running, or ctx ends, and returns its
+// final status.
+func (s *Service) Wait(ctx context.Context, uid, id string) (store.PrewarmJob, error) {
+	if current := s.active.Load(); current != nil && current.UID == uid && current.ID == id {
+		select {
+		case <-current.Done:
+		case <-ctx.Done():
+			return store.PrewarmJob{}, ctx.Err()
+		}
+	}
+	return s.Status(uid, id)
+}
+
 func (s *Service) Status(uid, id string) (store.PrewarmJob, error) {
 	job, err := s.DB.PrewarmJob(uid, id)
 	if err == nil && job.State != "running" && time.Now().After(job.Updated.Add(24*time.Hour)) {
@@ -474,7 +505,11 @@ func (s *Service) Automatic(ctx context.Context) {
 			continue
 		}
 		for _, channel := range policy.Channels {
-			job, startErr := s.Start(ctx, e.Descriptor.ID, warmplan.Input{RequestID: randomID(), Target: channel, Platforms: policy.Platforms, Limits: warmplan.DefaultLimits()}, true)
+			requestID, err := fsutil.RandomID()
+			if err != nil {
+				return
+			}
+			job, startErr := s.Start(ctx, e.Descriptor.ID, warmplan.Input{RequestID: requestID, Target: channel, Platforms: policy.Platforms, Limits: warmplan.DefaultLimits()}, true)
 			if errors.Is(startErr, ErrBusy) {
 				return
 			}

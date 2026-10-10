@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/PMExtra/RedApp/installers"
@@ -15,11 +16,7 @@ func TestDynamicProviderInstancesAndDirectoryLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.DB.Close() })
-	seedVendors, seedApps, err := Seeds()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.SeedDirectory(seedVendors, seedApps); err != nil {
+	if err := db.EnsureEntityTemplates(); err != nil {
 		t.Fatal(err)
 	}
 	vendor, err := db.CreateVendor(store.VendorInput{ID: "enterprise", Name: store.LocalizedText{En: "Enterprise", ZhCN: "企业"}, Enabled: true})
@@ -83,8 +80,13 @@ func TestDynamicProviderInstancesAndDirectoryLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	registry = load()
-	if _, ok := registry.Lookup(first.Descriptor.ID); ok || len(registry.Entries()) != 2 {
+	if _, ok := registry.Lookup(first.Descriptor.ID); ok {
 		t.Fatal("disabled vendor applications remained public")
+	}
+	for _, entry := range registry.Entries() {
+		if entry.VendorID == vendor.ID {
+			t.Fatalf("application %s of a disabled vendor remained public", entry.Descriptor.ID)
+		}
 	}
 	if entry, ok := registry.LookupAny(first.Descriptor.ID); !ok || entry.VendorRevision != 2 {
 		t.Fatal("disabled application or vendor admission revision disappeared")
@@ -117,16 +119,45 @@ func TestDynamicProviderInstancesAndDirectoryLifecycle(t *testing.T) {
 
 func TestRetiredSourceClientsDoNotDependOnPublicRegistry(t *testing.T) {
 	pool := distributor.NewPool()
+	appUID, vendorUID := strings.Repeat("a", 32), strings.Repeat("b", 32)
 	for _, input := range [][2]string{{application.Codex, "http://intranet.example:8081/codex"}, {application.ClaudeCode, "https://intranet.example/claude"}, {application.HttpCache, "http://intranet.example/files"}} {
-		client, err := NewSourceClient(input[0], input[1], pool)
+		client, err := NewScopedSourceClient(input[0], input[1], "", appUID, vendorUID, pool)
 		if err != nil || client.Base.String() != input[1] {
 			t.Fatal("independent historical source binding unavailable", err)
 		}
 	}
-	if _, err := NewSourceClient("unknown", "https://example/files", pool); err == nil {
+	if _, err := NewScopedSourceClient("unknown", "https://example/files", "", appUID, vendorUID, pool); err == nil {
 		t.Fatal("unregistered provider constructed")
 	}
-	if _, err := NewSourceClient(application.HttpCache, "https://example/files", nil); err == nil {
-		t.Fatal("dynamic source accepted independent/nil transport")
+	if _, err := NewScopedSourceClient(application.HttpCache, "https://example/files", "", appUID, vendorUID, nil); err == nil {
+		t.Fatal("dynamic source accepted a nil transport pool")
+	}
+	if _, err := NewScopedSourceClient(application.HttpCache, "https://example/files", "", "", vendorUID, pool); err == nil {
+		t.Fatal("source client built without an owner scope")
+	}
+}
+
+func TestIndependentReleaseInstancesUseTheProviderTemplate(t *testing.T) {
+	descriptors, err := reviewedDescriptors()
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := canonicalTemplates(descriptors)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for provider := range releaseProtocols {
+		id := canonical[provider]
+		if id == "" {
+			t.Fatalf("%s has no reviewed template", provider)
+		}
+		for _, d := range descriptors {
+			if d.ID == id && d.Protocol != releaseProtocols[provider] {
+				t.Fatalf("%s maps to %s with protocol %s", provider, id, d.Protocol)
+			}
+		}
+	}
+	if _, err = canonicalTemplates(append(descriptors, descriptors[0])); err == nil {
+		t.Fatal("two templates for one provider accepted")
 	}
 }

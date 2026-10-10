@@ -369,6 +369,10 @@ func TestPermanentDeletionCancelsWholeRefreshAndSharedFollowers(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-started
+	// The refresh worker holds its reader lease while the upstream blocks, so
+	// the only lease taken from here on is the follower's.
+	acquired := make(chan struct{}, 1)
+	f.budget.readerAcquired.Store(&acquired)
 	// Join the same refresh flight as a public reader of the now-stale entry.
 	f.clock.Add(3601)
 	follower := make(chan error, 1)
@@ -376,11 +380,9 @@ func TestPermanentDeletionCancelsWholeRefreshAndSharedFollowers(t *testing.T) {
 		r := httptest.NewRequest("GET", "http://local/file", nil)
 		follower <- f.s.Serve(httptest.NewRecorder(), r, f.entry, "file")
 	}()
-	deadline := time.Now().Add(time.Second)
-	for f.budget.readers.Load() < 2 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if f.budget.readers.Load() != 2 {
+	select {
+	case <-acquired:
+	case <-time.After(5 * time.Second):
 		t.Fatal("follower did not enter")
 	}
 	uid, drained, err := f.db.PrepareApplicationDeletion(f.app.Key, f.app.Revision)

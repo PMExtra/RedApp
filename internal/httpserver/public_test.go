@@ -3,7 +3,6 @@ package httpserver
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/PMExtra/RedApp/internal/apps/codex"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -39,12 +38,7 @@ func TestPublicPagesBootstrapAndApplicationIsolation(t *testing.T) {
 	}
 	var apps []map[string]any
 	json.Unmarshal(info["apps"], &apps)
-	if len(apps) != 2 || apps[0]["id"] != "openai/codex" || apps[1]["id"] != "anthropic/claude-code" || apps[0]["origin"] != "http://internal/openai/codex" {
+	if len(apps) != 2 || apps[0]["id"] != "anthropic/claude-code" || apps[1]["id"] != "openai/codex" || apps[1]["origin"] != "http://internal/openai/codex" {
 		t.Fatal(apps)
-	}
-	w = httptest.NewRecorder()
-	s.ServeHTTP(w, httptest.NewRequest("GET", "http://internal/openai/codex/icon.svg", nil))
-	if w.Code != 200 || w.Body.String() != codex.OpenAISymbol() || w.Header().Get("Content-Security-Policy") != "sandbox; default-src 'none'" {
-		t.Fatal("reviewed icon unavailable", w.Code)
 	}
 }

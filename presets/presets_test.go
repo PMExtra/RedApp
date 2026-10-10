@@ -53,7 +53,7 @@ func TestReviewedEquivalence(t *testing.T) {
 		}
 	}
 	d := s.Descriptors()
-	if d[0].ID != "openai/codex" || d[1].ID != "anthropic/claude-code" || d[0].Installers[0].Shell != "sh" || d[1].Installers[0].Shell != "bash" {
+	if d[0].ID != "anthropic/claude-code" || d[1].ID != "openai/codex" || d[0].Installers[0].Shell != "bash" || d[1].Installers[0].Shell != "sh" {
 		t.Fatal("reviewed inventory changed")
 	}
 }

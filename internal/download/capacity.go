@@ -6,6 +6,17 @@ import (
 	"sync"
 )
 
+// Budget is the shared transfer capacity: the reader and writer slots and the
+// per-file size limit. Manager implements it so that release downloads, the
+// HTTP cache and hosted uploads draw from one set of limits.
+type Budget interface {
+	AcquireHTTPReader() (func(), error)
+	AcquireHTTPWriter() (func(), error)
+	MaxArtifactBytes() int64
+}
+
+var _ Budget = (*Manager)(nil)
+
 func (m *Manager) readersLocked() int {
 	readers := m.httpReaders
 	for _, generation := range m.all {

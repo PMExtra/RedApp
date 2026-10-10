@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/testutil"
 	"io"
 	"math"
@@ -37,13 +38,13 @@ func TestEffectiveAverageExcludesVerificationAndRecentSnapshot(t *testing.T) {
 	m.mu.Unlock()
 	v := m.Snapshot()[0]
 	if v.AverageBPS != 25000 || v.DownloadNS != 2*time.Second.Nanoseconds() {
-		t.Fatalf("平均速度包含验证耗时: %+v", v)
+		t.Fatalf("average speed includes verification time: %+v", v)
 	}
 	if math.Abs(v.RecentBPS-25000) > 200 {
-		t.Fatal("近期快照速度错误", v.RecentBPS)
+		t.Fatal("wrong recent speed in snapshot", v.RecentBPS)
 	}
 	if v.SampledAt.IsZero() {
-		t.Fatal("缺采样时间")
+		t.Fatal("sample time missing")
 	}
 	if e := m.Close(); e != nil {
 		t.Fatal(e)
@@ -72,27 +73,28 @@ func TestHangingUpstreamHasBoundedFailure(t *testing.T) {
 	defer rd.Close()
 	_, e = io.ReadAll(rd)
 	if e == nil || ctx.Err() != nil {
-		t.Fatal("挂起上游未按请求重试边界终止", e)
+		t.Fatal("hanging upstream did not stop at the retry bound", e)
 	}
 }
 
-func TestEnglishFailureCategories(t *testing.T) {
-	for message, want := range map[string]string{
-		"Complete file SHA256 does not match":                  "hash",
-		"Unsafe upstream resume; a new generation is required": "range",
-		"Unsafe upstream Content-Encoding":                     "encoding",
-		"Disk write failed":                                    "disk",
-		"File fsync failed":                                    "disk",
-		"Artifact length does not match":                       "length",
-		"Artifact truncated":                                   "length",
-		"Upstream HTTP 503":                                    "http",
-		"DNS returned no addresses":                            "dns",
-		"TLS handshake failed":                                 "tls",
-		"request timeout":                                      "timeout",
-		"Cache state commit failed":                            "database",
+func TestFailureCategoriesFollowErrorTypes(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{errHashMismatch, "hash"},
+		{unsafeResume, "range"},
+		{distributor.ErrUnsafeEncoding, "encoding"},
+		{&failure{message: "Disk write failed", category: "disk", cause: os.ErrPermission}, "disk"},
+		{errLength, "length"},
+		{errTruncated, "length"},
+		{errBlobInvalid, "disk"},
+		{upstreamHTTPError(503), "http"},
+		{&failure{message: "Cache state commit failed", category: "database"}, "database"},
+		{&net.DNSError{Err: "no such host", Name: "upstream.example"}, "dns"},
 	} {
-		if got := failureCategory(nil, message); got != want {
-			t.Errorf("%q: got %s want %s", message, got, want)
+		if got := failureCategory(tc.err); got != tc.want {
+			t.Errorf("%v: got %s want %s", tc.err, got, tc.want)
 		}
 	}
 }
@@ -116,21 +118,18 @@ func TestTransportFailureCategories(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c.HTTP.Transport = failingTransport{tc.cause}
-			_, err := c.Get(context.Background(), c.URL("asset"), nil)
+			_, err := c.Get(context.Background(), testutil.SourceURL(c, "asset"), nil)
 			if err == nil || err.Error() != "Upstream connection failed" {
 				t.Fatal("transport failure message changed", err)
 			}
-			if got := failureCategory(err, err.Error()); got != tc.want {
+			if got := failureCategory(err); got != tc.want {
 				t.Fatalf("got %s want %s", got, tc.want)
 			}
 		})
 	}
 	// Body read failures keep their stable message and their transport class.
-	interrupted := &causeError{"Upstream download interrupted", &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}, true}
-	if got := failureCategory(interrupted, interrupted.Error()); got != "timeout" {
+	interrupted := &failure{message: "Upstream download interrupted", category: "upstream", cause: &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}, transient: true}
+	if got := failureCategory(interrupted); got != "timeout" {
 		t.Fatal("interrupted read timeout category", got)
-	}
-	if got := failureCategory(errHashMismatch, "Upstream connection failed"); got != "hash" {
-		t.Fatal("typed hash mismatch category", got)
 	}
 }

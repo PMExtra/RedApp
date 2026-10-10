@@ -48,7 +48,7 @@ func (s *Service) PreviewRefresh(ctx context.Context, entry application.Entry, m
 	stop := context.AfterFunc(s.ctx, cancel)
 	defer cancel()
 	defer stop()
-	return s.BuildPreview(ctx, entry, "refresh", PreviewCriteria{Match: match})
+	return s.buildPreview(ctx, entry, "refresh", PreviewCriteria{Match: match}, buildOptions{})
 }
 
 // ExecuteRefresh starts a single background worker. The durable frozen set is
@@ -208,7 +208,7 @@ func (s *Service) refreshExisting(ctx context.Context, entry application.Entry, 
 	if err != nil {
 		return item, err
 	}
-	ctx = context.WithValue(ctx, policyContextKey{}, policy)
+	f := fill{entry: entry, path: relative, policy: policy}
 	for tries := 0; ; tries++ {
 		if err := ctx.Err(); err != nil {
 			return item, err
@@ -234,7 +234,7 @@ func (s *Service) refreshExisting(ctx context.Context, entry application.Entry, 
 			item.Status, item.Reason = "skipped", "generation_changed"
 			return item, nil
 		}
-		result, err := s.sharedFetch(ctx, entry, relative, old)
+		result, err := s.sharedFetch(ctx, f, old)
 		s.unpin(old.GenerationID)
 		if errors.Is(err, ErrFetchAgain) {
 			continue

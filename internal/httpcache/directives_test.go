@@ -251,7 +251,8 @@ func TestSharedUpstreamEmitsOneWarningForAllReaders(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ctx := context.WithValue(context.Background(), policyContextKey{}, policy)
+			ctx := context.Background()
+			fileFill := fill{entry: f.entry, path: "file", policy: policy}
 			old, err := f.s.lookup(f.entry.StorageID(), "file")
 			if err != nil {
 				t.Fatal(err)
@@ -262,7 +263,7 @@ func TestSharedUpstreamEmitsOneWarningForAllReaders(t *testing.T) {
 			blocking.Store(true)
 			done := make(chan error, 4)
 			run := func(ctx context.Context) {
-				result, err := f.s.sharedFetch(ctx, f.entry, "file", old)
+				result, err := f.s.sharedFetch(ctx, fileFill, old)
 				if result.row != nil {
 					f.s.unpin(result.row.GenerationID)
 				}

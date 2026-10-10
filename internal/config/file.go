@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strconv"
-	"strings"
 
 	"github.com/PMExtra/RedApp/internal/jsoncheck"
 	"github.com/PMExtra/RedApp/internal/yamlconfig"
@@ -31,11 +29,9 @@ func readDeployment(path string, optional bool, c *Deployment) error {
 	if err != nil || len(raw) > 64<<10 {
 		return errors.New("configuration must be readable and at most 64 KiB")
 	}
-	if !strings.EqualFold(filepath.Ext(path), ".json") {
-		raw, err = yamlJSON(raw)
-		if err != nil {
-			return fmt.Errorf("invalid YAML: %w", err)
-		}
+	raw, err = yamlconfig.JSON(raw, 64<<10, "deployment")
+	if err != nil {
+		return fmt.Errorf("invalid YAML: %w", err)
 	}
 	if err := jsoncheck.Unique(raw); err != nil {
 		return fmt.Errorf("invalid deployment JSON: %w", err)
@@ -89,5 +85,3 @@ func readDeployment(path string, optional bool, c *Deployment) error {
 	}
 	return nil
 }
-
-func yamlJSON(raw []byte) ([]byte, error) { return yamlconfig.JSON(raw, 64<<10, "deployment") }

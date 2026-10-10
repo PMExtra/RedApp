@@ -5,7 +5,6 @@ package builtin
 import (
 	"fmt"
 	"github.com/PMExtra/RedApp/presets"
-	"strings"
 
 	"github.com/PMExtra/RedApp/installers"
 	"github.com/PMExtra/RedApp/internal/application"
@@ -114,21 +113,12 @@ func releaseEntry(descriptor application.Descriptor, client *distributor.Client)
 	default:
 		return application.Entry{}, fmt.Errorf("Unregistered protocol %s", descriptor.Protocol)
 	}
-	// Legacy protocol assets have their own reviewed registry. Display icons in
-	// presets never name or authorize installer protocol files.
-	if asset, ok := BrandAsset("/" + descriptor.ID + "/icon.svg"); ok {
-		entry.PublicAssets = map[string]application.Representation{"icon.svg": asset}
-	}
 	return entry, nil
 }
 
 // BrandAsset serves only reviewed, compiled image bytes, independently of a
 // persisted application's availability. It never fetches the supplied path.
 func BrandAsset(path string) (application.Representation, bool) {
-	if strings.HasPrefix(path, presets.ImagePrefix) {
-		image, ok := presets.Embedded().Image(path)
-		return application.Representation{ContentType: image.ContentType, Body: image.Body}, ok
-	}
-	image, ok := presets.LegacyImage(path)
+	image, ok := presets.Embedded().Image(path)
 	return application.Representation{ContentType: image.ContentType, Body: image.Body}, ok
 }

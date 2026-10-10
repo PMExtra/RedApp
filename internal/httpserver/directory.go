@@ -170,7 +170,7 @@ func directoryError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, errDeletePending), errors.Is(err, download.ErrTransfersActive):
 		problem(w, 409, "DIRECTORY_DELETE_PENDING", "Deletion is not complete. This application is blocked while its tasks stop. Retry deletion; restarting also resumes it.")
-	case errors.Is(err, store.ErrConflict), errors.Is(err, store.ErrRevisionConflict):
+	case errors.Is(err, store.ErrConflict):
 		problem(w, 409, "DIRECTORY_REVISION_CONFLICT", "Configuration changed; reload before saving")
 	case errors.Is(err, store.ErrCategoryAmbiguous):
 		problem(w, 409, "CATEGORY_AMBIGUOUS", err.Error())

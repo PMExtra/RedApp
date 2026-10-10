@@ -154,7 +154,7 @@ func (s *Service) cleanupPass(ctx context.Context, registry *application.Registr
 			status.ScannedFiles += scanned
 			if err == nil && jobID != "" {
 				var result CleanupResult
-				result, err = s.execute(ctx, entry, jobID)
+				result, err = s.ExecuteCleanup(ctx, entry, jobID)
 				status.RetiredFiles += result.RetiredFiles
 				status.RetiredBytes += result.RetiredBytes
 				status.SkippedAccessed += result.SkippedAccessed

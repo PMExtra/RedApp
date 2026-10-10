@@ -26,7 +26,7 @@ func TestRejectUnexpectedOrTransparentDecompression(t *testing.T) {
 			}
 			return &http.Response{StatusCode: 206, Header: http.Header{"Content-Encoding": []string{tc.encoding}}, Uncompressed: tc.decoded, Body: io.NopCloser(strings.NewReader("payload"))}, nil
 		})
-		if _, err = c.Get(context.Background(), c.URL("asset"), http.Header{"Range": []string{"bytes=3-"}}); err == nil {
+		if _, err = c.Get(context.Background(), sourceURL(c, "asset"), http.Header{"Range": []string{"bytes=3-"}}); err == nil {
 			t.Fatal("unsafe representation accepted", tc)
 		}
 	}
@@ -37,7 +37,7 @@ func TestRejectRepeatedContentEncoding(t *testing.T) {
 	c.HTTP.Transport = compressionTransport(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Encoding": {"identity", "gzip"}}, Body: io.NopCloser(strings.NewReader("payload"))}, nil
 	})
-	if _, err := c.Get(context.Background(), c.URL("asset"), nil); err == nil {
+	if _, err := c.Get(context.Background(), sourceURL(c, "asset"), nil); err == nil {
 		t.Fatal("repeated unsafe encoding accepted")
 	}
 }

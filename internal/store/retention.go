@@ -123,6 +123,6 @@ func (s *Store) SaveRetentionStatus(uid string, raw json.RawMessage) error {
 	if !identity.ValidUID(uid) || !json.Valid(raw) {
 		return ErrInvalidDirectory
 	}
-	_, err := s.DB.Exec(`INSERT INTO retention_status VALUES(?,?) ON CONFLICT(app_uid) DO UPDATE SET payload=excluded.payload`, uid, []byte(raw))
+	_, err := s.DB.Exec(`INSERT INTO retention_status(app_uid,payload) VALUES(?,?) ON CONFLICT(app_uid) DO UPDATE SET payload=excluded.payload`, uid, []byte(raw))
 	return err
 }

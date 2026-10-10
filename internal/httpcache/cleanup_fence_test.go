@@ -13,7 +13,7 @@ import (
 func TestCleanupStopsBetweenBatchesWhenRuntimeRevisionChanges(t *testing.T) {
 	f := newFixture(t, http.NotFoundHandler(), 300)
 	seedMaintenanceRows(t, f, 1205)
-	preview, err := f.s.Preview(f.entry, "fetched_at", f.s.now())
+	preview, err := f.s.PreviewCleanup(context.Background(), f.entry, "fetched_at", f.s.now(), allPaths)
 	if err != nil || preview.SelectedFiles != 1205 {
 		t.Fatal(preview, err)
 	}
@@ -28,7 +28,7 @@ func TestCleanupStopsBetweenBatchesWhenRuntimeRevisionChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := f.s.ExecuteContext(context.Background(), f.entry, preview.ID)
+	result, err := f.s.ExecuteCleanup(context.Background(), f.entry, preview.ID)
 	if !errors.Is(err, store.ErrSourceInactive) || result.SelectedFiles != 1205 || result.RetiredFiles != 100 || result.RetiredBytes != 700 || result.SkippedAccessed != 0 || result.SkippedChanged != 0 {
 		t.Fatal("cleanup continued past the changed revision or lost its committed batch", result, err)
 	}
@@ -54,7 +54,7 @@ func TestCleanupStopsBetweenBatchesWhenRuntimeRevisionChanges(t *testing.T) {
 	if err = f.db.DB.QueryRow(`SELECT revision,source_epoch FROM applications WHERE uid=?`, f.entry.UID).Scan(&revision, &epoch); err != nil || revision != f.entry.Revision+1 || epoch != f.entry.SourceEpoch {
 		t.Fatal("test did not advance the policy fence within the same source", revision, epoch, err)
 	}
-	again, err := f.s.ExecuteContext(context.Background(), f.entry, preview.ID)
+	again, err := f.s.ExecuteCleanup(context.Background(), f.entry, preview.ID)
 	if !errors.Is(err, ErrInvalidPreview) || again != receipt {
 		t.Fatal("failed receipt retry resumed the remaining selection", again, err)
 	}

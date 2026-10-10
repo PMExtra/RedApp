@@ -15,7 +15,7 @@
 
 - 错误消息用小写开头、不带句末标点，描述“做什么失败了”：`fmt.Errorf("open state database: %w", err)`。**【目标】** 现有不少错误以大写开头，因为它们被直接返回给客户端；阶段 3 改为显式错误码后统一（阶段 2/3）。
 - 包装底层错误一律用 `%w`，保留错误链。
-- 调用方需要区分的错误，定义 sentinel（`var ErrRevisionConflict = errors.New(...)`）或带字段的类型化错误，用 `errors.Is` / `errors.As` 判断。
+- 调用方需要区分的错误，定义 sentinel（`var ErrConflict = errors.New(...)`）或带字段的类型化错误，用 `errors.Is` / `errors.As` 判断。
 - **禁止按错误文本分类**，例如 `strings.Contains(err.Error(), "SHA256")` 或比较已持久化的错误字符串。需要持久化错误类别时，单独存一个稳定的代码字段。
 - 内部错误文本不直接返回给 HTTP 客户端；对外只给稳定的错误码和面向用户的消息（见下文 HTTP API）。
 
@@ -47,7 +47,7 @@
 ### 文件
 
 - 原子写入：同目录临时文件 → 写入 → `fsync` 文件 → `rename` → `fsync` 目录。不要在各包中重复实现这一流程。
-- **【目标】** 原子写、fsync、安全删除等使用共享的 `fsutil` 包（阶段 5）。在此之前，优先复用同包内已有的辅助函数，不要新增第三份实现。
+- 原子写、目录 fsync、暂存后 rename 发布、只读打开存储文件、删除和随机 ID 使用 `internal/fsutil`，不要在包内另写一份。读取已发布的文件用只读打开（`fsutil.OpenRegular`），只有原地续写的文件才以读写方式打开。
 - 数据目录权限为 `0700`，文件为 `0600`。
 
 ### 日志
@@ -62,43 +62,49 @@
 
 ## HTTP API
 
+全部路由以 [`api/openapi.yaml`](../../api/openapi.yaml) 为准，改接口先改规范（[ADR 0009](adr/0009-openapi-contract.md)）；组织方式、错误码目录用法和与旧实现的差异见 [api.md](api.md)。
+
 ### 路径与方法
 
 - 公开接口在 `/api/`，管理接口在 `/admin/api/`。分发路径是 `/<vendor>/<app>/<file_path>`，不加 `/api` 前缀。
 - 资源用名词复数路径，应用资源固定以 `/apps/<vendor>/<app>` 定位，不用请求头选择应用。
-- GET 只读、可重试；PUT 整体替换设置；PATCH 用于 `set`/`unset` 形式的稀疏修改；POST 用于创建或动作（如 `.../cleanup/preview`）；DELETE 删除。
+- GET 只读、可重试；PUT 整体替换设置；PATCH 用于稀疏修改（配置用 `set`/`unset`）；POST 用于创建或动作（如 `.../cleanup/preview`）；DELETE 删除。
+- 创建返回 `201`，没有响应体的成功返回 `204`；成功响应直接返回资源对象，不再包一层 `{"app": ...}`。
 - 查询参数白名单校验，未知或重复的参数返回 400。
 - **【目标】** 使用标准库 `http.ServeMux` 的方法 + 路径模式注册路由，鉴权、CSRF、Origin 检查、request_id 和日志做成中间件（阶段 3）。当前是 `Server.ServeHTTP` 中的手写前缀分发。
 
 ### 请求与响应体
 
 - JSON 字段名用 `snake_case`。
-- 请求体必须是 `application/json`，限制大小，拒绝重复键、未知字段和尾随数据（`decodeLimit` + `jsoncheck`）。
+- 请求体必须是 `application/json`（否则 415），限制大小，拒绝重复键、未知字段和尾随数据（`decodeLimit` + `jsoncheck`）。
 - 时间用 RFC 3339 UTC 字符串；字节数、计数用整数。
+- 不返回内部字段（本地文件路径、存储命名空间、内部 revision），不保留重复或兼容字段。
 
 ### 错误响应
 
 错误响应体：
 
 ```json
-{"error": {"code": "SETTINGS_REVISION_CONFLICT", "message": "...", "request_id": "...", "retryable": false}}
+{"error": {"code": "REVISION_CONFLICT", "message": "...", "request_id": "...", "retryable": false}}
 ```
 
-- `code` 是稳定的大写蛇形标识，前端按 `code` 而不是 HTTP 状态或消息文本做判断。
+- `code` 是稳定的大写蛇形标识，前端按 `code` 而不是 HTTP 状态或消息文本做判断。错误码、状态和 `retryable` 由规范中的错误码目录（`components.x-error-codes`）定义，新增错误码先加入目录。
 - **【目标】** 每个错误场景显式指定 `code`，不由 HTTP 状态推导（阶段 3）。当前 `fail()` 按状态映射，导致所有 409 都是 `SETTINGS_REVISION_CONFLICT`、所有 403 都是 `CSRF_REJECTED`；新代码应调用带显式 code 的 `problem()`。
-- **【目标】** `request_id` 在请求入口生成一次，写入响应头和日志（阶段 3）。当前只在生成错误响应时随机产生，不可关联日志。
+- **【目标】** `request_id` 在请求入口生成一次，写入 `X-Request-Id` 响应头和日志（阶段 3）。当前只在生成错误响应时随机产生，不可关联日志。
 - `message` 面向用户，不包含内部错误文本、路径或 SQL。
 
 ### 并发控制（revision）
 
 - 可编辑资源的 GET 返回 `revision` 字段和 `ETag: "<revision>"`。
-- 修改请求带 `If-Match: "<revision>"`（或请求体中的 `revision`，用于 PATCH 稀疏修改）。缺少时返回 400，不匹配时返回 409，前端保留用户草稿。
+- 所有修改请求带 `If-Match: "<revision>"`，请求体不携带 `revision`。缺少或格式错误返回 `400 IF_MATCH_REQUIRED`，不匹配返回 `409 REVISION_CONFLICT`，前端保留用户草稿。
+- 防止误操作同名重建对象的 UID 守卫（如删除应用的 `confirm_uid`）不匹配时同样返回 `409 REVISION_CONFLICT`。
+- 不可变对象（按 ID 寻址的托管文件）和绑定冻结状态的预览/任务动作不需要 `If-Match`。
 - 成功响应返回新的 revision 和完整的新状态，前端用它替换基线。
 
 ### 分页
 
-- 时间序或无限增长的列表（版本、资源、事件）用游标分页：`?limit=&cursor=`，响应 `{"items": [...], "next_cursor": "..." | null}`。默认 50，最大 100。游标对客户端不透明。
-- 需要页码导航的有限列表（目录、分类、托管文件）用 `?page=&limit=`，默认值按页面而定，最大 100。
+- 时间序或无限增长的列表（版本、资源、事件、缓存条目）用游标分页：`?limit=&cursor=`，响应 `{"items": [...], "next_cursor": "..." | null}`。默认值按接口而定（通常 50），最大 100。游标对客户端不透明，用在其他接口或过滤条件上返回 `400 INVALID_CURSOR`。
+- 需要页码导航的有限列表（厂商、应用、分类、托管文件）用 `?page=&limit=`，响应 `items`、`page`、`limit`、`total`、`total_pages`，默认值按页面而定，最大 100。页码超出范围返回空 `items`。
 - 先过滤、再分页；总数不随页码变化。
 
 ## 前端
@@ -146,8 +152,8 @@ frontend/src/
 ## 脚本
 
 - Python 只用标准库。
-- 生产脚本（CI、发布、安装器维护）用显式检查并抛出带说明的异常或 `sys.exit(<消息>)`，不要用 `assert` 做校验（`python -O` 会移除 `assert`）。**【目标】** 现有脚本中的 `assert` 在阶段 2 替换。
-- 共享逻辑放在支持模块中（如 `installer_test_support.py`、`installer_manifest.py`），不要在脚本之间复制粘贴。
+- 生产脚本（CI、发布、安装器维护）用显式检查并抛出带说明的异常或 `sys.exit(<消息>)`，不要用 `assert` 做校验（`python -O` 会移除 `assert`）。测试脚本可以用 `assert` 或 `unittest` 断言。
+- 共享逻辑放在支持模块中（如 `installer_test_support.py`、`installer_manifest.py`），不要在脚本之间复制粘贴。启动真实 `bin/redapp` 的测试一律使用 `cli_test_support.py`，不要自行选端口、轮询健康检查或拼装登录流程。
 - 格式可读：一行一条语句，不用分号拼接多条语句，不写超长单行表达式；函数有简短 docstring 说明目的。
 - Shell 脚本以 `set -eu` 开头，变量加引号。
 

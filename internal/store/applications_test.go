@@ -12,9 +12,9 @@ import (
 	"time"
 )
 
-func openTest(t *testing.T) *Store {
+func openTest(t *testing.T, options ...option) *Store {
 	t.Helper()
-	s, e := Open(t.TempDir())
+	s, e := openStore(t.TempDir(), options...)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -39,50 +39,6 @@ func snapshotFiles(t *testing.T, dir string) map[string][]byte {
 		out[e.Name()] = b
 	}
 	return out
-}
-func TestOldAndUnknownDirectoriesAreRejectedWithoutModification(t *testing.T) {
-	for _, ddl := range []string{
-		`CREATE TABLE schema_version(version INTEGER);INSERT INTO schema_version VALUES(1);CREATE TABLE versions(version TEXT);INSERT INTO versions VALUES('0.1.0')`,
-		`CREATE TABLE schema_version(version INTEGER);INSERT INTO schema_version VALUES(2);CREATE TABLE records(kind TEXT,id TEXT,body BLOB)`,
-		`CREATE TABLE unrelated(secret TEXT);INSERT INTO unrelated VALUES('preserve')`,
-		`CREATE TABLE schema_version(version INTEGER);INSERT INTO schema_version VALUES(3)`,
-	} {
-		t.Run(ddl[:30], func(t *testing.T) {
-			dir := t.TempDir()
-			db, err := sql.Open("sqlite3", filepath.Join(dir, "state.sqlite"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err = db.Exec(ddl); err != nil {
-				t.Fatal(err)
-			}
-			db.Close()
-			before := snapshotFiles(t, dir)
-			if !errors.Is(Preflight(dir), ErrFreshDirectory) {
-				t.Fatal("preflight accepted old data")
-			}
-			if s, err := Open(dir); !errors.Is(err, ErrFreshDirectory) {
-				if s != nil {
-					s.DB.Close()
-				}
-				t.Fatal("accepted old data", err)
-			}
-			after := snapshotFiles(t, dir)
-			if len(before) != len(after) {
-				t.Fatal("old directory modified")
-			}
-			for name, b := range before {
-				if !bytes.Equal(b, after[name]) {
-					t.Fatal("old file changed", name)
-				}
-			}
-		})
-	}
-	dir := t.TempDir()
-	os.Mkdir(filepath.Join(dir, "objects"), 0700)
-	if !errors.Is(Preflight(dir), ErrFreshDirectory) {
-		t.Fatal("nonempty legacy directory accepted")
-	}
 }
 func releaseFixture(t *testing.T, s *Store, app, version string) Resource {
 	t.Helper()
@@ -125,47 +81,34 @@ func TestMetadataAtomicityImmutabilityAndApplicationIsolation(t *testing.T) {
 		t.Fatal("application history not isolated")
 	}
 }
-func TestSettingsCASAndPairedCountersRollback(t *testing.T) {
+func TestGlobalSettingCASRejectsStaleAndMalformedWrites(t *testing.T) {
 	s := openTest(t)
-	if _, rev, err := s.ChannelTTL("openai/codex"); !errors.Is(err, sql.ErrNoRows) || rev != 0 {
-		t.Fatal(rev, err)
+	var value map[string]string
+	if rev, err := s.ReadSiteSettings(&value); err != nil || rev != 0 || value != nil {
+		t.Fatalf("missing setting = %v, %d, %v; want nil, 0, nil", value, rev, err)
 	}
-	rev, err := s.SetChannelTTL("openai/codex", 0, 30)
+	rev, err := s.SaveSiteSettings(0, map[string]string{"title": "first"})
 	if err != nil || rev != 1 {
-		t.Fatal(rev, err)
+		t.Fatalf("first save = %d, %v; want 1", rev, err)
 	}
-	if _, err = s.SetChannelTTL("openai/codex", 0, 60); !errors.Is(err, ErrConflict) {
-		t.Fatal("stale edit accepted", err)
+	if _, err = s.SaveSiteSettings(0, map[string]string{"title": "lost"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("second create = %v; want ErrConflict", err)
 	}
-	if _, err = s.SetChannelTTL("anthropic/claude-code", 0, 0); err == nil {
-		t.Fatal("invalid ttl accepted")
+	if _, err = s.SaveSiteSettings(1, []string{"not an object"}); err == nil {
+		t.Fatal("non-object setting accepted")
 	}
-	if _, err = s.DB.Exec(`CREATE TRIGGER fail_app_counter BEFORE INSERT ON metric_counters WHEN NEW.scope='app' BEGIN SELECT RAISE(FAIL,'app fault'); END`); err != nil {
-		t.Fatal(err)
+	if rev, err = s.SaveSiteSettings(1, map[string]string{"title": "second"}); err != nil || rev != 2 {
+		t.Fatalf("update = %d, %v; want 2", rev, err)
 	}
-	if err = s.AddFor("openai/codex", "upstream_bytes", 7); err != nil {
-		t.Fatal("buffered add failed", err)
+	if _, err = s.SaveSiteSettings(1, map[string]string{"title": "stale"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale update = %v; want ErrConflict", err)
 	}
-	if err = s.FlushCounters(); err == nil {
-		t.Fatal("counter fault ignored")
+	var publicURL map[string]string
+	if rev, err = s.ReadPublicURLSetting(&publicURL); err != nil || rev != 0 {
+		t.Fatalf("site setting leaked into public URL: %d, %v", rev, err)
 	}
-	counters, _ := s.Counters()
-	if counters["upstream_bytes"] != 0 {
-		t.Fatal("half counter committed")
-	}
-	s.DB.Exec("DROP TRIGGER fail_app_counter")
-	// The failed increment is retained and committed by the next flush exactly once.
-	if err = s.FlushCounters(); err != nil {
-		t.Fatal(err)
-	}
-	global, _ := s.Counters()
-	app, _ := s.CountersFor("openai/codex")
-	other, _ := s.CountersFor("anthropic/claude-code")
-	if global["upstream_bytes"] != 7 || app["upstream_bytes"] != 7 || len(other) != 0 {
-		t.Fatal(global, app, other)
-	}
-	if err = s.Add("reuse_requests", 1); err == nil {
-		t.Fatal("retired metric accepted")
+	if rev, err = s.ReadSiteSettings(&value); err != nil || rev != 2 || value["title"] != "second" {
+		t.Fatalf("stored setting = %v at %d, %v", value, rev, err)
 	}
 }
 func TestGenerationCleanupScopeAndCurrentCannotBeResurrected(t *testing.T) {
@@ -217,49 +160,6 @@ func TestGenerationCleanupScopeAndCurrentCannotBeResurrected(t *testing.T) {
 	}
 }
 
-func TestReadOnlyPreflightUnderstandsWALAndPreservesRejectedSource(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "state.sqlite")
-	db, err := sql.Open("sqlite3", sqliteURL(path, "_journal_mode=WAL"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if _, err = db.Exec("CREATE TABLE schema_version(version INTEGER); INSERT INTO schema_version VALUES(2);"); err != nil {
-		t.Fatal(err)
-	}
-	before := snapshotFiles(t, dir)
-	if !errors.Is(Preflight(dir), ErrFreshDirectory) {
-		t.Fatal("legacy WAL accepted")
-	}
-	if s, err := Open(dir); !errors.Is(err, ErrFreshDirectory) {
-		if s != nil {
-			s.DB.Close()
-		}
-		t.Fatal("legacy WAL opened for writing", err)
-	}
-	after := snapshotFiles(t, dir)
-	if len(before) != len(after) {
-		t.Fatal("source sidecars changed")
-	}
-	for name, b := range before {
-		if !bytes.Equal(b, after[name]) {
-			t.Fatal("preflight changed source", name)
-		}
-	}
-	// A valid schema whose transactions remain in WAL can be inspected without a
-	// false fresh-directory rejection after an unclean process exit.
-	valid := t.TempDir()
-	s, err := Open(valid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.DB.Close()
-	if err = Preflight(valid); err != nil {
-		t.Fatal("valid WAL database rejected", err)
-	}
-}
-
 func TestWALDataSurvivesAbruptProcessExit(t *testing.T) {
 	const helper = "REDAPP_STORE_CRASH_DIR"
 	if dir := os.Getenv(helper); dir != "" {
@@ -267,7 +167,7 @@ func TestWALDataSurvivesAbruptProcessExit(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = s.SetChannelTTL("openai/codex", 0, 37); err != nil {
+		if _, err = s.SaveSiteSettings(0, map[string]string{"title": "kept"}); err != nil {
 			t.Fatal(err)
 		}
 		if err = s.AddFor("openai/codex", "upstream_bytes", 13); err != nil {
@@ -303,9 +203,9 @@ func TestWALDataSurvivesAbruptProcessExit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.DB.Close()
-	ttl, rev, err := s.ChannelTTL("openai/codex")
-	if err != nil || ttl != 37 || rev != 1 {
-		t.Fatal("committed WAL setting lost", ttl, rev, err)
+	var site map[string]string
+	if rev, err := s.ReadSiteSettings(&site); err != nil || rev != 1 || site["title"] != "kept" {
+		t.Fatal("committed WAL setting lost", site, rev, err)
 	}
 	counts, err := s.CountersFor("openai/codex")
 	if err != nil || counts["upstream_bytes"] != 13 {

@@ -35,7 +35,7 @@ func TestPinnedOfficialSignature(t *testing.T) {
 	}
 	bad := append([]byte{}, sig...)
 	bad[len(bad)/2] ^= 1
-	if Verify(raw, bad) == nil || Verify(raw, nil) == nil || verifyWithKey(raw, sig, []byte("untrusted key")) == nil {
+	if Verify(raw, bad) == nil || Verify(raw, nil) == nil || verifyPinnedKey(raw, sig, []byte("untrusted key"), SigningFingerprint) == nil {
 		t.Fatal("untrusted signature accepted")
 	}
 }

@@ -20,7 +20,7 @@ func TestDiskFailureDoesNotPoisonVerifiedCache(t *testing.T) {
 	good := authorizedResource(t, m, c, data)
 	collect(t, m, good)
 	bad := good
-	bad.Source = c.URL("second")
+	bad.Source = testutil.SourceURL(c, "second")
 	bad.Version = "0.2.0"
 	bad.Hash = digest([]byte("different approved content"))
 	bad.ID = LogicalIdentity(bad.Application, bad.Version, bad.Key)
@@ -34,7 +34,7 @@ func TestDiskFailureDoesNotPoisonVerifiedCache(t *testing.T) {
 	g.file, e = os.OpenFile("/dev/full", os.O_RDWR, 0600)
 	if e != nil {
 		m.mu.Unlock()
-		t.Skip("/dev/full 不可用")
+		t.Skip("/dev/full unavailable")
 	}
 	m.mu.Unlock()
 	rd, _, e := m.Acquire(context.Background(), bad)
@@ -44,10 +44,10 @@ func TestDiskFailureDoesNotPoisonVerifiedCache(t *testing.T) {
 	_, e = io.ReadAll(rd)
 	rd.Close()
 	if e == nil {
-		t.Fatal("磁盘失败被当作成功")
+		t.Fatal("disk failure reported as success")
 	}
 	if !bytes.Equal(collect(t, m, good), data) {
-		t.Fatal("已有 complete 受污染")
+		t.Fatal("existing complete generation was damaged")
 	}
 }
 func TestDatabaseBusyIsBoundedAndVerifiedCacheSurvives(t *testing.T) {
@@ -65,7 +65,7 @@ func TestDatabaseBusyIsBoundedAndVerifiedCacheSurvives(t *testing.T) {
 	}
 	defer blocker.Close()
 	bad := good
-	bad.Source = c.URL("second")
+	bad.Source = testutil.SourceURL(c, "second")
 	bad.Version = "0.2.0"
 	bad.Hash = digest([]byte("different approved content"))
 	bad.ID = LogicalIdentity(bad.Application, bad.Version, bad.Key)
@@ -76,12 +76,12 @@ func TestDatabaseBusyIsBoundedAndVerifiedCacheSurvives(t *testing.T) {
 	defer blocker.Exec("ROLLBACK")
 	start := time.Now()
 	if _, _, e = m.Acquire(context.Background(), bad); e == nil {
-		t.Fatal("数据库 busy 未拒绝新缓存写入")
+		t.Fatal("busy database did not reject a new cache write")
 	}
 	if time.Since(start) > time.Second {
-		t.Fatal("数据库 busy 无界等待")
+		t.Fatal("busy database caused an unbounded wait")
 	}
 	if !bytes.Equal(collect(t, m, good), data) {
-		t.Fatal("已有 complete 受数据库 busy 影响")
+		t.Fatal("busy database affected an existing complete generation")
 	}
 }

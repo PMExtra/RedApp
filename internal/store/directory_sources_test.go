@@ -111,7 +111,8 @@ func TestDirectoryMultiSourceSnapshotsAndLegacyEdits(t *testing.T) {
 }
 
 func TestDirectoryMultiSourceCASAndSnapshotRollback(t *testing.T) {
-	s := openTest(t)
+	fault := &commitFault{}
+	s := openTest(t, fault.option())
 	v, err := s.CreateVendor(directoryVendor("vendor"))
 	if err != nil {
 		t.Fatal(err)
@@ -157,11 +158,9 @@ func TestDirectoryMultiSourceCASAndSnapshotRollback(t *testing.T) {
 	if err != nil || len(before) != 2 {
 		t.Fatal(before, err)
 	}
-	// The new snapshot is inserted before the app pointer is advanced. Failing
-	// the second statement must roll back both, leaving no orphan future epoch.
-	if _, err = s.DB.Exec(`CREATE TRIGGER reject_source_update BEFORE UPDATE ON applications BEGIN SELECT RAISE(ABORT,'injected update failure'); END`); err != nil {
-		t.Fatal(err)
-	}
+	// A failure after the new source snapshot and the advanced application
+	// pointer are written must roll back both, leaving no orphan future epoch.
+	fault.armed.Store(true)
 	change := applicationChanges(a)
 	change.BaseURLs = []string{"https://three.example.test"}
 	if _, err = s.UpdateApplication(a.Key, a.Revision, change); err == nil {

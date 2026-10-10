@@ -3,6 +3,8 @@ package httpserver
 import (
 	"encoding/json"
 	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/presets"
+	"net/url"
 	"testing"
 	"time"
 )
@@ -77,15 +79,16 @@ func TestPublicKnownVersionUsesProtocolOrderAndFirstDiscovery(t *testing.T) {
 
 func TestReviewedAnthropicIconsAndDisabledApplication(t *testing.T) {
 	h := newDirectoryHarness(t, t.TempDir())
-	h.request("GET", "/anthropic/claude-code/icon.svg", nil, 200, nil)
-	_, headers := h.request("GET", "/assets/builtin/anthropic.svg", nil, 200, nil)
+	vendorIcon, appIcon := presets.ImagePrefix+"builtin/anthropic.svg", presets.ImagePrefix+"anthropic/claude-code/icon.svg"
+	_, headers := h.request("GET", vendorIcon, nil, 200, nil)
 	if headers.Get("Content-Type") != "image/svg+xml" {
 		t.Fatal(headers)
 	}
-	h.request("GET", "/assets/builtin/missing.svg", nil, 404, nil)
+	h.request("GET", presets.ImagePrefix+"builtin/missing.svg", nil, 404, nil)
 	h.login(h.password)
 	v, _ := h.server.DB.Vendor("anthropic")
-	h.request("PATCH", "/admin/api/vendors/anthropic", map[string]any{"revision": v.Revision, "enabled": false, "icon": "/assets/builtin/anthropic.svg"}, 200, nil)
-	h.request("GET", "/anthropic/claude-code/icon.svg", nil, 404, nil)
-	h.request("GET", "/admin/api/assets/builtin-icon?path=%2Fanthropic%2Fclaude-code%2Ficon.svg", nil, 200, nil)
+	h.request("PATCH", "/admin/api/vendors/anthropic", map[string]any{"revision": v.Revision, "enabled": false, "icon": vendorIcon}, 200, nil)
+	// Reviewed images do not depend on the state of the vendor using them.
+	h.request("GET", appIcon, nil, 200, nil)
+	h.request("GET", "/admin/api/assets/builtin-icon?path="+url.QueryEscape(appIcon), nil, 200, nil)
 }

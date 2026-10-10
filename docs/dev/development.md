@@ -4,14 +4,24 @@
 
 | 工具 | 版本/要求 | 用途 |
 | --- | --- | --- |
-| Go | 1.27.1（与 CI、Dockerfile 一致） | 服务端；需要 CGO 和 C 编译器（`mattn/go-sqlite3`） |
-| Node.js | 24.19.0，使用提交的 `package-lock.json` | 前端构建与测试 |
+| Go | `go.mod` 的 `go` 指令（当前 1.27.1） | 服务端；需要 CGO 和 C 编译器（`mattn/go-sqlite3`） |
+| Node.js | `frontend/.node-version`（当前 24.19.0），使用提交的 `package-lock.json` | 前端构建与测试 |
 | Python 3 | 只用标准库 | 安装器维护、CLI 集成测试、发布脚本、文档检查 |
 | GNU `patch` | 支持 `--fuzz=0` | 安装器 patch 应用 |
 | Docker | 可选 | 镜像构建、原生发布编译、Docker 运行测试 |
 | PowerShell 7 + Windows PowerShell 5.1 | 仅 Windows | PowerShell 安装器门禁 |
 
 Windows 主机上建议在 Linux 容器或 WSL 中运行 `make` 目标；PowerShell 安装器测试则必须在 Windows 上运行。
+
+### 工具链版本的唯一来源
+
+| 内容 | 唯一来源 | 使用方 |
+| --- | --- | --- |
+| Go 版本 | `go.mod` 的 `go X.Y.Z`（不另写 `toolchain`） | 所有工作流的 `setup-go`（`go-version-file: go.mod`） |
+| Node.js 版本 | `frontend/.node-version` | 所有工作流的 `setup-node`（`node-version-file`） |
+| 基础镜像 | 根 `Dockerfile` 的全局 `ARG GO_IMAGE` / `ARG NODE_IMAGE`（标签 + 摘要） | Dockerfile 各阶段；`scripts/build-native-container.sh` 与 CI 发布编译缓存键通过 `scripts/dockerfile-arg.sh GO_IMAGE` 读取 |
+
+`make check` 中的 `scripts/check-toolchain.py` 保证：镜像标签与 `go.mod`、`.node-version` 一致且按摘要固定；工作流不写死 `go-version`/`node-version`；action 固定到 commit SHA；不使用 `pull_request_target`；`docker build` 不带 `--pull`；`.github/` 下的 Dockerfile 也按摘要固定基础镜像。升级 Go 或 Node 时同时改唯一来源和对应镜像的标签与摘要。
 
 ## 构建
 
@@ -21,9 +31,16 @@ make binary     # 只编译 Go，使用当前已提交的前端产物
 make docker     # 从源码构建镜像 redapp:local
 ```
 
+根 `Dockerfile` 是唯一的镜像定义（需要 BuildKit），`runtime` 阶段的 LABEL、用户、数据卷、健康检查只写一次。全局 `ARG RUNTIME_FILES` 选择运行时文件的来源：
+
+| `RUNTIME_FILES` | 构建上下文 | 用途 |
+| --- | --- | --- |
+| `source`（默认） | 仓库根目录（`.dockerignore` 排除文档、`.git`、`bin`、已提交的前端产物等） | `make docker`：Node 阶段重新构建前端，Go 阶段编译 |
+| `prebuilt` | 含 `redapp`、`ca-certificates.crt` 和 `0700` 的 `data/` 的目录 | CI 发布镜像与 `scripts/test-docker-local.sh`：只打包原生编译好的二进制，不拉取外部镜像 |
+
 - 所有编译都经过 `scripts/build-binary.sh`：CGO 静态链接，tags 为 `netgo,osusergo,sqlite_omit_load_extension`，通过 `-X main.version` / `-X main.revision` 注入版本。
 - 宿主上的 `make binary` 使用宿主的 C/libc，产物不能作为发布制品。
-- 发布用的二进制由 `scripts/build-native-container.sh` 在固定摘要的 `golang:1.27.1-trixie` 镜像中、在对应原生架构上编译（`GOAMD64=v1`、`GOARM64=v8.0`），不交叉编译、不使用 QEMU 编译。原因见 [ADR 0004](adr/0004-static-cpu-baseline-build.md)。
+- 发布用的二进制由 `scripts/build-native-container.sh` 在 Dockerfile `GO_IMAGE` 指定的固定摘要 `golang:<版本>-trixie` 镜像中、在对应原生架构上编译（`GOAMD64=v1`、`GOARM64=v8.0`），不交叉编译、不使用 QEMU 编译。原因见 [ADR 0004](adr/0004-static-cpu-baseline-build.md)。
 
 ## 前端
 
@@ -47,15 +64,24 @@ npm run build
 
 | 命令 | 覆盖 | 需要 |
 | --- | --- | --- |
-| `make check` | 文档检查（`docs-check`）、`gofmt`（`cmd internal installers presets`）、`go vet` | Go、Python |
-| `make test` | 发布脚本单测、文档检查单测、`go test -race ./...`、Shell 安装器契约、安装器更新与每日维护的离线回归 | Go、Python、`patch` |
+| `make check` | 文档检查（`docs-check`）、工具链与 CI 固定检查（`toolchain-check`）、`gofmt`（`cmd internal installers presets`）、`go vet` | Go、Python |
+| `make test` | 发布脚本单测、文档检查与工具链检查单测、`go test -race ./...`、Shell 安装器契约、安装器更新与每日维护的离线回归 | Go、Python、`patch` |
 | `make frontend-test` | `vue-tsc` 类型检查与 Vitest DOM 测试 | Node |
-| `make runtime-test` | 用**当前** `bin/redapp`（不重新编译）跑真实进程：数据目录与配置、HTTP 路由与重启、使用说明文档执行、retention、prewarm、分类/Tag、配置导入导出 | 已构建的二进制、Node |
+| `make runtime-test` | 用**当前** `bin/redapp`（不重新编译，缺失时直接失败）跑真实进程：数据目录与配置、HTTP 路由与重启、使用说明文档执行、retention、prewarm、分类/Tag、配置导入导出 | 已构建的二进制、Node（自动 `npm ci`，供 Happy DOM 使用） |
 | `make docs-check` | 双语用户文档结构一致、仓库内 Markdown 相对链接有效 | Python |
-| `sh scripts/test-docker-local.sh` | 镜像配置发现、默认 serve、健康检查、数据卷 | Docker、镜像 |
+| `sh scripts/test-docker-local.sh` | 镜像配置发现、默认 serve、健康检查、数据卷；未设 `REDAPP_TEST_IMAGE` 时用根 Dockerfile 的 `prebuilt` 方式打包当前 `bin/redapp` | Docker（BuildKit）、Linux 二进制或镜像 |
 | `python3 scripts/test-cpu-baseline.py` | 从实际镜像取出 amd64 二进制，检查只声明 x86-64 baseline，并在无 AVX 的 QEMU CPU 上启动 | `qemu-user`、`binutils` |
 | `python scripts/test-installers.py --platform windows` | PS7 与 5.1 解析并执行全部 PowerShell 安装器 | Windows |
-| `python3 scripts/test-prewarm-claude-cli.py` | 联网：官方 Claude 签名清单与一个真实二进制 | 外网；不在强制门禁中 |
+| `make network-test` | 联网：官方 Claude 签名清单与一个真实二进制（超过 200 MB，最长 30 分钟，2 分钟无进度即失败） | 已构建的二进制、外网；不在强制门禁中 |
+
+### 真实进程测试
+
+`scripts/test-*-cli.py` 都基于 `scripts/cli_test_support.py`（标准库 `unittest`），每个文件可单独运行，例如 `python3 scripts/test-http-cli.py`，也可以加 `TestClass.test_name` 只跑一个用例。
+
+- `ServerTestCase` 为每个用例提供私有临时目录；`start_server()` 启动的服务和 `start_fixture()` 启动的本地上游在用例结束时一定被停止和清理。
+- `RedAppServer` 每次启动都探测新的回环端口；探测与服务绑定之间被其他进程抢占时，服务以 `address already in use` 退出，harness 换端口重试。重启后 `base_url` 会变化。
+- `Session` 模拟浏览器：Cookie、`Origin`、CSRF。`fetch()`/`request()` 默认断言 HTTP 200，其他状态用 `expect=` 显式声明，失败消息包含方法、路径、状态和响应体摘要。
+- 用例失败时打印该用例所有服务的日志，初始管理员密码会被遮盖。
 
 `docs-check` 与 `--base`：
 
@@ -72,12 +98,14 @@ python3 scripts/check-docs.py --base main     # 另外要求成对文档同时�
 | --- | --- |
 | `frontend` | `make frontend-test`，重新构建并比对已提交的 `internal/httpserver/web`，上传 `frontend-<SHA>` 产物（含 SHA256SUMS） |
 | `test`（amd64、arm64） | `make check test`；PR 上另跑 `check-docs.py --base HEAD^1`；amd64 在无网络、只读的容器里再跑一次 Shell 安装器测试 |
-| `runtime`（amd64、arm64） | 校验并解包本次 `frontend` 产物，用原生容器编译，`make runtime-test`，打包 scratch 运行镜像并跑 Docker 测试；amd64 另跑 CPU 基线测试 |
+| `runtime`（amd64、arm64） | 校验并解包本次 `frontend` 产物，用原生容器编译，`make runtime-test`，用根 Dockerfile（`--target runtime`、`RUNTIME_FILES=prebuilt`）打包 scratch 运行镜像并跑 Docker 测试；amd64 另跑 CPU 基线测试 |
+| `source-image`（amd64） | 用根 Dockerfile 从源码（前端 + Go 阶段）构建镜像，检查版本并跑 Docker 测试；只验证，不产生产物 |
 | `windows-installers` | 复用 `windows-installers.yml`，PS7 与 5.1 安装器门禁 |
 
 - 只有 `PMExtra/RedApp` main 的 push 才上传 `runtime-<SHA>-<arch>` 产物（image.tar + metadata.json，保留 3 天）。PR 跑完整验证但不产生可发布产物。
-- 所有 action 都固定到 commit SHA，并在行尾注释主版本（如 `# v4`）。checkout 一律 `persist-credentials: false`。新增 action 遵循同样做法。
-- 缓存只用于加速，不能当作可信产物：源码测试的 Go 缓存按 runner/Go 版本/go.sum 分键，发布编译缓存另按 Linux 架构、工具链镜像摘要分键。
+- 所有 action 都固定到 commit SHA，并在行尾注释主版本（如 `# v4`）。checkout 一律 `persist-credentials: false`。新增 action 遵循同样做法（`toolchain-check` 强制）。
+- Linux 任务统一使用 `ubuntu-26.04` / `ubuntu-26.04-arm`；Windows 安装器门禁使用 `windows-2022`。
+- 缓存只用于加速，不能当作可信产物：源码测试的 Go 缓存按 runner/Go 版本/go.sum 分键，发布编译缓存另按 Linux 架构、`GO_IMAGE` 摘要和 go.sum 分键。
 
 ## 发布与推广
 

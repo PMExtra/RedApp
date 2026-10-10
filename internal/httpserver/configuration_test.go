@@ -120,7 +120,7 @@ func TestConfigurationRuntimeAndDatabaseStayAlignedOnFailure(t *testing.T) {
 		t.Fatal("half-saved configuration", after, current)
 	}
 	candidateID := identity.StorageID(before.UID, before.SourceEpoch+1)
-	client, err := builtin.NewSourceClient(before.Provider, "https://other.example/codex", h.server.Pool)
+	client, err := builtin.NewScopedSourceClient(before.Provider, "https://other.example/codex", "", before.UID, before.VendorUID, h.server.Pool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestConfigurationRuntimeAndDatabaseStayAlignedOnFailure(t *testing.T) {
 	if current.Revision != saved.Revision || current.SourceEpoch != before.SourceEpoch+1 || current.Upstream.Base.String() != "https://replacement.example/codex" {
 		t.Fatal("published runtime differs from DB", current, saved)
 	}
-	if err = h.server.DB.CheckSourceActive(entry.StorageID(), store.SourceFence{AppRevision: entry.Revision, VendorRevision: entry.VendorRevision}); !errors.Is(err, store.ErrSourceInactive) {
+	if err = h.server.DB.CheckSourceActive(entry.StorageID(), store.SourceFence{AppRuntimeRevision: entry.RuntimeRevision, VendorRuntimeRevision: entry.VendorRuntimeRevision}); !errors.Is(err, store.ErrSourceInactive) {
 		t.Fatal("old source fence accepted", err)
 	}
 }

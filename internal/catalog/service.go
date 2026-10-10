@@ -34,38 +34,6 @@ func New(db *store.Store, registry *application.Registry) *Service {
 	return &Service{db: db, registry: registry, flights: map[string]*flight{}, active: map[string]int{}}
 }
 
-func (s *Service) TTL(app string) (int, int64, error) {
-	e, ok := s.registry.Lookup(app)
-	if !ok {
-		return 0, 0, application.ErrNotFound
-	}
-	return s.ttl(e)
-}
-
-func (s *Service) ttl(e application.Entry) (int, int64, error) {
-	if e.UID != "" {
-		return e.Descriptor.DefaultChannelTTLSeconds, e.Revision, nil
-	}
-	seconds, revision, err := s.db.ChannelTTL(e.MetricsID())
-	if errors.Is(err, sql.ErrNoRows) {
-		return e.Descriptor.DefaultChannelTTLSeconds, 0, nil
-	}
-	return seconds, revision, err
-}
-func (s *Service) SetTTL(app string, expected int64, seconds int) (int64, error) {
-	e, ok := s.registry.Lookup(app)
-	if !ok || e.Protocol == nil {
-		return 0, application.ErrNotFound
-	}
-	if err := s.db.CheckSourceActive(e.StorageID(), sourceFence(e)); err != nil {
-		return 0, err
-	}
-	if e.UID != "" {
-		return 0, errors.New("Dynamic application settings require the application revision API")
-	}
-	return s.db.SetChannelTTL(e.MetricsID(), expected, seconds)
-}
-
 // Release returns only freshly verified metadata. Expired channels never fall
 // back to stale data after upstream failure, while immutable versions do not expire.
 func (s *Service) Release(ctx context.Context, app, target string) (application.Release, error) {
@@ -77,7 +45,7 @@ func (s *Service) Release(ctx context.Context, app, target string) (application.
 }
 
 func sourceFence(e application.Entry) store.SourceFence {
-	return store.SourceFence{AppRevision: e.RuntimeRevision, VendorRevision: e.VendorRuntimeRevision}
+	return store.SourceFence{AppRuntimeRevision: e.RuntimeRevision, VendorRuntimeRevision: e.VendorRuntimeRevision}
 }
 
 // release carries one immutable runtime snapshot through channel resolution,
@@ -108,11 +76,7 @@ func (s *Service) release(ctx context.Context, e application.Entry, target strin
 			return application.Release{}, err
 		}
 		if err == nil {
-			ttl, _, err := s.ttl(e)
-			if err != nil {
-				s.mu.Unlock()
-				return application.Release{}, err
-			}
+			ttl := e.Descriptor.DefaultChannelTTLSeconds
 			now := time.Now()
 			expires := cached.FetchedAt.Add(time.Duration(ttl) * time.Second)
 			if cached.ExpiresAt.Before(expires) {
@@ -210,12 +174,9 @@ func (s *Service) fetch(parent context.Context, e application.Entry, target stri
 			release, err = s.release(ctx, e, resolved.Version)
 		}
 		if err == nil {
-			ttl, _, ttlErr := s.ttl(e)
-			err = ttlErr
-			if err == nil {
-				now := time.Now().UTC()
-				err = s.db.PutChannel(store.Channel{AppID: app, Name: target, Version: release.Version, FetchedAt: now, ExpiresAt: now.Add(time.Duration(ttl) * time.Second)}, sourceFence(e))
-			}
+			ttl := e.Descriptor.DefaultChannelTTLSeconds
+			now := time.Now().UTC()
+			err = s.db.PutChannel(store.Channel{AppID: app, Name: target, Version: release.Version, FetchedAt: now, ExpiresAt: now.Add(time.Duration(ttl) * time.Second)}, sourceFence(e))
 		}
 	} else {
 		var envelope application.Envelope

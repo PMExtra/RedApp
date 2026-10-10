@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/rsa"
-	assets "github.com/PMExtra/RedApp/installers"
-	"golang.org/x/crypto/openpgp"
-	"golang.org/x/crypto/openpgp/armor"
-	"golang.org/x/crypto/openpgp/packet"
-	"strings"
+	"errors"
 	"testing"
+
+	"github.com/ProtonMail/go-crypto/openpgp"
+	"github.com/ProtonMail/go-crypto/openpgp/armor"
+	"github.com/ProtonMail/go-crypto/openpgp/packet"
+
+	assets "github.com/PMExtra/RedApp/installers"
 )
 
 func TestRejectUnsupportedSignatureHashAndExtraPackets(t *testing.T) {
@@ -47,7 +49,7 @@ func TestRejectUnsupportedSignatureHashAndExtraPackets(t *testing.T) {
 	}
 	signature.Hash = crypto.SHA256
 	signature.HashSuffix[3] = 8 // OpenPGP SHA256 identifier in the serialized v4 header.
-	if err = Verify(raw, encode(false)); err == nil || !strings.Contains(err.Error(), "Unsupported manifest signature algorithm") {
+	if err = Verify(raw, encode(false)); !errors.Is(err, ErrUnsupportedSignature) {
 		t.Fatal("hash algorithm gate missing", err)
 	}
 }
@@ -75,7 +77,7 @@ func TestRejectDifferentValidPublicKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw, sig := fixture(t)
-	if err = verifyWithKey(raw, sig, b.Bytes()); err == nil {
+	if err = verifyPinnedKey(raw, sig, b.Bytes(), SigningFingerprint); err == nil {
 		t.Fatal("different public key accepted")
 	}
 }

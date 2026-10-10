@@ -137,26 +137,27 @@ func purgeApplication(tx *sql.Tx, key string, revision int64) error {
 			return err
 		}
 	}
-	for _, table := range []string{"generations", "resources", "channels", "release_metadata", "app_versions", "blobs", "cleanup_previews"} {
-		if _, err = tx.Exec(`DELETE FROM `+table+` WHERE app_id LIKE ?`, pattern); err != nil {
+	// Rows keyed by the storage or metrics namespace have no foreign key to the
+	// application. Deleting a version cascades to its metadata, channels,
+	// resources and generations, which must go before the blobs they reference.
+	for _, statement := range []string{
+		`DELETE FROM app_versions WHERE app_id LIKE ?`,
+		`DELETE FROM blobs WHERE app_id LIKE ?`,
+		`DELETE FROM cleanup_previews WHERE app_id LIKE ?`,
+		`DELETE FROM http_cleanup_previews WHERE storage_id LIKE ?`,
+		`DELETE FROM http_cache_generations WHERE storage_id LIKE ?`,
+	} {
+		if _, err = tx.Exec(statement, pattern); err != nil {
 			return err
 		}
 	}
-	for _, table := range []string{"metric_counters", "metric_samples", "metric_hours", "events", "settings"} {
+	for _, table := range []string{"metric_counters", "metric_samples", "metric_hours", "events"} {
 		if _, err = tx.Exec(`DELETE FROM `+table+` WHERE app_id=? OR app_id LIKE ?`, prefix, pattern); err != nil {
 			return err
 		}
 	}
-	for _, table := range []string{"http_cleanup_previews", "http_cache_generations"} {
-		if _, err = tx.Exec(`DELETE FROM `+table+` WHERE storage_id LIKE ?`, pattern); err != nil {
-			return err
-		}
-	}
-	for _, table := range []string{"application_instructions", "hosted_files", "download_sketches", "homepage_pins", "application_sources"} {
-		if _, err = tx.Exec(`DELETE FROM `+table+` WHERE app_uid=?`, a.UID); err != nil {
-			return err
-		}
-	}
+	// Every UID-keyed row (sources, configuration, notes, taxonomy, hosted files,
+	// ranking, prewarm, retention) cascades from the application.
 	if _, err = tx.Exec(`DELETE FROM applications WHERE uid=?`, a.UID); err != nil {
 		return err
 	}
