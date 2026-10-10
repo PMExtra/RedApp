@@ -22,6 +22,8 @@ import {
   type CounterView,
 } from "./chartData";
 import { useMetricFormat } from "./format";
+import HistoryReadout from "./HistoryReadout.vue";
+import HistoryTable from "./HistoryTable.vue";
 import { createPlot, indexAt, showCursor } from "./plot";
 import { useMetricHistory, type MetricScope } from "./queries";
 
@@ -39,7 +41,7 @@ const format = useFormat();
 const metricFormat = useMetricFormat();
 const labels = useMetricLabels();
 const preferences = usePreferencesStore();
-const ids = { help: useId(), summary: useId(), readout: useId(), table: useId() };
+const ids = { help: useId(), summary: useId(), readout: useId() };
 
 const view = ref<CounterView>("value");
 watch(
@@ -65,17 +67,29 @@ const summary = computed(() =>
 );
 const unit = computed(() => props.metric.unit);
 const metricName = computed(() => labels.label(props.metric));
+const rangeName = computed(() => t(`metrics.history.ranges.${range.value}`));
 const hourly = computed(() => series.value?.resolution_seconds === 3600);
 const latestPoint = computed(() => series.value?.points.at(-1));
 
-const selected = ref<number | null>(null);
+// The selection is a bucket time, not an index, so it survives background
+// refetches that add or drop buckets; it clears when its bucket is gone.
+const selectedTime = ref<number | null>(null);
 const input = ref<"pointer" | "keyboard" | "touch">("pointer");
-const selectedTime = computed(() =>
-  selected.value === null ? undefined : timeline.value.times[selected.value],
-);
+const selected = computed(() => {
+  if (selectedTime.value === null) return null;
+  const index = timeline.value.times.indexOf(selectedTime.value);
+  return index < 0 ? null : index;
+});
 const selectedPoint = computed<HistoryPoint | null | undefined>(() =>
   selected.value === null ? undefined : timeline.value.points[selected.value],
 );
+watch([() => props.metric.key, range, view], () => {
+  selectedTime.value = null;
+});
+
+function selectIndex(index: number | null) {
+  selectedTime.value = index === null ? null : (timeline.value.times[index] ?? null);
+}
 
 const host = ref<HTMLElement>();
 const plot = shallowRef<uPlot>();
@@ -90,7 +104,8 @@ function destroyPlot() {
 
 function drawPlot() {
   destroyPlot();
-  selected.value = null;
+  // A hover readout follows the mouse, which the new chart has not seen yet.
+  if (input.value === "pointer") selectedTime.value = null;
   const element = host.value;
   if (!element || !summary.value?.covered) return;
   plot.value = createPlot({
@@ -103,9 +118,11 @@ function drawPlot() {
       // A touch tap pins the readout; emulated mouse events must not move it.
       if (input.value === "touch") return;
       input.value = "pointer";
-      selected.value = index;
+      selectIndex(index);
     },
   });
+  // A keyboard or touch selection stays visible across redraws.
+  if (selected.value !== null) showCursor(plot.value, selected.value);
   if (typeof ResizeObserver !== "undefined") {
     observer = new ResizeObserver(() => {
       plot.value?.setSize({ width: Math.max(240, element.clientWidth), height: 260 });
@@ -127,7 +144,7 @@ onBeforeUnmount(destroyPlot);
 function select(index: number | null, method: "keyboard" | "touch") {
   input.value = method;
   const last = timeline.value.times.length - 1;
-  selected.value = index === null || last < 0 ? null : Math.max(0, Math.min(last, index));
+  selectIndex(index === null || last < 0 ? null : Math.max(0, Math.min(last, index)));
   if (plot.value) showCursor(plot.value, selected.value);
 }
 
@@ -174,19 +191,14 @@ function onPointerDown(event: PointerEvent) {
   if (index !== null) select(index, "touch");
 }
 
+// A real mouse over the chart takes over from a pinned touch readout (touch
+// produces emulated mouse events, but never pointer events of type mouse).
+function onPointerMove(event: PointerEvent) {
+  if (event.pointerType === "mouse" && input.value === "touch") input.value = "pointer";
+}
+
 function onBlur() {
   if (input.value === "keyboard") select(null, "keyboard");
-}
-
-function bucketTime(seconds: number | undefined) {
-  if (seconds === undefined) return "—";
-  return format.dateTime(new Date(seconds * 1000), { dateStyle: "medium", timeStyle: "short" });
-}
-
-function coverage(point: HistoryPoint) {
-  if (point.partial) return t("metrics.history.coverage.partial");
-  if (point.incomplete) return t("metrics.history.coverage.incomplete");
-  return t("metrics.history.coverage.complete");
 }
 
 const kindNote = computed(() => t(`metrics.history.notes.${props.metric.kind}`));
@@ -195,16 +207,6 @@ const scopeNote = computed(() =>
     ? t(props.scope.kind === "app" ? "metrics.versionsScope.app" : "metrics.versionsScope.global")
     : "",
 );
-
-const tableOpen = ref(false);
-const tableRows = computed(() => {
-  const rows: { time: number; point: HistoryPoint }[] = [];
-  timeline.value.points.forEach((point, index) => {
-    const time = timeline.value.times[index];
-    if (point && time !== undefined) rows.push({ time, point });
-  });
-  return rows.reverse();
-});
 const counter = computed(() => props.metric.kind === "counter");
 </script>
 
@@ -295,85 +297,26 @@ const counter = computed(() => props.metric.kind === "counter");
             ref="host"
             role="group"
             tabindex="0"
-            :aria-label="
-              t('metrics.history.chartLabel', {
-                name: metricName,
-                range: t(`metrics.history.ranges.${range}`),
-              })
-            "
+            :aria-label="t('metrics.history.chartLabel', { name: metricName, range: rangeName })"
             :aria-describedby="`${ids.summary} ${ids.help} ${ids.readout}`"
             class="min-h-[260px] w-full touch-pan-y rounded-md focus-ring"
             @keydown="onKeydown"
             @focus="onFocus"
             @blur="onBlur"
             @pointerdown="onPointerDown"
+            @pointermove="onPointerMove"
           />
           <p :id="ids.help" class="text-xs text-muted">{{ t("metrics.history.help") }}</p>
-          <div
+          <HistoryReadout
             :id="ids.readout"
-            role="status"
-            :aria-label="t('metrics.history.readout')"
-            :aria-live="input === 'pointer' ? 'off' : 'polite'"
-            aria-atomic="true"
-            class="min-h-24 rounded-lg border border-border bg-surface-sunken p-3 text-sm"
-          >
-            <template v-if="selectedTime !== undefined">
-              <p class="font-medium">
-                <time :datetime="new Date(selectedTime * 1000).toISOString()">
-                  {{ bucketTime(selectedTime) }}
-                </time>
-                <span class="text-muted">
-                  ·
-                  {{ t(hourly ? "metrics.history.bucket.hour" : "metrics.history.bucket.minute") }}
-                </span>
-              </p>
-              <p v-if="!selectedPoint" class="mt-1 text-muted">
-                {{ t("metrics.history.gap") }}
-              </p>
-              <template v-else>
-                <dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
-                  <template v-for="line in lines" :key="line.field">
-                    <dt class="text-muted">{{ t(line.labelKey) }}</dt>
-                    <dd class="tabular-nums">
-                      {{ metricFormat.value(selectedPoint[line.field], unit) }}
-                      <span
-                        v-if="
-                          metricFormat.exact(selectedPoint[line.field], unit) !==
-                          metricFormat.value(selectedPoint[line.field], unit)
-                        "
-                        class="text-xs text-muted"
-                      >
-                        ({{ metricFormat.exact(selectedPoint[line.field], unit) }})
-                      </span>
-                    </dd>
-                  </template>
-                </dl>
-                <p class="mt-2 text-xs text-muted">
-                  {{ t("metrics.history.samples", { count: selectedPoint.count }) }}
-                  · {{ coverage(selectedPoint) }}
-                  <template v-if="metric.kind !== 'gauge'">
-                    ·
-                    {{
-                      t("metrics.history.observed", {
-                        seconds: format.number(selectedPoint.observed_seconds),
-                      })
-                    }}
-                  </template>
-                  <template v-if="counter && view === 'delta'">
-                    ·
-                    {{ t("metrics.history.intervals", { count: selectedPoint.delta_count }) }}
-                  </template>
-                </p>
-                <p
-                  v-if="counter && view === 'delta' && selectedPoint.delta === null"
-                  class="mt-1 text-xs text-muted"
-                >
-                  {{ t("metrics.history.deltaUnknown") }}
-                </p>
-              </template>
-            </template>
-            <p v-else class="text-muted">{{ t("metrics.history.prompt") }}</p>
-          </div>
+            :live="input !== 'pointer'"
+            :time="selected === null ? undefined : timeline.times[selected]"
+            :point="selectedPoint"
+            :lines="lines"
+            :metric="metric"
+            :hourly="hourly"
+            :view="view"
+          />
         </template>
 
         <p class="text-xs text-muted">{{ kindNote }}</p>
@@ -381,92 +324,13 @@ const counter = computed(() => props.metric.kind === "counter");
           {{ t("metrics.history.partialNote", { count: latestPoint.count }) }}
         </p>
 
-        <details
+        <HistoryTable
           v-if="summary.covered > 0"
-          class="rounded-lg border border-border"
-          @toggle="tableOpen = ($event.target as HTMLDetailsElement).open"
-        >
-          <summary class="cursor-pointer px-3 py-2 text-sm font-medium focus-ring">
-            {{ t("metrics.history.table.toggle", { count: format.number(tableRows.length) }) }}
-          </summary>
-          <div
-            v-if="tableOpen"
-            class="max-h-80 overflow-auto border-t border-border"
-            tabindex="0"
-            :aria-labelledby="ids.table"
-          >
-            <table class="w-full border-collapse text-sm">
-              <caption :id="ids.table" class="sr-only">
-                {{
-                  t("metrics.history.table.caption", {
-                    name: metricName,
-                    range: t(`metrics.history.ranges.${range}`),
-                  })
-                }}
-              </caption>
-              <thead class="sticky top-0 bg-surface-sunken text-xs text-muted">
-                <tr>
-                  <th scope="col" class="px-3 py-2 text-start font-medium">
-                    {{ t("metrics.history.table.time") }}
-                  </th>
-                  <template v-if="counter">
-                    <th scope="col" class="px-3 py-2 text-end font-medium">
-                      {{ t("metrics.history.lines.last") }}
-                    </th>
-                    <th scope="col" class="px-3 py-2 text-end font-medium">
-                      {{ t("metrics.history.lines.delta") }}
-                    </th>
-                  </template>
-                  <template v-else>
-                    <th scope="col" class="px-3 py-2 text-end font-medium">
-                      {{ t(lines[0]?.labelKey ?? "metrics.history.lines.sample") }}
-                    </th>
-                    <th scope="col" class="px-3 py-2 text-end font-medium">
-                      {{ t("metrics.history.lines.min") }}
-                    </th>
-                    <th scope="col" class="px-3 py-2 text-end font-medium">
-                      {{ t("metrics.history.lines.max") }}
-                    </th>
-                  </template>
-                  <th scope="col" class="px-3 py-2 text-end font-medium">
-                    {{ t("metrics.history.table.samples") }}
-                  </th>
-                  <th scope="col" class="px-3 py-2 text-start font-medium">
-                    {{ t("metrics.history.table.coverage") }}
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="row in tableRows" :key="row.time" class="border-t border-border">
-                  <th scope="row" class="px-3 py-1.5 text-start font-normal whitespace-nowrap">
-                    {{ bucketTime(row.time) }}
-                  </th>
-                  <template v-if="counter">
-                    <td class="px-3 py-1.5 text-end tabular-nums">
-                      {{ metricFormat.value(row.point.value, unit) }}
-                    </td>
-                    <td class="px-3 py-1.5 text-end tabular-nums">
-                      {{ metricFormat.value(row.point.delta, unit) }}
-                    </td>
-                  </template>
-                  <template v-else>
-                    <td class="px-3 py-1.5 text-end tabular-nums">
-                      {{ metricFormat.value(row.point.value, unit) }}
-                    </td>
-                    <td class="px-3 py-1.5 text-end tabular-nums">
-                      {{ metricFormat.value(row.point.min, unit) }}
-                    </td>
-                    <td class="px-3 py-1.5 text-end tabular-nums">
-                      {{ metricFormat.value(row.point.max, unit) }}
-                    </td>
-                  </template>
-                  <td class="px-3 py-1.5 text-end tabular-nums">{{ row.point.count }}</td>
-                  <td class="px-3 py-1.5">{{ coverage(row.point) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </details>
+          :timeline="timeline"
+          :lines="lines"
+          :metric="metric"
+          :caption="t('metrics.history.table.caption', { name: metricName, range: rangeName })"
+        />
       </div>
     </AsyncState>
   </div>

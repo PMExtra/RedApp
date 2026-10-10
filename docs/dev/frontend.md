@@ -189,7 +189,7 @@ const save = useRevisionedMutation({
 | `MetricScope`、`GLOBAL_SCOPE`、`appScope(vendor, app)` | 指标归属：`{ kind: "global" }` 或 `{ kind: "app", vendor, app }` |
 | `<MetricCards :metrics :primary :scope @select>` | 按规范的 `group`（disk、traffic、speed、runtime、resources）分组；`primary` 中的键为常用指标，其余为折叠的诊断指标。默认 `GLOBAL_COMMON_METRICS`（16 项），应用页传 `APP_COMMON_METRICS`。`level` 设置标题层级 |
 | `<MetricHistoryDialog v-model:metric :scope>` | 设置 `metric` 打开对话框，关闭时置为 `undefined`；在对话框间保持所选范围 |
-| `<HistoryChart :metric :scope v-model:range>` | 不带对话框的历史图（uPlot）：24h/7d/30d（默认 7d），计数器可切换累计值与每段增量；缺失样本保持空缺；键盘（左右、Page Up/Down、Home/End、Esc）与触摸读数；摘要句与数据表作为无图替代 |
+| `<HistoryChart :metric :scope v-model:range>` | 不带对话框的历史图（uPlot）：24h/7d/30d（默认 7d），计数器可切换累计值与每段增量；缺失样本保持空缺；键盘（左右、Page Up/Down、Home/End、Esc）与触摸读数，所选时间段在后台刷新后保留，触摸后鼠标移入恢复悬停读数；摘要句与数据表（`HistoryReadout`、`HistoryTable`）作为无图替代 |
 | `useMetricHistory(scope, metric, range)` | `getHistory` / `getAppHistory` |
 | `useMetricLabels()`、`useMetricFormat()`、`formatMetricValue()` | 本地化名称（`metrics.labels.<key>`，缺失时回退到服务端英文 `label`）与按 `unit` 格式化（IEC 字节、字节/秒、计数、时长；未知为 `—`） |
 
@@ -200,7 +200,7 @@ const save = useRevisionedMutation({
 <MetricHistoryDialog v-model:metric="selected" :scope="appScope(vendor, app)" />
 ```
 
-`sampled`、`stale` 两个文本（`metrics.sampled`、`metrics.stale`）供页面显示采样时间与刷新失败警告。图表颜色在绘制时从设计令牌（`--rd-primary`、`--rd-text-subtle`、`--rd-border`）读取，主题或语言切换后重绘。uPlot 只通过 CSSOM 设置样式，不违反 CSP。happy-dom 没有 canvas，打开历史图的测试用 `vi.mock("uplot", () => import("@/test/uplot"))` 替身。
+`sampled`、`stale` 两个文本（`metrics.sampled`、`metrics.stale`）供页面显示采样时间与刷新失败警告。图表颜色在绘制时从设计令牌（`--rd-primary`、`--rd-text-subtle`、`--rd-border`）读取，主题或语言切换后重绘。uPlot 只通过 CSSOM 设置样式，不违反 CSP。happy-dom 没有 canvas，打开历史图的测试用 `vi.mock("uplot", () => import("@/test/uplot"))` 替身（每个时间段 10px，鼠标在绘图区移动时像 uPlot 一样触发 `setCursor` 钩子）。
 
 ## 国际化
 
