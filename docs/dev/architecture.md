@@ -192,6 +192,23 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 
 全局未设置时为直连。`url` 模式下 DNS 由代理解析。每个作用域有独立的 transport，切换设置不取消已在进行的请求。
 
+### 写入、CAS 与发布
+
+配置写入（`internal/store` 的 `writeConfiguration`）分四步：
+
+1. **读取**：在只读事务中只加载本次操作涉及的行——目标实体、它的模板、所属厂商（解析代理）、引用的分类、备注、全局代理——在内存中修改，再校验并物化变化的实体（目录列、使用说明 revision、HTTP 策略、来源 epoch、运行时 revision）。
+2. **准备**：在内存中的运行时视图上叠加变化的实体，得到完整的 `DirectorySnapshot`，交给发布协调器准备注册表、代理 transport 与下载上游。此时没有打开的事务。
+3. **提交**：一个事务只写变化的行。已有的厂商、应用、分类、备注和全局代理用 `UPDATE … WHERE … AND revision=<读到的值>`，新建的行用 `INSERT … ON CONFLICT DO NOTHING`；影响行数不为 1 即 `ErrConflict`，整个事务回滚。分类的创建、剪枝和公开 revision 在同一事务内完成；永久删除在同一事务内清除行。
+4. **发布**：提交成功后才发布，并把变化并入运行时视图。准备或提交失败都会放弃发布，视图不变。
+
+要点：
+
+- **按实体冲突**：只有本次写入涉及的实体被并发修改才冲突；修改其他实体从不冲突。导入在执行时对涉及的实体重新计算计划，与预览结果逐项比较（revision、差异、动作），任一不同即 409；全部实体、分类、备注和导入回执在一个事务内提交或全部不提交。
+- **三级代理**：修改厂商或全局代理只写自身那一行，不改写应用的覆盖；应用的有效视图和运行时代理作用域在读取或发布时由三级继承解析。
+- **运行时视图**：store 在内存中保存已提交配置的运行时投影（实体、自身代理设置、模板绑定、可信发布契约、来源），首次发布时从数据库加载一次。准备发布不再重读配置，但重建注册表仍是内存中 O(N)。`DirectoryConfigurationSnapshot` 与 `RepublishConfiguration` 从数据库重建视图，用于启动和外部直接改行之后。
+- **唯一的全局串行点**：`Store.writeMu` 从读取持有到发布，保证发布顺序与提交顺序一致、每次准备都基于上一次提交后的视图。持锁的最长操作是一个只涉及变更行的写事务加内存中的准备与发布；SQLite 本来就只允许一个写者。不参与发布的管理员备注只用 CAS，不持此锁；分类重命名持此锁，以免与写入中新建的分类重名。HTTP 层不再有自己的目录锁。
+- 模板同步（启动时）是唯一加载全部配置的写入，因为模板变化会影响所有绑定它的实体。
+
 ### 其他设置
 
 - **保留**：发布类应用可设 `keep_latest`（1–1000，默认 3）。
@@ -229,7 +246,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 
 - `httpserver.New(Deps, ...Option)` 一次校验全部依赖（store、注册表、目录、下载、HTTP 缓存、托管文件、认证、上游连接池、图标、指标历史、公共地址、预热、发布维护、数据目录），缺失即返回错误；不做惰性初始化。
 - `Deps.TrustedProxies`（`ParseTrustedProxies`，来自部署配置 `trusted_proxies`）决定哪些对端的转发头可信。
-- 构造时在 store 上安装配置发布协调器（`publication.go`）：每次配置写入先准备候选注册表、上游 transport 和下载上游，提交后一起发布。
+- 构造时在 store 上安装配置发布协调器（`publication.go`）：每次配置写入先准备候选注册表、上游 transport 和下载上游，提交后一起发布（见[写入、CAS 与发布](#写入cas-与发布)）。发布顺序由 store 保证，处理器不另加锁。
 - 选项：`WithConfigurationCheck` 在发布准备后追加一个校验（测试用它注入失败），`WithDeleteWait` 设定删除应用时等待任务退出的上限（默认 15 秒）。
 
 ### 路由表
@@ -295,8 +312,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 | --- | --- | --- |
 | 两套缓存引擎 | `download` 与 `httpcache` 各自实现代际、临时文件发布、清理预览、恢复和指标 | 阶段 5：HTTP 缓存复用下载引擎的存储与发布机制 |
 | store 暴露 DB | `Store.DB` 是公开字段，`auth`、`history`、`httpcache`、`httpserver` 直接写 SQL | 阶段 5：SQL 收回 `internal/store`，按实体封装 |
-| 配置快照 CAS | 每次配置写入在全局锁下读取、克隆整份配置状态，事务内再与重读结果整体比较；任一实体的并发变化都会让本次写入失败，成本随配置规模增长。实体 revision 只是额外检查 | 阶段 5：按实体 CAS |
 | HTTP 缓存冷请求 | 冷请求必须先完整落盘才响应，单次下载在全部来源上合计最长 9 分钟；慢速链路上的超大文件会失败，前置反代也可能先超时 | 阶段 5：复用下载引擎边下边读后取消总时限 |
-| 锁内 I/O | 下载进度保存和数据库调用仍在 `Manager.mu` 内（整文件哈希和 bcrypt 已移出）；媒体、预热和目录写入在持锁期间做 I/O | 阶段 2/5：按[约定](conventions.md#并发)调整 |
+| 锁内 I/O | 下载进度保存和数据库调用仍在 `Manager.mu` 内（整文件哈希和 bcrypt 已移出）；媒体和预热在持锁期间做 I/O（配置写入的 `Store.writeMu` 按约定在声明处说明了持锁范围） | 阶段 2/5：按[约定](conventions.md#并发)调整 |
 | 无 UID 的静态测试条目 | httpserver 的测试已全部经 `newHarness` 使用真实目录；`catalog` 等包的测试仍用没有 UID 的 `application.Entry`，`Entry.StorageID`/`MetricsID`/`Active`、`store.checkSourceActive`、`catalog.CandidatesForSource` 为它们保留了分支 | 这些测试改用真实目录后删除这些分支 |
 | 后台日志 | HTTP 层用 `log/slog` 记录访问与错误日志；`cmd/redapp` 和后台循环的失败仍经标准库 `log` 进入同一个 slog handler，没有结构化字段 | 逐步改为 slog 字段 |
