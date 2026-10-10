@@ -156,7 +156,10 @@ func TestExchangeAtomicFailureMissingTemplateAndPreviewFences(t *testing.T) {
 		t.Fatal("partial vendor")
 	}
 	s.SetConfigurationPrepare(nil)
-	patch(t, s, "openai/codex", map[string]any{"name.en": "changed"})
+	// Creating an entity the import creates makes the preview stale.
+	if _, e = s.CreateVendor(VendorInput{ID: "new", Name: LocalizedText{"New", "New"}}); e != nil {
+		t.Fatal(e)
+	}
 	if _, e = s.ExecuteConfigurationImport(plan, "stale", true); !errors.Is(e, ErrConflict) {
 		t.Fatal("preview CAS", e)
 	}
@@ -356,9 +359,9 @@ func TestExchangeOmittedProxyRebindRequiresResolutionAndKeepsNotes(t *testing.T)
 	if e = s.ReconcileTemplates(set); e != nil {
 		t.Fatal(e)
 	}
-	st, _ := s.configurationState()
 	ref := "openai/other"
-	doc := configexchange.Document{SchemaVersion: 1, Kind: "App", Metadata: &presets.Metadata{Vendor: "target", ID: "copy"}, Template: &ref, TemplateHash: st.Templates[templateKey("App", ref)].Hash, Overrides: map[string]any{}, OmittedFields: []string{"proxy"}}
+	other, _ := s.ApplicationConfiguration(ref)
+	doc := configexchange.Document{SchemaVersion: 1, Kind: "App", Metadata: &presets.Metadata{Vendor: "target", ID: "copy"}, Template: &ref, TemplateHash: *other.TemplateHash, Overrides: map[string]any{}, OmittedFields: []string{"proxy"}}
 	// Current own proxy is inherited from the old template. Preserving it as an explicit inherit remains direct here.
 	plan, e := s.PreviewConfigurationImport([]configexchange.Document{doc}, []ImportChoice{{Kind: "App", Key: app.Key, Action: "update"}})
 	if e != nil {
