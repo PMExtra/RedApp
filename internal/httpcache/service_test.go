@@ -31,6 +31,20 @@ type testBudget struct {
 	readerAcquired atomic.Pointer[chan struct{}]
 }
 
+// drained reports whether every lease was returned. Fills release their
+// writer lease after publication, which can follow the response that ended a
+// test, so it waits briefly for leases still being returned.
+func (b *testBudget) drained() bool {
+	deadline := time.Now().Add(5 * time.Second)
+	for b.readers.Load() != 0 || b.writers.Load() != 0 {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return true
+}
+
 func (b *testBudget) AcquireHTTPReader() (func(), error) {
 	b.readers.Add(1)
 	if acquired := b.readerAcquired.Load(); acquired != nil {
@@ -326,7 +340,7 @@ func TestCacheSingleflightAndUnsharedResponses(t *testing.T) {
 					t.Fatal("unshared response reached disk", files)
 				}
 			}
-			if f.budget.readers.Load() != 0 || f.budget.writers.Load() != 0 {
+			if !f.budget.drained() {
 				t.Fatal("capacity leaked")
 			}
 		})
@@ -470,7 +484,7 @@ func TestConcurrentReadersOfUncacheablePathAllSucceed(t *testing.T) {
 	if calls.Load() != readers || len(f.rows(t)) != 0 {
 		t.Fatal("uncacheable readers were not served by direct transfers", calls.Load())
 	}
-	if f.budget.readers.Load() != 0 || f.budget.writers.Load() != 0 {
+	if !f.budget.drained() {
 		t.Fatal("capacity leaked")
 	}
 }
@@ -537,7 +551,7 @@ func TestServeBoundsFetchAgainRetries(t *testing.T) {
 	if !errors.Is(err, ErrFetchContended) || w.Code != 200 || w.Body.Len() != 0 || calls.Load() != 0 {
 		t.Fatal("unbounded or misreported ErrFetchAgain retry", err, w.Code, calls.Load())
 	}
-	if f.budget.readers.Load() != 0 || f.budget.writers.Load() != 0 {
+	if !f.budget.drained() {
 		t.Fatal("capacity leaked")
 	}
 }
@@ -741,7 +755,7 @@ func TestBoundsCancellationRecoveryAndPolicyParsing(t *testing.T) {
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	if g.budget.readers.Load() != 0 || g.budget.writers.Load() != 0 {
+	if !g.budget.drained() {
 		t.Fatal("cancel leaked capacity")
 	}
 	// Refuse a symlinked cache directory, without touching its destination.
@@ -829,7 +843,7 @@ func TestActiveSnapshotCountersAndNoStoreInterruptedBody(t *testing.T) {
 	if len(files) != 0 {
 		t.Fatal("no-store bytes stored on disk", files)
 	}
-	if f.budget.readers.Load() != 0 || f.budget.writers.Load() != 0 {
+	if !f.budget.drained() {
 		t.Fatal("private failure leaked leases")
 	}
 }
