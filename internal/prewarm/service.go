@@ -165,18 +165,32 @@ func (s *Service) Start(ctx context.Context, key string, in warmplan.Input, auto
 	}
 	current := &activeJob{UID: e.UID, ID: jobID, Done: make(chan struct{}), Budget: &warmplan.Budget{Max: in.Limits.MaxDownloadBytes}}
 	s.mu.Lock()
-	if s.closed.Load() {
-		s.mu.Unlock()
-		return store.PrewarmJob{}, false, context.Canceled
-	}
-	if !s.active.CompareAndSwap(nil, current) {
+	for {
+		if s.closed.Load() {
+			s.mu.Unlock()
+			return store.PrewarmJob{}, false, context.Canceled
+		}
+		if s.active.CompareAndSwap(nil, current) {
+			break
+		}
 		existing := s.active.Load()
 		s.mu.Unlock()
-		if existing != nil {
-			job, _ := s.DB.PrewarmJob(existing.UID, existing.ID)
+		if existing == nil {
+			s.mu.Lock()
+			continue
+		}
+		job, _ := s.DB.PrewarmJob(existing.UID, existing.ID)
+		if job.ID == "" || job.State == "running" {
 			return job, false, ErrBusy
 		}
-		return store.PrewarmJob{}, false, ErrBusy
+		// The worker persists the terminal state before it releases the slot;
+		// wait for that release instead of reporting a finished job as busy.
+		select {
+		case <-existing.Done:
+		case <-ctx.Done():
+			return store.PrewarmJob{}, false, ctx.Err()
+		}
+		s.mu.Lock()
 	}
 	s.wg.Add(1)
 	ctxWork, finish, err := s.DB.ApplicationWork(s.ctx, e.StorageID())
