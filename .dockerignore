@@ -1,6 +1,22 @@
+# Build context of the root Dockerfile (source builds). The image needs Go
+# sources with their embedded assets, frontend sources and scripts/build-binary.sh.
 .git
+.github
+.claude
+.generated
+.vscode
+.idea
 bin
 data
-*.sqlite*
-__pycache__
-frontend/node_modules
+docs
+config
+third_party
+AGENTS.md
+README*.md
+scripts/*
+!scripts/build-binary.sh
+# Rebuilt by the frontend stage; never mixed with the committed bundle.
+internal/httpserver/web
+**/node_modules
+**/__pycache__
+**/*.sqlite*

@@ -63,4 +63,4 @@ installers: installer-inventory
 	python3 scripts/update-installers.py --application anthropic/claude-code --source installers/anthropic/claude-code/upstream
 
 docker:
-	docker build -t redapp:local .
+	docker build -t redapp:local --build-arg VERSION="$(VERSION)" --build-arg REVISION="$(REVISION)" .

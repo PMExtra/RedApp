@@ -133,7 +133,8 @@ jobs:
           cp /etc/ssl/certs/ca-certificates.crt runtime-input/ca-certificates.crt
           chmod 0700 runtime-input/data
           image="redapp:ci-$GITHUB_SHA-$ARCH"
-          docker build --platform "linux/$ARCH" -f .github/runtime/Dockerfile \
+          docker build --platform "linux/$ARCH" -f Dockerfile --target runtime \
+            --build-arg RUNTIME_FILES=prebuilt \
             --build-arg VERSION="$(cat VERSION)" --build-arg REVISION="$GITHUB_SHA" \
             -t "$image" runtime-input
           test "$(docker run --rm --network none "$image" version)" = "RedApp $(cat VERSION) (commit $GITHUB_SHA)"
@@ -153,6 +154,22 @@ jobs:
           if-no-files-found: error
           overwrite: true
           compression-level: 0
+
+  # Release images package the native CI binary (runtime job). This job keeps the
+  # source path of the same Dockerfile (frontend + Go stages) building and working.
+  source-image:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Build the root Dockerfile from source and exercise the image
+        run: |
+          image="redapp:source-$GITHUB_SHA"
+          docker build --build-arg VERSION="$(cat VERSION)" --build-arg REVISION="$GITHUB_SHA" -t "$image" .
+          test "$(docker run --rm --network none "$image" version)" = "RedApp $(cat VERSION) (commit $GITHUB_SHA)"
+          REDAPP_TEST_IMAGE="$image" sh scripts/test-docker-local.sh
 
   windows-installers:
     uses: ./.github/workflows/windows-installers.yml
