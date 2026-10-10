@@ -28,7 +28,7 @@ func (s *Service) bodies() bodyStore { return localBodies{s.dir} }
 
 func (b localBodies) path(id string) (string, error) {
 	if !bodyID.MatchString(id) {
-		return "", errors.New("Invalid blob identifier")
+		return "", errors.New("invalid blob identifier")
 	}
 	return filepath.Join(b.directory, id+".body"), nil
 }

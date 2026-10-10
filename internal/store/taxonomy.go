@@ -34,7 +34,7 @@ type TaxonomyItem struct {
 }
 
 // ErrCategoryAmbiguous means a typed category name matches more than one existing category.
-var ErrCategoryAmbiguous = errors.New("Category name matches more than one existing category; choose one from the list")
+var ErrCategoryAmbiguous = errors.New("category name matches more than one existing category; choose one from the list")
 
 const categoryKind = "categories"
 const taxonomyColumns = `id,name_en,name_zh_cn,revision,builtin,present,default_en,default_zh_cn,override_en,override_zh_cn`

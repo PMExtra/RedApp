@@ -32,7 +32,7 @@ import (
 
 var ErrClosed = errors.New("HTTP cache is shutting down")
 var ErrUpstream = errors.New("HTTP upstream response unavailable")
-var ErrInvalidCleanup = errors.New("Invalid HTTP cache cleanup request")
+var ErrInvalidCleanup = errors.New("invalid HTTP cache cleanup request")
 
 type Row struct {
 	SourceURL    string     `json:"source_url"`
@@ -364,7 +364,7 @@ func (s *Service) recover() error {
 	keep := map[string]bool{}
 	for _, e := range entries {
 		if !bodyID.MatchString(e.ID) {
-			return errors.New("Invalid HTTP cache file identity")
+			return errors.New("invalid HTTP cache file identity")
 		}
 		if e.Current {
 			keep[e.ID+".body"] = true
@@ -385,7 +385,7 @@ func (s *Service) recover() error {
 			continue
 		}
 		if f.Type()&os.ModeSymlink != 0 || f.IsDir() {
-			return errors.New("Unexpected nonregular HTTP cache file")
+			return errors.New("unexpected nonregular HTTP cache file")
 		}
 		if _, err = fsutil.Remove(filepath.Join(s.dir, name)); err != nil {
 			return err

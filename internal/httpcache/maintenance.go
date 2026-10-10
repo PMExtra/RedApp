@@ -17,9 +17,9 @@ import (
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
-var ErrPreviewRunning = errors.New("Maintenance preview is already running")
-var ErrInvalidPreview = errors.New("Invalid maintenance preview")
-var ErrPreviewBusy = errors.New("Maintenance preview capacity reached")
+var ErrPreviewRunning = errors.New("maintenance preview is already running")
+var ErrInvalidPreview = errors.New("invalid maintenance preview")
+var ErrPreviewBusy = errors.New("maintenance preview capacity reached")
 
 const PreviewBuilderLimit = 8
 

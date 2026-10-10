@@ -13,7 +13,7 @@ import (
 
 var ErrRefreshMissing = errors.New("HTTP cache refresh requires an existing current file")
 var ErrRefreshBusy = errors.New("HTTP cache refresh is already running")
-var ErrInvalidRefresh = errors.New("Invalid HTTP cache refresh request")
+var ErrInvalidRefresh = errors.New("invalid HTTP cache refresh request")
 
 type RefreshItem struct {
 	Path         string `json:"path"`

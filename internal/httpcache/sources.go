@@ -28,7 +28,7 @@ type sourceCursor struct {
 // response classes may advance to the next source.
 func (s *Service) sourceAttempts(entry application.Entry) ([]sourceAttempt, error) {
 	if entry.Provider != application.HttpCache {
-		return nil, errors.New("Multiple source selection requires GeneralHttp")
+		return nil, errors.New("multiple source selection requires GeneralHttp")
 	}
 	clients := entry.Upstreams
 	if len(clients) == 0 && entry.Upstream != nil {
@@ -57,7 +57,7 @@ func (s *Service) sourceAttempts(entry application.Entry) ([]sourceAttempt, erro
 		rand.Shuffle(len(attempts), func(i, j int) { attempts[i], attempts[j] = attempts[j], attempts[i] })
 		return attempts, nil
 	default:
-		return nil, errors.New("Unknown HTTP source strategy")
+		return nil, errors.New("unknown HTTP source strategy")
 	}
 }
 

@@ -198,7 +198,7 @@ func (w *accessWriter) Write(p []byte) (int, error) {
 		w.WriteHeader(http.StatusOK)
 	}
 	if w.failed {
-		return 0, errors.New("Cache access persistence failed")
+		return 0, errors.New("cache access persistence failed")
 	}
 	return w.ResponseWriter.Write(p)
 }
