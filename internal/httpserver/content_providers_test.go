@@ -42,20 +42,17 @@ func TestContentProvidersInstructionsAndBackendCapabilityGates(t *testing.T) {
 	}
 	h.request("GET", "/content/about/file.zip", nil, 404, nil)
 	h.request("GET", "/admin/api/apps/content/about/files", nil, 404, nil)
-	h.request("POST", "/admin/api/vendors/content/apps", map[string]any{"id": "bad", "provider": "info", "name": store.LocalizedText{En: "Bad", ZhCN: "错误"}, "base_url": "https://example.com"}, 400, nil)
-	endpoint := "/admin/api/apps/" + info.Key + "/instructions"
-	_, headers := h.request("GET", endpoint, nil, 200, nil)
-	if headers.Get("ETag") != `"0"` {
-		t.Fatal(headers)
-	}
+	h.request("POST", "/admin/api/apps", map[string]any{"vendor": "content", "id": "bad", "provider": "info", "name": store.LocalizedText{En: "Bad", ZhCN: "错误"}, "base_url": "https://example.com", "enabled": true}, 400, nil)
+	// Usage instructions are configuration paths of the application.
+	endpoint := "/admin/api/apps/" + info.Key + "/configuration"
 	before, _ := h.publicCatalog()
-	value := map[string]any{"en": "<script>never execute</script>\nUse this app.", "zh-CN": "使用说明\n保留换行"}
-	h.request("PUT", endpoint, value, 403, map[string]string{"X-CSRF-Token": "wrong", "If-Match": `"0"`})
-	_, headers = h.request("PUT", endpoint, value, 200, map[string]string{"If-Match": `"0"`})
-	if headers.Get("ETag") != `"1"` {
+	value := map[string]any{"set": map[string]any{"instructions.en": "<script>never execute</script>\nUse this app.", "instructions.zh-CN": "使用说明\n保留换行"}}
+	h.request("PATCH", endpoint, value, 403, map[string]string{"X-CSRF-Token": "wrong", "If-Match": etag(info.Revision)})
+	_, headers := h.request("PATCH", endpoint, value, 200, ifMatchHeader(info.Revision))
+	if headers.Get("ETag") != etag(info.Revision+1) {
 		t.Fatal(headers)
 	}
-	h.request("PUT", endpoint, value, 409, map[string]string{"If-Match": `"0"`})
+	h.request("PATCH", endpoint, value, 409, ifMatchHeader(info.Revision))
 	after, _ := h.publicCatalog()
 	if before == after {
 		t.Fatal("instructions did not invalidate public bootstrap")
@@ -67,7 +64,7 @@ func TestContentProvidersInstructionsAndBackendCapabilityGates(t *testing.T) {
 	if doc, _ := h.request("GET", "/api/apps/"+info.Key+"/instructions/document?lang=zh-CN", nil, 200, nil); !bytes.Contains(doc, []byte("保留换行")) {
 		t.Fatal("instructions document lost the text", string(doc))
 	}
-	h.request("PUT", endpoint, map[string]any{"en": strings.Repeat("界", 12001), "zh-CN": ""}, 400, map[string]string{"If-Match": `"1"`})
+	h.request("PATCH", endpoint, map[string]any{"set": map[string]any{"instructions.en": strings.Repeat("界", 12001)}}, 400, ifMatchHeader(info.Revision+1))
 	if updated, _ := h.server.store.Application(info.Key); updated.Revision != info.Revision+1 || updated.SourceEpoch != info.SourceEpoch {
 		t.Fatal("instructions changed application identity")
 	}
@@ -160,7 +157,7 @@ func TestHostedHTTPUploadImportLocalRangeAndRestart(t *testing.T) {
 	if string(data) != "replacement" {
 		t.Fatal("restart lost file", string(data))
 	}
-	h.request("DELETE", "/admin/api/apps/content/files", map[string]any{"revision": a.Revision, "confirm_key": a.Key, "confirm_uid": a.UID}, 200, nil)
+	h.deleteApp(a.Key, a.UID, h.adminApp(a.Key).Revision, 200)
 	h.request("GET", "/content/files/remote.zip", nil, 404, nil)
 	h.request("GET", "/admin/api/apps/content/files/files", nil, 404, nil)
 	h.request("GET", "/content/files/nested/tool.bin", nil, 404, nil)

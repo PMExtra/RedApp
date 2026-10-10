@@ -14,7 +14,6 @@ import (
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/history"
 	"github.com/PMExtra/RedApp/internal/httpcache"
-	"github.com/PMExtra/RedApp/internal/store"
 )
 
 func TestGeneralHTTPRouteEncodingMethodsAndRanges(t *testing.T) {
@@ -127,8 +126,8 @@ func TestGeneralHTTPCacheAdminHistoricalSourceCleanup(t *testing.T) {
 	if string(body) != "old source file" {
 		t.Fatal("initial source file missing")
 	}
-	body, _ = h.request("PATCH", api, map[string]any{"revision": app.Revision, "base_url": newUpstream.URL + "/files"}, 200, nil)
-	rebound := directoryDecode[store.Application](t, body, "app")
+	h.patchConfiguration("apps/"+app.Key, map[string]any{"set": map[string]any{"base_urls": []string{newUpstream.URL + "/files"}}}, 200)
+	rebound := h.adminApp(app.Key)
 	body, _ = h.request("GET", publicPath, nil, 200, nil)
 	if string(body) != "new source file" || rebound.SourceEpoch != 2 {
 		t.Fatal("source edit served the old namespace")
@@ -181,7 +180,7 @@ func TestGeneralHTTPCacheAdminHistoricalSourceCleanup(t *testing.T) {
 	}
 	h.request("POST", execute+"?source_epoch=1", map[string]any{}, 200, nil)
 	// Disabling the public app retains cache and source management routes.
-	h.request("PATCH", api, map[string]any{"revision": rebound.Revision, "enabled": false}, 200, nil)
+	h.setEnabled("apps/"+app.Key, false)
 	h.request("GET", publicPath, nil, 404, nil)
 	h.request("HEAD", publicPath, nil, 404, nil)
 	if rows := list(""); len(rows) != 1 || rows[0].GenerationID != currentRows[0].GenerationID {

@@ -74,8 +74,7 @@ func retentionFixture(t *testing.T, dir string) (*harness, *retentionFixtureCont
 		t.Fatal(err)
 	}
 	h.createVendor("retention")
-	v, _ := h.server.store.Vendor("retention")
-	h.request("PATCH", "/admin/api/vendors/retention", map[string]any{"revision": v.Revision, "enabled": true}, 200, nil)
+	h.setEnabled("vendors/retention", true)
 	h.createApp("retention", "binary", "codex", map[string]any{"base_url": "http://retention.example", "cache_ttl_seconds": 60, "enabled": true})
 	for _, version := range []string{"1.0.0", "2.0.0", "10.0.0"} {
 		h.request("GET", "/retention/binary/releases/"+version+"/asset.tgz", nil, 200, nil)
@@ -187,9 +186,9 @@ func TestRetentionRejectsChangedPolicySourceAndChannels(t *testing.T) {
 			case "retention":
 				setRetention(t, h, 2, false)
 			case "source":
-				h.request("PATCH", "/admin/api/apps/"+a.Key, map[string]any{"revision": a.Revision, "base_url": "https://changed.example"}, 200, nil)
+				h.patchConfiguration("apps/"+a.Key, map[string]any{"set": map[string]any{"base_url": "https://changed.example"}}, 200)
 			case "disabled":
-				h.request("PATCH", "/admin/api/apps/"+a.Key, map[string]any{"revision": a.Revision, "enabled": false}, 200, nil)
+				h.setEnabled("apps/"+a.Key, false)
 			case "channel":
 				_, err := h.server.store.DB.Exec(`UPDATE channels SET version='10.0.0' WHERE app_id=?`, entry.StorageID())
 				if err != nil {

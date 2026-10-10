@@ -23,7 +23,7 @@ func TestExchangeLinkedIndependentSensitiveRoundtripAndCopy(t *testing.T) {
 	key := "openai/codex"
 	a, _ := s.Application(key)
 	patch(t, s, key, map[string]any{"name.en": a.Name.En, "instructions.zh-CN": "", "tags": []string{"cli"}, "categories": []string{"tools"}, "prewarm": presets.DefaultPrewarm(), "retention": presets.DefaultRetention(), "proxy": networkproxy.Config{Mode: "url", URL: "http://secret:password@127.0.0.1:3128"}})
-	if _, e := s.SaveAdminNotes("app", key, 0, "private notes sentinel"); e != nil {
+	if _, e := s.SaveAdminNotes("app", key, 1, "private notes sentinel"); e != nil {
 		t.Fatal(e)
 	}
 	p, e := s.ExportConfiguration(exchangeOptions("linked"))
@@ -347,7 +347,7 @@ func TestExchangeOmittedProxyRebindRequiresResolutionAndKeepsNotes(t *testing.T)
 	if e != nil {
 		t.Fatal(e)
 	}
-	s.SaveAdminNotes("app", app.Key, 0, "preserve notes")
+	s.SaveAdminNotes("app", app.Key, 1, "preserve notes")
 	// A separate valid template has a different proxy default. Omitting proxy may not switch the target's exit.
 	extra := set.Apps[slices.IndexFunc(set.Apps, func(a presets.App) bool { return a.Key() == source.Key })]
 	extra.Metadata.ID = "other"

@@ -76,15 +76,17 @@ async function withTimeout(promise, label) {
     clearTimeout(timer);
   }
 }
-async function request(path, body, method, status = 200) {
+async function request(path, body, method, status = 200, revision) {
+  const headers = {
+    Origin: origin,
+    Cookie: cookie,
+    "X-CSRF-Token": csrf,
+    "Content-Type": "application/json",
+  };
+  if (revision !== undefined) headers["If-Match"] = `"${revision}"`;
   const response = await fetch(origin + path, {
     method: method || (body ? "POST" : "GET"),
-    headers: {
-      Origin: origin,
-      Cookie: cookie,
-      "X-CSRF-Token": csrf,
-      "Content-Type": "application/json",
-    },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   assert.equal(response.status, status, path);
@@ -115,25 +117,15 @@ try {
     .map((item) => item.split(";")[0])
     .join("; ");
   csrf = (await login.json()).csrf_token;
-  const vendor = (await (await request("/admin/api/vendors/openai")).json())
-    .vendor;
-  const app = (await (await request("/admin/api/apps/openai/codex")).json())
-    .app;
-  await request(
-    "/admin/api/vendors/openai",
-    { revision: vendor.revision, enabled: true },
-    "PATCH",
-  );
-  await request(
-    "/admin/api/apps/openai/codex",
-    { revision: app.revision, enabled: true },
-    "PATCH",
-  );
+  const vendor = await (await request("/admin/api/vendors/openai")).json();
+  const app = await (await request("/admin/api/apps/openai/codex")).json();
+  await request("/admin/api/vendors/openai", { enabled: true }, "PATCH", 200, vendor.revision);
+  await request("/admin/api/apps/openai/codex", { enabled: true }, "PATCH", 200, app.revision);
   // Default documents use native disclosure and Markdown code even inside details.
-  const claudeVendor = (await (await request("/admin/api/vendors/anthropic")).json()).vendor;
-  const claudeApp = (await (await request("/admin/api/apps/anthropic/claude-code")).json()).app;
-  await request("/admin/api/vendors/anthropic", { revision: claudeVendor.revision, enabled: true }, "PATCH");
-  await request("/admin/api/apps/anthropic/claude-code", { revision: claudeApp.revision, enabled: true }, "PATCH");
+  const claudeVendor = await (await request("/admin/api/vendors/anthropic")).json();
+  const claudeApp = await (await request("/admin/api/apps/anthropic/claude-code")).json();
+  await request("/admin/api/vendors/anthropic", { enabled: true }, "PATCH", 200, claudeVendor.revision);
+  await request("/admin/api/apps/anthropic/claude-code", { enabled: true }, "PATCH", 200, claudeApp.revision);
   function observeVersion(app, version) {
     execFileSync("python3", ["-c", "import sqlite3,sys,time; c=sqlite3.connect(sys.argv[1]); c.execute('INSERT INTO app_versions(app_id,version,first_seen_s) VALUES(?,?,?)',(sys.argv[2],sys.argv[3],int(time.time()))); c.commit()", join(temporary, "data", "state.sqlite"), `app/${app.uid}-e${app.source_epoch}`, version]);
   }
@@ -193,17 +185,25 @@ try {
     await defaultsPage.close();
   }
   console.log("Default installation documents: collapsed native details, summary focus/toggle spacing, bilingual editable scalar variables, observed-version updates, literal <version> fallback, supported channels and exact Markdown copy passed (Happy DOM; no GUI).");
-  const instructions = await (
-    await request("/admin/api/apps/openai/codex/instructions")
+  const configuration = await (
+    await request("/admin/api/apps/openai/codex/configuration")
   ).json();
   const scalarName = '<img id="scalar-injection" src="x" onerror="alert(1)"> & {{latest_version}}';
-  const currentApp = (await (await request('/admin/api/apps/openai/codex')).json()).app;
-  await request('/admin/api/apps/openai/codex', {revision:currentApp.revision, name:{en:scalarName,'zh-CN':scalarName}}, 'PATCH');
   const en = `# Executable fixture\n\n## Installation instructions\n\n{{app_name}} {{app_key}} {{base_url}}{{app_path}}\n\n<script>window.inlineFixture = "executed";</script>\n<script src="http://127.0.0.1:${fixturePort}/fixture.js"></script>\n\n{{unknown}}\n\n\`\`\`sh\n  first\n\nsecond  \n\`\`\`\n\n\`inline\`\n\n\`\`\`bash\n0O 1lI 中文\n\`\`\`\n\n\`\`\`sh\nprintf '%s' '{{latest_version}}' '{{app_name}}' '{{base_url}}{{app_path}}'\n\`\`\`\n\n<pre id="raw"><code>raw block</code></pre>`;
+  // Names and usage instructions are configuration paths saved in one patch.
   await request(
-    "/admin/api/apps/openai/codex/instructions",
-    { en, "zh-CN": "# 中文说明\n\n```\n中文代码\n```", revision: instructions.revision },
-    "PUT",
+    "/admin/api/apps/openai/codex/configuration",
+    {
+      set: {
+        "name.en": scalarName,
+        "name.zh-CN": scalarName,
+        "instructions.en": en,
+        "instructions.zh-CN": "# 中文说明\n\n```\n中文代码\n```",
+      },
+    },
+    "PATCH",
+    200,
+    configuration.revision,
   );
   const path = "/api/apps/openai/codex/instructions/document?lang=en";
   const documentResponse = await request(path);

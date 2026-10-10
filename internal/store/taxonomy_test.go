@@ -155,8 +155,12 @@ func TestCategoriesCreateReuseRollbackAndCleanupInOneTransaction(t *testing.T) {
 	if _, err = s.PatchTaxonomy("ai-tools", ConfigurationPatch{Revision: first.Revision, Set: mapRaw("name.zh-CN", "Shared")}); err != nil {
 		t.Fatal(err)
 	}
+	// Renames keep names unique; older duplicates can still make typed names ambiguous.
 	second, _ := categoryItem(t, s, chinese)
-	if _, err = s.PatchTaxonomy(chinese, ConfigurationPatch{Revision: second.Revision, Set: mapRaw("name.en", "shared")}); err != nil {
+	if _, err = s.PatchTaxonomy(chinese, ConfigurationPatch{Revision: second.Revision, Set: mapRaw("name.en", "SHARED")}); !errors.Is(err, ErrInvalidDirectory) {
+		t.Fatal("duplicate category name accepted", err)
+	}
+	if _, err = s.DB.Exec(`UPDATE categories SET name_en='shared' WHERE id=?`, chinese); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = patchCategories(s, bound, []string{}, "SHARED"); !errors.Is(err, ErrCategoryAmbiguous) {

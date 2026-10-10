@@ -85,7 +85,7 @@ func TestAdminNotesAndPermanentDeleteSerializeWithConfigurationWriters(t *testin
 	var notesErr, deleteErr error
 	pauseFirstPublication(s, func() {
 		wg.Add(2)
-		go func() { defer wg.Done(); _, notesErr = s.SaveAdminNotes("app", a.Key, 0, "private") }()
+		go func() { defer wg.Done(); _, notesErr = s.SaveAdminNotes("app", a.Key, 1, "private") }()
 		go func() { defer wg.Done(); deleteErr = s.PermanentlyDeleteApplication(gone.Key, gone.Revision) }()
 	})
 	if _, err = s.UpdateApplication(a.Key, a.Revision, ApplicationChanges{Name: LocalizedText{"Renamed", "Renamed"}, Enabled: true}); err != nil {

@@ -47,8 +47,9 @@ class ClaudeNetworkPrewarmTest(ServerTestCase):
             expect=201,
         )
         admin.request(
-            "/admin/api/vendors/signed/apps",
+            "/admin/api/apps",
             {
+                "vendor": "signed",
                 "id": "claude",
                 "provider": "claude-code",
                 "name": {"en": "Claude fixture", "zh-CN": "Claude 夹具"},

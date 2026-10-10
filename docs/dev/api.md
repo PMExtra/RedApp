@@ -67,11 +67,13 @@
 
 已按规范实现：health、public、pages、assets、distribution、auth 六个标签下的全部 29 个操作。以下差异已落地：错误码与 `request_id`、`Error` 文档（含 404/405）、HEAD（发布制品不触发下载）、认证与会话、公开 API、分发与静态资源、页码超出时返回空页、`PREWARM_BUSY` 改为标准 `Error`。
 
-其余 74 个管理操作在路由表中标记为 `legacy`，仍由旧处理器以旧路径和旧响应形状服务（`legacy.go` 的分发骨架与 `legacy_directory.go`、`legacy_releases.go`、`legacy_overview.go` 三个分派函数）；规范已删除的旧路径经 `/admin/api/` 兜底注册到达。它们按三个互不重叠的工作包迁移：
+工作包 1（directory、configuration、exchange 三个标签的 27 个操作）已按规范实现，下文“目录、配置与分类”“导入导出与复制”两节的差异均已落地；旧的 `settings`、`instructions`、`assets/icons`、`assets/builtin-icon` 与 `vendors/{v}/apps` 路径已删除。`legacy_directory.go` 的分派函数直接返回 `false`，该文件只保留工作包 2、3 的旧处理器仍在使用的 `directoryError`、`positivePage`。
+
+其余 47 个管理操作在路由表中标记为 `legacy`，仍由旧处理器以旧路径和旧响应形状服务（`legacy.go` 的分发骨架与 `legacy_releases.go`、`legacy_overview.go` 两个分派函数）；规范已删除的旧路径经 `/admin/api/` 兜底注册到达。三个工作包互不重叠：
 
 | 工作包 | 操作 | 主要文件 |
 | --- | --- | --- |
-| 1 目录、配置、导入导出、分类、管理备注（27） | `listProviders`、`listVendors`、`createVendor`、`getVendor`、`updateVendor`、`deleteVendor`、`listApps`、`createApp`、`getApp`、`updateApp`、`deleteApp`、`uploadIcon`、`getVendorConfiguration`、`patchVendorConfiguration`、`getAppConfiguration`、`patchAppConfiguration`、`getVendorNotes`、`replaceVendorNotes`、`getAppNotes`、`replaceAppNotes`、`listCategories`、`getCategory`、`patchCategory`、`exportConfiguration`、`previewImport`、`executeImport`、`copyApp` | `directory.go`、`directory_listing.go`、`directory_table.go`、`configuration.go`、`admin_notes.go`、`taxonomy.go`、`exchange.go`、`proxy_redaction.go`、`application_work.go`、`legacy_directory.go`；测试 `directory_test.go`、`directory_table_test.go`、`configuration_test.go`、`admin_notes_test.go`、`taxonomy_test.go`、`exchange_test.go`、`vendor_icons_test.go`、`proxy_redaction_test.go`、`force_delete_test.go`、`scoped_proxy_test.go`、`v072_test.go` |
+| 1 目录、配置、导入导出、分类、管理备注（27，已完成） | `listProviders`、`listVendors`、`createVendor`、`getVendor`、`updateVendor`、`deleteVendor`、`listApps`、`createApp`、`getApp`、`updateApp`、`deleteApp`、`uploadIcon`、`getVendorConfiguration`、`patchVendorConfiguration`、`getAppConfiguration`、`patchAppConfiguration`、`getVendorNotes`、`replaceVendorNotes`、`getAppNotes`、`replaceAppNotes`、`listCategories`、`getCategory`、`patchCategory`、`exportConfiguration`、`previewImport`、`executeImport`、`copyApp` | `directory.go`、`directory_listing.go`、`directory_table.go`、`configuration.go`、`admin_notes.go`、`taxonomy.go`、`exchange.go`、`proxy_redaction.go`、`application_work.go`、`legacy_directory.go`；测试 `directory_test.go`、`directory_table_test.go`、`configuration_test.go`、`admin_notes_test.go`、`taxonomy_test.go`、`exchange_test.go`、`vendor_icons_test.go`、`proxy_redaction_test.go`、`force_delete_test.go`、`scoped_proxy_test.go`、`v072_test.go` |
 | 2 发布版本、资源、版本清理、保留、预热、托管文件管理（21） | `listVersions`、`listResources`、`previewVersionCleanup`、`executeVersionCleanup`、`getRetentionStatus`、`previewRetention`、`getRetentionPreview`、`listRetentionPreviewItems`、`executeRetention`、`getPrewarmOptions`、`startPrewarm`、`getPrewarmJob`、`listPrewarmItems`、`cancelPrewarmJob`、`retryPrewarmJob`、`listHostedFiles`、`uploadHostedFile`、`importHostedFile`、`deleteHostedFile`、`getHostedTransfer`、`cancelHostedTransfer` | `listing.go`、`numbered_listing.go`、`retention.go`、`prewarm.go`、`hosted.go`、`legacy_releases.go`；测试 `listing_test.go`、`retention_test.go`、`prewarm_test.go`、`content_providers_test.go` |
 | 3 HTTP 缓存管理、概览、事件、历史、站点设置（26） | `listSources`、`listCacheEntries`、`refreshCacheEntry`、`previewCacheRefresh`、`getCacheRefresh`、`listCacheRefreshItems`、`executeCacheRefresh`、`previewCacheCleanup`、`getCacheCleanup`、`listCacheCleanupItems`、`executeCacheCleanup`、`getAutoCleanupStatus`、`testPathMatch`、`getStatus`、`getHistory`、`listEvents`、`getAppStatus`、`getAppHistory`、`getSiteSettings`、`replaceSiteSettings`、`getPublicUrlSettings`、`replacePublicUrlSettings`、`getGlobalProxySettings`、`replaceGlobalProxySettings`、`getHomepageSettings`、`replaceHomepageSettings` | `cache.go`、`status.go`、`history.go`、`homepage_settings.go`、`legacy_overview.go`；`listing.go` 中的 `eventList`；测试 `cache_policy_test.go`、`cache_capacity_test.go`、`general_routes_test.go`（管理部分）、`dynamic_metrics_test.go`、`site_test.go` |
 
@@ -156,6 +158,11 @@
 | `GET/PUT /admin/api/apps/{v}/{a}/cache/policy` | 删除，用配置路径 `http_policy.*` |
 | `GET /admin/api/providers` → `{providers}`，空默认值为 `""`/`0` | `{items}`，空默认值为 `null` |
 | 分类 `PATCH` 用请求体 `revision`；条目含 `kind: "categories"` | `If-Match`；删除 `kind`；新增 `GET /admin/api/categories/{category}` |
+| 分类可以改名为其他分类已用的名称 | 改名后的中英文名称（不区分大小写）不得与其他分类重复，否则 `VALIDATION_FAILED` |
+| 管理备注首次保存前 revision 为 `0`，请求体可带 `revision` | 首次保存前为 `1`，只用 `If-Match` |
+| 没有应用的内置厂商可以删除 | `409 BUILTIN_PROTECTED` |
+| 重试未完成的应用删除须带最初的 revision | 不再比较 revision（`If-Match` 仍须存在），只按 `confirm_uid` 定位 |
+| 配置 `PATCH` 可以设置不适用于 Provider 的路径（如 Codex 的 `base_urls`） | `400 VALIDATION_FAILED` |
 | 首页设置 `keys` | `pinned_app_keys` |
 | `POST /admin/api/assets/icons` | `POST /admin/api/icons` |
 | `GET /admin/api/assets/builtin-icon?path=` | 删除；图标字段总是站点绝对路径，直接用 `/assets/icons/...` 或 `/assets/presets/...` |
@@ -168,6 +175,10 @@
 | 条目和选择的 `kind`：`Vendor`、`App`、`categories` | `vendor`、`app`、`category`（导出 `selection.kind` 同样） |
 | 执行请求 `{confirm: true, trust_instructions}` | `{trust_instructions}` |
 | 复制请求体 `source_revision` | `If-Match`；响应为应用对象 |
+| 导出厂商时缺省包含其全部应用 | `include_apps` 缺省为 `false`，需显式请求；应用选择不接受该字段 |
+| 预览不存在、过期、属于其他会话或提交时会话已变 → `409`；回执过期 → `409` | `404 PREVIEW_NOT_FOUND` |
+| 预览未就绪或缺少信任确认 → `400` | `409 IMPORT_NOT_READY`、`400 INSTRUCTIONS_TRUST_REQUIRED` |
+| 预览后对象被修改 → 通用 `409` | `409 PREVIEW_STALE` |
 
 ### 概览与事件
 

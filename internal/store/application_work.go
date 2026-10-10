@@ -102,8 +102,10 @@ func (s *Store) PrepareApplicationDeletion(key string, revision int64) (string, 
 			if app.Key != key {
 				continue
 			}
-			original, pending := st.Pending[app.UID]
-			if revision != app.Revision && (!pending || revision != original) {
+			// A retry of a pending deletion is not checked against a revision again:
+			// the application is already read-only and only its UID identifies it.
+			_, pending := st.Pending[app.UID]
+			if revision != app.Revision && !pending {
 				return ErrConflict
 			}
 			uid = app.UID

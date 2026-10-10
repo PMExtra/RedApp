@@ -8,8 +8,6 @@ import (
 	"testing"
 
 	"github.com/PMExtra/RedApp/internal/configexchange"
-	"github.com/PMExtra/RedApp/internal/networkproxy"
-	"github.com/PMExtra/RedApp/internal/store"
 )
 
 func TestGlobalProxyResponsesRedactPasswordAndKeepItOnlyForSameProxy(t *testing.T) {
@@ -55,39 +53,35 @@ func TestGlobalProxyResponsesRedactPasswordAndKeepItOnlyForSameProxy(t *testing.
 
 func TestConfigurationResponsesRedactProxyPasswordsExceptCredentialExport(t *testing.T) {
 	h := newHarness(t)
-	h.login(h.password)
-	vendorEndpoint, appEndpoint := "/admin/api/vendors/openai/configuration", "/admin/api/apps/openai/codex/configuration"
-	patch := func(endpoint string, proxy map[string]any, status int) []byte {
-		raw, _ := h.request("GET", endpoint, nil, 200, nil)
-		data, _ := h.request("PATCH", endpoint, map[string]any{"revision": configurationValue(t, raw).Revision, "set": map[string]any{"proxy": proxy}}, status, nil)
-		return data
+	h.login("")
+	patch := func(path string, proxy map[string]any, status int) []byte {
+		return h.patchConfiguration(path, map[string]any{"set": map[string]any{"proxy": proxy}}, status)
 	}
 	vendorURL := "http://vendor-user:vendor-secret@127.0.0.1:3128"
-	patch(vendorEndpoint, map[string]any{"mode": "url", "url": vendorURL}, 200)
-	appData := patch(appEndpoint, map[string]any{"mode": "url", "url": "socks5://app-user:app-secret@127.0.0.1:1080"}, 200)
-	vendorData, _ := h.request("GET", vendorEndpoint, nil, 200, nil)
-	inheritedData, _ := h.request("GET", appEndpoint, nil, 200, nil)
+	patch("vendors/openai", map[string]any{"mode": "url", "url": vendorURL}, 200)
+	appData := patch("apps/openai/codex", map[string]any{"mode": "url", "url": "socks5://app-user:app-secret@127.0.0.1:1080"}, 200)
+	vendorData, _ := h.request("GET", "/admin/api/vendors/openai/configuration", nil, 200, nil)
+	inheritedData, _ := h.request("GET", "/admin/api/apps/openai/codex/configuration", nil, 200, nil)
 	for _, data := range [][]byte{vendorData, appData, inheritedData} {
 		if bytes.Contains(data, []byte("-secret")) || !bytes.Contains(data, []byte(":****@127.0.0.1")) {
 			t.Fatal("configuration proxy password", string(data))
 		}
 	}
-	app := configurationValue(t, appData)
-	if app.ProxyEffective.URL != "socks5://app-user:****@127.0.0.1:1080" || !strings.Contains(fmt.Sprint(app.Effective["proxy"]), "app-user:****@") {
-		t.Fatal("redacted app proxy", string(appData))
+	app := decodeJSONBody[configurationDTO](t, appData)
+	if app.ProxyEffective.URL != "socks5://app-user:****@127.0.0.1:1080" || app.ProxyEffective.SourceScope != "app" || !strings.Contains(fmt.Sprint(app.Effective["proxy"]), "app-user:****@") {
+		t.Fatal("redacted application proxy", string(appData))
 	}
-	// The app's own proxy is not the vendor's; the vendor placeholder cannot move there.
-	patch(appEndpoint, map[string]any{"mode": "url", "url": "http://vendor-user:****@127.0.0.1:3128"}, 400)
-	patch(appEndpoint, map[string]any{"mode": "url", "url": "socks5://app-user:****@127.0.0.1:1080"}, 200)
-	patch(vendorEndpoint, map[string]any{"mode": "url", "url": "http://vendor-user:****@127.0.0.1:3128"}, 200)
-	stored, _ := h.server.store.ApplicationConfiguration("openai/codex")
-	vendor, _ := h.server.store.VendorConfiguration("openai")
+	// The vendor's placeholder cannot move to the application's own proxy.
+	expectCode(t, patch("apps/openai/codex", map[string]any{"mode": "url", "url": "http://vendor-user:****@127.0.0.1:3128"}, 400), codeProxyRedactedMismatch)
+	patch("apps/openai/codex", map[string]any{"mode": "url", "url": "socks5://app-user:****@127.0.0.1:1080"}, 200)
+	patch("vendors/openai", map[string]any{"mode": "url", "url": "http://vendor-user:****@127.0.0.1:3128"}, 200)
+	stored, _ := h.store.ApplicationConfiguration("openai/codex")
+	vendor, _ := h.store.VendorConfiguration("openai")
 	if stored.ProxyEffective.URL != "socks5://app-user:app-secret@127.0.0.1:1080" || vendor.ProxyEffective.URL != vendorURL {
 		t.Fatal("redacted passwords not kept", stored.ProxyEffective.SourceScope, vendor.ProxyEffective.SourceScope)
 	}
 	// Only the explicit credential export carries saved passwords.
-	selection := []store.ExportSelection{{Kind: "App", Key: "openai/codex"}}
-	raw, _ := h.request("POST", "/admin/api/configuration/export", store.ExportOptions{Selection: selection, Mode: "independent", IncludeProxyCredentials: true}, 200, nil)
+	raw := h.exportPackage("independent", true, "app:openai/codex")
 	p, err := configexchange.Parse(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -98,19 +92,19 @@ func TestConfigurationResponsesRedactProxyPasswordsExceptCredentialExport(t *tes
 		exported = exported || bytes.Contains(body, []byte("app-user:app-secret@"))
 	}
 	if !exported {
-		t.Fatal("credential export lost password")
+		t.Fatal("credential export lost the password")
 	}
 	// Import previews redact both sides of a proxy difference.
-	patch(appEndpoint, map[string]any{"mode": "url", "url": "socks5://app-user:changed-secret@127.0.0.1:1080"}, 200)
+	patch("apps/openai/codex", map[string]any{"mode": "url", "url": "socks5://app-user:changed-secret@127.0.0.1:1080"}, 200)
 	body := exchangeUpload(h, raw, nil, 200)
 	if bytes.Contains(body, []byte("-secret")) || !bytes.Contains(body, []byte("app-user:****@")) {
 		t.Fatal("import preview proxy password", string(body))
 	}
-	// Import choices for an omitted proxy have no saved password to keep.
-	omitted, _ := h.request("POST", "/admin/api/configuration/export", store.ExportOptions{Selection: selection, Mode: "independent"}, 200, nil)
-	choice := func(url string) []store.ImportChoice {
-		return []store.ImportChoice{{Kind: "App", Key: "openai/codex", Action: "update", DetachTemplate: true, Proxy: &networkproxy.Config{Mode: "url", URL: url}}}
+	// A choice for an omitted proxy has no saved password to keep.
+	omitted := h.exportPackage("independent", false, "app:openai/codex")
+	choice := func(url string) []map[string]any {
+		return []map[string]any{{"kind": "app", "key": "openai/codex", "action": "update", "detach_template": true, "proxy": map[string]any{"mode": "url", "url": url}}}
 	}
-	exchangeUpload(h, omitted, choice("socks5://app-user:****@127.0.0.1:1080"), 400)
+	expectCode(t, exchangeUpload(h, omitted, choice("socks5://app-user:****@127.0.0.1:1080"), 400), codeValidationFailed)
 	exchangeUpload(h, omitted, choice("socks5://app-user:typed-secret@127.0.0.1:1080"), 200)
 }

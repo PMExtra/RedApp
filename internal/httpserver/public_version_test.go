@@ -2,7 +2,6 @@ package httpserver
 
 import (
 	"encoding/json"
-	"net/url"
 	"testing"
 
 	"github.com/PMExtra/RedApp/internal/application"
@@ -67,9 +66,9 @@ func TestReviewedAnthropicIconsAndDisabledApplication(t *testing.T) {
 	}
 	h.request("GET", presets.ImagePrefix+"builtin/missing.svg", nil, 404, nil)
 	h.login(h.password)
-	v, _ := h.server.store.Vendor("anthropic")
-	h.request("PATCH", "/admin/api/vendors/anthropic", map[string]any{"revision": v.Revision, "enabled": false, "icon": vendorIcon}, 200, nil)
+	h.patchConfiguration("vendors/anthropic", map[string]any{"set": map[string]any{"icon": vendorIcon}}, 200)
+	h.setEnabled("vendors/anthropic", false)
 	// Reviewed images do not depend on the state of the vendor using them.
 	h.request("GET", appIcon, nil, 200, nil)
-	h.request("GET", "/admin/api/assets/builtin-icon?path="+url.QueryEscape(appIcon), nil, 200, nil)
+	h.request("GET", vendorIcon, nil, 200, nil)
 }

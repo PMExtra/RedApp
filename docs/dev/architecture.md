@@ -275,7 +275,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 | `error_codes.go` | 规范 `components.x-error-codes` 的 Go 常量与状态/`retryable` 表；`TestErrorCatalogMatchesSpec` 保证两者一致 |
 | `public_dto.go` 等 | 响应文档类型，按规范 schema 显式构造；不直接编码 store 或领域结构体 |
 
-领域错误到错误码的映射集中在使用它的处理文件中（如 `distribution.go` 的 `releaseError`、`cacheFileError`），按 sentinel 或类型判断，不看错误文本。
+领域错误到错误码的映射集中在使用它的处理文件中（如 `distribution.go` 的 `releaseError`、`cacheFileError`，`directory.go` 的 `directoryFailure`），按 sentinel 或类型判断，不看错误文本。store 的校验错误是 `store.ValidationError`（匹配 `ErrInvalidDirectory`），其 `Detail()` 指明出错字段、不含已保存的机密，可作为 `VALIDATION_FAILED` 的消息；导入预览和执行仍用通用消息，因为细节可能回显包中的私有 URL 或文本。
 
 ### SPA
 

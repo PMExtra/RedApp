@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +15,6 @@ import (
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/store"
-	"github.com/PMExtra/RedApp/presets"
 )
 
 func TestV072PublicDirectoryPinsTemplatesAndInstructionDocuments(t *testing.T) {
@@ -53,8 +51,7 @@ func TestV072PublicDirectoryPinsTemplatesAndInstructionDocuments(t *testing.T) {
 	if !bytes.Contains(data, []byte("acme/tool-6")) {
 		t.Fatal("pin missing", string(data))
 	}
-	app, _ := h.server.store.Application("acme/tool-6")
-	h.request("PATCH", "/admin/api/apps/"+app.Key, map[string]any{"revision": app.Revision, "enabled": false}, 200, nil)
+	h.setEnabled("apps/acme/tool-6", false)
 	for _, path := range []string{"/api/home", "/api/catalog?q=tool-6", "/api/search?q=tool-6"} {
 		data, _ = h.request("GET", path, nil, 200, nil)
 		if bytes.Contains(data, []byte("acme/tool-6")) {
@@ -70,7 +67,7 @@ func TestV072PublicDirectoryPinsTemplatesAndInstructionDocuments(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := "# Fixture\n\n<script>window.fixtureInline=1</script>\n<script src=\"https://cdn.example/fixture.js\"></script>\n<img src=\"https://cdn.example/fixture.png\">\n\n{{app_name}} {{public_origin}} {{unknown}}"
-	h.request("PUT", "/admin/api/apps/acme/tool-0/instructions", map[string]any{"en": source, "zh-CN": "<b>中文</b>", "revision": 0}, 200, nil)
+	h.patchConfiguration("apps/acme/tool-0", map[string]any{"set": map[string]any{"instructions.en": source, "instructions.zh-CN": "<b>中文</b>"}}, 200)
 	data, headers := h.request("GET", "/api/apps/acme/tool-0/instructions/document?lang=en", nil, 200, nil)
 	for _, want := range []string{"<h1>Fixture</h1>", "<script>window.fixtureInline=1</script>", "https://cdn.example/fixture.js", "Tool 0", "{{unknown}}"} {
 		if !bytes.Contains(data, []byte(want)) {
@@ -80,7 +77,7 @@ func TestV072PublicDirectoryPinsTemplatesAndInstructionDocuments(t *testing.T) {
 	if bytes.Contains(data, []byte("fake-secret")) || !strings.Contains(headers.Get("Content-Security-Policy"), "sandbox allow-scripts ") {
 		t.Fatal("private data leaked or JS not isolated")
 	}
-	h.request("PUT", "/admin/api/apps/acme/tool-0/instructions", map[string]any{"en": "", "zh-CN": "", "revision": 1}, 200, nil)
+	h.patchConfiguration("apps/acme/tool-0", map[string]any{"set": map[string]any{"instructions.en": "", "instructions.zh-CN": ""}}, 200)
 	data, _ = h.request("GET", "/api/apps/acme/tool-0/instructions/document?lang=en", nil, 200, nil)
 	if bytes.Contains(data, []byte("Fixture")) {
 		t.Fatal("explicit blank not preserved")
@@ -156,7 +153,7 @@ func TestV072DownloadRankingCountsOnlySuccessfulPublicTransfers(t *testing.T) {
 	}
 	defer lease()
 	// Unrelated global capacity no longer blocks deleting this application.
-	h.request("DELETE", "/admin/api/apps/"+a.Key, map[string]any{"revision": a.Revision, "confirm_key": a.Key, "confirm_uid": a.UID}, 200, nil)
+	h.deleteApp(a.Key, a.UID, a.Revision, 200)
 
 	ranking(0)
 }
@@ -190,87 +187,4 @@ func TestV072CacheHitsRankAndReceiptRejectsFailedWrites(t *testing.T) {
 	if scores[0].Clients != 1 {
 		t.Fatal("failed receipt counted", scores)
 	}
-}
-
-func TestV072DisabledBrandIconRemainsAvailableOnlyToAdmin(t *testing.T) {
-	h := newHarness(t)
-	path := "/admin/api/assets/builtin-icon?path=" + url.QueryEscape(presets.ImagePrefix+"openai/codex/icon.svg")
-	h.request("GET", path, nil, 401, nil)
-	h.login(h.password)
-	v, _ := h.server.store.Vendor("openai")
-	h.request("PATCH", "/admin/api/vendors/openai", map[string]any{"enabled": false, "revision": v.Revision}, 200, nil)
-	data, headers := h.request("GET", path, nil, 200, nil)
-	if !bytes.Contains(data, []byte("<svg")) || headers.Get("Content-Type") != "image/svg+xml" || !strings.Contains(headers.Get("Content-Security-Policy"), "sandbox") {
-		t.Fatal("missing reviewed brand icon or static policy")
-	}
-	h.request("GET", "/admin/api/assets/builtin-icon?path=https%3A%2F%2Fexample.com%2Fevil.svg", nil, 404, nil)
-}
-
-func TestFieldResetNeverChangesEnabled(t *testing.T) {
-	h := newHarness(t)
-	h.login(h.password)
-	for _, enabled := range []bool{true, false} {
-		for _, kind := range []string{"vendor", "app"} {
-			path := "/admin/api/vendors/openai"
-			if kind == "app" {
-				path = "/admin/api/apps/openai/codex"
-			}
-			data, _ := h.request("GET", path, nil, 200, nil)
-			current := directoryDecode[store.Application](t, data, kind)
-			data, _ = h.request("PATCH", path, map[string]any{"revision": current.Revision, "enabled": enabled}, 200, nil)
-			current = directoryDecode[store.Application](t, data, kind)
-			data, _ = h.request("PATCH", path+"/configuration", map[string]any{"revision": current.Revision, "set": map[string]any{"icon": ""}}, 200, nil)
-			current.Revision = configurationValue(t, data).Revision
-			for _, unset := range [][]string{{"enabled"}, {"icon", "enabled"}} {
-				h.request("PATCH", path+"/configuration", map[string]any{"revision": current.Revision, "unset": unset}, 400, nil)
-			}
-			h.request("PATCH", path+"/configuration", map[string]any{"revision": current.Revision, "set": map[string]any{"enabled": !enabled}}, 400, nil)
-			data, _ = h.request("PATCH", path+"/configuration", map[string]any{"revision": current.Revision, "unset": []string{"icon"}}, 200, nil)
-			if configurationValue(t, data).Revision != current.Revision+1 {
-				t.Fatal("field reset did not advance revision once", kind)
-			}
-			data, _ = h.request("GET", path, nil, 200, nil)
-			after := directoryDecode[store.Application](t, data, kind)
-			if after.Enabled != enabled || after.Name != current.Name || after.Description != current.Description || after.Revision != current.Revision+1 {
-				t.Fatal("icon reset changed unselected fields", kind, after)
-			}
-		}
-	}
-}
-
-func TestVendorApplicationsPagesIncludeDisabledAndIsolateVendor(t *testing.T) {
-	h := newHarness(t)
-	h.login(h.password)
-	v := h.createVendor("many")
-	other := h.createVendor("other")
-	h.createApp(other.ID, "foreign", application.Info, nil)
-	for i := range 23 {
-		h.createApp(v.ID, fmt.Sprintf("tool-%02d", i), application.Info, map[string]any{"enabled": i%2 == 0})
-	}
-	h.request("PATCH", "/admin/api/vendors/many", map[string]any{"revision": v.Revision, "enabled": false}, 200, nil)
-	seen := map[string]bool{}
-	disabled := 0
-	for page := 1; page <= 2; page++ {
-		data, _ := h.request("GET", fmt.Sprintf("/admin/api/vendors/many/apps?state=current&page=%d&limit=20", page), nil, 200, nil)
-		var result store.Page[store.Application]
-		if err := json.Unmarshal(data, &result); err != nil {
-			t.Fatal(err)
-		}
-		if result.Total != 23 || result.TotalPages != 2 {
-			t.Fatal(result)
-		}
-		for _, app := range result.Items {
-			if app.VendorID != v.ID || seen[app.UID] {
-				t.Fatal("mixed vendor or duplicate", app)
-			}
-			seen[app.UID] = true
-			if !app.Enabled {
-				disabled++
-			}
-		}
-	}
-	if len(seen) != 23 || disabled != 11 {
-		t.Fatal("missing applications", len(seen), disabled)
-	}
-	h.request("GET", "/admin/vendors/many/apps", nil, 200, nil)
 }

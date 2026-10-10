@@ -169,6 +169,9 @@ func purgeApplication(tx *sql.Tx, key string, revision int64) error {
 // PermanentlyDeleteVendor soft-deletes (if needed) and removes the vendor in one
 // transaction, serialized with other configuration writers.
 func (s *Store) PermanentlyDeleteVendor(id string, revision int64) error {
+	if _, ok := BuiltinVendorTemplate(id); ok {
+		return ErrBuiltinTemplate
+	}
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
 	current, e := s.Vendor(id)

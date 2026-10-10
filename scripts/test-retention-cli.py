@@ -46,12 +46,8 @@ class RetentionCLITest(ServerTestCase):
     def patch_retention(self, admin, enabled):
         """Set retention to keep one version, enabled or not; return the configuration."""
         configuration = admin.request(APP + "/configuration")
-        body = {
-            "revision": configuration["revision"],
-            "set": {"retention": {"enabled": enabled, "keep_latest": 1}},
-            "unset": [],
-        }
-        return admin.request(APP + "/configuration", body, method="PATCH")
+        body = {"set": {"retention": {"enabled": enabled, "keep_latest": 1}}, "unset": []}
+        return admin.request(APP + "/configuration", body, method="PATCH", if_match=configuration["revision"])
 
     def test_retention_execution_receipt_survives_restart(self):
         fixture = self.start_fixture(RetentionFixture)
@@ -71,8 +67,9 @@ class RetentionCLITest(ServerTestCase):
             expect=201,
         )
         admin.request(
-            "/admin/api/vendors/retention/apps",
+            "/admin/api/apps",
             {
+                "vendor": "retention",
                 "id": "binary",
                 "provider": "codex",
                 "name": {"en": "Binary", "zh-CN": "二进制"},

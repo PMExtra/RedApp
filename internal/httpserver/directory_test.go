@@ -2,269 +2,291 @@ package httpserver
 
 import (
 	"bytes"
-	"fmt"
-	"io"
-	"mime/multipart"
 	"strings"
 	"testing"
 
-	"github.com/PMExtra/RedApp/presets"
-
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/media"
-	"github.com/PMExtra/RedApp/internal/store"
 )
 
-func TestDirectoryHTTPProviderCreationCASAndSettings(t *testing.T) {
+func TestProvidersListCapabilitiesAndNullDefaults(t *testing.T) {
 	h := newHarness(t)
-	h.request("GET", "/admin/api/providers", nil, 401, nil)
-	h.login(h.password)
-	data, _ := h.request("GET", "/admin/api/providers", nil, 200, nil)
-	definitions := directoryDecode[[]application.Definition](t, data, "providers")
-	providers := map[string]application.Definition{}
-	for _, definition := range definitions {
-		providers[definition.Key] = definition
+	h.expectError("GET", "/admin/api/providers", nil, 401, codeAuthRequired, nil)
+	h.login("")
+	list := getJSON[providerListDTO](h, "/admin/api/providers")
+	providers := map[string]providerDTO{}
+	for _, p := range list.Items {
+		providers[p.Key] = p
 	}
-	if len(providers) != 5 || providers[application.HttpCache].Capabilities.Versions || !providers[application.HttpCache].Capabilities.TimeCleanup || providers[application.Codex].DefaultBaseURL == "" || providers[application.ClaudeCode].DefaultBaseURL == "" {
-		t.Fatal("provider API lost its peer capability/default contract", providers)
+	if len(providers) != 5 || providers[application.HttpCache].Capabilities.Versions || !providers[application.HttpCache].Capabilities.TimeCleanup {
+		t.Fatal("provider capabilities", list)
 	}
-	input := map[string]any{"id": "blocked", "name": store.LocalizedText{En: "Blocked", ZhCN: "阻止"}}
-	h.request("POST", "/admin/api/vendors", input, 403, map[string]string{"X-CSRF-Token": ""})
-	h.request("POST", "/admin/api/vendors", input, 403, map[string]string{"Origin": "https://foreign.example"})
-	initialRevision, _ := h.publicCatalog()
-	vendor := h.createVendor("enterprise")
-	h.request("POST", "/admin/api/vendors", input, 201, nil)
-	h.request("POST", "/admin/api/vendors", input, 409, nil)
-	for _, provider := range []string{application.Codex, application.ClaudeCode} {
-		app := h.createApp(vendor.ID, provider, provider, nil)
-		if app.BaseURL != providers[provider].DefaultBaseURL || app.CacheTTLSeconds != 60 || !app.Enabled || app.SourceEpoch != 1 || app.UID == "" {
-			t.Fatal("release provider defaults were not persisted", app)
+	for _, key := range []string{application.Codex, application.ClaudeCode} {
+		if p := providers[key]; p.DefaultBaseURL == nil || *p.DefaultBaseURL == "" || p.DefaultCacheTTLSeconds == nil || *p.DefaultCacheTTLSeconds != 60 {
+			t.Fatal("release provider defaults", key, p)
 		}
 	}
-	missingBase := map[string]any{"id": "missing-base", "provider": application.HttpCache, "name": store.LocalizedText{En: "Files", ZhCN: "文件"}}
-	h.request("POST", "/admin/api/vendors/enterprise/apps", missingBase, 400, nil)
-	general := h.createApp(vendor.ID, "files", application.HttpCache, map[string]any{"base_url": "http://intranet.example:8081/packages/", "cache_ttl_seconds": 0})
-	if general.BaseURL != "http://intranet.example:8081/packages" || general.CacheTTLSeconds != 0 {
-		t.Fatal("explicit zero TTL or enterprise BaseURL was lost", general)
+	for _, key := range []string{application.Info, application.Hosted} {
+		if p := providers[key]; p.DefaultBaseURL != nil || p.DefaultCacheTTLSeconds != nil {
+			t.Fatal("content providers have no upstream defaults", key, p)
+		}
 	}
-	defaultTTL := h.createApp(vendor.ID, "files-default", application.HttpCache, map[string]any{"base_url": "http://intranet.example/packages"})
-	if defaultTTL.CacheTTLSeconds != 300 {
-		t.Fatal("omitted GeneralHttp TTL did not use the provider default")
+	if p := providers[application.HttpCache]; p.DefaultBaseURL != nil || p.DefaultCacheTTLSeconds == nil || *p.DefaultCacheTTLSeconds != 300 {
+		t.Fatal("http-cache defaults", p)
 	}
-	api := "/admin/api/apps/" + general.Key
-	for _, immutable := range []map[string]any{{"id": "renamed"}, {"provider": application.Codex}, {"vendor_id": "openai"}} {
-		immutable["revision"] = general.Revision
-		h.request("PATCH", api, immutable, 400, nil)
-	}
-	// Two localized strings within the documented per-field limit can exceed
-	// the old generic 8 KiB JSON body cap even at 2,000 characters each.
-	description := store.LocalizedText{En: strings.Repeat("介紹", 1000), ZhCN: strings.Repeat("介绍", 1000)}
-	data, _ = h.request("PATCH", api, map[string]any{"description": description}, 200, map[string]string{"If-Match": fmt.Sprint(general.Revision)})
-	edited := directoryDecode[store.Application](t, data, "app")
-	if edited.Revision != general.Revision+1 || edited.SourceEpoch != general.SourceEpoch || edited.UID != general.UID || edited.CacheTTLSeconds != 0 || edited.Description != description {
-		t.Fatal("partial edit lost identity/source/TTL", edited)
-	}
-	h.request("PATCH", api, map[string]any{"revision": general.Revision, "enabled": false}, 409, nil)
-	h.request("PATCH", api, map[string]any{"revision": edited.Revision}, 400, map[string]string{"If-Match": "1"})
-	data, _ = h.request("PATCH", api, map[string]any{"revision": edited.Revision, "base_url": "https://new-source.example/files"}, 200, nil)
-	rebound := directoryDecode[store.Application](t, data, "app")
-	if rebound.SourceEpoch != 2 || rebound.MetricsID() != general.MetricsID() || rebound.StorageID() == general.StorageID() {
-		t.Fatal("API source edit did not isolate the cache namespace", rebound)
-	}
-	currentRevision, public := h.publicCatalog()
-	if initialRevision == currentRevision || public[general.Key].Provider != application.HttpCache || public[general.Key].Capabilities.Versions || public[general.Key].Vendor.Name.ZhCN != "企业" {
-		t.Fatal("dynamic public bootstrap did not reflect directory/provider metadata", public)
-	}
-
-	// Existing release settings now edit the same directory record seen by the
-	// directory form; they must not leave a second independent TTL setting behind.
-	codexAPI := "/admin/api/apps/enterprise/codex"
-	data, _ = h.request("GET", codexAPI, nil, 200, nil)
-	codex := directoryDecode[store.Application](t, data, "app")
-	data, headers := h.request("GET", codexAPI+"/settings", nil, 200, nil)
-	if directoryDecode[int](t, data, "channel_ttl_seconds") != codex.CacheTTLSeconds || directoryDecode[int64](t, data, "revision") != codex.Revision || headers.Get("ETag") == "" {
-		t.Fatal("settings view does not use directory TTL/revision", string(data))
-	}
-	h.request("PUT", codexAPI+"/settings", map[string]int{"channel_ttl_seconds": 120}, 200, map[string]string{"If-Match": fmt.Sprint(codex.Revision)})
-	data, _ = h.request("GET", codexAPI, nil, 200, nil)
-	updated := directoryDecode[store.Application](t, data, "app")
-	if updated.CacheTTLSeconds != 120 || updated.Revision != codex.Revision+1 || updated.SourceEpoch != codex.SourceEpoch {
-		t.Fatal("settings update diverged from application record", updated)
-	}
-	h.request("PUT", codexAPI+"/settings", map[string]int{"channel_ttl_seconds": 30}, 409, map[string]string{"If-Match": fmt.Sprint(codex.Revision)})
-	entry, ok := h.server.registry.Lookup(updated.Key)
-	if !ok || entry.Descriptor.DefaultChannelTTLSeconds != 120 || entry.Revision != updated.Revision {
-		t.Fatal("settings write did not publish the new runtime snapshot")
-	}
-	installer, _ := h.request("GET", "/enterprise/codex/install.sh", nil, 200, nil)
-	if !bytes.Contains(installer, []byte(h.http.URL+"/enterprise/codex")) || bytes.Contains(installer, []byte("@REDAPP_BASE_URL@")) {
-		t.Fatal("custom instance installer was not bound to its public root")
-	}
-	h.request("GET", "/enterprise/codex/licenses/LICENSE", nil, 200, nil)
+	h.expectError("GET", "/admin/api/providers?view=all", nil, 400, codeInvalidQuery, nil)
 }
 
-func TestDirectoryHTTPDisableDeleteAndEmptyRestart(t *testing.T) {
+func TestVendorCreateReadToggleAndPermanentDelete(t *testing.T) {
+	h := newHarness(t)
+	h.login("")
+	input := map[string]any{"id": "enterprise", "name": map[string]string{"en": "Enterprise", "zh-CN": "企业"}, "enabled": true}
+	h.expectError("POST", "/admin/api/vendors", input, 403, codeCSRFRejected, map[string]string{"X-CSRF-Token": ""})
+	h.expectError("POST", "/admin/api/vendors", input, 403, codeOriginRejected, map[string]string{"Origin": "https://foreign.example"})
+	h.expectError("POST", "/admin/api/vendors", map[string]any{"id": "enterprise", "name": input["name"]}, 400, codeInvalidRequest, nil)
+	h.expectError("POST", "/admin/api/vendors", map[string]any{"id": "all", "name": input["name"], "enabled": true}, 400, codeValidationFailed, nil)
+	h.expectError("POST", "/admin/api/vendors", map[string]any{"id": "blank", "name": map[string]string{"en": " ", "zh-CN": "x"}, "enabled": true}, 400, codeValidationFailed, nil)
+	h.expectError("POST", "/admin/api/vendors", map[string]any{"id": "icon", "name": input["name"], "enabled": true, "icon": media.PublicPrefix + strings.Repeat("f", 64) + ".png"}, 400, codeValidationFailed, nil)
+	data, headers := h.request("POST", "/admin/api/vendors", input, 201, nil)
+	created := decodeJSONBody[vendorDTO](t, data)
+	if headers.Get("Location") != "/admin/api/vendors/enterprise" || headers.Get("ETag") != etag(created.Revision) || created.HasTemplate || !created.Enabled || created.DeletedAt != nil {
+		t.Fatal("created vendor", headers, string(data))
+	}
+	h.expectError("POST", "/admin/api/vendors", input, 409, codeAlreadyExists, nil)
+	_, headers = h.request("GET", "/admin/api/vendors/enterprise", nil, 200, nil)
+	if headers.Get("ETag") != etag(created.Revision) {
+		t.Fatal("GET ETag", headers)
+	}
+	h.expectError("GET", "/admin/api/vendors/missing", nil, 404, codeVendorNotFound, nil)
+	h.expectError("GET", "/admin/api/vendors/Bad_ID", nil, 400, codeInvalidPath, nil)
+
+	app := h.createApp("enterprise", "tool", application.Info, nil)
+	path := "/admin/api/vendors/enterprise"
+	h.expectError("PATCH", path, map[string]any{"enabled": false}, 400, codeIfMatchRequired, nil)
+	h.expectError("PATCH", path, map[string]any{"enabled": false}, 400, codeIfMatchRequired, map[string]string{"If-Match": "W/\"1\""})
+	h.expectError("PATCH", path, map[string]any{"enabled": false, "name": input["name"]}, 400, codeInvalidRequest, ifMatchHeader(created.Revision))
+	h.expectError("PATCH", path, map[string]any{"enabled": false}, 409, codeRevisionConflict, ifMatchHeader(created.Revision+1))
+	h.expectError("PATCH", "/admin/api/vendors/missing", map[string]any{"enabled": false}, 404, codeVendorNotFound, ifMatchHeader(1))
+	data, headers = h.request("PATCH", path, map[string]any{"enabled": false}, 200, ifMatchHeader(created.Revision))
+	disabled := decodeJSONBody[vendorDTO](t, data)
+	if disabled.Enabled || disabled.Revision != created.Revision+1 || disabled.Name != created.Name || headers.Get("ETag") != etag(disabled.Revision) {
+		t.Fatal("enabled toggle changed other fields", string(data))
+	}
+	// Disabling the vendor unpublishes its applications without touching them.
+	h.expectError("GET", "/api/apps/"+app.Key, nil, 404, codeApplicationNotFound, nil)
+	if retained := h.adminApp(app.Key); !retained.Enabled || retained.Revision != app.Revision {
+		t.Fatal("vendor toggle rewrote the application", retained)
+	}
+
+	h.expectError("DELETE", path, nil, 400, codeIfMatchRequired, nil)
+	h.expectError("DELETE", path, nil, 409, codeVendorNotEmpty, ifMatchHeader(disabled.Revision))
+	openai := h.adminVendor("openai")
+	h.expectError("DELETE", "/admin/api/vendors/openai", nil, 409, codeBuiltinProtected, ifMatchHeader(openai.Revision))
+	h.deleteApp(app.Key, app.UID, app.Revision, 200)
+	h.expectError("DELETE", path, nil, 409, codeRevisionConflict, ifMatchHeader(created.Revision))
+	if _, headers = h.request("DELETE", path, nil, 204, ifMatchHeader(disabled.Revision)); headers.Get("Content-Type") != "" {
+		t.Fatal("204 with a body type", headers)
+	}
+	// The deleted vendor is gone from every vendor operation.
+	h.expectError("GET", path, nil, 404, codeVendorNotFound, nil)
+	h.expectError("DELETE", path, nil, 404, codeVendorNotFound, ifMatchHeader(disabled.Revision))
+	h.expectError("PATCH", path, map[string]any{"enabled": true}, 404, codeVendorNotFound, ifMatchHeader(disabled.Revision))
+	h.expectError("GET", path+"/configuration", nil, 404, codeVendorNotFound, nil)
+	h.expectError("PATCH", path+"/configuration", map[string]any{}, 404, codeVendorNotFound, ifMatchHeader(disabled.Revision))
+	h.expectError("GET", path+"/admin-notes", nil, 404, codeVendorNotFound, nil)
+	h.expectError("PUT", path+"/admin-notes", map[string]any{"text": ""}, 404, codeVendorNotFound, ifMatchHeader(1))
+	h.expectError("GET", "/admin/api/apps?vendor=enterprise", nil, 404, codeVendorNotFound, nil)
+	h.expectError("POST", "/admin/api/apps", map[string]any{"vendor": "enterprise", "id": "tool", "provider": "info", "name": input["name"], "enabled": true}, 404, codeVendorNotFound, nil)
+}
+
+func TestApplicationCreateAppliesProviderFieldsAndDefaults(t *testing.T) {
+	h := newHarness(t)
+	h.login("")
+	h.createVendor("enterprise")
+	name := map[string]string{"en": "Tool", "zh-CN": "工具"}
+	create := func(body map[string]any, status int) []byte {
+		t.Helper()
+		body["vendor"], body["name"], body["enabled"] = "enterprise", name, true
+		data, _ := h.request("POST", "/admin/api/apps", body, status, nil)
+		return data
+	}
+	data, headers := h.request("POST", "/admin/api/apps", map[string]any{"vendor": "enterprise", "id": "codex", "provider": "codex", "name": name, "enabled": true}, 201, nil)
+	codex := decodeJSONBody[appDTO](t, data)
+	providers := getJSON[providerListDTO](h, "/admin/api/providers")
+	defaultBase := ""
+	for _, p := range providers.Items {
+		if p.Key == "codex" {
+			defaultBase = *p.DefaultBaseURL
+		}
+	}
+	if headers.Get("Location") != "/admin/api/apps/enterprise/codex" || headers.Get("ETag") != etag(codex.Revision) || codex.BaseURL == nil || *codex.BaseURL != defaultBase || codex.CacheTTLSeconds == nil || *codex.CacheTTLSeconds != 60 || codex.SourceEpoch != 1 || codex.BaseURLs != nil {
+		t.Fatal("release defaults", string(data))
+	}
+	if !bytes.Contains(data, []byte(`"base_url"`)) || bytes.Contains(data, []byte(`"base_urls"`)) || bytes.Contains(data, []byte(`"source_strategy"`)) {
+		t.Fatal("release application fields", string(data))
+	}
+	files := decodeJSONBody[appDTO](t, create(map[string]any{"id": "files", "provider": "http-cache", "base_urls": []string{"http://intranet.example:8081/packages/", "https://mirror.example/packages"}, "tags": []string{"#Mirror"}}, 201))
+	if len(files.BaseURLs) != 2 || files.BaseURLs[0] != "http://intranet.example:8081/packages" || files.SourceStrategy != "ordered" || *files.CacheTTLSeconds != 300 || files.BaseURL != nil || strings.Join(files.Tags, ",") != "Mirror" {
+		t.Fatal("http-cache defaults", files)
+	}
+	zero := decodeJSONBody[appDTO](t, create(map[string]any{"id": "zero", "provider": "http-cache", "base_urls": []string{"http://intranet.example/zero"}, "cache_ttl_seconds": 0, "source_strategy": "random"}, 201))
+	if *zero.CacheTTLSeconds != 0 || zero.SourceStrategy != "random" {
+		t.Fatal("explicit zero TTL or strategy lost", zero)
+	}
+	data = create(map[string]any{"id": "about", "provider": "info"}, 201)
+	if about := decodeJSONBody[appDTO](t, data); about.SourceEpoch != 0 || bytes.Contains(data, []byte(`"cache_ttl_seconds"`)) || bytes.Contains(data, []byte(`"base_url`)) {
+		t.Fatal("info application has upstream fields", string(data))
+	}
+	for _, invalid := range []map[string]any{
+		{"id": "missing-base", "provider": "http-cache"},
+		{"id": "single-base", "provider": "http-cache", "base_url": "http://intranet.example/files"},
+		{"id": "info-base", "provider": "info", "base_url": "https://example.com"},
+		{"id": "hosted-ttl", "provider": "hosted", "cache_ttl_seconds": 1},
+		{"id": "codex-sources", "provider": "codex", "base_urls": []string{"https://example.com"}},
+		{"id": "codex-zero", "provider": "codex", "cache_ttl_seconds": 0},
+		{"id": "credentials", "provider": "codex", "base_url": "https://user:secret@example.com"},
+		{"id": "unknown-category", "provider": "info", "categories": []string{"missing"}},
+		{"id": "Bad", "provider": "info"},
+		{"id": "bad-provider", "provider": "plugin"},
+	} {
+		expectCode(t, create(invalid, 400), codeValidationFailed)
+	}
+	expectCode(t, create(map[string]any{"id": "files", "provider": "info"}, 409), codeAlreadyExists)
+	h.expectError("POST", "/admin/api/apps", map[string]any{"vendor": "missing", "id": "tool", "provider": "info", "name": name, "enabled": true}, 404, codeVendorNotFound, nil)
+	h.expectError("POST", "/admin/api/apps", map[string]any{"vendor": "enterprise", "id": "tool", "provider": "info", "name": name}, 400, codeInvalidRequest, nil)
+	h.expectError("POST", "/admin/api/apps", map[string]any{"vendor": "enterprise", "id": "tool", "provider": "info", "name": name, "enabled": true, "localized_icons": map[string]string{"en": "", "zh-CN": ""}}, 400, codeInvalidRequest, nil)
+	gone := h.createVendor("gone")
+	if err := h.store.DeleteVendor(gone.ID, gone.Revision); err != nil {
+		t.Fatal(err)
+	}
+	h.expectError("POST", "/admin/api/apps", map[string]any{"vendor": "gone", "id": "tool", "provider": "info", "name": name, "enabled": true}, 409, codeEntityDeleted, nil)
+	_, public := h.publicCatalog()
+	if public["enterprise/files"].Provider != application.HttpCache || public["enterprise/files"].Vendor.Name.ZhCN != "企业" {
+		t.Fatal("created application is not published", public)
+	}
+}
+
+func TestApplicationStateToggleChangesOnlyEnabled(t *testing.T) {
+	h := newHarness(t)
+	h.login("")
+	before := h.adminApp("openai/codex")
+	path := "/admin/api/apps/openai/codex"
+	h.expectError("PATCH", path, map[string]any{"enabled": false, "base_url": "https://example.com"}, 400, codeInvalidRequest, ifMatchHeader(before.Revision))
+	h.expectError("PATCH", path, map[string]any{}, 400, codeInvalidRequest, ifMatchHeader(before.Revision))
+	data, _ := h.request("PATCH", path, map[string]any{"enabled": false}, 200, ifMatchHeader(before.Revision))
+	after := decodeJSONBody[appDTO](t, data)
+	if after.Enabled || after.Revision != before.Revision+1 || after.Name != before.Name || *after.BaseURL != *before.BaseURL || after.SourceEpoch != before.SourceEpoch || after.Icon != before.Icon {
+		t.Fatal("enabled toggle changed other fields", after)
+	}
+	h.request("GET", "/openai/codex/install.sh", nil, 404, nil)
+	h.expectError("PATCH", path, map[string]any{"enabled": true}, 409, codeRevisionConflict, ifMatchHeader(before.Revision))
+	h.expectError("PATCH", "/admin/api/apps/openai/missing", map[string]any{"enabled": true}, 404, codeApplicationNotFound, ifMatchHeader(1))
+	h.createVendor("soft")
+	soft := h.createApp("soft", "deleted", application.Info, nil)
+	if err := h.store.DeleteApplication(soft.Key, soft.Revision); err != nil {
+		t.Fatal(err)
+	}
+	deleted := h.adminApp(soft.Key)
+	if deleted.DeletedAt == nil || deleted.Enabled {
+		t.Fatal("deleted applications stay readable", deleted)
+	}
+	h.expectError("PATCH", "/admin/api/apps/"+soft.Key, map[string]any{"enabled": true}, 409, codeEntityDeleted, ifMatchHeader(deleted.Revision))
+}
+
+func TestApplicationPermanentDeleteGuardsIdentityAndIsFinal(t *testing.T) {
 	dir := t.TempDir()
 	h := newHarness(t, withDir(dir))
 	password := h.password
-	h.login(password)
-	vendor := h.createVendor("enterprise")
-	app := h.createApp(vendor.ID, "codex", application.Codex, nil)
-	if err := h.server.store.AddFor(app.MetricsID(), "artifact_requests", 7); err != nil {
+	h.login("")
+	h.createVendor("enterprise")
+	app := h.createApp("enterprise", "codex", application.Codex, nil)
+	if err := h.store.AddFor(app.MetricsID(), "artifact_requests", 7); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := h.publicCatalog()
-	data, _ := h.request("PATCH", "/admin/api/vendors/enterprise", map[string]any{"revision": vendor.Revision, "enabled": false}, 200, nil)
-	disabledVendor := directoryDecode[store.Vendor](t, data, "vendor")
-	after, public := h.publicCatalog()
-	if before == after {
-		t.Fatal("vendor visibility change did not update bootstrap revision")
+	path := "/admin/api/apps/" + app.Key
+	h.expectError("DELETE", path, nil, 400, codeInvalidQuery, ifMatchHeader(app.Revision))
+	h.expectError("DELETE", path+"?confirm_uid=short", nil, 400, codeInvalidQuery, ifMatchHeader(app.Revision))
+	h.expectError("DELETE", path+"?confirm_uid="+app.UID, nil, 400, codeIfMatchRequired, nil)
+	expectCode(t, h.deleteApp(app.Key, strings.Repeat("0", 32), app.Revision, 409), codeRevisionConflict)
+	expectCode(t, h.deleteApp(app.Key, app.UID, app.Revision+1, 409), codeRevisionConflict)
+	builtin := h.adminApp("openai/codex")
+	expectCode(t, h.deleteApp(builtin.Key, builtin.UID, builtin.Revision, 409), codeBuiltinProtected)
+	data := h.deleteApp(app.Key, app.UID, app.Revision, 200)
+	if deletion := decodeJSONBody[appDeletionDTO](t, data); deletion.CleanupPending {
+		t.Fatal("cleanup pending without files", string(data))
 	}
-	if _, present := public[app.Key]; present {
-		t.Fatal("disabled vendor's application remained public")
+	// A retry after success is not found; a recreated application keeps its new identity.
+	expectCode(t, h.deleteApp(app.Key, app.UID, app.Revision, 404), codeApplicationNotFound)
+	replacement := h.createApp("enterprise", "codex", application.Info, nil)
+	expectCode(t, h.deleteApp(app.Key, app.UID, replacement.Revision, 409), codeRevisionConflict)
+	if counters, err := h.store.CountersFor(app.MetricsID()); err != nil || len(counters) != 0 {
+		t.Fatal("deleted history survived", counters, err)
 	}
-	for _, path := range []string{"/enterprise/codex", "/enterprise/codex/install.sh", "/api/apps/enterprise/codex"} {
-		h.request("GET", path, nil, 404, nil)
-	}
-	data, _ = h.request("GET", "/admin/api/apps/enterprise/codex", nil, 200, nil)
-	retained := directoryDecode[store.Application](t, data, "app")
-	if !retained.Enabled || retained.Revision != app.Revision {
-		t.Fatal("vendor disable rewrote the app enable flag or revision")
-	}
-	h.request("GET", "/admin/vendors/enterprise/apps/codex/settings", nil, 200, nil)
-	h.request("PATCH", "/admin/api/vendors/enterprise", map[string]any{"revision": disabledVendor.Revision, "enabled": true}, 200, nil)
-	h.request("GET", "/enterprise/codex", nil, 200, nil)
-	h.request("PATCH", "/admin/api/apps/enterprise/codex", map[string]any{"revision": app.Revision, "enabled": false}, 200, nil)
-	h.request("GET", "/enterprise/codex/install.sh", nil, 404, nil)
-	data, _ = h.request("GET", "/admin/api/vendors/enterprise", nil, 200, nil)
-	currentVendor := directoryDecode[store.Vendor](t, data, "vendor")
-	h.request("DELETE", "/admin/api/vendors/enterprise", map[string]any{"revision": currentVendor.Revision, "confirm_key": "enterprise"}, 409, nil)
-
-	// Built-in keys are protected even when disabled; custom deletion is permanent.
-	data, _ = h.request("GET", "/admin/api/apps", nil, 200, nil)
-	apps := directoryDecode[[]store.Application](t, data, "items")
-	for _, row := range apps {
-		if row.BuiltinTemplate {
-			h.request("DELETE", "/admin/api/apps/"+row.Key, map[string]any{"revision": row.Revision, "confirm_key": row.Key, "confirm_uid": row.UID}, 409, nil)
-			h.request("PATCH", "/admin/api/apps/"+row.Key, map[string]any{"revision": row.Revision, "enabled": false}, 200, nil)
-		} else {
-			h.request("DELETE", "/admin/api/apps/"+row.Key, map[string]any{"revision": row.Revision, "confirm_key": row.Key, "confirm_uid": row.UID}, 200, nil)
-		}
-	}
-	h.request("DELETE", "/admin/api/vendors/enterprise", map[string]any{"revision": currentVendor.Revision, "confirm_key": "enterprise"}, 200, nil)
-	h.request("DELETE", "/admin/api/vendors/openai", map[string]any{"revision": 1, "confirm_key": "openai"}, 409, nil)
-	_, public = h.publicCatalog()
-	if len(public) != 0 {
-		t.Fatal("disabled or deleted application remained public")
-	}
+	h.deleteApp(replacement.Key, replacement.UID, replacement.Revision, 200)
+	expectGoneApplication(h, app.Key, replacement.Revision)
 	h.close()
 	h = newHarness(t, withDir(dir))
 	if h.password != "" {
-		t.Fatal("admin credentials reset")
+		t.Fatal("administrator credentials reset")
 	}
 	h.login(password)
-	_, public = h.publicCatalog()
-	if len(public) != 0 {
-		t.Fatal("restart enabled a protected template")
+	h.expectError("GET", path, nil, 404, codeApplicationNotFound, nil)
+	page := getJSON[pageDTO[appListItemDTO]](h, "/admin/api/apps?state=deleted")
+	if page.Total != 0 {
+		t.Fatal("permanent removal left tombstones", page)
 	}
-	h.request("GET", "/admin/api/apps/enterprise/codex", nil, 404, nil)
-	data, _ = h.request("GET", "/admin/api/apps?state=deleted", nil, 200, nil)
-	if rows := directoryDecode[[]store.Application](t, data, "items"); len(rows) != 0 {
-		t.Fatal("permanent removal left tombstones")
-	}
-	counters, err := h.server.store.CountersFor(app.MetricsID())
-	if err != nil || len(counters) != 0 {
-		t.Fatal("deleted history survived", counters, err)
-	}
+}
+
+// expectGoneApplication requires every application operation to report a
+// permanently deleted application as not found.
+func expectGoneApplication(h *harness, key string, revision int64) {
+	h.t.Helper()
+	path := "/admin/api/apps/" + key
+	h.expectError("GET", path, nil, 404, codeApplicationNotFound, nil)
+	h.expectError("PATCH", path, map[string]any{"enabled": true}, 404, codeApplicationNotFound, ifMatchHeader(revision))
+	h.expectError("GET", path+"/configuration", nil, 404, codeApplicationNotFound, nil)
+	h.expectError("PATCH", path+"/configuration", map[string]any{"set": map[string]any{"name.en": "x"}}, 404, codeApplicationNotFound, ifMatchHeader(revision))
+	h.expectError("GET", path+"/admin-notes", nil, 404, codeApplicationNotFound, nil)
+	h.expectError("PUT", path+"/admin-notes", map[string]any{"text": ""}, 404, codeApplicationNotFound, ifMatchHeader(1))
+	h.expectError("POST", path+"/copy", map[string]any{"source_uid": strings.Repeat("0", 32), "target_vendor": "openai", "target_id": "gone-copy", "mode": "independent", "include_notes": false}, 404, codeApplicationNotFound, ifMatchHeader(revision))
+	h.expectError("POST", "/admin/api/configuration/export", map[string]any{"selection": []map[string]any{{"kind": "app", "key": key}}, "mode": "linked", "include_notes": false, "include_proxy_credentials": false}, 404, codeApplicationNotFound, nil)
+}
+
+func TestIconUploadValidatesAndServesInertImages(t *testing.T) {
+	h := newHarness(t)
+	h.login("")
 	h.createVendor("enterprise")
-	h.createVendor("after-restart")
-	h.createApp("after-restart", "files", application.HttpCache, map[string]any{"base_url": "http://intranet.example/files"})
-	_, public = h.publicCatalog()
-	if len(public) != 1 || public["after-restart/files"].ID == "" {
-		t.Fatal("empty runtime could not admit a new application")
+	static := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#123456" d="M0 0 L24 0 L12 24 Z"/></svg>`
+	body, contentType := multipartForm(t, [3]string{"file", "a.svg", static})
+	if code, data, _ := h.raw("POST", "/admin/api/icons", body, contentType, map[string]string{"X-CSRF-Token": ""}); code != 403 {
+		t.Fatal("upload without CSRF", code, string(data))
 	}
-
-}
-
-func TestDirectoryHTTPIconUploadAndPublicBoundary(t *testing.T) {
-	h := newHarness(t)
-	h.login(h.password)
-	vendor := h.createVendor("enterprise")
-	upload := func(svg, csrf string, want int) string {
-		t.Helper()
-		var body bytes.Buffer
-		form := multipart.NewWriter(&body)
-		file, err := form.CreateFormFile("file", "untrusted-name.svg")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := io.WriteString(file, svg); err != nil {
-			t.Fatal(err)
-		}
-		if err := form.Close(); err != nil {
-			t.Fatal(err)
-		}
-		code, data, _ := h.raw("POST", "/admin/api/assets/icons", &body, form.FormDataContentType(), map[string]string{"X-CSRF-Token": csrf})
-		if code != want {
-			t.Fatalf("icon upload got %d, want %d: %s", code, want, data)
-		}
-		if code == 201 {
-			return directoryDecode[string](t, data, "icon")
-		}
-		return ""
+	h.uploadIcon(`<svg onload="alert(1)"><script>alert(1)</script></svg>`, 400)
+	code, data, _ := h.raw("POST", "/admin/api/icons", strings.NewReader(static), "image/svg+xml", nil)
+	if code != 415 {
+		t.Fatal("non-multipart upload", code, string(data))
 	}
-	staticSVG := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#123456" d="M0 0 L24 0 L12 24 Z"/></svg>`
-	upload(staticSVG, "", 403)
-	upload(`<svg onload="alert(1)"><script>alert(1)</script></svg>`, h.csrf, 400)
-	path := upload(staticSVG, h.csrf, 201)
-	if !strings.HasPrefix(path, media.PublicPrefix) || strings.Contains(path, "untrusted-name") {
-		t.Fatal("upload filename became a public/storage path", path)
+	expectCode(t, data, codeUnsupportedMediaType)
+	body, contentType = multipartForm(t, [3]string{"file", "a.svg", static}, [3]string{"file", "b.svg", static})
+	code, data, _ = h.raw("POST", "/admin/api/icons", body, contentType, nil)
+	if code != 400 {
+		t.Fatal("two files accepted", code)
 	}
-	body, headers := h.request("GET", path, nil, 200, nil)
-	if !bytes.Contains(body, []byte("#123456")) || headers.Get("Content-Type") != "image/svg+xml" || headers.Get("X-Content-Type-Options") != "nosniff" || headers.Get("Content-Security-Policy") != "sandbox; default-src 'none'" || !strings.Contains(headers.Get("Cache-Control"), "immutable") {
-		t.Fatal("uploaded SVG lost the inert public response contract", headers)
+	expectCode(t, data, codeInvalidRequest)
+	path := h.uploadIcon(static, 201)
+	if again := h.uploadIcon(static, 201); again != path || !strings.HasPrefix(path, media.PublicPrefix) || strings.Contains(path, "untrusted-name") {
+		t.Fatal("icon storage is not content addressed", path, again)
 	}
-	head, _ := h.request("HEAD", path, nil, 200, nil)
-	if len(head) != 0 {
-		t.Fatal("icon HEAD returned a response body")
+	served, headers := h.request("GET", path, nil, 200, nil)
+	if !bytes.Contains(served, []byte("#123456")) || headers.Get("Content-Type") != "image/svg+xml" || headers.Get("Content-Security-Policy") != "sandbox; default-src 'none'" || !strings.Contains(headers.Get("Cache-Control"), "immutable") {
+		t.Fatal("uploaded SVG lost the inert response contract", headers)
 	}
-	h.request("PATCH", "/admin/api/vendors/enterprise", map[string]any{"revision": vendor.Revision, "icon": media.PublicPrefix + strings.Repeat("f", 64) + ".png"}, 400, nil)
-	h.request("PATCH", "/admin/api/vendors/enterprise", map[string]any{"revision": vendor.Revision, "icon": path}, 200, nil)
-	app := h.createApp(vendor.ID, "files", application.HttpCache, map[string]any{"base_url": "http://intranet.example/files"})
-	_, public := h.publicCatalog()
-	if public[app.Key].Icon != path {
-		t.Fatal("application without its own icon did not inherit vendor icon")
+	// Only uploaded or preset icons can be selected.
+	expectCode(t, h.patchConfiguration("vendors/enterprise", map[string]any{"set": map[string]any{"icon": media.PublicPrefix + strings.Repeat("f", 64) + ".png"}}, 400), codeValidationFailed)
+	h.patchConfiguration("vendors/enterprise", map[string]any{"set": map[string]any{"icon": path}}, 200)
+	app := h.createApp("enterprise", "files", application.HttpCache, map[string]any{"base_url": "http://intranet.example/files"})
+	if _, public := h.publicCatalog(); public[app.Key].Vendor.Icon != path {
+		t.Fatal("published vendor icon", public[app.Key])
 	}
-	// The public URL serves only normalized bytes even after the upload session
-	// has gone away; it cannot expose the raw upload name or arbitrary files.
 	h.request("GET", media.PublicPrefix+"untrusted-name.svg", nil, 404, nil)
-	h.request("GET", path+"/extra", nil, 404, nil)
-}
-
-func TestDirectoryOpenAISharedIconAndEnabledOnlyPATCH(t *testing.T) {
-	h := newHarness(t)
-	h.login(h.password)
-	icon, _ := h.request("GET", presets.ImagePrefix+"builtin/openai.svg", nil, 200, nil)
-	codex, _ := h.request("GET", presets.ImagePrefix+"openai/codex/icon.svg", nil, 200, nil)
-	if !bytes.Equal(icon, codex) {
-		t.Fatal("vendor and application icon bytes differ")
-	}
-	v, _ := h.server.store.Vendor("openai")
-	a, _ := h.server.store.Application("openai/codex")
-	data, _ := h.request("PATCH", "/admin/api/vendors/openai", map[string]any{"revision": v.Revision, "enabled": false}, 200, nil)
-	changedVendor := directoryDecode[store.Vendor](t, data, "vendor")
-	if changedVendor.Enabled || changedVendor.Revision != v.Revision+1 || changedVendor.Name != v.Name || changedVendor.Description != v.Description || changedVendor.Icon != v.Icon {
-		t.Fatal("enabled patch changed vendor fields", changedVendor)
-	}
-	h.request("PATCH", "/admin/api/vendors/openai", map[string]any{"revision": v.Revision, "enabled": true}, 409, nil)
-	data, _ = h.request("PATCH", "/admin/api/apps/openai/codex", map[string]any{"revision": a.Revision, "enabled": false}, 200, nil)
-	changedApp := directoryDecode[store.Application](t, data, "app")
-	if changedApp.Enabled || changedApp.Revision != a.Revision+1 || changedApp.Name != a.Name || changedApp.Description != a.Description || changedApp.Icon != a.Icon || changedApp.BaseURL != a.BaseURL || changedApp.SourceEpoch != a.SourceEpoch {
-		t.Fatal("enabled patch changed app fields", changedApp)
-	}
-	h.request("PATCH", "/admin/api/apps/openai/codex", map[string]any{"revision": a.Revision, "enabled": true}, 409, nil)
-	independent, _ := h.request("GET", presets.ImagePrefix+"builtin/openai.svg", nil, 200, nil)
-	if !bytes.Equal(icon, independent) {
-		t.Fatal("vendor icon depends on application state")
-	}
 }

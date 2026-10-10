@@ -246,8 +246,8 @@ func TestHTTPCacheCleanupAPIFreezesMatcherAndFencesRevision(t *testing.T) {
 	}
 	saved := savePolicyAPI(t, h, api+"/cache/policy", app.Revision, map[string]any{"rules": []any{}, "auto_cleanup": []any{}, "stale_fallback": false})
 	h.request("POST", api+"/cache/cleanup/"+legacy.ID+"/execute", map[string]any{}, 409, nil)
-	body, _ = h.request("PATCH", api, map[string]any{"base_url": upstream.URL + "/new-source"}, 200, map[string]string{"If-Match": fmt.Sprintf(`"%d"`, saved.Revision)})
-	changed := directoryDecode[store.Application](t, body, "app")
+	h.request("PATCH", api+"/configuration", map[string]any{"set": map[string]any{"base_urls": []string{upstream.URL + "/new-source"}}}, 200, ifMatchHeader(saved.Revision))
+	changed := h.adminApp(app.Key)
 	if changed.SourceEpoch != app.SourceEpoch+1 {
 		t.Fatal("fixture did not create a historical source")
 	}
@@ -299,115 +299,6 @@ func TestHTTPCachePolicyAPIChangesLiveTTLAndStaleFallback(t *testing.T) {
 	}
 	savePolicyAPI(t, h, api+"/cache/policy", saved.Revision, map[string]any{"rules": saved.Rules, "auto_cleanup": saved.AutoCleanup, "stale_fallback": false})
 	h.request("GET", public, nil, 502, nil)
-}
-
-type sourcesAPIApplication struct {
-	Key             string              `json:"key"`
-	Name            store.LocalizedText `json:"name"`
-	Revision        int64               `json:"revision"`
-	SourceEpoch     int64               `json:"source_epoch"`
-	BaseURLs        []string            `json:"base_urls"`
-	SourceStrategy  string              `json:"source_strategy"`
-	CacheTTLSeconds int                 `json:"cache_ttl_seconds"`
-}
-
-func TestHTTPCacheMultiSourceAPIValidationAndEpochs(t *testing.T) {
-	h := newHarness(t)
-	h.login(h.password)
-	vendor := h.createVendor("source-test")
-	create := "/admin/api/vendors/" + vendor.ID + "/apps"
-	name := store.LocalizedText{En: "Multiple sources", ZhCN: "多个源"}
-	base := []string{"http://127.0.0.1:9/first", "http://127.0.0.1:9/second"}
-	tooMany := make([]string, 17)
-	for i := range tooMany {
-		tooMany[i] = fmt.Sprintf("http://127.0.0.1:9/source-%d", i)
-	}
-	for _, values := range [][]string{{}, tooMany, {base[0], base[0]}, {base[0], base[0] + "/"}, {"https://user:password@example.test/files"}} {
-		h.request("POST", create, map[string]any{"id": "invalid", "name": name, "provider": application.HttpCache, "base_urls": values, "source_strategy": "ordered"}, 400, nil)
-	}
-	h.request("POST", create, map[string]any{"id": "invalid-strategy", "name": name, "provider": application.HttpCache, "base_urls": base, "source_strategy": "fastest"}, 400, nil)
-	for _, provider := range []string{application.Codex, application.ClaudeCode} {
-		h.request("POST", create, map[string]any{"id": "not-multi-" + provider, "name": name, "provider": provider, "base_urls": base}, 400, nil)
-		h.request("POST", create, map[string]any{"id": "not-strategy-" + provider, "name": name, "provider": provider, "source_strategy": "ordered"}, 400, nil)
-	}
-	body, _ := h.request("POST", create, map[string]any{"id": "files", "name": name, "provider": application.HttpCache, "base_urls": base}, 201, nil)
-	app := directoryDecode[sourcesAPIApplication](t, body, "app")
-	if app.SourceEpoch != 1 || !reflect.DeepEqual(app.BaseURLs, base) || app.SourceStrategy != "ordered" {
-		t.Fatal("multi-source defaults/order lost", app)
-	}
-	api := "/admin/api/apps/" + app.Key
-	patch := func(input map[string]any) {
-		t.Helper()
-		data, _ := h.request("PATCH", api, input, 200, map[string]string{"If-Match": fmt.Sprintf(`"%d"`, app.Revision)})
-		updated := directoryDecode[sourcesAPIApplication](t, data, "app")
-		if updated.Revision != app.Revision+1 {
-			t.Fatal("directory edit failed to advance CAS revision", updated)
-		}
-		app = updated
-	}
-	patch(map[string]any{"name": store.LocalizedText{En: "New label", ZhCN: "新名称"}})
-	patch(map[string]any{"cache_ttl_seconds": 0})
-	if app.SourceEpoch != 1 || !reflect.DeepEqual(app.BaseURLs, base) {
-		t.Fatal("metadata/TTL update changed source identity", app)
-	}
-	policy := savePolicyAPI(t, h, api+"/cache/policy", app.Revision, map[string]any{"rules": []any{}, "auto_cleanup": []any{}, "stale_fallback": false})
-	body, _ = h.request("GET", api, nil, 200, nil)
-	app = directoryDecode[sourcesAPIApplication](t, body, "app")
-	if app.Revision != policy.Revision || app.SourceEpoch != 1 {
-		t.Fatal("policy edit changed source epoch", app)
-	}
-	reordered := []string{base[1], base[0]}
-	patch(map[string]any{"base_urls": reordered})
-	if app.SourceEpoch != 2 || !reflect.DeepEqual(app.BaseURLs, reordered) {
-		t.Fatal("source reordering did not isolate its cache namespace", app)
-	}
-	patch(map[string]any{"source_strategy": "round_robin"})
-	if app.SourceEpoch != 3 || app.SourceStrategy != "round_robin" {
-		t.Fatal("source strategy did not change epoch", app)
-	}
-	patch(map[string]any{"base_url": reordered[0] + "/", "cache_ttl_seconds": 120})
-	if app.SourceEpoch != 3 || app.SourceStrategy != "round_robin" || !reflect.DeepEqual(app.BaseURLs, reordered) || app.CacheTTLSeconds != 120 {
-		t.Fatal("legacy first-source/TTL edit discarded multiple sources or changed their identity", app)
-	}
-	replaced := []string{base[1], "http://127.0.0.1:9/replacement"}
-	patch(map[string]any{"base_urls": replaced})
-	if app.SourceEpoch != 4 || !reflect.DeepEqual(app.BaseURLs, replaced) {
-		t.Fatal("source replacement did not isolate its cache namespace", app)
-	}
-	patch(map[string]any{"base_urls": replaced, "source_strategy": "round_robin"})
-	if app.SourceEpoch != 4 {
-		t.Fatal("unchanged source configuration manufactured another epoch", app)
-	}
-	body, _ = h.request("GET", api+"/sources", nil, 200, nil)
-	var sources []struct {
-		Epoch   int64 `json:"epoch"`
-		Current bool  `json:"current"`
-	}
-	sources = directoryDecode[[]struct {
-		Epoch   int64 `json:"epoch"`
-		Current bool  `json:"current"`
-	}](t, body, "sources")
-	if len(sources) != 4 {
-		t.Fatalf("historical source snapshots not retained: %s", body)
-	}
-	for _, source := range sources {
-		if source.Current != (source.Epoch == 4) {
-			t.Fatal("incorrect current source snapshot", sources)
-		}
-	}
-	body, _ = h.request("GET", "/api/bootstrap", nil, 200, nil)
-	for _, private := range []string{`"base_urls"`, `"source_strategy"`, `"stale_fallback"`} {
-		if bytes.Contains(body, []byte(private)) {
-			t.Fatalf("public bootstrap exposed source policy %s", private)
-		}
-	}
-	h.request("GET", "/admin/api/apps/source-test/unknown/sources", nil, 404, nil)
-	row, err := h.server.store.Application(app.Key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.request("DELETE", api, map[string]any{"revision": row.Revision, "confirm_key": row.Key, "confirm_uid": row.UID}, 200, nil)
-	h.request("GET", api+"/sources", nil, 404, nil)
 }
 
 func TestHTTPCacheRefreshAPIPaginatesAndExecutesCompleteFrozenSet(t *testing.T) {
@@ -638,8 +529,8 @@ func TestHTTPCacheRefreshAPISingleOutcomesAndPreviewFences(t *testing.T) {
 	fail.Store(false)
 	body, _ = h.request("POST", api+"/cache/refresh/preview", match, 200, nil)
 	beforeSource := directoryDecode[httpcache.MaintenancePreview](t, body, "job")
-	body, _ = h.request("PATCH", api, map[string]any{"base_url": upstream.URL + "/replacement"}, 200, map[string]string{"If-Match": fmt.Sprintf(`"%d"`, saved.Revision)})
-	changed := directoryDecode[store.Application](t, body, "app")
+	h.request("PATCH", api+"/configuration", map[string]any{"set": map[string]any{"base_urls": []string{upstream.URL + "/replacement"}}}, 200, ifMatchHeader(saved.Revision))
+	changed := h.adminApp(app.Key)
 	h.request("POST", api+"/cache/refresh/"+beforeSource.ID+"/execute", map[string]any{}, 409, nil)
 	h.request("POST", api+"/cache/refresh/"+beforeSource.ID+"/execute?source_epoch=1", map[string]any{}, 400, nil)
 	h.request("PATCH", api, map[string]any{"enabled": false}, 200, map[string]string{"If-Match": fmt.Sprintf(`"%d"`, changed.Revision)})
