@@ -30,6 +30,7 @@ export default {
       title: "Import configuration",
       description:
         "Upload a ZIP or YAML package, review what will change and decide per item. Nothing changes until you execute the import.",
+      file: "Package file",
       fileHint:
         "New vendors and applications are created disabled. A preview expires after ten minutes.",
       uploading: "Uploading package",
@@ -81,6 +82,9 @@ export default {
       after: "Imported",
       changedTitle: "Decisions changed",
       changed: "Update the preview to apply your decisions before importing.",
+      staleTitle: "Preview no longer valid",
+      stale:
+        "The preview expired or the data changed since it was made. Nothing was imported. Create a new preview.",
       notReady: "Resolve the items marked above, then update the preview.",
       trustWarning:
         "This package changes usage instructions. Instructions may contain HTML and JavaScript that run on the public application page; they are shown above as text only.",

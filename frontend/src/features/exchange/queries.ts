@@ -78,6 +78,8 @@ export function previewImport(
 export function useExecuteImport() {
   const client = useQueryClient();
   return useMutation({
+    // The dialog drops the preview and asks for a new one.
+    meta: { handledCodes: ["PREVIEW_NOT_FOUND", "PREVIEW_STALE"] },
     mutationFn: ({ id, trust }: { id: string; trust: boolean }) =>
       unwrap(
         api.POST("/admin/api/configuration/import/{preview_id}/execute", {
@@ -104,6 +106,8 @@ export function useCopyApp(
   };
   const mutation = useRevisionedMutation<Schema<"App">, CopyRequest>({
     revision: () => toValue(source)?.revision,
+    // A taken target ID is shown at the ID field.
+    handledCodes: ["ALREADY_EXISTS"],
     mutationFn: (body, ifMatch) => {
       const app = toValue(source);
       if (!app) return Promise.reject(new Error("no source application"));
