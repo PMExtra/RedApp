@@ -48,7 +48,7 @@ func (s *Service) Warm(ctx context.Context, entry application.Entry, path string
 	ctx = context.WithValue(ctx, warmContextKey{}, true)
 	ctx = context.WithValue(ctx, fetchObserverKey{}, func(n int64) error { return budget.Consume(n) })
 	ctx = context.WithValue(ctx, fetchLengthKey{}, func(n int64) error { return budget.CheckLength(n) })
-	for tries := 0; tries < 16; tries++ {
+	for tries := 0; tries < fetchAgainLimit; tries++ {
 		if ctx.Err() != nil {
 			item.Reason = "cancelled"
 			return item

@@ -12,6 +12,17 @@ import (
 
 var ErrFetchAgain = errors.New("HTTP cache fetch must be retried with current storage state")
 
+// ErrFetchContended reports that storage kept changing under one caller for
+// fetchAgainLimit consecutive attempts.
+var ErrFetchContended = errors.New("HTTP cache storage kept changing; retry the request")
+
+// fetchAgainLimit bounds every ErrFetchAgain retry loop.
+const fetchAgainLimit = 16
+
+func flightKey(entry application.Entry, path, generation string) string {
+	return entry.StorageID() + "\x00" + path + "\x00" + strconv.FormatInt(entry.RuntimeRevision, 10) + "/" + strconv.FormatInt(entry.VendorRuntimeRevision, 10) + "\x00" + generation
+}
+
 // Flights own the upstream context. A caller relinquishes only its waiter;
 // cancellation closes the upstream when no admitted waiter remains.
 func (s *Service) sharedFetch(ctx context.Context, entry application.Entry, path string, old *Row) (fetchResult, error) {
@@ -19,7 +30,7 @@ func (s *Service) sharedFetch(ctx context.Context, entry application.Entry, path
 	if old != nil {
 		generation = old.GenerationID
 	}
-	key := entry.StorageID() + "\x00" + path + "\x00" + strconv.FormatInt(entry.RuntimeRevision, 10) + "/" + strconv.FormatInt(entry.VendorRuntimeRevision, 10) + "\x00" + generation
+	key := flightKey(entry, path, generation)
 	waiter := &fetchWaiter{failed: make(chan struct{})}
 	waiter.observe, _ = ctx.Value(fetchObserverKey{}).(func(int64) error)
 	waiter.check, _ = ctx.Value(fetchLengthKey{}).(func(int64) error)
@@ -128,7 +139,7 @@ func (s *Service) runFetch(ctx context.Context, entry application.Entry, path st
 		err = s.db.AddFor(entry.MetricsID(), "miss_requests", 1)
 	}
 	if err == nil {
-		result, err = s.fetch(ctx, entry, path, old, true)
+		result, err = s.fetch(ctx, entry, path, old)
 	}
 	if result.response != nil {
 		result.response.Body = &finishBody{ReadCloser: result.response.Body, finish: finish}

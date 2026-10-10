@@ -209,9 +209,13 @@ func (s *Service) refreshExisting(ctx context.Context, entry application.Entry, 
 		return item, err
 	}
 	ctx = context.WithValue(ctx, policyContextKey{}, policy)
-	for {
+	for tries := 0; ; tries++ {
 		if err := ctx.Err(); err != nil {
 			return item, err
+		}
+		if tries == fetchAgainLimit {
+			item.Reason = "generation_changed"
+			return item, ErrFetchContended
 		}
 		old, err := s.lookup(entry.StorageID(), relative)
 		if err != nil {

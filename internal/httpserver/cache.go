@@ -63,6 +63,8 @@ func (s *Server) generalFile(w http.ResponseWriter, r *http.Request) bool {
 			problem(w, 409, "SOURCE_CHANGED", "Application source changed; retry the request")
 		case errors.Is(err, download.ErrReaderLimit), errors.Is(err, download.ErrWriterLimit):
 			problem(w, 503, "TRANSFER_CAPACITY", "Transfer capacity is currently full")
+		case errors.Is(err, httpcache.ErrFetchContended):
+			problem(w, 503, "CACHE_CONTENDED", "Cached file kept changing; retry the request")
 		default:
 			fail(w, 502, "Unable to serve the requested file")
 		}

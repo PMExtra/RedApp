@@ -32,7 +32,7 @@ type fetchResult struct {
 
 const upstreamOperationTimeout = 9 * time.Minute
 
-func (s *Service) fetch(ctx context.Context, entry application.Entry, path string, old *Row, allowStore bool) (out fetchResult, err error) {
+func (s *Service) fetch(ctx context.Context, entry application.Entry, path string, old *Row) (out fetchResult, err error) {
 	release, err := s.budget.AcquireHTTPWriter()
 	if err != nil {
 		return fetchResult{}, err
@@ -67,7 +67,7 @@ func (s *Service) fetch(ctx context.Context, entry application.Entry, path strin
 			lastErr = upstreamCtx.Err()
 			break
 		}
-		result, retry, fetchErr := s.fetchAttempt(upstreamCtx, entry, path, old, allowStore, attempt)
+		result, retry, fetchErr := s.fetchAttempt(upstreamCtx, entry, path, old, attempt)
 		if result.oldUnavailable {
 			old = nil
 		}
@@ -108,7 +108,7 @@ func validSourceNotModified(old *Row, resp *http.Response, initial string, sent 
 	return resp.Request == nil || resp.Request.Header.Get("If-None-Match") != "" || resp.Request.Header.Get("If-Modified-Since") != ""
 }
 
-func (s *Service) fetchAttempt(ctx context.Context, entry application.Entry, path string, old *Row, allowStore bool, attempt sourceAttempt) (out fetchResult, retry bool, err error) {
+func (s *Service) fetchAttempt(ctx context.Context, entry application.Entry, path string, old *Row, attempt sourceAttempt) (out fetchResult, retry bool, err error) {
 	source, err := attempt.Client.RelativeURL(path)
 	if err != nil {
 		return fetchResult{}, false, err
@@ -159,10 +159,6 @@ func (s *Service) fetchAttempt(ctx context.Context, entry application.Entry, pat
 			}
 			return result, retry, err
 		}
-		if !allowStore {
-			row, err := s.pin(old.GenerationID)
-			return fetchResult{row: row, status: http.StatusOK}, false, err
-		}
 		result, err := s.revalidate(ctx, entry, old, combined)
 		result, err = s.recordOverride(ctx, entry, path, combined, result, err)
 		return result, false, err
@@ -172,20 +168,15 @@ func (s *Service) fetchAttempt(ctx context.Context, entry application.Entry, pat
 	}
 	blockReason := cacheBlockReason(resp.Header, contextCacheDecision(ctx, entry, path))
 	cacheable := blockReason == ""
-	if !cacheable || !allowStore {
-		if !cacheable {
-			if err = s.retire(old); err != nil {
-				return fetchResult{}, false, err
-			}
+	if !cacheable {
+		if err = s.retire(old); err != nil {
+			return fetchResult{}, false, err
 		}
 		if resp.ContentLength > s.budget.MaxArtifactBytes() {
 			return fetchResult{}, false, download.ErrArtifactLimit
 		}
 		// Uncacheable responses stream only to this reader. Once downstream
 		// headers/body start, a failure cannot transparently change sources.
-		if blockReason == "" {
-			blockReason = "request-no-store"
-		}
 		return fetchResult{response: resp, status: resp.StatusCode, blockReason: blockReason}, false, nil
 	}
 	s.checkFetchLength(ctx, resp.ContentLength)
