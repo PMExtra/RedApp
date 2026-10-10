@@ -7,6 +7,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/networkproxy"
 	"github.com/PMExtra/RedApp/presets"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -348,7 +349,7 @@ func TestExchangeOmittedProxyRebindRequiresResolutionAndKeepsNotes(t *testing.T)
 	}
 	s.SaveAdminNotes("app", app.Key, 0, "preserve notes")
 	// A separate valid template has a different proxy default. Omitting proxy may not switch the target's exit.
-	extra := set.Apps[0]
+	extra := set.Apps[slices.IndexFunc(set.Apps, func(a presets.App) bool { return a.Key() == source.Key })]
 	extra.Metadata.ID = "other"
 	extra.Spec.Proxy = networkproxy.Config{Mode: "url", URL: "http://127.0.0.1:3128"}
 	set.Apps = append(set.Apps, extra)

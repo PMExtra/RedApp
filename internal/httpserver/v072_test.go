@@ -8,9 +8,11 @@ import (
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/store"
+	"github.com/PMExtra/RedApp/presets"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -197,12 +199,11 @@ func TestV072CacheHitsRankAndReceiptRejectsFailedWrites(t *testing.T) {
 
 func TestV072DisabledBrandIconRemainsAvailableOnlyToAdmin(t *testing.T) {
 	h := newDirectoryHarness(t, t.TempDir())
-	path := "/admin/api/assets/builtin-icon?path=%2Fopenai%2Fcodex%2Ficon.svg"
+	path := "/admin/api/assets/builtin-icon?path=" + url.QueryEscape(presets.ImagePrefix+"openai/codex/icon.svg")
 	h.request("GET", path, nil, 401, nil)
 	h.login(h.password)
 	v, _ := h.server.DB.Vendor("openai")
 	h.request("PATCH", "/admin/api/vendors/openai", map[string]any{"enabled": false, "revision": v.Revision}, 200, nil)
-	h.request("GET", "/openai/codex/icon.svg", nil, 404, nil)
 	data, headers := h.request("GET", path, nil, 200, nil)
 	if !bytes.Contains(data, []byte("<svg")) || headers.Get("Content-Type") != "image/svg+xml" || !strings.Contains(headers.Get("Content-Security-Policy"), "sandbox") {
 		t.Fatal("missing reviewed brand icon or static policy")

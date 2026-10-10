@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -163,7 +164,8 @@ func TestConfigurationMissingTemplateFrozenAndReappearance(t *testing.T) {
 	}
 	before, _ := s.Application("openai/codex")
 	missing := presets.Embedded()
-	missing.Apps = missing.Apps[1:]
+	codex := slices.IndexFunc(missing.Apps, func(a presets.App) bool { return a.Key() == before.Key })
+	missing.Apps = slices.Delete(missing.Apps, codex, codex+1)
 	if err := s.ReconcileTemplates(missing); err != nil {
 		t.Fatal(err)
 	}
@@ -176,8 +178,8 @@ func TestConfigurationMissingTemplateFrozenAndReappearance(t *testing.T) {
 		t.Fatal("missing template admitted new binding", err)
 	}
 	bad := presets.Embedded()
-	bad.Apps[0].Spec.Provider = "http-cache"
-	bad.Apps[0].Distribution = nil
+	bad.Apps[codex].Spec.Provider = "http-cache"
+	bad.Apps[codex].Distribution = nil
 	state, _ := s.configurationState()
 	if err := s.ReconcileTemplates(bad); err == nil {
 		t.Fatal("Provider changed")

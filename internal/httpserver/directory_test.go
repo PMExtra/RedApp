@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/PMExtra/RedApp/presets"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -535,8 +536,8 @@ func TestDirectoryHTTPIconUploadAndPublicBoundary(t *testing.T) {
 func TestDirectoryOpenAISharedIconAndEnabledOnlyPATCH(t *testing.T) {
 	h := newDirectoryHarness(t, t.TempDir())
 	h.login(h.password)
-	icon, _ := h.request("GET", "/assets/builtin/openai.svg", nil, 200, nil)
-	codex, _ := h.request("GET", "/openai/codex/icon.svg", nil, 200, nil)
+	icon, _ := h.request("GET", presets.ImagePrefix+"builtin/openai.svg", nil, 200, nil)
+	codex, _ := h.request("GET", presets.ImagePrefix+"openai/codex/icon.svg", nil, 200, nil)
 	if !bytes.Equal(icon, codex) {
 		t.Fatal("vendor and application icon bytes differ")
 	}
@@ -554,8 +555,7 @@ func TestDirectoryOpenAISharedIconAndEnabledOnlyPATCH(t *testing.T) {
 		t.Fatal("enabled patch changed app fields", changedApp)
 	}
 	h.request("PATCH", "/admin/api/apps/openai/codex", map[string]any{"revision": a.Revision, "enabled": true}, 409, nil)
-	h.request("GET", "/openai/codex/icon.svg", nil, 404, nil)
-	independent, _ := h.request("GET", "/assets/builtin/openai.svg", nil, 200, nil)
+	independent, _ := h.request("GET", presets.ImagePrefix+"builtin/openai.svg", nil, 200, nil)
 	if !bytes.Equal(icon, independent) {
 		t.Fatal("vendor icon depends on application state")
 	}

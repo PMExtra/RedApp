@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"github.com/PMExtra/RedApp/internal/store"
+	"github.com/PMExtra/RedApp/presets"
 	"mime/multipart"
 	"strings"
 	"testing"
@@ -37,7 +38,7 @@ func TestVendorLocalizedIconsPrivateWritesPublicProjectionResetAndRestart(t *tes
 	}
 	en, zh := upload("red"), upload("blue")
 	v, _ := h.server.DB.Vendor("openai")
-	base := "/assets/builtin/openai.svg"
+	base := presets.ImagePrefix + "builtin/openai.svg"
 	h.request("PUT", "/admin/api/vendors/openai/admin-notes", map[string]any{"revision": 0, "text": "keep private note"}, 200, nil)
 	h.request("PATCH", "/admin/api/vendors/openai", map[string]any{"revision": v.Revision, "localized_icons": map[string]string{"en": en}}, 403, map[string]string{"X-CSRF-Token": "bad"})
 	h.request("PATCH", "/admin/api/vendors/openai", map[string]any{"revision": v.Revision, "localized_icons": map[string]string{"en": "https://untrusted.example/logo.svg"}}, 400, nil)

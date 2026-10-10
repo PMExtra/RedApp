@@ -305,9 +305,6 @@ func (s *Server) exportImages(p *configexchange.Package) error {
 			} else {
 				image, ok := presets.Embedded().Image(field.value)
 				if !ok {
-					image, ok = presets.LegacyImage(field.value)
-				}
-				if !ok {
 					return media.ErrInvalidIcon
 				}
 				body = image.Body

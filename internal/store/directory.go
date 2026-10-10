@@ -538,13 +538,9 @@ func (s *Store) SourceActive(storageID string) (bool, error) {
 	return err == nil, err
 }
 
-// Only reviewed embedded images may bypass uploaded-image paths. Legacy routes
-// remain accepted for existing data, independently of new template display URLs.
+// Only reviewed embedded images may bypass uploaded-image paths.
 func builtinTemplateIcon(path string) bool {
-	if _, ok := presets.Embedded().Image(path); ok {
-		return true
-	}
-	_, ok := presets.LegacyImage(path)
+	_, ok := presets.Embedded().Image(path)
 	return ok
 }
 
