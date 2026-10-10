@@ -116,6 +116,15 @@ export default defineConfig({
         index: fileURLToPath(new URL("./index.html", import.meta.url)),
         admin: fileURLToPath(new URL("./admin.html", import.meta.url)),
       },
+      output: {
+        // vue-router's core ships in a dist file named devtools-*.js; a chunk
+        // named after it looks like debugging code in production.
+        chunkFileNames: (chunk) =>
+          chunk.name.startsWith("devtools") &&
+          chunk.moduleIds.some((id) => /[\\/]node_modules[\\/]vue-router[\\/]/.test(id))
+            ? "assets/vue-router-[hash].js"
+            : "assets/[name]-[hash].js",
+      },
     },
   },
   test: {

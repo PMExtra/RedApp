@@ -37,7 +37,7 @@
 - `/assets/` 下只有扁平的 `*.js`、`*.css`、`*.woff2` 和字体许可 `*.txt`（`assetsInlineLimit: 0`，不产生其他类型）。`frontend/public/assets/` 中的 JetBrains Mono 字体同时被使用说明文档引用，文件名不能改。
 - 文件都在嵌入目录 `internal/httpserver/web/` 的根部：`index.html`、`admin.html`、`assets/`。
 
-两个入口共享的模块（Vue、Reka UI、`shared/`）打成公共 chunk。`vite build` 的 `publicBundleGuard` 检查公开入口能到达的模块中没有 `src/app/admin/` 和 `src/pages/admin/`，否则构建失败。
+两个入口共享的模块（Vue、Reka UI、`shared/`）打成公共 chunk。chunk 按 `[name]-[hash].js` 命名；vue-router 的核心在其发行包中名为 `devtools-*.js`，`chunkFileNames` 把它改名为 `vue-router-[hash].js`，以免被误认为调试代码。`vite build` 的 `publicBundleGuard` 检查公开入口能到达的模块中没有 `src/app/admin/` 和 `src/pages/admin/`，否则构建失败。
 
 本地开发：`npm run dev` 把 `/admin`、`/admin/...` 改写到 `admin.html`。设置 `REDAPP_DEV_BACKEND=http://127.0.0.1:8080` 会把 `/api`、`/admin/api`、`/assets/icons`、`/assets/presets` 代理到本机 Go 服务（保留 `Host`，Origin 检查与 Cookie 可用）。
 
