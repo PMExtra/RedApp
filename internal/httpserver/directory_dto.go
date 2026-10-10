@@ -133,11 +133,3 @@ func nonNil[T any](values []T) []T {
 	}
 	return values
 }
-
-func utcTime(t *time.Time) *time.Time {
-	if t == nil {
-		return nil
-	}
-	u := t.UTC()
-	return &u
-}

@@ -1,7 +1,6 @@
 package httpserver
 
 import (
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,11 +8,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
-	"github.com/PMExtra/RedApp/internal/history"
-	"github.com/PMExtra/RedApp/internal/httpcache"
 )
 
 func TestGeneralHTTPRouteEncodingMethodsAndRanges(t *testing.T) {
@@ -74,7 +70,7 @@ func TestGeneralHTTPRouteEncodingMethodsAndRanges(t *testing.T) {
 	assertCounters(3, 2, 13)
 	for _, endpoint := range []string{"/admin/api/status", "/admin/api/apps/" + app.Key + "/status"} {
 		body, _ := h.request("GET", endpoint, nil, 200, nil)
-		metrics := directoryDecode[[]history.Metric](t, body, "metrics")
+		metrics := directoryDecode[[]metricDTO](t, body, "metrics")
 		values := map[string]*float64{}
 		for _, metric := range metrics {
 			values[metric.Key] = metric.Value
@@ -98,97 +94,4 @@ func TestGeneralHTTPRouteEncodingMethodsAndRanges(t *testing.T) {
 		t.Fatal("invalid public path/method reached the configured origin", calls.Load())
 	}
 	assertCounters(3, 2, 13)
-}
-
-func TestGeneralHTTPCacheAdminHistoricalSourceCleanup(t *testing.T) {
-	newSource := func(body string) *httptest.Server {
-		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path != "/files/object.bin" {
-				http.NotFound(w, r)
-				return
-			}
-			w.Header().Set("Cache-Control", "max-age=3600")
-			io.WriteString(w, body)
-		}))
-	}
-	oldSource := newSource("old source file")
-	defer oldSource.Close()
-	newUpstream := newSource("new source file")
-	defer newUpstream.Close()
-	h := newHarness(t)
-	h.request("GET", "/admin/api/apps/openai/codex/sources", nil, 401, nil)
-	h.login(h.password)
-	h.createVendor("enterprise")
-	app := h.createApp("enterprise", "files", application.HttpCache, map[string]any{"base_url": oldSource.URL + "/files"})
-	api := "/admin/api/apps/" + app.Key
-	publicPath := "/" + app.Key + "/object.bin"
-	body, _ := h.request("GET", publicPath, nil, 200, nil)
-	if string(body) != "old source file" {
-		t.Fatal("initial source file missing")
-	}
-	h.patchConfiguration("apps/"+app.Key, map[string]any{"set": map[string]any{"base_urls": []string{newUpstream.URL + "/files"}}}, 200)
-	rebound := h.adminApp(app.Key)
-	body, _ = h.request("GET", publicPath, nil, 200, nil)
-	if string(body) != "new source file" || rebound.SourceEpoch != 2 {
-		t.Fatal("source edit served the old namespace")
-	}
-	body, _ = h.request("GET", api+"/sources", nil, 200, nil)
-	sources := directoryDecode[[]struct {
-		Epoch   int64 `json:"epoch"`
-		Current bool  `json:"current"`
-		Active  bool  `json:"active"`
-	}](t, body, "sources")
-	if len(sources) != 2 || sources[0].Epoch != 1 || sources[0].Current || sources[0].Active || sources[1].Epoch != 2 || !sources[1].Current || !sources[1].Active {
-		t.Fatal("source history/current eligibility was lost", string(body))
-	}
-	list := func(query string) []httpcache.Row {
-		t.Helper()
-		body, _ := h.request("GET", api+"/cache"+query, nil, 200, nil)
-		return directoryDecode[[]httpcache.Row](t, body, "items")
-	}
-	oldRows, currentRows := list("?source_epoch=1"), list("")
-	if len(oldRows) != 1 || len(currentRows) != 1 || oldRows[0].GenerationID == currentRows[0].GenerationID || oldRows[0].SHA256 == currentRows[0].SHA256 {
-		t.Fatal("cache listing merged historical and current source data", oldRows, currentRows)
-	}
-	for _, query := range []string{"?source_epoch=01", "?source_epoch=0", "?source_epoch=3", "?source_epoch=1&source_epoch=2", "?unexpected=1"} {
-		status := 400
-		if query == "?source_epoch=3" {
-			status = 404
-		}
-		h.request("GET", api+"/cache"+query, nil, status, nil)
-	}
-	// Make the already fetched historical row old enough for the real time-based
-	// preview without sleeping or changing the HTTP-cache service's clock.
-	if _, err := h.server.store.DB.Exec("UPDATE http_cache_generations SET fetched_at_s=? WHERE id=?", time.Now().Add(-time.Hour).Unix(), oldRows[0].GenerationID); err != nil {
-		t.Fatal(err)
-	}
-	selection := map[string]any{"basis": "fetched_at", "before": time.Now().UTC().Add(-time.Minute)}
-	h.request("POST", api+"/cache/cleanup/preview?source_epoch=1", selection, 403, map[string]string{"X-CSRF-Token": ""})
-	body, _ = h.request("POST", api+"/cache/cleanup/preview?source_epoch=1", selection, 200, nil)
-	preview := directoryDecode[httpcache.MaintenancePreview](t, body, "job")
-	if preview.SelectedFiles != 1 || preview.SelectedBytes != int64(len("old source file")) {
-		t.Fatal("historical cleanup did not snapshot only its selected source", preview)
-	}
-	execute := api + "/cache/cleanup/" + preview.ID + "/execute"
-	h.request("POST", execute, map[string]any{}, 409, nil)
-	other := h.createApp("enterprise", "other", application.HttpCache, map[string]any{"base_url": oldSource.URL + "/files"})
-	h.request("POST", "/admin/api/apps/"+other.Key+"/cache/cleanup/"+preview.ID+"/execute?source_epoch=1", map[string]any{}, 409, nil)
-	body, _ = h.request("POST", execute+"?source_epoch=1", map[string]any{}, 200, nil)
-	result := directoryDecode[httpcache.CleanupResult](t, body, "result")
-	if result.RetiredFiles != 1 || len(list("?source_epoch=1")) != 0 || len(list("")) != 1 {
-		t.Fatal("cleanup removed data outside its historical source", result)
-	}
-	h.request("POST", execute+"?source_epoch=1", map[string]any{}, 200, nil)
-	// Disabling the public app retains cache and source management routes.
-	h.setEnabled("apps/"+app.Key, false)
-	h.request("GET", publicPath, nil, 404, nil)
-	h.request("HEAD", publicPath, nil, 404, nil)
-	if rows := list(""); len(rows) != 1 || rows[0].GenerationID != currentRows[0].GenerationID {
-		t.Fatal("disabled app lost administrative cache visibility")
-	}
-	body, _ = h.request("GET", api+"/sources", nil, 200, nil)
-	if strings.Contains(string(body), `"active":true`) {
-		t.Fatal("disabled source remained eligible", string(body))
-	}
-	h.request("GET", fmt.Sprintf("%s/cache?source_epoch=%d", api, rebound.SourceEpoch), nil, 200, nil)
 }

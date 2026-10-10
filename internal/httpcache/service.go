@@ -186,9 +186,13 @@ func scan(row scanner) (*Row, error) {
 }
 
 func (s *Service) listRows(storageID string) ([]Row, error) {
+	return s.queryRows(`SELECT `+columns+` FROM http_cache_generations WHERE storage_id=? AND is_current=1 ORDER BY path`, storageID)
+}
+
+func (s *Service) queryRows(query string, args ...any) ([]Row, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.DB.Query(`SELECT `+columns+` FROM http_cache_generations WHERE storage_id=? AND is_current=1 ORDER BY path`, storageID)
+	rows, err := s.db.DB.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

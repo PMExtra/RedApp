@@ -19,10 +19,6 @@ func TestManualRefreshReportsTransferCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
-	body, _ := h.request("POST", "/admin/api/apps/"+app.Key+"/cache/refresh", map[string]any{"path": "/file.bin"}, 503, nil)
-	if got := directoryDecode[struct {
-		Code string `json:"code"`
-	}](t, body, "error").Code; got != "TRANSFER_CAPACITY" {
-		t.Fatalf("capacity error must remain distinct from an invalid preview: %s", body)
-	}
+	// Capacity is a retryable condition, distinct from an uncached path.
+	h.expectError("POST", "/admin/api/apps/"+app.Key+"/cache/refresh", map[string]any{"path": "/file.bin"}, 503, codeTransferCapacity, nil)
 }

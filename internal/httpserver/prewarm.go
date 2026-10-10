@@ -58,13 +58,6 @@ type prewarmJobDTO struct {
 	Limits          warmplan.Limits `json:"limits"`
 }
 
-func optionalText(value string) *string {
-	if value == "" {
-		return nil
-	}
-	return &value
-}
-
 func prewarmJob(job store.PrewarmJob) prewarmJobDTO {
 	out := prewarmJobDTO{
 		ID: job.ID, State: job.State, Reason: optionalText(job.Reason), Automatic: job.Automatic, Target: optionalText(job.Target),

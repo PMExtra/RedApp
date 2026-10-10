@@ -160,7 +160,7 @@ class HTTPServerCLITest(ServerTestCase):
         self.assertEqual(app["source_epoch"], 1)
         self.assertEqual(app["cache_ttl_seconds"], 300)
         self.assertIn("cli-example/files", self.public_app_ids())
-        self.assertEqual(self.read(app_path + "/cache"), {"items": []})
+        self.assertEqual(self.read(app_path + "/cache/entries"), {"items": [], "next_cursor": None})
         # The entity only toggles its state; everything else is configuration.
         self.client.fetch(app_path, {"id": "renamed"}, method="PATCH", if_match=app["revision"], expect=400)
         self.client.fetch(app_path, {"enabled": False}, method="PATCH", expect=400)
@@ -174,7 +174,7 @@ class HTTPServerCLITest(ServerTestCase):
         self.assertEqual(app["source_epoch"], 2)
         self.assertEqual(configuration["revision"], app["revision"])
         self.client.fetch(app_path, {"enabled": False}, method="PATCH", if_match=app["revision"] - 1, expect=409)
-        sources = self.read(app_path + "/sources")["sources"]
+        sources = self.read(app_path + "/sources")["items"]
         self.assertEqual({source["epoch"] for source in sources}, {1, 2})
         self.assertEqual([source["epoch"] for source in sources if source["current"]], [2])
 
@@ -197,10 +197,15 @@ class HTTPServerCLITest(ServerTestCase):
     def test_status_pagination_and_history(self):
         self.client.login()
         status = self.read("/admin/api/status")
-        self.assertEqual(status["name"], "RedApp")
-        self.assertGreater(status["disk"]["free_bytes"], 0)
+        self.assertEqual(set(status), {"sampled_at", "started_at", "metrics"})
         self.assertEqual(len(status["metrics"]), 41)
-        self.assertFalse({"resources", "versions", "application_versions", "events"}.intersection(status))
+        metrics = {metric["key"]: metric for metric in status["metrics"]}
+        self.assertGreater(metrics["disk.free_bytes"]["value"], 0)
+        self.assertEqual(metrics["disk.free_bytes"]["group"], "disk")
+        self.assertEqual(
+            {metric["group"] for metric in status["metrics"]},
+            {"disk", "traffic", "speed", "runtime", "resources"},
+        )
         for path in [
             "/admin/api/events",
             "/admin/api/apps/openai/codex/versions",
@@ -210,8 +215,14 @@ class HTTPServerCLITest(ServerTestCase):
                 self.assertEqual(self.read(path + "?limit=50"), {"items": [], "next_cursor": None})
                 self.client.fetch(path + "?limit=101", expect=400)
         for window, resolution in [("24h", 60), ("7d", 3600), ("30d", 3600)]:
-            query = urllib.parse.urlencode({"scope": "global", "metric": "disk.cache_bytes", "range": window})
-            self.assertEqual(self.read("/admin/api/history?" + query)["resolution_seconds"], resolution)
+            query = urllib.parse.urlencode({"metric": "disk.cache_bytes", "range": window})
+            series = self.read("/admin/api/history?" + query)
+            self.assertEqual(series["resolution_seconds"], resolution)
+            self.assertRegex(series["from"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+            self.assertIsNone(series["app_key"])
+        legacy = urllib.parse.urlencode({"scope": "global", "metric": "disk.cache_bytes", "range": "24h"})
+        error = self.client.fetch("/admin/api/history?" + legacy, expect=400).json()["error"]
+        self.assertEqual(error["code"], "INVALID_QUERY")
 
     def test_settings_persist_across_yaml_selected_restart(self):
         password = self.server.initial_password()

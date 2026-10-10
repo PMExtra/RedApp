@@ -490,5 +490,7 @@ CREATE TABLE pending_object_deletes(
 );
 
 INSERT INTO category_state(id,public_revision) VALUES(1,1);
-INSERT INTO catalog_state(id,revision,ranking_salt) VALUES(1,0,randomblob(32));
+INSERT INTO catalog_state(id,revision,ranking_salt) VALUES(1,1,randomblob(32));
+-- Settings documents exist from creation so that every editable revision is at least 1.
+INSERT INTO settings(key,revision,payload) VALUES('site',1,'{}'),('public_url',1,'{"override_url":null}'),('upstream_proxy',1,'{"mode":"direct"}');
 INSERT INTO metric_history_state(id,aggregated_before_s) VALUES(1,0);

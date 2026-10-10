@@ -67,26 +67,26 @@ func TestPublicURLPrecedenceClearCASAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	view := p.View("http://request.example")
-	if view.Source != "environment" || view.Revision != 0 {
+	if view.Source != "environment" || view.Revision != 1 {
 		t.Fatal(view)
 	}
 	override := "https://override.example/"
-	if _, err = p.Set(&override, 0); err != nil {
+	if _, err = p.Set(&override, 1); err != nil {
 		t.Fatal(err)
 	}
 	view = p.View("http://request.example")
-	if view.EffectiveURL != "https://override.example" || view.Source != "override" || view.Revision != 1 {
+	if view.EffectiveURL != "https://override.example" || view.Source != "override" || view.Revision != 2 {
 		t.Fatal(view)
 	}
 	// Callers cannot mutate the stored snapshot through returned pointers.
 	*view.OverrideURL = "http://changed.example"
-	if _, err = p.Set(nil, 0); err == nil {
+	if _, err = p.Set(nil, 1); err == nil {
 		t.Fatal("stale clear accepted")
 	}
 	if p.View("http://request.example").EffectiveURL != "https://override.example" {
 		t.Fatal("failed update changed snapshot")
 	}
-	if _, err = p.Set(nil, 1); err != nil {
+	if _, err = p.Set(nil, 2); err != nil {
 		t.Fatal(err)
 	}
 	p, err = LoadPublicSettings(db, "https://env.example")
@@ -94,7 +94,7 @@ func TestPublicURLPrecedenceClearCASAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	view = p.View("http://request.example")
-	if view.Source != "environment" || view.OverrideURL != nil || view.Revision != 2 {
+	if view.Source != "environment" || view.OverrideURL != nil || view.Revision != 3 {
 		t.Fatal(view)
 	}
 	p, err = LoadPublicSettings(db, "")
@@ -105,7 +105,7 @@ func TestPublicURLPrecedenceClearCASAndRestart(t *testing.T) {
 		t.Fatal("request fallback cached across hosts")
 	}
 	db.DB.Close()
-	if _, err = p.Set(&override, 2); err == nil || p.View("http://one.example").Source != "request" {
+	if _, err = p.Set(&override, 3); err == nil || p.View("http://one.example").Source != "request" {
 		t.Fatal("failed persistence became effective")
 	}
 }

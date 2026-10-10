@@ -3,6 +3,7 @@ package httpserver
 import (
 	"net/http"
 	"strconv"
+	"time"
 )
 
 // writeOK writes a 200 JSON document.
@@ -30,3 +31,20 @@ func writeCreated(w http.ResponseWriter, location string, revision int64, value 
 func writeNoContent(w http.ResponseWriter) { w.WriteHeader(http.StatusNoContent) }
 
 func etag(revision int64) string { return `"` + strconv.FormatInt(revision, 10) + `"` }
+
+// optionalText maps an empty string to a JSON null.
+func optionalText(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+// utcTime returns t in UTC, or nil when t is nil.
+func utcTime(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	value := t.UTC()
+	return &value
+}

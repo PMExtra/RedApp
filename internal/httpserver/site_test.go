@@ -2,59 +2,56 @@ package httpserver
 
 import (
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/PMExtra/RedApp/internal/site"
 )
 
-func TestSiteSettingsAuthenticationCSRFAndPublicText(t *testing.T) {
+func TestSiteSettingsRequireRevisionAndPublishPlainText(t *testing.T) {
 	h := newHarness(t)
-	token, session, err := h.server.auth.Login("127.0.0.1", h.password)
-	if err != nil {
-		t.Fatal(err)
+	h.expectError("GET", "/admin/api/settings/site", nil, 401, codeAuthRequired, nil)
+	h.login("")
+	body, headers := h.request("GET", "/admin/api/settings/site", nil, 200, nil)
+	initial := decodeJSONBody[siteSettingsStateDTO](t, body)
+	defaults := site.Defaults()
+	if initial.Revision != 1 || headers.Get("ETag") != `"1"` || initial.Title.En != defaults.Title.EN {
+		t.Fatal("initial site settings", string(body), headers)
 	}
-	request := func(method, path, body string, authenticated, csrf bool) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(method, "http://internal"+path, strings.NewReader(body))
-		r.Header.Set("Content-Type", "application/json")
-		r.Header.Set("If-Match", "0")
-		if authenticated {
-			r.AddCookie(&http.Cookie{Name: "redapp_session", Value: token})
-		}
-		if csrf {
-			r.Header.Set("X-CSRF-Token", session.CSRF)
-		}
-		return h.serve(r)
+	text := func(en, zh string) map[string]string { return map[string]string{"en": en, "zh-CN": zh} }
+	input := map[string]any{"title": text("  <svg onload=alert(1)>  ", "工具"), "subtitle": text("", ""), "disclaimer": text("Custom notice", "自定义说明")}
+	h.expectError("PUT", "/admin/api/settings/site", input, 400, codeIfMatchRequired, nil)
+	h.expectError("PUT", "/admin/api/settings/site", input, 400, codeIfMatchRequired, map[string]string{"If-Match": "1"})
+	h.expectError("PUT", "/admin/api/settings/site", input, 403, codeCSRFRejected, map[string]string{"If-Match": `"1"`, "X-CSRF-Token": ""})
+	body, headers = h.request("PUT", "/admin/api/settings/site", input, 200, map[string]string{"If-Match": `"1"`})
+	saved := decodeJSONBody[siteSettingsStateDTO](t, body)
+	if saved.Revision != 2 || headers.Get("ETag") != `"2"` || saved.Title.En != "<svg onload=alert(1)>" || saved.Subtitle.En != "" {
+		t.Fatal("saved site settings were not trimmed or revisioned", string(body))
 	}
-	settings := site.Defaults()
-	settings.Title.EN = "<svg onload=alert(1)>"
-	settings.Disclaimer.EN = "Custom notice"
-	body, _ := json.Marshal(settings)
-	for _, tc := range []struct {
-		method     string
-		auth, csrf bool
-		status     int
-	}{{"GET", false, false, 401}, {"PUT", false, false, 401}, {"PUT", true, false, 403}, {"PUT", true, true, 200}, {"GET", true, false, 200}} {
-		w := request(tc.method, "/admin/api/settings/site", string(body), tc.auth, tc.csrf)
-		if w.Code != tc.status {
-			t.Fatalf("%+v: %d %s", tc, w.Code, w.Body)
-		}
+	h.expectError("PUT", "/admin/api/settings/site", input, 409, codeRevisionConflict, map[string]string{"If-Match": `"1"`})
+	for _, invalid := range []map[string]any{
+		{"title": text("", "工具"), "subtitle": text("", ""), "disclaimer": text("", "")},
+		{"title": text(strings.Repeat("x", 81), "工具"), "subtitle": text("", ""), "disclaimer": text("", "")},
+		{"title": text("Tools", "工具"), "subtitle": text("bell\a", ""), "disclaimer": text("", "")},
+	} {
+		h.expectError("PUT", "/admin/api/settings/site", invalid, 400, codeValidationFailed, map[string]string{"If-Match": `"2"`})
 	}
-	for _, body := range []string{`{"title":{"en":""}}`, `{"unknown":true}`, `{"title":{"en":"x","zh-CN":"x"},"subtitle":{"en":false}}`} {
-		if w := request("PUT", "/admin/api/settings/site", body, true, true); w.Code != 400 {
-			t.Fatal(w.Code)
-		}
+	for _, invalid := range []map[string]any{
+		{"title": text("Tools", "工具")},
+		{"title": map[string]string{"en": "Tools"}, "subtitle": text("", ""), "disclaimer": text("", "")},
+		{"title": text("Tools", "工具"), "subtitle": text("", ""), "disclaimer": text("", ""), "revision": 2},
+		{"title": text("Tools", "工具"), "subtitle": map[string]any{"en": false, "zh-CN": ""}, "disclaimer": text("", "")},
+	} {
+		h.expectError("PUT", "/admin/api/settings/site", invalid, 400, codeInvalidRequest, map[string]string{"If-Match": `"2"`})
 	}
-	w := request("GET", "/api/bootstrap", "", false, false)
+	// Public pages receive the texts as data, never as markup.
+	body, headers = h.request("GET", "/api/bootstrap", nil, 200, nil)
 	var info struct {
-		Site site.Settings `json:"site"`
+		Site struct {
+			Title localizedText `json:"title"`
+		} `json:"site"`
 	}
-	if json.Unmarshal(w.Body.Bytes(), &info) != nil || info.Site != settings {
-		t.Fatal(w.Body)
-	}
-	if w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("Set-Cookie") != "" || strings.Contains(w.Body.String(), "<svg") {
-		t.Fatal("unsafe public settings response")
+	if json.Unmarshal(body, &info) != nil || info.Site.Title.En != "<svg onload=alert(1)>" || headers.Get("Cache-Control") != "no-store" || headers.Get("Set-Cookie") != "" {
+		t.Fatal("public site texts", string(body))
 	}
 }

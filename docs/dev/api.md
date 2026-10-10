@@ -76,7 +76,7 @@
 | --- | --- | --- |
 | 1 目录、配置、导入导出、分类、管理备注（27，已完成） | `listProviders`、`listVendors`、`createVendor`、`getVendor`、`updateVendor`、`deleteVendor`、`listApps`、`createApp`、`getApp`、`updateApp`、`deleteApp`、`uploadIcon`、`getVendorConfiguration`、`patchVendorConfiguration`、`getAppConfiguration`、`patchAppConfiguration`、`getVendorNotes`、`replaceVendorNotes`、`getAppNotes`、`replaceAppNotes`、`listCategories`、`getCategory`、`patchCategory`、`exportConfiguration`、`previewImport`、`executeImport`、`copyApp` | `directory.go`、`directory_listing.go`、`directory_table.go`、`configuration.go`、`admin_notes.go`、`taxonomy.go`、`exchange.go`、`proxy_redaction.go`、`application_work.go`、`legacy_directory.go`；测试 `directory_test.go`、`directory_table_test.go`、`configuration_test.go`、`admin_notes_test.go`、`taxonomy_test.go`、`exchange_test.go`、`vendor_icons_test.go`、`proxy_redaction_test.go`、`force_delete_test.go`、`scoped_proxy_test.go`、`v072_test.go` |
 | 2 发布版本、资源、版本清理、保留、预热、托管文件管理（21） | `listVersions`、`listResources`、`previewVersionCleanup`、`executeVersionCleanup`、`getRetentionStatus`、`previewRetention`、`getRetentionPreview`、`listRetentionPreviewItems`、`executeRetention`、`getPrewarmOptions`、`startPrewarm`、`getPrewarmJob`、`listPrewarmItems`、`cancelPrewarmJob`、`retryPrewarmJob`、`listHostedFiles`、`uploadHostedFile`、`importHostedFile`、`deleteHostedFile`、`getHostedTransfer`、`cancelHostedTransfer` | `listing.go`、`numbered_listing.go`、`retention.go`、`prewarm.go`、`hosted.go`、`legacy_releases.go`；测试 `listing_test.go`、`retention_test.go`、`prewarm_test.go`、`content_providers_test.go` |
-| 3 HTTP 缓存管理、概览、事件、历史、站点设置（26） | `listSources`、`listCacheEntries`、`refreshCacheEntry`、`previewCacheRefresh`、`getCacheRefresh`、`listCacheRefreshItems`、`executeCacheRefresh`、`previewCacheCleanup`、`getCacheCleanup`、`listCacheCleanupItems`、`executeCacheCleanup`、`getAutoCleanupStatus`、`testPathMatch`、`getStatus`、`getHistory`、`listEvents`、`getAppStatus`、`getAppHistory`、`getSiteSettings`、`replaceSiteSettings`、`getPublicUrlSettings`、`replacePublicUrlSettings`、`getGlobalProxySettings`、`replaceGlobalProxySettings`、`getHomepageSettings`、`replaceHomepageSettings` | `cache.go`、`status.go`、`history.go`、`homepage_settings.go`、`legacy_overview.go`；`listing.go` 中的 `eventList`；测试 `cache_policy_test.go`、`cache_capacity_test.go`、`general_routes_test.go`（管理部分）、`dynamic_metrics_test.go`、`site_test.go` |
+| 3 HTTP 缓存管理、概览、事件、历史、站点设置（26，已完成） | `listSources`、`listCacheEntries`、`refreshCacheEntry`、`previewCacheRefresh`、`getCacheRefresh`、`listCacheRefreshItems`、`executeCacheRefresh`、`previewCacheCleanup`、`getCacheCleanup`、`listCacheCleanupItems`、`executeCacheCleanup`、`getAutoCleanupStatus`、`testPathMatch`、`getStatus`、`getHistory`、`listEvents`、`getAppStatus`、`getAppHistory`、`getSiteSettings`、`replaceSiteSettings`、`getPublicUrlSettings`、`replacePublicUrlSettings`、`getGlobalProxySettings`、`replaceGlobalProxySettings`、`getHomepageSettings`、`replaceHomepageSettings` | `cache.go`、`status.go`、`history.go`、`events.go`、`settings.go`、`homepage_settings.go`、`page_cursor.go`、`legacy_overview.go`；测试 `cache_admin_test.go`、`cache_maintenance_test.go`、`cache_policy_test.go`、`cache_capacity_test.go`、`overview_test.go`、`settings_test.go`、`site_test.go`、`general_routes_test.go`（管理部分）、`dynamic_metrics_test.go` |
 
 每个工作包的做法：把本包在 `routeTable()` 中的行从 `serve: s.legacyAdmin, …, legacy: true` 改为新处理函数（契约测试随之生效），按规范重写处理器与测试；完成后让本包的 `legacy_*.go` 分派函数直接返回 `false` 并删除不再引用的旧处理器。不要修改 `legacy.go`；三个包都完成后，在一次清理中删除 `legacy.go`、三个 `legacy_*.go`、`legacyCatchAll` 和路由字段 `legacy`。
 
@@ -111,6 +111,7 @@
 | `PREWARM_BUSY` 错误体 | 额外带 `job`，缺 `request_id`/`retryable` | 标准 `Error` |
 | `request_id` | 只在错误时随机生成 | 每个请求生成一次，所有响应带 `X-Request-Id`，与日志一致 |
 | revision | `If-Match` 或请求体 `revision`，部分接口二者都可选 | 只用 `If-Match`，所有写操作必填；请求体不含 `revision` |
+| 设置文档（站点、公共地址、全局代理、首页固定）的初始 revision | `0`（无法写成合法的 `If-Match`） | `1`：数据库创建时写入这些设置（schema 13） |
 | 成功响应包装 | `{vendor: …}`、`{app: …}`、`{job: …}`、`{result: …}`、`{item: …}`、`{sources: …}`、`{providers: …}` | 直接返回对象；列表统一为 `items` |
 | 无内容响应 | `{ok: true}`、`{deleted: true}`、`{cancelled: true}` | `204`（应用删除仍返回 `{cleanup_pending}`） |
 | 创建 | `200`（部分 `201`） | `201`，带 `ETag` 和 `Location` |
@@ -164,7 +165,7 @@
 | 没有应用的内置厂商可以删除 | `409 BUILTIN_PROTECTED` |
 | 重试未完成的应用删除须带最初的 revision | 不再比较 revision（`If-Match` 仍须存在），只按 `confirm_uid` 定位 |
 | 配置 `PATCH` 可以设置不适用于 Provider 的路径（如 Codex 的 `base_urls`） | `400 VALIDATION_FAILED` |
-| 首页设置 `keys` | `pinned_app_keys` |
+| 首页设置 `keys` | `pinned_app_keys`；响应另带 `pinned_apps`（名称、图标、`state`：`published`/`disabled`/`deleted`/`missing`），未发布的固定项也列出以便移除 |
 | `POST /admin/api/assets/icons` | `POST /admin/api/icons` |
 | `GET /admin/api/assets/builtin-icon?path=` | 删除；图标字段总是站点绝对路径，直接用 `/assets/icons/...` 或 `/assets/presets/...` |
 
@@ -193,6 +194,7 @@
 | 已退役指标 `counters.reuse_requests`、`events.recent_total` 仍可查询 | 从目录删除 |
 | 事件 `resource`（与 `resource_key` 重复）、`app_id`、空字符串 | 删除 `resource`；`app_key`；空值为 `null` |
 | `GET /admin/api/apps/{v}/{a}/events` | 删除（界面不可达） |
+| 历史序列用 `count: 0` 的空点填满整个时间窗 | 只返回有样本的桶，缺口就是缺失的点 |
 
 ### 发布类应用（Codex、Claude Code）
 
@@ -225,6 +227,9 @@
 | 清理/刷新后续请求需重复 `source_epoch` | 只在创建清理预览时（请求体）指定；预览记录 `source_epoch`，后续按 ID 定位 |
 | 预览条目 `next_cursor` 末页为 `""`；含 `access_bucket`、`basis`、`before`、`match`、`rule_index` | `null`；删除这些字段 |
 | 清理执行返回 `{result}`；刷新执行 `200` | 都返回预览对象（`result` 带 `kind` 区分）；刷新执行 `202` |
+| 单文件刷新返回 `{item}`，空字段省略 | 直接返回 `CacheRefreshItem`，空值为 `null`；不可缓存的上游响应或期间被替换的文件为 `status: skipped` |
+| 条目和预览条目的 `path` 不带前导 `/` | 以 `/` 开头，与请求中的路径一致 |
+| 刷新预览的 `basis`/`before` 省略 | `null` |
 
 ### 预热
 

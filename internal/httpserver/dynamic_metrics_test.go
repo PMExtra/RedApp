@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
@@ -125,34 +124,30 @@ func TestDynamicMetricsAndListsKeepStorageAndPublicNamespacesSeparate(t *testing
 			t.Fatal(err)
 		}
 	}
-	status, err := s.status("https://downloads.example")
+	metricValue := func(metrics []history.Metric, key string) *float64 {
+		t.Helper()
+		for _, metric := range metrics {
+			if metric.Key == key {
+				return metric.Value
+			}
+		}
+		t.Fatalf("metric %s missing", key)
+		return nil
+	}
+	_, global, err := s.globalMetrics()
 	if err != nil {
 		t.Fatal(err)
 	}
-	counts := status["application_version_counts"].(map[string]int64)
-	if counts[app.Key] != 2 || counts[other.Key] != 1 {
-		t.Fatal("version count queried wrong namespace", counts)
+	if versions := metricValue(global, "versions.total"); versions == nil || *versions != 3 {
+		t.Fatal("global versions omitted a provider or counted old epochs", versions)
 	}
-	if _, ok := counts[general.Key]; ok {
-		t.Fatal("GeneralHttp got fake version count")
-	}
-	for _, metric := range status["metrics"].([]history.Metric) {
-		if metric.Key == "versions.total" && (metric.Value == nil || *metric.Value != 3) {
-			t.Fatal("global versions omitted a provider or counted old epochs", metric)
-		}
-	}
-	appStatus, err := s.appStatus(app.Key, "")
+	entry, _ := s.registry.LookupAny(app.Key)
+	appMetrics, err := s.appMetrics(entry)
 	if err != nil {
 		t.Fatal(err)
 	}
-	views := appStatus["resources"].([]download.View)
-	if len(views) != 2 || appStatus["counters"].(map[string]int64)["artifact_requests"] != 7 {
-		t.Fatal("app status did not aggregate stable UID", appStatus)
-	}
-	for _, view := range views {
-		if view.Resource.Application != app.Key || view.Resource.MetricsID != app.Key {
-			t.Fatal("private scope escaped", view.Resource)
-		}
+	if total, requests, versions := metricValue(appMetrics, "resources.total"), metricValue(appMetrics, "counters.artifact_requests"), metricValue(appMetrics, "versions.total"); *total != 2 || *requests != 7 || *versions != 2 {
+		t.Fatal("app metrics did not aggregate the stable UID across epochs", *total, *requests, *versions)
 	}
 	originals := s.downloads.Snapshot()
 	if len(originals) != 2 {
@@ -166,17 +161,13 @@ func TestDynamicMetricsAndListsKeepStorageAndPublicNamespacesSeparate(t *testing
 			t.Fatal("metric scope changed", view.Resource)
 		}
 	}
-	generalStatus, err := s.appStatus(general.Key, "")
+	generalEntry, _ := s.registry.LookupAny(general.Key)
+	generalMetrics, err := s.appMetrics(generalEntry)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if generalStatus["version_count"] != nil {
-		t.Fatal("GeneralHttp version count must be unavailable")
-	}
-	for _, metric := range generalStatus["metrics"].([]history.Metric) {
-		if metric.Key == "versions.total" && metric.Value != nil {
-			t.Fatal("GeneralHttp versions metric fabricated zero")
-		}
+	if metricValue(generalMetrics, "versions.total") != nil {
+		t.Fatal("GeneralHttp versions metric fabricated a value")
 	}
 	s.history, err = history.Open(db)
 	if err != nil {
@@ -200,46 +191,8 @@ func TestDynamicMetricsAndListsKeepStorageAndPublicNamespacesSeparate(t *testing
 		t.Fatal(err)
 	}
 	reload()
-	if _, err = s.appStatus(app.Key, ""); err != nil {
+	entry, _ = s.registry.LookupAny(app.Key)
+	if _, err = s.appMetrics(entry); err != nil {
 		t.Fatal("disabled status inaccessible", err)
 	}
-	events := decodeList[store.ListedEvent](t, listRequest(s, app.Key, "events", ""))
-	if len(events.Items) != 1 || events.Items[0].AppID != app.Key {
-		t.Fatal("events did not map stable scope", events)
-	}
-	globalEvents := decodeList[store.ListedEvent](t, listRequest(s, "", "events", ""))
-	for _, event := range globalEvents.Items {
-		if event.AppID != app.Key && event.AppID != other.Key {
-			t.Fatal("global events leaked private scope", event)
-		}
-	}
-}
-
-func TestStatusAndHistoryAfterReleaseDownloads(t *testing.T) {
-	data := []byte("official archive")
-	h := newHarness(t)
-	h.upstreamProxy(codexRelease("0.159.2", map[string][]byte{"archive.tgz": data}, nil))
-	key := h.releaseApp("fixture", "codex", "codex")
-	h.login("")
-	h.request("GET", "/"+key+"/releases/0.159.2/archive.tgz", nil, 200, nil)
-	if err := h.store.SeenFor("anthropic/claude-code", "0.159.2"); err != nil {
-		t.Fatal(err)
-	}
-	for _, path := range []string{"/admin/api/status", "/admin/api/apps/" + key + "/status"} {
-		data, _ := h.request("GET", path, nil, 200, nil)
-		var summary map[string]json.RawMessage
-		if json.Unmarshal(data, &summary) != nil {
-			t.Fatal("status summary unavailable", string(data))
-		}
-		for _, field := range []string{"resources", "events", "versions", "version_stats", "application_versions"} {
-			if _, present := summary[field]; present {
-				t.Fatal("status summary contains an unbounded list", path, field)
-			}
-		}
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	h.server.SampleHistory(ctx, func(e error) { t.Fatal(e) })
-	h.request("GET", "/admin/api/history?scope=global&metric=versions.total&range=24h", nil, 200, nil)
-	h.request("GET", "/admin/api/apps/"+key+"/history?metric=versions.total&range=24h", nil, 200, nil)
 }

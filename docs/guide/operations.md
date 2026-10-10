@@ -156,6 +156,8 @@ Public pages:
 | `/<vendor>/<app>` | Application page with usage instructions |
 | `/<vendor>/<app>/<path>` | Files, installers and release downloads |
 
+The home page shows the pinned applications in the order set on the site appearance page (up to 100). Only published applications appear there. Pins of disabled or deleted applications stay listed and labelled in the admin console until you remove them.
+
 The vendor IDs `all`, `admin`, `api`, `assets` and `health` are reserved.
 
 ## Background maintenance

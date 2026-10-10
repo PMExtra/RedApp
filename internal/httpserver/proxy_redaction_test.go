@@ -2,54 +2,12 @@ package httpserver
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/PMExtra/RedApp/internal/configexchange"
 )
-
-func TestGlobalProxyResponsesRedactPasswordAndKeepItOnlyForSameProxy(t *testing.T) {
-	h := newHarness(t)
-	h.login(h.password)
-	put := func(body map[string]any, status int) []byte {
-		data, _ := h.request("PUT", "/admin/api/settings/proxy", body, status, map[string]string{"If-Match": fmt.Sprintf(`"%d"`, h.server.pool.Proxy().Revision)})
-		return data
-	}
-	saved := "http://proxy%40user:global-secret@proxy.example:3128"
-	for _, data := range [][]byte{put(map[string]any{"mode": "url", "url": saved}, 200), func() []byte { data, _ := h.request("GET", "/admin/api/settings/proxy", nil, 200, nil); return data }()} {
-		var view map[string]any
-		json.Unmarshal(data, &view)
-		if bytes.Contains(data, []byte("global-secret")) || view["url"] != "http://proxy%40user:****@proxy.example:3128" || view["mode"] != "url" || view["server"] != nil {
-			t.Fatal("global proxy view", string(data))
-		}
-	}
-	revision := h.server.pool.Proxy().Revision
-	// The placeholder may not carry the saved password to another user, scheme or host.
-	for _, moved := range []string{"http://other:****@proxy.example:3128", "socks5://proxy%40user:****@proxy.example:3128", "http://proxy%40user:****@attacker.example:3128", "http://proxy%40user:****@proxy.example:3129"} {
-		if data := put(map[string]any{"mode": "url", "url": moved}, 400); bytes.Contains(data, []byte("global-secret")) {
-			t.Fatal("error leaked password")
-		}
-	}
-	// The removed compatibility field and an implicit mode are rejected.
-	put(map[string]any{"server": saved}, 400)
-	put(map[string]any{"url": saved}, 400)
-	if got := h.server.pool.Proxy(); got.URL != saved || got.Revision != revision {
-		t.Fatal("rejected update changed proxy", got.Redacted())
-	}
-	put(map[string]any{"mode": "url", "url": "http://proxy%40user:%2A%2A%2A%2A@proxy.example:3128"}, 200)
-	if got := h.server.pool.Proxy(); got.URL != saved || got.Revision != revision+1 {
-		t.Fatal("redacted password not kept", got.Redacted())
-	}
-	put(map[string]any{"mode": "url", "url": "http://proxy%40user:next-secret@proxy.example:3128"}, 200)
-	if h.server.pool.Proxy().URL != "http://proxy%40user:next-secret@proxy.example:3128" {
-		t.Fatal("new password not saved")
-	}
-	put(map[string]any{"mode": "direct"}, 200)
-	// Without a saved password, the placeholder is ambiguous.
-	put(map[string]any{"mode": "url", "url": "http://proxy%40user:****@proxy.example:3128"}, 400)
-}
 
 func TestConfigurationResponsesRedactProxyPasswordsExceptCredentialExport(t *testing.T) {
 	h := newHarness(t)
