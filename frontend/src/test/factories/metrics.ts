@@ -5,13 +5,9 @@ type MetricKey = Schema<"MetricKey">;
 
 const GLOBAL_KEYS: MetricKey[] = [
   "disk.used_bytes",
-  "disk.logical_bytes",
   "disk.allocated_cache_bytes",
   "disk.allocated_temporary_bytes",
   "disk.allocated_pending_bytes",
-  "disk.cache_bytes",
-  "disk.temporary_bytes",
-  "disk.pending_bytes",
   "disk.other_bytes",
   "disk.free_bytes",
   "counters.requests",
@@ -28,22 +24,12 @@ const GLOBAL_KEYS: MetricKey[] = [
   "rates.upstream_bytes_per_second",
   "rates.downstream_bytes_per_second",
   "runtime.memory_bytes",
-  "runtime.goroutines",
-  "runtime.uptime_seconds",
-  "resources.total",
   "resources.current",
   "resources.retired",
   "resources.readers",
   "resources.active_writers",
-  "resources.queued",
-  "resources.downloading",
-  "resources.resuming",
-  "resources.retry_wait",
-  "resources.verifying",
-  "resources.complete",
   "resources.failed",
   "resources.invalid",
-  "resources.interrupted",
   "versions.total",
 ];
 
@@ -53,13 +39,7 @@ export function metric(key: MetricKey, overrides: Partial<Metric> = {}): Metric 
   const kind: Metric["kind"] =
     prefix === "counters" ? "counter" : prefix === "rates" ? "rate" : "gauge";
   const unit: Metric["unit"] =
-    prefix === "rates"
-      ? "bytes_per_second"
-      : key.endsWith("_bytes")
-        ? "bytes"
-        : key === "runtime.uptime_seconds"
-          ? "seconds"
-          : "count";
+    prefix === "rates" ? "bytes_per_second" : key.endsWith("_bytes") ? "bytes" : "count";
   const group: Metric["group"] =
     prefix === "disk"
       ? "disk"
@@ -82,7 +62,7 @@ export function metric(key: MetricKey, overrides: Partial<Metric> = {}): Metric 
   };
 }
 
-/** `getStatus` with all 41 metrics; `values` overrides single values. */
+/** `getStatus` with all 27 metrics; `values` overrides single values. */
 export function globalStatus(
   values: Partial<Record<MetricKey, number | null>> = {},
   overrides: Partial<Schema<"GlobalStatus">> = {},
@@ -97,12 +77,14 @@ export function globalStatus(
   };
 }
 
-/** `getAppStatus` with the 25 application metrics; `values` overrides single values. */
+/** `getAppStatus` with the 17 application metrics; `values` overrides single values. */
 export function appStatus(
   values: Partial<Record<MetricKey, number | null>> = {},
   overrides: Partial<Schema<"AppStatus">> = {},
 ): Schema<"AppStatus"> {
-  const keys = GLOBAL_KEYS.filter((key) => /^(counters|resources|versions)\./.test(key));
+  const keys = GLOBAL_KEYS.filter(
+    (key) => /^(counters|resources|versions)\./.test(key) && key !== "counters.requests",
+  );
   return {
     sampled_at: "2026-10-10T12:00:00Z",
     metrics: keys.map((key) => metric(key, key in values ? { value: values[key] ?? null } : {})),

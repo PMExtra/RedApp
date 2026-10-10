@@ -34,9 +34,9 @@ import {
 
 /**
  * Application header (icon, state, public link, download URL, export, copy)
- * and the tab host. Tabs follow the provider: files for `hosted`; cache for
- * `http-cache`, `codex` and `claude-code`; versions for `codex` and
- * `claude-code`. A tab the provider lacks shows "not available" instead.
+ * and the tab host. Tabs follow the provider: files for `hosted`; cache and
+ * metrics for `http-cache`, `codex` and `claude-code`; versions for `codex`
+ * and `claude-code`. A tab the provider lacks shows "not available" instead.
  */
 const { t } = useI18n();
 const localized = useLocalized();
@@ -87,6 +87,7 @@ const TAB_LABELS: Record<AppTab, string> = {
   settings: "adminShell.tabs.appSettings",
   versions: "adminShell.tabs.versions",
   cache: "adminShell.tabs.cache",
+  metrics: "adminShell.tabs.metrics",
   files: "adminShell.tabs.files",
   "admin-notes": "adminShell.tabs.adminNotes",
 };

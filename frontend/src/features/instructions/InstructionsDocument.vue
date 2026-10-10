@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
+import { usePreferencesStore } from "@/shared/lib";
 
 /**
  * Usage instructions rendered by the server as a standalone document (ADR 0006).
@@ -16,6 +17,7 @@ const props = defineProps<{
   revision: string;
 }>();
 const { t, locale } = useI18n();
+const preferences = usePreferencesStore();
 const frame = ref<HTMLIFrameElement>();
 
 const SANDBOX =
@@ -28,7 +30,9 @@ const PADDING = 20;
 const source = computed(
   () =>
     `/api/apps/${encodeURIComponent(props.vendor)}/${encodeURIComponent(props.app)}` +
-    `/instructions/document?lang=${encodeURIComponent(locale.value)}`,
+    `/instructions/document?lang=${encodeURIComponent(locale.value)}` +
+    // The opaque-origin document cannot see the page theme; a change reloads it.
+    (preferences.resolvedTheme === "dark" ? "&theme=dark" : ""),
 );
 
 function onMessage(event: MessageEvent) {
@@ -60,6 +64,6 @@ onBeforeUnmount(() => {
     :sandbox="SANDBOX"
     allow="clipboard-write"
     loading="lazy"
-    class="block h-[120px] w-full rounded-lg border border-border bg-white"
+    class="block h-[120px] w-full rounded-lg border border-border bg-surface"
   />
 </template>

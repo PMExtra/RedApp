@@ -23,6 +23,7 @@ export const spaRoutes = [
   "/admin/vendors/{vendor}/apps/{app}/admin-notes",
   "/admin/vendors/{vendor}/apps/{app}/versions",
   "/admin/vendors/{vendor}/apps/{app}/cache",
+  "/admin/vendors/{vendor}/apps/{app}/metrics",
   "/admin/vendors/{vendor}/apps/{app}/files"
 ] as const;
 

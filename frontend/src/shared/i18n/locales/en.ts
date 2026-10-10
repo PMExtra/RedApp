@@ -115,6 +115,8 @@ export default {
     },
     form: {
       required: "Required",
+      requiredMessage: "This field is required",
+      invalidValue: "Enter a valid value",
       optional: "Optional",
       tooLong: "At most {max} characters",
       unsavedTitle: "Discard unsaved changes?",

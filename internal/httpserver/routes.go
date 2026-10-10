@@ -47,7 +47,7 @@ func (s *Server) routeTable() []route {
 		{method: "GET", path: "/api/vendors/{vendor}", operation: "getPublicVendor", serve: s.getPublicVendor},
 		{method: "GET", path: "/api/apps/{vendor}/{app}", operation: "getPublicApp", serve: s.getPublicApp},
 		{method: "GET", path: "/api/apps/{vendor}/{app}/files", operation: "listPublicHostedFiles", serve: s.listPublicHostedFiles, query: []string{"page", "limit"}},
-		{method: "GET", path: "/api/apps/{vendor}/{app}/instructions/document", operation: "getInstructionsDocument", serve: s.getInstructionsDocument, query: []string{"lang"}},
+		{method: "GET", path: "/api/apps/{vendor}/{app}/instructions/document", operation: "getInstructionsDocument", serve: s.getInstructionsDocument, query: []string{"lang", "theme"}},
 		{method: "GET", path: "/", operation: "getHomePage", serve: s.getHomePage},
 		{method: "GET", path: "/all", operation: "getCatalogPage", serve: s.getCatalogPage, query: []string{"q", "category", "page"}},
 		{method: "GET", path: "/admin", operation: "redirectAdmin", serve: s.redirectAdmin},

@@ -21,19 +21,16 @@ export const HISTORY_RANGES: readonly HistoryRange[] = ["24h", "7d", "30d"];
 export const DEFAULT_HISTORY_RANGE: HistoryRange = "7d";
 
 /**
- * The 16 global metrics shown first on the overview: capacity, downloads and
- * active transfers. The other 25 are diagnostic and start collapsed.
+ * The 13 global metrics shown first on the overview: capacity, downloads and
+ * active transfers. The other 14 are diagnostic and start collapsed.
  */
 export const GLOBAL_COMMON_METRICS: readonly MetricKey[] = [
   "disk.used_bytes",
   "disk.free_bytes",
   "disk.allocated_cache_bytes",
-  "disk.allocated_temporary_bytes",
-  "disk.allocated_pending_bytes",
   "counters.artifact_requests",
   "counters.download_success",
   "counters.download_errors",
-  "counters.upstream_errors",
   "counters.upstream_bytes",
   "counters.downstream_bytes",
   "rates.upstream_bytes_per_second",

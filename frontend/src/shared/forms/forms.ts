@@ -16,6 +16,25 @@ function applyZodLocale(locale: Locale): void {
 }
 
 /**
+ * Replaces zod's technical fallbacks ("expected string, received undefined")
+ * with plain messages. Schema-level messages take precedence over this map,
+ * and anything not handled here falls through to zod's localized messages.
+ */
+function friendlyIssue(issue: z.core.$ZodRawIssue): string | undefined {
+  const empty = issue.input === undefined || issue.input === null || issue.input === "";
+  if (issue.code === "invalid_type") {
+    return translate(empty ? "ui.form.requiredMessage" : "ui.form.invalidValue");
+  }
+  if (issue.code === "too_small" && issue.origin === "string" && issue.minimum === 1) {
+    return translate("ui.form.requiredMessage");
+  }
+  if (issue.code === "invalid_union" || issue.code === "invalid_value") {
+    return translate(empty ? "ui.form.requiredMessage" : "ui.form.invalidValue");
+  }
+  return undefined;
+}
+
+/**
  * Adapts a zod schema to vee-validate (`useForm({ validationSchema: zodSchema(schema) })`).
  * Generic zod messages follow the UI locale; custom messages should be created
  * with `formError()` so they are translated too.
@@ -25,7 +44,7 @@ export function zodSchema<S extends z.ZodType>(schema: S): TypedSchema<z.input<S
     __type: "VVTypedSchema",
     async parse(values) {
       applyZodLocale(currentLocale());
-      const result = await schema.safeParseAsync(values);
+      const result = await schema.safeParseAsync(values, { error: friendlyIssue });
       if (result.success) return { value: result.data, errors: [] };
       const byPath = new Map<string, string[]>();
       for (const issue of result.error.issues) {

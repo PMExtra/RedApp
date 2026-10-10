@@ -31,9 +31,9 @@ describe("application tabs", () => {
   it.each([
     ["info", ["Settings", "Admin notes"]],
     ["hosted", ["Settings", "Files", "Admin notes"]],
-    ["http-cache", ["Settings", "Cache", "Admin notes"]],
-    ["codex", ["Settings", "Versions", "Cache", "Admin notes"]],
-    ["claude-code", ["Settings", "Versions", "Cache", "Admin notes"]],
+    ["http-cache", ["Settings", "Cache", "Metrics", "Admin notes"]],
+    ["codex", ["Settings", "Versions", "Cache", "Metrics", "Admin notes"]],
+    ["claude-code", ["Settings", "Versions", "Cache", "Metrics", "Admin notes"]],
   ] as const)("offers the %s tabs", async (provider, tabs) => {
     appServer({ provider });
     await renderAdminPage("/admin/vendors/example/apps/tools/admin-notes");
@@ -71,7 +71,7 @@ describe("application tabs", () => {
   it("hides the versions of a deleted application and makes it read-only", async () => {
     appServer({ provider: "codex", deleted_at: "2026-10-01T08:00:00Z" });
     await renderAdminPage("/admin/vendors/example/apps/tools/admin-notes");
-    expect(await tabNames()).toEqual(["Settings", "Cache", "Admin notes"]);
+    expect(await tabNames()).toEqual(["Settings", "Cache", "Metrics", "Admin notes"]);
     expect(screen.getByText(/This application is deleted/)).toBeInTheDocument();
     expect(await screen.findByRole("textbox", { name: "Notes" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Export configuration" })).toBeNull();

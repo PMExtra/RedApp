@@ -1,18 +1,18 @@
 @font-face{font-family:"RedApp Code";src:url("/assets/JetBrainsMono-Regular-v2.304.woff2") format("woff2");font-style:normal;font-weight:400;font-display:swap}
 .copy-block pre,.copy-block code,.copy-inline>code{font-family:"RedApp Code","SFMono-Regular",Consolas,"Liberation Mono","Noto Sans Mono CJK SC","Microsoft YaHei",monospace;font-weight:400;font-variant-ligatures:none;font-feature-settings:"liga" 0,"calt" 0;tab-size:4}
 .copy-inline>code{font-size:.9375em}
-.copy-block{border:1px solid #dfe6eb;border-radius:9px;overflow:hidden;background:#f8fafb;margin:1rem 0}
-.copy-heading{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.75rem 1rem;border-bottom:1px solid #dfe6eb}
+.copy-block{border:1px solid var(--border);border-radius:9px;overflow:hidden;background:var(--subtle-bg);margin:1rem 0}
+.copy-heading{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.75rem 1rem;border-bottom:1px solid var(--border)}
 .copy-title{font-size:.8rem;font-weight:600;overflow-wrap:anywhere;min-width:0}
-.copy-block pre{white-space:pre;overflow-wrap:normal;overflow:auto;margin:0;padding:1.15rem 1rem;font-size:.9375rem;line-height:1.65;background:#112b39;color:#dbece5;border-radius:0}
+.copy-block pre{white-space:pre;overflow-wrap:normal;overflow:auto;margin:0;padding:1.15rem 1rem;font-size:.9375rem;line-height:1.65;background:var(--code-bg);color:var(--code-fg);border-radius:0}
 .copy-block code{font-size:1em}
-.copy-code{display:inline-flex;align-items:center;justify-content:center;gap:.5rem;padding:.3rem .6rem;min-height:30px;border:1px solid #dfe6eb;border-radius:8px;background:white;color:#344e5b;font:600 .73rem/1.3 system-ui,sans-serif;cursor:pointer;flex-shrink:0}
+.copy-code{display:inline-flex;align-items:center;justify-content:center;gap:.5rem;padding:.3rem .6rem;min-height:30px;border:1px solid var(--border);border-radius:8px;background:var(--button-bg);color:var(--button-fg);font:600 .73rem/1.3 system-ui,sans-serif;cursor:pointer;flex-shrink:0}
 .copy-code:hover:not(:disabled){filter:brightness(.96)}
-.copy-code:active:not(:disabled){background:#eaf5ef;transform:translateY(1px)}
+.copy-code:active:not(:disabled){background:var(--button-active);transform:translateY(1px)}
 .copy-code:disabled{opacity:.55;cursor:not-allowed}
-.copy-code:focus-visible,.copy-block pre:focus-visible{outline:3px solid #80bdd8;outline-offset:-3px}
-.copy-status{color:#14725b;font-size:.85rem}
-.copy-status[data-error]{color:#b33c3d}
+.copy-code:focus-visible,.copy-block pre:focus-visible{outline:3px solid var(--focus);outline-offset:-3px}
+.copy-status{color:var(--ok);font-size:.85rem}
+.copy-status[data-error]{color:var(--error)}
 .copy-block>.copy-status[data-error]{display:block;padding:.5rem 1rem}
 .copy-block>.copy-status:not([data-error]){position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
 .copy-inline{position:relative}
@@ -24,6 +24,6 @@
 
 .installer-options{margin:1rem 0 0}
 .installer-options>summary{cursor:pointer;font-weight:600;line-height:1.3;margin:0}
-.installer-options>summary:focus-visible{outline:3px solid #80bdd8;outline-offset:3px}
+.installer-options>summary:focus-visible{outline:3px solid var(--focus);outline-offset:3px}
 .installer-options[open]>summary{margin-bottom:1rem}
 .installer-options>summary+p{margin-top:0}

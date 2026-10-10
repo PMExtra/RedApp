@@ -5,6 +5,7 @@ export default {
     title: "管理后台",
     badge: "管理",
     openMenu: "打开导航",
+    publicSite: "公开站点",
     nav: {
       overview: "概览",
       events: "事件",
@@ -36,6 +37,7 @@ export default {
       appSettings: "设置",
       versions: "版本",
       cache: "缓存",
+      metrics: "指标",
       files: "文件",
     },
     notFound: {

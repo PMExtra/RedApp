@@ -145,6 +145,7 @@ RedApp 读取转发头的方式：
 | `/admin/vendors/<vendor>/apps/<app>/settings` | 应用设置、使用说明、导出、复制 |
 | `/admin/vendors/<vendor>/apps/<app>/admin-notes` | 应用的私有备注 |
 | `/admin/vendors/<vendor>/apps/<app>/versions` | 版本与资源（Codex、Claude Code） |
+| `/admin/vendors/<vendor>/apps/<app>/metrics` | 应用指标（HTTP 缓存、Codex、Claude Code） |
 | `/admin/vendors/<vendor>/apps/<app>/cache` | 缓存管理（HTTP 缓存、Codex、Claude Code） |
 | `/admin/vendors/<vendor>/apps/<app>/files` | 托管文件（仅 Hosted Provider） |
 

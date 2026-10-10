@@ -264,11 +264,16 @@ describe("homepage pins", () => {
     expect(within(list).queryByText("openai/codex")).toBeNull();
 
     // Add through the application search; already pinned ones are disabled.
-    await user.type(within(card).getByRole("combobox", { name: "Add an application" }), "o");
+    const search = within(card).getByRole("combobox", { name: "Add an application" });
+    await user.type(search, "o");
     const claude = await screen.findByRole("option", { name: /Claude Code/ });
     expect(claude).toHaveTextContent("Pinned");
     await user.click(await screen.findByRole("option", { name: /Gemini CLI/ }));
     expect(await within(list).findByText("google/gemini-cli")).toBeVisible();
+    // The search box is cleared for the next pick.
+    await waitFor(() => {
+      expect(search).toHaveValue("");
+    });
 
     await user.click(within(card).getByRole("button", { name: "Save pinned applications" }));
     expect(await screen.findByText("Pinned applications saved.")).toBeVisible();

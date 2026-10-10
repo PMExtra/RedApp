@@ -38,8 +38,8 @@ describe("overview", () => {
     expect(within(common).getByRole("heading", { name: "Disk" })).toBeInTheDocument();
     expect(within(common).getByRole("button", { name: /^Free space: 1\.00 KiB/ })).toBeVisible();
     // Diagnostic metrics start collapsed.
-    const goroutines = screen.getByRole("button", { name: /^Goroutines:/, hidden: true });
-    expect(goroutines.closest("details")).not.toHaveAttribute("open");
+    const otherData = screen.getByRole("button", { name: /^Other data:/, hidden: true });
+    expect(otherData.closest("details")).not.toHaveAttribute("open");
 
     await vi.advanceTimersByTimeAsync(5_000);
     expect(

@@ -75,7 +75,7 @@ func TestGeneralHTTPRouteEncodingMethodsAndRanges(t *testing.T) {
 		for _, metric := range metrics {
 			values[metric.Key] = metric.Value
 		}
-		for key, want := range map[string]float64{"counters.artifact_requests": 3, "resources.total": 1, "resources.complete": 1, "resources.current": 1} {
+		for key, want := range map[string]float64{"counters.artifact_requests": 3, "resources.current": 1, "resources.retired": 0} {
 			if values[key] == nil || *values[key] != want {
 				t.Fatalf("%s %s: missing/wrong GeneralHttp metric %v", endpoint, key, values[key])
 			}

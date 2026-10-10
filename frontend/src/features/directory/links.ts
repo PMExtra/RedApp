@@ -2,12 +2,13 @@ import type { RouteLocationRaw } from "vue-router";
 import type { App, ProviderKey, Vendor } from "./queries";
 
 /** Tabs of the application pages, in display order. */
-export type AppTab = "settings" | "versions" | "cache" | "files" | "admin-notes";
+export type AppTab = "settings" | "versions" | "cache" | "metrics" | "files" | "admin-notes";
 
 const TAB_ROUTES: Record<AppTab, string> = {
   settings: "admin-app-settings",
   versions: "admin-app-versions",
   cache: "admin-app-cache",
+  metrics: "admin-app-metrics",
   files: "admin-app-files",
   "admin-notes": "admin-app-notes",
 };
@@ -28,14 +29,14 @@ export function hasHostedFiles(provider: ProviderKey): boolean {
 }
 
 /**
- * Tabs an application offers: files for `hosted`; cache for `http-cache`,
+ * Tabs an application offers: files for `hosted`; cache and metrics for `http-cache`,
  * `codex` and `claude-code`; versions for `codex` and `claude-code` (not for
  * deleted applications, whose release data is no longer browsable).
  */
 export function appTabs(app: Pick<App, "provider" | "deleted_at">): AppTab[] {
   const tabs: AppTab[] = ["settings"];
   if (hasVersions(app.provider) && !app.deleted_at) tabs.push("versions");
-  if (hasCache(app.provider)) tabs.push("cache");
+  if (hasCache(app.provider)) tabs.push("cache", "metrics");
   if (hasHostedFiles(app.provider)) tabs.push("files");
   tabs.push("admin-notes");
   return tabs;

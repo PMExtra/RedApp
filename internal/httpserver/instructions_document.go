@@ -19,6 +19,9 @@ var instructionsMarkdown = goldmark.New(goldmark.WithExtensions(extension.GFM), 
 //go:embed instructions_height.js
 var instructionsHeightScript string
 
+//go:embed instructions_document.css
+var instructionsDocumentStyle string
+
 // The CSP sandbox gives the document an opaque origin even when opened directly,
 // so its scripts cannot use the administrator session. The embedding iframe
 // carries the same sandbox flags.
@@ -32,6 +35,15 @@ func (s *Server) getInstructionsDocument(w http.ResponseWriter, r *http.Request)
 	lang := r.URL.Query().Get("lang")
 	if lang != "en" && lang != "zh-CN" {
 		s.fail(w, r, codeInvalidQuery, nil, "lang must be en or zh-CN")
+		return
+	}
+	// The opaque-origin document cannot read the page's theme, so the iframe passes it.
+	theme := r.URL.Query().Get("theme")
+	if theme == "" {
+		theme = "light"
+	}
+	if theme != "light" && theme != "dark" {
+		s.fail(w, r, codeInvalidQuery, nil, "theme must be light or dark")
 		return
 	}
 	entry, ok := s.publishedApp(w, r)
@@ -55,5 +67,5 @@ func (s *Server) getInstructionsDocument(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 	w.Header().Set("Content-Security-Policy", instructionsDocumentPolicy)
-	fmt.Fprintf(w, `<!doctype html><html lang="%s"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><base target="_top"><style>body{font:15px/1.65 system-ui,sans-serif;margin:0;padding:1px;color:#27364b;background:white}h1,h2,h3{line-height:1.3}pre{overflow:auto;background:#f4f6f9;padding:16px;border-radius:8px}img,video{max-width:100%%}button{border:1px solid #cbd5e1;background:white;border-radius:6px;padding:8px 16px;cursor:pointer}table{border-collapse:collapse}td,th{border:1px solid #ddd;padding:8px}a{color:#185fbc}%s</style></head><body>%s<script>%s</script><script>%s</script></body></html>`, lang, instructionsCopyStyle, s.interpolateInstructionVariables(entry, body.String(), s.publicURL(r), lang), instructionsCopyScript, instructionsHeightScript)
+	fmt.Fprintf(w, `<!doctype html><html lang="%s" data-theme="%s"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><base target="_top"><style>%s%s</style></head><body>%s<script>%s</script><script>%s</script></body></html>`, lang, theme, instructionsDocumentStyle, instructionsCopyStyle, s.interpolateInstructionVariables(entry, body.String(), s.publicURL(r), lang), instructionsCopyScript, instructionsHeightScript)
 }

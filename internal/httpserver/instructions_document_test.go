@@ -28,6 +28,14 @@ func TestInstructionsDocumentRunsInOpaqueOriginSandbox(t *testing.T) {
 	if !bytes.Contains(data, []byte(`<base target="_top">`)) || !bytes.Contains(data, []byte("redapp-instructions-height")) {
 		t.Fatal("document lost top navigation or height reporting")
 	}
+	if !bytes.Contains(data, []byte(`data-theme="light"`)) {
+		t.Fatal("document does not default to the light theme")
+	}
+	data, _ = h.request("GET", "/api/apps/openai/codex/instructions/document?lang=en&theme=dark", nil, 200, nil)
+	if !bytes.Contains(data, []byte(`data-theme="dark"`)) {
+		t.Fatal("document ignores the dark theme")
+	}
+	h.request("GET", "/api/apps/openai/codex/instructions/document?lang=en&theme=blue", nil, 400, nil)
 	// The opaque-origin document loads the code font through CORS.
 	_, headers = h.request("GET", "/assets/JetBrainsMono-Regular-v2.304.woff2", nil, 200, nil)
 	if headers.Get("Access-Control-Allow-Origin") != "*" {

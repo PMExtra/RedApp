@@ -23,6 +23,7 @@ export { default as EntityIcon } from "./EntityIcon.vue";
 export { default as Field } from "./Field.vue";
 export { default as FilePicker } from "./FilePicker.vue";
 export { default as IconButton } from "./IconButton.vue";
+export { default as InfoTip } from "./InfoTip.vue";
 export { default as Input } from "./Input.vue";
 export { default as LanguageSwitcher } from "./LanguageSwitcher.vue";
 export { default as NavTabs } from "./NavTabs.vue";

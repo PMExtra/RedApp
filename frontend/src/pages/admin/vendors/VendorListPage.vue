@@ -120,10 +120,7 @@ const items = computed(() => vendors.data.value?.items ?? []);
           </template>
         </EmptyState>
       </template>
-      <div
-        class="grid gap-4 md:grid-cols-2 xl:grid-cols-3"
-        :aria-busy="vendors.isFetching.value || undefined"
-      >
+      <div class="grid gap-4 xl:grid-cols-2" :aria-busy="vendors.isFetching.value || undefined">
         <VendorCard
           v-for="vendor in items"
           :key="vendor.uid"

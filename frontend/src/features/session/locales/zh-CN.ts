@@ -23,7 +23,6 @@ export default {
     account: {
       menu: "管理员",
       changePassword: "修改密码",
-      publicSite: "公开站点",
       signOut: "退出登录",
     },
     password: {

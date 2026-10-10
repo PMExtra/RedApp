@@ -128,7 +128,7 @@ x-spa-routes:
     document with status 404. Vendor and application segments must exist (not necessarily enabled) for
     admin routes; public `/<vendor>` and `/<vendor>/<app>` routes require the vendor and application to be
     published, otherwise they return `index.html` with status 404 so that the SPA shows its not-found page.
-    Tab availability follows provider capabilities: `files` only for `hosted`; `cache` for
+    Tab availability follows provider capabilities: `files` only for `hosted`; `cache` and `metrics` for
     `http-cache`, `codex`, `claude-code`; `versions` for `codex`, `claude-code`. The bare application path
     `/admin/vendors/{vendor}/apps/{app}` exists for every application; the SPA redirects it client-side to the
     provider's default tab.
@@ -163,6 +163,7 @@ x-spa-routes:
     - /admin/vendors/{vendor}/apps/{app}/admin-notes
     - /admin/vendors/{vendor}/apps/{app}/versions
     - /admin/vendors/{vendor}/apps/{app}/cache
+    - /admin/vendors/{vendor}/apps/{app}/metrics
     - /admin/vendors/{vendor}/apps/{app}/files
 
 paths:
@@ -448,6 +449,14 @@ paths:
           description: Instructions language.
           schema:
             $ref: '#/components/schemas/Language'
+        - name: theme
+          in: query
+          required: false
+          description: Color theme of the embedding page; the opaque-origin document cannot read it.
+          schema:
+            type: string
+            enum: [light, dark]
+            default: light
       x-error-codes: [APPLICATION_NOT_FOUND]
       responses:
         '200':
@@ -1137,7 +1146,7 @@ paths:
       tags: [overview]
       summary: Read the current global metrics.
       description: |
-        Computes all 41 global metrics now (walks the data directory for disk usage).
+        Computes all 27 global metrics now (walks the data directory for disk usage).
         The admin overview polls it every 5 seconds while visible.
       security:
         - sessionCookie: []
@@ -1239,7 +1248,7 @@ paths:
       tags: [overview]
       summary: Read the current metrics of one application.
       description: |
-        Available for `http-cache`, `codex` and `claude-code` (14 `resources.*` metrics, counters except
+        Available for `http-cache`, `codex` and `claude-code` (17 metrics: 6 `resources.*` metrics, counters except
         `counters.requests`, and `versions.total` with `value: null` for `http-cache`). Deleted applications are readable.
       security:
         - sessionCookie: []
@@ -5638,13 +5647,9 @@ components:
       description: Metric key from the fixed catalog (see `docs/guide/metrics.md`).
       enum:
         - disk.used_bytes
-        - disk.logical_bytes
         - disk.allocated_cache_bytes
         - disk.allocated_temporary_bytes
         - disk.allocated_pending_bytes
-        - disk.cache_bytes
-        - disk.temporary_bytes
-        - disk.pending_bytes
         - disk.other_bytes
         - disk.free_bytes
         - counters.requests
@@ -5661,22 +5666,12 @@ components:
         - rates.upstream_bytes_per_second
         - rates.downstream_bytes_per_second
         - runtime.memory_bytes
-        - runtime.goroutines
-        - runtime.uptime_seconds
-        - resources.total
         - resources.current
         - resources.retired
         - resources.readers
         - resources.active_writers
-        - resources.queued
-        - resources.downloading
-        - resources.resuming
-        - resources.retry_wait
-        - resources.verifying
-        - resources.complete
         - resources.failed
         - resources.invalid
-        - resources.interrupted
         - versions.total
     Metric:
       type: object
@@ -5716,7 +5711,7 @@ components:
           format: date-time
         metrics:
           type: array
-          description: All 41 global metrics in catalog order.
+          description: All 27 global metrics in catalog order.
           items:
             $ref: '#/components/schemas/Metric'
     AppStatus:
@@ -5729,7 +5724,7 @@ components:
           format: date-time
         metrics:
           type: array
-          description: The 25 application metrics in catalog order.
+          description: The 17 application metrics in catalog order.
           items:
             $ref: '#/components/schemas/Metric'
     HistorySeries:

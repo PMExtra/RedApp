@@ -5,6 +5,7 @@ export default {
     title: "Administration",
     badge: "Admin",
     openMenu: "Open navigation",
+    publicSite: "Public site",
     nav: {
       overview: "Overview",
       events: "Events",
@@ -36,6 +37,7 @@ export default {
       appSettings: "Settings",
       versions: "Versions",
       cache: "Cache",
+      metrics: "Metrics",
       files: "Files",
     },
     notFound: {

@@ -158,7 +158,7 @@ Proxy URL rules:
 
 Behavior:
 
-- With an `http` or `https` proxy, HTTPS upstreams are reached through `CONNECT`. With SOCKS5, the proxy resolves host names.
+- With an `http` or `https` proxy, HTTPS upstreams are reached through `CONNECT`. With every proxy type, the proxy resolves host names.
 - Changing a parent never rewrites a child's own setting.
 - A change applies to new upstream connections. Transfers already in progress finish on their old connection.
 - Proxy passwords are never returned in full. The console shows them redacted. Saving without changing the password keeps the stored one.

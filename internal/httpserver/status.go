@@ -139,10 +139,6 @@ func (s *Server) globalMetrics() (time.Time, []history.Metric, error) {
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 	values["runtime.memory_bytes"] = float64(mem.Alloc)
-	values["runtime.goroutines"] = float64(runtime.NumGoroutine())
-	if !s.started.IsZero() {
-		values["runtime.uptime_seconds"] = time.Since(s.started).Seconds()
-	}
 	resourceMetrics(views, values)
 	for _, entry := range s.registry.Entries() {
 		if entry.Protocol == nil {
@@ -186,13 +182,11 @@ func number(value any) float64 {
 }
 
 // diskMetrics fills the disk.* metrics: allocated blocks of the data directory
-// classified by resource state, logical sizes and free file system space.
+// classified by resource state and free file system space.
 func (s *Server) diskMetrics(views []spool.FileStatus, values map[string]float64) error {
-	var complete, temp, pending, total, logical, allocatedCache, allocatedTemp, allocatedPending int64
+	var total, allocatedCache, allocatedTemp, allocatedPending int64
 	classes := map[string]string{}
-	fileBytes := map[string]int64{}
 	for _, v := range views {
-		fileBytes[v.Path] = v.Bytes
 		if v.Retired {
 			if classes[v.Path] == "" {
 				classes[v.Path] = "pending"
@@ -201,16 +195,6 @@ func (s *Server) diskMetrics(views []spool.FileStatus, values map[string]float64
 			classes[v.Path] = "cache"
 		} else if classes[v.Path] != "cache" {
 			classes[v.Path] = "temporary"
-		}
-	}
-	for path, size := range fileBytes {
-		switch classes[path] {
-		case "pending":
-			pending += size
-		case "cache":
-			complete += size
-		case "temporary":
-			temp += size
 		}
 	}
 	err := filepath.WalkDir(s.dataDir, func(path string, d os.DirEntry, e error) error {
@@ -229,9 +213,6 @@ func (s *Server) diskMetrics(views []spool.FileStatus, values map[string]float64
 			allocated = st.Blocks * 512
 		}
 		total += allocated
-		if !d.IsDir() {
-			logical += info.Size()
-		}
 		switch classes[path] {
 		case "cache":
 			allocatedCache += allocated
@@ -249,17 +230,17 @@ func (s *Server) diskMetrics(views []spool.FileStatus, values map[string]float64
 	if err = syscall.Statfs(s.dataDir, &disk); err != nil {
 		return err
 	}
-	for key, value := range map[string]int64{"used_bytes": total, "logical_bytes": logical, "allocated_cache_bytes": allocatedCache, "allocated_temporary_bytes": allocatedTemp, "allocated_pending_bytes": allocatedPending, "cache_bytes": complete, "temporary_bytes": temp, "pending_bytes": pending, "other_bytes": total - allocatedCache - allocatedTemp - allocatedPending} {
+	for key, value := range map[string]int64{"used_bytes": total, "allocated_cache_bytes": allocatedCache, "allocated_temporary_bytes": allocatedTemp, "allocated_pending_bytes": allocatedPending, "other_bytes": total - allocatedCache - allocatedTemp - allocatedPending} {
 		values["disk."+key] = float64(value)
 	}
 	values["disk.free_bytes"] = float64(disk.Bavail * uint64(disk.Bsize))
 	return nil
 }
 
-// resourceMetrics adds the resources.* metrics of views.
+// resourceMetrics adds the resources.* metrics of views. Only the failed and
+// invalid states have catalog metrics.
 func resourceMetrics(views []spool.FileStatus, values map[string]float64) {
 	for _, view := range views {
-		values["resources.total"]++
 		values["resources.readers"] += float64(view.Readers)
 		if view.Current {
 			values["resources.current"]++

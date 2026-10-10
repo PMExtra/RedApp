@@ -19,7 +19,6 @@ const { t, locale } = useI18n();
 const localized = useLocalized();
 
 const search = ref("");
-const selected = ref<string>();
 const debounced = useDebounced(search, 200);
 const apps = useAppSearch(debounced, locale);
 const excluded = computed(() => new Set(props.exclude ?? []));
@@ -39,8 +38,6 @@ const options = computed<AppOption[]>(() =>
 function choose(option: AppOption) {
   if (excluded.value.has(option.value)) return;
   emit("select", option.app);
-  search.value = "";
-  selected.value = undefined;
 }
 </script>
 
@@ -48,8 +45,8 @@ function choose(option: AppOption) {
   <Field v-slot="{ control }" :label="label" :description="description">
     <Combobox
       v-bind="control"
-      v-model="selected"
       v-model:search="search"
+      clear-on-select
       :options="options"
       :loading="apps.isFetching.value"
       :disabled="disabled"

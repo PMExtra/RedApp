@@ -59,12 +59,12 @@ func TestUTCAndGaugeAggregationPartialResolution(t *testing.T) {
 	h, _, _ := setup(t)
 	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	for i := 0; i <= 60; i++ {
-		if err := h.Record(base.Add(time.Duration(i)*time.Minute), []Metric{observation("disk.cache_bytes", float64(i))}); err != nil {
+		if err := h.Record(base.Add(time.Duration(i)*time.Minute), []Metric{observation("disk.allocated_cache_bytes", float64(i))}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	now := base.Add(time.Hour + 30*time.Second)
-	p := point(t, h, "disk.cache_bytes", "7d", now, base)
+	p := point(t, h, "disk.allocated_cache_bytes", "7d", now, base)
 	value(t, p.Min, 0)
 	value(t, p.Max, 59)
 	value(t, p.Avg, 29.5)
@@ -72,13 +72,13 @@ func TestUTCAndGaugeAggregationPartialResolution(t *testing.T) {
 	if p.Count != 60 || p.Partial || p.Incomplete {
 		t.Fatalf("closed hour %+v", p)
 	}
-	open := point(t, h, "disk.cache_bytes", "7d", now, base.Add(time.Hour))
+	open := point(t, h, "disk.allocated_cache_bytes", "7d", now, base.Add(time.Hour))
 	value(t, open.Value, 60)
 	if !open.Partial || !open.Incomplete || open.Count != 1 {
 		t.Fatalf("partial %+v", open)
 	}
 	for _, window := range []string{"24h", "7d", "30d"} {
-		series, err := h.Query("disk.cache_bytes", window, now)
+		series, err := h.Query("disk.allocated_cache_bytes", window, now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -159,7 +159,7 @@ func TestRetentionAggregatesBeforeDeletionAndIsIdempotent(t *testing.T) {
 	now := time.Date(2026, 9, 30, 12, 35, 0, 0, time.UTC)
 	old := now.Add(-48 * time.Hour).Truncate(time.Hour)
 	// A stopped process may leave unaggregated raw observations beyond 24h.
-	if _, err := sqlDB.Exec("INSERT INTO metric_samples(scope,app_id,metric,t_s,observed_at_s,boot,value,delta,duration_s) VALUES(?,?,?,?,?,?,?,?,?)", "global", "", "disk.cache_bytes", old.Unix(), old.Unix(), "old", 123, nil, 0); err != nil {
+	if _, err := sqlDB.Exec("INSERT INTO metric_samples(scope,app_id,metric,t_s,observed_at_s,boot,value,delta,duration_s) VALUES(?,?,?,?,?,?,?,?,?)", "global", "", "disk.allocated_cache_bytes", old.Unix(), old.Unix(), "old", 123, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.Maintain(now); err != nil {
@@ -170,13 +170,13 @@ func TestRetentionAggregatesBeforeDeletionAndIsIdempotent(t *testing.T) {
 	if raw != 0 {
 		t.Fatal("raw retention failed")
 	}
-	value(t, point(t, h, "disk.cache_bytes", "7d", now, old).Last, 123)
+	value(t, point(t, h, "disk.allocated_cache_bytes", "7d", now, old).Last, 123)
 	for i := 0; i < 2; i++ {
 		if err := h.Maintain(now); err != nil {
 			t.Fatal(err)
 		}
 	}
-	value(t, point(t, h, "disk.cache_bytes", "7d", now, old).Last, 123)
+	value(t, point(t, h, "disk.allocated_cache_bytes", "7d", now, old).Last, 123)
 	if err := h.Maintain(now.Add(31 * 24 * time.Hour)); err != nil {
 		t.Fatal(err)
 	}
@@ -186,11 +186,46 @@ func TestRetentionAggregatesBeforeDeletionAndIsIdempotent(t *testing.T) {
 		t.Fatal("hour retention failed")
 	}
 }
+
+// Keys dropped from the catalog keep no special handling: old rows age out
+// through time-based retention and the keys cannot be queried.
+func TestRemovedCatalogKeysAgeOut(t *testing.T) {
+	h, _, sqlDB := setup(t)
+	now := time.Date(2026, 9, 30, 12, 35, 0, 0, time.UTC)
+	old := now.Add(-48 * time.Hour).Truncate(time.Hour)
+	for _, at := range []time.Time{old, now.Add(-time.Hour)} {
+		if _, err := sqlDB.Exec("INSERT INTO metric_samples(scope,app_id,metric,t_s,observed_at_s,boot,value,delta,duration_s) VALUES(?,?,?,?,?,?,?,?,?)", "global", "", "runtime.goroutines", at.Unix(), at.Unix(), "old", 7, nil, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.Record(now, []Metric{observation("disk.allocated_cache_bytes", 1)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Maintain(now); err != nil {
+		t.Fatal(err)
+	}
+	var raw, hours int
+	sqlDB.QueryRow("SELECT COUNT(*) FROM metric_samples WHERE metric='runtime.goroutines'").Scan(&raw)
+	sqlDB.QueryRow("SELECT COUNT(*) FROM metric_hours WHERE metric='runtime.goroutines'").Scan(&hours)
+	if raw != 1 || hours != 0 {
+		t.Fatalf("removed key raw=%d hours=%d", raw, hours)
+	}
+	if _, err := h.Query("runtime.goroutines", "24h", now); err == nil {
+		t.Fatal("removed metric key accepted")
+	}
+	if err := h.Maintain(now.Add(25 * time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	sqlDB.QueryRow("SELECT COUNT(*) FROM metric_samples WHERE metric='runtime.goroutines'").Scan(&raw)
+	if raw != 0 {
+		t.Fatal("removed key raw rows were not retired")
+	}
+}
 func TestAtomicFailureCannotLoseUnaggregatedRaw(t *testing.T) {
 	h, _, sqlDB := setup(t)
 	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 	old := now.Add(-48 * time.Hour)
-	sqlDB.Exec("INSERT INTO metric_samples(scope,app_id,metric,t_s,observed_at_s,boot,value,delta,duration_s) VALUES(?,?,?,?,?,?,?,?,?)", "global", "", "disk.cache_bytes", old.Unix(), old.Unix(), "old", 42, nil, 0)
+	sqlDB.Exec("INSERT INTO metric_samples(scope,app_id,metric,t_s,observed_at_s,boot,value,delta,duration_s) VALUES(?,?,?,?,?,?,?,?,?)", "global", "", "disk.allocated_cache_bytes", old.Unix(), old.Unix(), "old", 42, nil, 0)
 	sqlDB.Exec(`CREATE TRIGGER fail_cleanup BEFORE DELETE ON metric_samples BEGIN SELECT RAISE(ABORT,'test failure'); END`)
 	if err := h.Maintain(now); err == nil {
 		t.Fatal("injected transaction failure ignored")
@@ -207,7 +242,7 @@ func TestAtomicFailureCannotLoseUnaggregatedRaw(t *testing.T) {
 	if err := h.Maintain(now); err != nil {
 		t.Fatal(err)
 	}
-	value(t, point(t, h, "disk.cache_bytes", "7d", now, old).Last, 42)
+	value(t, point(t, h, "disk.allocated_cache_bytes", "7d", now, old).Last, 42)
 }
 func TestRatesAndCatalogValidation(t *testing.T) {
 	h, _, _ := setup(t)
@@ -221,7 +256,7 @@ func TestRatesAndCatalogValidation(t *testing.T) {
 	if p.Count != 2 || p.ObservedSeconds != 10 || !p.Incomplete {
 		t.Fatal("rate coverage lost")
 	}
-	if len(Definitions()) != 41 {
+	if len(Definitions()) != 27 || len(AppDefinitions()) != 17 {
 		t.Fatal("catalog changed unexpectedly")
 	}
 	seen := map[string]bool{}
@@ -245,7 +280,7 @@ func TestRatesAndCatalogValidation(t *testing.T) {
 	if err := h.Record(base.Add(2*time.Hour), []Metric{bad}); err == nil {
 		t.Fatal("partial startup rate treated as full window")
 	}
-	if err := h.Record(base, []Metric{observation("disk.cache_bytes", 1)}); err == nil {
+	if err := h.Record(base, []Metric{observation("disk.allocated_cache_bytes", 1)}); err == nil {
 		t.Fatal("clock rollback ignored")
 	}
 }
@@ -258,7 +293,7 @@ func TestDuplicateMinuteIsIdempotentAndPersistenceSurvivesReopen(t *testing.T) {
 	h, _ := Open(db)
 	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	for i := 0; i < 2; i++ {
-		if err = h.Record(base, []Metric{observation("disk.cache_bytes", 5)}); err != nil {
+		if err = h.Record(base, []Metric{observation("disk.allocated_cache_bytes", 5)}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -277,11 +312,11 @@ func TestDuplicateMinuteIsIdempotentAndPersistenceSurvivesReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	value(t, point(t, h, "disk.cache_bytes", "24h", base, base).Last, 5)
-	if err = h.Record(base.Add(time.Minute), []Metric{observation("disk.cache_bytes", -1)}); err == nil {
+	value(t, point(t, h, "disk.allocated_cache_bytes", "24h", base, base).Last, 5)
+	if err = h.Record(base.Add(time.Minute), []Metric{observation("disk.allocated_cache_bytes", -1)}); err == nil {
 		t.Fatal("negative metric accepted")
 	}
-	if err = h.Record(base.Add(time.Minute), []Metric{{Definition: Definition{Key: "disk.cache_bytes"}}}); err != nil && !errors.Is(err, nil) {
+	if err = h.Record(base.Add(time.Minute), []Metric{{Definition: Definition{Key: "disk.allocated_cache_bytes"}}}); err != nil && !errors.Is(err, nil) {
 		t.Fatal(err)
 	}
 }
@@ -290,12 +325,12 @@ func TestQueryIncludesJustClosedUncommittedHourWithoutWriting(t *testing.T) {
 	h, _, sqlDB := setup(t)
 	base := time.Date(2026, 9, 1, 20, 0, 0, 0, time.UTC)
 	for i := 0; i < 60; i++ {
-		if err := h.Record(base.Add(time.Duration(i)*time.Minute), []Metric{observation("disk.cache_bytes", float64(i))}); err != nil {
+		if err := h.Record(base.Add(time.Duration(i)*time.Minute), []Metric{observation("disk.allocated_cache_bytes", float64(i))}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	now := base.Add(time.Hour + 10*time.Second)
-	p := point(t, h, "disk.cache_bytes", "7d", now, base)
+	p := point(t, h, "disk.allocated_cache_bytes", "7d", now, base)
 	value(t, p.Avg, 29.5)
 	value(t, p.Last, 59)
 	if p.Partial || p.Count != 60 {

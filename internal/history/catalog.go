@@ -24,21 +24,19 @@ func Definitions() []Definition {
 	add := func(key, label, kind, unit, group string) {
 		out = append(out, Definition{Key: key, Label: label, Kind: kind, Unit: unit, Group: group})
 	}
-	for _, item := range [][2]string{{"used_bytes", "Service disk usage"}, {"logical_bytes", "Total logical file bytes"}, {"allocated_cache_bytes", "Allocated cache"}, {"allocated_temporary_bytes", "Allocated temporary files"}, {"allocated_pending_bytes", "Allocated pending deletion"}, {"cache_bytes", "Cache"}, {"temporary_bytes", "Temporary"}, {"pending_bytes", "Pending deletion"}, {"other_bytes", "Other allocated disk usage"}, {"free_bytes", "Filesystem available"}} {
+	for _, item := range [][2]string{{"used_bytes", "Disk used"}, {"allocated_cache_bytes", "Cached files"}, {"allocated_temporary_bytes", "Partial downloads"}, {"allocated_pending_bytes", "Pending deletion"}, {"other_bytes", "Other data"}, {"free_bytes", "Free space"}} {
 		add("disk."+item[0], item[1], "gauge", "bytes", "disk")
 	}
-	for _, item := range [][3]string{{"requests", "Public requests", "count"}, {"artifact_requests", "Artifact requests", "count"}, {"cache_hit_requests", "Cache-hit requests", "count"}, {"shared_follower_requests", "Shared-follower requests", "count"}, {"miss_requests", "Miss requests", "count"}, {"download_success", "Successful downloads", "count"}, {"download_errors", "Download errors", "count"}, {"upstream_errors", "Artifact upstream errors", "count"}, {"upstream_bytes", "Upstream traffic", "bytes"}, {"downstream_bytes", "Downstream traffic", "bytes"}, {"cleanup_freed_bytes", "Logical bytes reclaimed", "bytes"}} {
+	for _, item := range [][3]string{{"requests", "Public requests", "count"}, {"artifact_requests", "File requests", "count"}, {"cache_hit_requests", "Cache hits", "count"}, {"shared_follower_requests", "Shared downloads", "count"}, {"miss_requests", "Cache misses", "count"}, {"download_success", "Downloads served", "count"}, {"download_errors", "Downloads failed", "count"}, {"upstream_errors", "Upstream errors", "count"}, {"upstream_bytes", "Traffic in", "bytes"}, {"downstream_bytes", "Traffic out", "bytes"}, {"cleanup_freed_bytes", "Space reclaimed", "bytes"}} {
 		add("counters."+item[0], item[1], "counter", item[2], "traffic")
 	}
-	add("rates.upstream_bytes_per_second", "Upstream rate", "rate", "bytes_per_second", "speed")
-	add("rates.downstream_bytes_per_second", "Downstream rate", "rate", "bytes_per_second", "speed")
-	add("runtime.memory_bytes", "Memory allocated", "gauge", "bytes", "runtime")
-	add("runtime.goroutines", "Goroutines", "gauge", "count", "runtime")
-	add("runtime.uptime_seconds", "Process uptime", "gauge", "seconds", "runtime")
-	for _, item := range [][2]string{{"total", "Resource generations"}, {"current", "Current generations"}, {"retired", "Retired generations"}, {"readers", "Active readers"}, {"active_writers", "Active writers"}, {"queued", "Queued generations"}, {"downloading", "Downloading generations"}, {"resuming", "Resuming generations"}, {"retry_wait", "Retry-wait generations"}, {"verifying", "Verifying generations"}, {"complete", "Complete generations"}, {"failed", "Failed generations"}, {"invalid", "Invalid generations"}, {"interrupted", "Interrupted generations"}} {
+	add("rates.upstream_bytes_per_second", "Speed in", "rate", "bytes_per_second", "speed")
+	add("rates.downstream_bytes_per_second", "Speed out", "rate", "bytes_per_second", "speed")
+	add("runtime.memory_bytes", "Memory", "gauge", "bytes", "runtime")
+	for _, item := range [][2]string{{"current", "Current files"}, {"retired", "Retired files"}, {"readers", "Active downloads"}, {"active_writers", "Active fetches"}, {"failed", "Failed files"}, {"invalid", "Invalid files"}} {
 		add("resources."+item[0], item[1], "gauge", "count", "resources")
 	}
-	add("versions.total", "Discovered versions", "gauge", "count", "resources")
+	add("versions.total", "Versions", "gauge", "count", "resources")
 	return out
 }
 

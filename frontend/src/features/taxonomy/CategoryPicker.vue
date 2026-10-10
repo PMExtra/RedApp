@@ -18,7 +18,6 @@ const { t } = useI18n();
 const localized = useLocalized();
 const id = useId();
 const search = ref("");
-const chosen = ref<string>();
 const message = ref("");
 const MAX_NAME = 64;
 const MAX_CATEGORIES = 32;
@@ -39,13 +38,11 @@ const count = computed(() => selected.value.length + pending.value.length);
 
 function select(option: ComboboxOption): void {
   message.value = "";
-  chosen.value = undefined;
   if (count.value >= MAX_CATEGORIES) {
     message.value = t("taxonomy.categories.tooMany", { max: MAX_CATEGORIES });
     return;
   }
   if (!selected.value.includes(option.value)) selected.value = [...selected.value, option.value];
-  search.value = "";
 }
 
 /** Enter on typed text: reuse a category with that exact name or add a pending one. */
@@ -111,8 +108,8 @@ function categoryLabel(categoryId: string): string {
     <!-- Enter picks or adds a category; it never submits the surrounding form. -->
     <Combobox
       :id="id"
-      v-model="chosen"
       v-model:search="search"
+      clear-on-select
       :options="options"
       :placeholder="t('taxonomy.categories.placeholder')"
       :disabled="disabled"

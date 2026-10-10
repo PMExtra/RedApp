@@ -23,7 +23,7 @@ func TestStatusReportsCatalogMetricsWithStableGroups(t *testing.T) {
 	h.request("GET", "/"+key+"/releases/0.159.2/archive.tgz", nil, 200, nil)
 	body, _ := h.request("GET", "/admin/api/status", nil, 200, nil)
 	global := decodeJSONBody[globalStatusDTO](t, body)
-	if len(global.Metrics) != 41 || global.StartedAt.IsZero() || global.SampledAt.Before(global.StartedAt) {
+	if len(global.Metrics) != 27 || global.StartedAt.IsZero() || global.SampledAt.Before(global.StartedAt) {
 		t.Fatal("global status", string(body))
 	}
 	values := map[string]*float64{}
@@ -38,7 +38,7 @@ func TestStatusReportsCatalogMetricsWithStableGroups(t *testing.T) {
 	}
 	body, _ = h.request("GET", "/admin/api/apps/"+key+"/status", nil, 200, nil)
 	app := decodeJSONBody[appStatusDTO](t, body)
-	if len(app.Metrics) != 25 || app.SampledAt.IsZero() {
+	if len(app.Metrics) != 17 || app.SampledAt.IsZero() {
 		t.Fatal("app status", string(body))
 	}
 	for _, metric := range app.Metrics {
@@ -80,7 +80,7 @@ func TestHistorySeriesUseRFC3339TimesAndPublicKeys(t *testing.T) {
 		t.Fatal("history sampling logged a failure", logs)
 	}
 	for window, resolution := range map[string]int64{"24h": 60, "7d": 3600, "30d": 3600} {
-		body, _ := h.request("GET", "/admin/api/history?metric=disk.cache_bytes&range="+window, nil, 200, nil)
+		body, _ := h.request("GET", "/admin/api/history?metric=disk.allocated_cache_bytes&range="+window, nil, 200, nil)
 		series := decodeJSONBody[historySeriesDTO](t, body)
 		if series.Scope != "global" || series.AppKey != nil || series.ResolutionSeconds != resolution || series.Group != "disk" || !series.From.Before(series.To) || series.To.Location() != time.UTC {
 			t.Fatal("global series", string(body))
@@ -94,15 +94,15 @@ func TestHistorySeriesUseRFC3339TimesAndPublicKeys(t *testing.T) {
 	if series.Scope != "app" || series.AppKey == nil || *series.AppKey != files.Key || len(series.Points) != 1 || strings.Contains(string(body), files.UID) {
 		t.Fatal("application series", string(body))
 	}
-	for _, query := range []string{"metric=disk.cache_bytes", "range=24h", "metric=unknown&range=24h", "metric=disk.cache_bytes&range=1h", "scope=global&metric=disk.cache_bytes&range=24h", "metric=events.recent_total&range=24h"} {
+	for _, query := range []string{"metric=disk.allocated_cache_bytes", "range=24h", "metric=unknown&range=24h", "metric=disk.allocated_cache_bytes&range=1h", "scope=global&metric=disk.allocated_cache_bytes&range=24h", "metric=events.recent_total&range=24h", "metric=runtime.goroutines&range=24h"} {
 		h.expectError("GET", "/admin/api/history?"+query, nil, 400, codeInvalidQuery, nil)
 	}
-	for _, metric := range []string{"disk.free_bytes", "runtime.goroutines", "counters.requests"} {
+	for _, metric := range []string{"disk.free_bytes", "runtime.memory_bytes", "counters.requests", "resources.total"} {
 		h.expectError("GET", "/admin/api/apps/"+files.Key+"/history?range=24h&metric="+metric, nil, 400, codeInvalidQuery, nil)
 	}
 	h.createApp("fixture", "about", application.Info, nil)
-	h.expectError("GET", "/admin/api/apps/fixture/about/history?metric=resources.total&range=24h", nil, 404, codeCapabilityUnsupported, nil)
-	h.expectError("GET", "/admin/api/apps/fixture/unknown/history?metric=resources.total&range=24h", nil, 404, codeApplicationNotFound, nil)
+	h.expectError("GET", "/admin/api/apps/fixture/about/history?metric=resources.current&range=24h", nil, 404, codeCapabilityUnsupported, nil)
+	h.expectError("GET", "/admin/api/apps/fixture/unknown/history?metric=resources.current&range=24h", nil, 404, codeApplicationNotFound, nil)
 }
 
 func TestEventsPaginateNewestFirstWithPublicKeys(t *testing.T) {
@@ -204,8 +204,8 @@ func TestAppMetricsFollowTheApplicationAcrossSourceEpochs(t *testing.T) {
 		return values
 	}
 	app := metrics("/admin/api/apps/" + key + "/status")
-	if *app["resources.total"] != 2 || *app["counters.artifact_requests"] != 2 || *app["versions.total"] != 1 {
-		t.Fatal("application metrics did not follow the application across epochs", *app["resources.total"], *app["counters.artifact_requests"], *app["versions.total"])
+	if *app["resources.current"]+*app["resources.retired"] != 2 || *app["counters.artifact_requests"] != 2 || *app["versions.total"] != 1 {
+		t.Fatal("application metrics did not follow the application across epochs", *app["resources.current"], *app["resources.retired"], *app["counters.artifact_requests"], *app["versions.total"])
 	}
 	if global := metrics("/admin/api/status"); *global["versions.total"] != 2 {
 		t.Fatal("global versions counted an old epoch or an HTTP cache application", *global["versions.total"])

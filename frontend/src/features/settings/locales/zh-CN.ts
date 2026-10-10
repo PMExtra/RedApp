@@ -65,10 +65,7 @@ export default {
       description: "用于元数据、下载和导入，除非厂商或应用另有设置。忽略环境变量中的代理设置。",
       urlRequired: "请输入代理 URL。",
       urlScheme: "请使用 http://、https:// 或 socks5:// 开头的 URL。",
-      dns: {
-        local: "主机名由本服务器解析。",
-        proxy: "主机名由代理解析（SOCKS5）。",
-      },
+      viaProxy: "上游连接经由代理建立，主机名也由代理解析。",
       direct: "上游连接直接建立，不使用代理。",
       save: "保存代理",
       saved: "代理已保存。新的上游连接将使用它；进行中的传输不受影响。",

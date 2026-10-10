@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import { ChevronRight } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
-import { Badge, Card } from "@/shared/ui";
+import { Badge, Card, InfoTip } from "@/shared/ui";
 import {
   GLOBAL_COMMON_METRICS,
   METRIC_GROUPS,
@@ -56,13 +56,13 @@ const commonCount = computed(() =>
 );
 const subLevel = computed(() => (props.level === 2 ? "h3" : "h4"));
 
+/** Tooltip text: what the metric measures and how its value is formed. */
 function hint(metric: Metric) {
-  if (metric.key === "versions.total") {
-    return t(
-      props.scope.kind === "app" ? "metrics.versionsScope.app" : "metrics.versionsScope.global",
-    );
-  }
-  return t(`metrics.kinds.${metric.kind}`);
+  const scope =
+    metric.key === "versions.total"
+      ? t(props.scope.kind === "app" ? "metrics.versionsScope.app" : "metrics.versionsScope.global")
+      : t(`metrics.kinds.${metric.kind}`);
+  return [labels.description(metric.key), scope].filter(Boolean).join(" ");
 }
 </script>
 
@@ -83,10 +83,10 @@ function hint(metric: Metric) {
             {{ labels.group(entry.group) }}
           </component>
           <ul class="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-3">
-            <li v-for="metric in entry.items" :key="metric.key">
+            <li v-for="metric in entry.items" :key="metric.key" class="relative">
               <button
                 type="button"
-                class="group flex h-full w-full flex-col gap-1 rounded-lg border border-border bg-surface p-3 text-start hover:border-border-strong hover:bg-surface-hover focus-ring"
+                class="flex h-full w-full flex-col gap-1 rounded-lg border border-border bg-surface p-3 text-start hover:border-border-strong hover:bg-surface-hover focus-ring"
                 :aria-label="
                   t('metrics.viewHistory', {
                     name: labels.label(metric),
@@ -95,18 +95,16 @@ function hint(metric: Metric) {
                 "
                 @click="emit('select', metric)"
               >
-                <span class="flex items-center justify-between gap-2 text-sm text-muted">
-                  {{ labels.label(metric) }}
-                  <ChevronRight
-                    class="size-4 shrink-0 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100"
-                    aria-hidden="true"
-                  />
-                </span>
-                <span class="text-xl font-semibold tabular-nums">
+                <span class="truncate pe-6 text-sm text-muted">{{ labels.label(metric) }}</span>
+                <span class="truncate text-xl font-semibold tabular-nums">
                   {{ format.value(metric.value, metric.unit) }}
                 </span>
-                <span class="text-xs text-subtle">{{ hint(metric) }}</span>
               </button>
+              <InfoTip
+                class="absolute end-2.5 top-2.5"
+                :label="t('metrics.about', { name: labels.label(metric) })"
+                :content="hint(metric)"
+              />
             </li>
           </ul>
         </section>
@@ -139,10 +137,14 @@ function hint(metric: Metric) {
             {{ labels.group(entry.group) }}
           </component>
           <ul class="grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-2">
-            <li v-for="metric in entry.items" :key="metric.key">
+            <li
+              v-for="metric in entry.items"
+              :key="metric.key"
+              class="flex items-center gap-1 rounded-md border border-border pe-1.5 hover:bg-surface-hover"
+            >
               <button
                 type="button"
-                class="flex w-full items-baseline justify-between gap-3 rounded-md border border-border px-3 py-2 text-start text-sm hover:bg-surface-hover focus-ring"
+                class="flex min-w-0 flex-1 items-baseline justify-between gap-3 rounded-md py-2 ps-3 text-start text-sm focus-ring"
                 :aria-label="
                   t('metrics.viewHistory', {
                     name: labels.label(metric),
@@ -151,11 +153,15 @@ function hint(metric: Metric) {
                 "
                 @click="emit('select', metric)"
               >
-                <span class="text-muted">{{ labels.label(metric) }}</span>
-                <span class="font-medium tabular-nums">
+                <span class="truncate text-muted">{{ labels.label(metric) }}</span>
+                <span class="shrink-0 font-medium tabular-nums">
                   {{ format.value(metric.value, metric.unit) }}
                 </span>
               </button>
+              <InfoTip
+                :label="t('metrics.about', { name: labels.label(metric) })"
+                :content="hint(metric)"
+              />
             </li>
           </ul>
         </section>

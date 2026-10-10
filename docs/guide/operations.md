@@ -145,6 +145,7 @@ Sign in at `/admin/login`. Pages that you can open directly or bookmark:
 | `/admin/vendors/<vendor>/apps/<app>/settings` | Application settings, usage instructions, export, copy |
 | `/admin/vendors/<vendor>/apps/<app>/admin-notes` | Private notes for an application |
 | `/admin/vendors/<vendor>/apps/<app>/versions` | Versions and resources (Codex, Claude Code) |
+| `/admin/vendors/<vendor>/apps/<app>/metrics` | Application metrics (HTTP cache, Codex, Claude Code) |
 | `/admin/vendors/<vendor>/apps/<app>/cache` | Cache management (HTTP cache, Codex, Claude Code) |
 | `/admin/vendors/<vendor>/apps/<app>/files` | Hosted files (Hosted provider only) |
 

@@ -40,7 +40,8 @@ describe("global proxy", () => {
     await renderPage();
     const url = await screen.findByLabelText(/^Proxy URL/, { selector: "input" });
     expect(url).toHaveValue("socks5://user:****@proxy.example.internal:1080");
-    expect(screen.getByText("Host names are resolved by the proxy (SOCKS5).")).toBeVisible();
+    const viaProxy = "Upstream connections go through the proxy, which also resolves host names.";
+    expect(screen.getByText(viaProxy)).toBeVisible();
     const saveButton = screen.getByRole("button", { name: "Save proxy" });
     expect(saveButton).toBeDisabled();
 
@@ -55,7 +56,12 @@ describe("global proxy", () => {
     expect(url).toHaveAccessibleDescription(expect.stringContaining(message) as string);
     expect(screen.getAllByText(message)).toHaveLength(1);
 
+    // The hint follows the selected mode before saving.
     await user.click(screen.getByRole("radio", { name: "Direct connection" }));
+    expect(
+      screen.getByText("Upstream connections are made directly, without a proxy."),
+    ).toBeVisible();
+    expect(screen.queryByText(viaProxy)).toBeNull();
     await user.click(saveButton);
     expect(await screen.findByText(/^Proxy saved\./)).toBeVisible();
     await waitFor(() => {

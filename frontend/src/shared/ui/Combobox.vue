@@ -1,5 +1,5 @@
 <script setup lang="ts" generic="T extends ComboboxOption">
-import { computed, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import {
   ComboboxAnchor,
   ComboboxContent,
@@ -27,6 +27,8 @@ const props = defineProps<{
   disabled?: boolean;
   /** Keep the typed text after choosing an option (search boxes). */
   keepSearch?: boolean;
+  /** Clear the selection and the typed text after choosing (pickers that add to a list). */
+  clearOnSelect?: boolean;
   class?: string;
 }>();
 const emit = defineEmits<{
@@ -49,7 +51,16 @@ const hasHighlight = computed(
 
 function onSelect(value: unknown) {
   const option = props.options.find((item) => item.value === value);
-  if (option) emit("select", option);
+  if (!option) return;
+  emit("select", option);
+  // Cleared on the next tick: Reka writes the chosen value into the input
+  // after the selection, and a same-tick reset never reaches its state.
+  if (props.clearOnSelect) {
+    void nextTick(() => {
+      model.value = undefined;
+      search.value = "";
+    });
+  }
 }
 
 function onEnter(event: KeyboardEvent) {

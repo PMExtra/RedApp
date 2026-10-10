@@ -23,7 +23,6 @@ export default {
     account: {
       menu: "Administrator",
       changePassword: "Change password",
-      publicSite: "Public site",
       signOut: "Sign out",
     },
     password: {

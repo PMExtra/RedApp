@@ -44,6 +44,7 @@ var adminSPARoutes = []string{
 	"/admin/vendors/{vendor}/apps/{app}/admin-notes",
 	"/admin/vendors/{vendor}/apps/{app}/versions",
 	"/admin/vendors/{vendor}/apps/{app}/cache",
+	"/admin/vendors/{vendor}/apps/{app}/metrics",
 	"/admin/vendors/{vendor}/apps/{app}/files",
 }
 
@@ -131,7 +132,7 @@ func (s *Server) adminRouteExists(r *http.Request) bool {
 	switch r.Pattern[strings.LastIndexByte(r.Pattern, '/')+1:] {
 	case "files":
 		return e.Provider == application.Hosted
-	case "cache":
+	case "cache", "metrics":
 		return e.Provider != application.Info && e.Provider != application.Hosted
 	case "versions":
 		return e.Protocol != nil

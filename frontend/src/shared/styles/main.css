@@ -35,6 +35,7 @@
   --color-info-soft: var(--rd-info-soft);
   --color-focus: var(--rd-focus);
   --color-overlay: var(--rd-overlay);
+  --color-icon-bg: var(--rd-icon-bg);
 
   --font-sans:
     system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", "PingFang SC",
@@ -87,6 +88,36 @@
 }
 @utility z-tooltip {
   z-index: 80;
+}
+
+/*
+ * Horizontal strip whose scrollbar keeps its space but stays transparent until
+ * the strip scrolls (add is-scrolling), so the layout never shifts.
+ */
+@utility strip-scroll {
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  &.is-scrolling {
+    scrollbar-color: var(--rd-border-strong) transparent;
+  }
+}
+
+/* Edge fades hinting at content scrolled out of view. */
+@utility fade-start {
+  mask-image: linear-gradient(to right, transparent, #000 3rem);
+}
+@utility fade-end {
+  mask-image: linear-gradient(to left, transparent, #000 3rem);
+}
+@utility fade-x {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 3rem,
+    #000 calc(100% - 3rem),
+    transparent
+  );
 }
 
 /* Shared focus ring for interactive elements. */

@@ -87,7 +87,7 @@ frontend/
 | `taxonomy` | 分类查询与重命名、`CategoryPicker`、`TagEditor`、应用分类与标签表单 | 后台 |
 | `notes` | 厂商/应用管理员备注（`NotesEditor`） | 后台 |
 | `exchange` | 配置导出、导入（预览—决定—信任—执行）与复制应用 | 后台 |
-| `metrics` | 全局/应用指标查询、`MetricCards`、`HistoryChart`、`MetricHistoryDialog`，见下文 | 后台概览、应用版本页 |
+| `metrics` | 全局/应用指标查询、`MetricCards`、`HistoryChart`、`MetricHistoryDialog`，见下文 | 后台概览、应用指标页 |
 | `events` | `listEvents` 游标分页查询、`EventsTable` | 后台事件页 |
 | `settings` | 站点文本、公开地址、首页置顶、全局代理的查询与保存，各区块表单（草稿由 `useServerDraft` 维护：未修改时跟随服务端，保存、冲突重新加载与放弃时重置）、`AppPicker`（`listApps` 搜索） | 后台设置页 |
 | `releases` | 版本与制品清单（`ReleaseInventory`，游标分页、按版本筛选）、缓存来源选择（`SourceEpochSelect`、`useSources`）、版本清理（预览—执行）、预览过期（`useExpired`） | 应用版本页、缓存页 |
@@ -187,7 +187,7 @@ const save = useRevisionedMutation({
 | --- | --- |
 | `useGlobalStatus({ refetchInterval })`、`useAppStatus(vendor, app, { refetchInterval })` | `getStatus` / `getAppStatus`；配合 `useAutoRefresh()` 每 5 秒轮询。刷新失败时 `data` 保留上一次快照，页面同时显示 `error` 作为警告 |
 | `MetricScope`、`GLOBAL_SCOPE`、`appScope(vendor, app)` | 指标归属：`{ kind: "global" }` 或 `{ kind: "app", vendor, app }` |
-| `<MetricCards :metrics :primary :scope @select>` | 按规范的 `group`（disk、traffic、speed、runtime、resources）分组；`primary` 中的键为常用指标，其余为折叠的诊断指标。默认 `GLOBAL_COMMON_METRICS`（16 项），应用页传 `APP_COMMON_METRICS`。`level` 设置标题层级 |
+| `<MetricCards :metrics :primary :scope @select>` | 按规范的 `group`（disk、traffic、speed、runtime、resources）分组；`primary` 中的键为常用指标，其余为折叠的诊断指标。默认 `GLOBAL_COMMON_METRICS`（13 项），应用页传 `APP_COMMON_METRICS`。`level` 设置标题层级 |
 | `<MetricHistoryDialog v-model:metric :scope>` | 设置 `metric` 打开对话框，关闭时置为 `undefined`；在对话框间保持所选范围 |
 | `<HistoryChart :metric :scope v-model:range>` | 不带对话框的历史图（uPlot）：24h/7d/30d（默认 7d），计数器可切换累计值与每段增量；缺失样本保持空缺；键盘（左右、Page Up/Down、Home/End、Esc）与触摸读数，所选时间段在后台刷新后保留，触摸后鼠标移入恢复悬停读数；摘要句与数据表（`HistoryReadout`、`HistoryTable`）作为无图替代 |
 | `useMetricHistory(scope, metric, range)` | `getHistory` / `getAppHistory` |
@@ -281,9 +281,9 @@ Reka UI 的 `SelectViewport`/`ComboboxViewport`/`ScrollAreaViewport` 会插入�
 
 `@/features/instructions` 的 `InstructionsDocument`（[ADR 0006](adr/0006-sandboxed-usage-instructions.md)）：
 
-- `src` 为 `/api/apps/{vendor}/{app}/instructions/document?lang=<界面语言>`，`sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"`（没有 `allow-same-origin`），`allow="clipboard-write"`。
+- `src` 为 `/api/apps/{vendor}/{app}/instructions/document?lang=<界面语言>`，深色主题时追加 `&theme=dark`（不透明源文档读不到页面主题），`sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"`（没有 `allow-same-origin`），`allow="clipboard-write"`。
 - 高度来自 `postMessage({type: "redapp-instructions-height", height})`，只接受来源是本 iframe `contentWindow` 的有限数字，加 20px 后限制在 120–50000px。
-- `revision`（`PublicApp.revision`）或语言变化时重建 iframe。
+- `revision`（`PublicApp.revision`）、语言或主题变化时重建 iframe。
 
 ## 测试
 

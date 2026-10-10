@@ -589,7 +589,7 @@ export interface paths {
         };
         /**
          * Read the current global metrics.
-         * @description Computes all 41 global metrics now (walks the data directory for disk usage).
+         * @description Computes all 27 global metrics now (walks the data directory for disk usage).
          *     The admin overview polls it every 5 seconds while visible.
          */
         get: operations["getStatus"];
@@ -652,7 +652,7 @@ export interface paths {
         };
         /**
          * Read the current metrics of one application.
-         * @description Available for `http-cache`, `codex` and `claude-code` (14 `resources.*` metrics, counters except
+         * @description Available for `http-cache`, `codex` and `claude-code` (17 metrics: 6 `resources.*` metrics, counters except
          *     `counters.requests`, and `versions.total` with `value: null` for `http-cache`). Deleted applications are readable.
          */
         get: operations["getAppStatus"];
@@ -2338,7 +2338,7 @@ export interface components {
          * @description Metric key from the fixed catalog (see `docs/guide/metrics.md`).
          * @enum {string}
          */
-        MetricKey: "disk.used_bytes" | "disk.logical_bytes" | "disk.allocated_cache_bytes" | "disk.allocated_temporary_bytes" | "disk.allocated_pending_bytes" | "disk.cache_bytes" | "disk.temporary_bytes" | "disk.pending_bytes" | "disk.other_bytes" | "disk.free_bytes" | "counters.requests" | "counters.artifact_requests" | "counters.cache_hit_requests" | "counters.shared_follower_requests" | "counters.miss_requests" | "counters.download_success" | "counters.download_errors" | "counters.upstream_errors" | "counters.upstream_bytes" | "counters.downstream_bytes" | "counters.cleanup_freed_bytes" | "rates.upstream_bytes_per_second" | "rates.downstream_bytes_per_second" | "runtime.memory_bytes" | "runtime.goroutines" | "runtime.uptime_seconds" | "resources.total" | "resources.current" | "resources.retired" | "resources.readers" | "resources.active_writers" | "resources.queued" | "resources.downloading" | "resources.resuming" | "resources.retry_wait" | "resources.verifying" | "resources.complete" | "resources.failed" | "resources.invalid" | "resources.interrupted" | "versions.total";
+        MetricKey: "disk.used_bytes" | "disk.allocated_cache_bytes" | "disk.allocated_temporary_bytes" | "disk.allocated_pending_bytes" | "disk.other_bytes" | "disk.free_bytes" | "counters.requests" | "counters.artifact_requests" | "counters.cache_hit_requests" | "counters.shared_follower_requests" | "counters.miss_requests" | "counters.download_success" | "counters.download_errors" | "counters.upstream_errors" | "counters.upstream_bytes" | "counters.downstream_bytes" | "counters.cleanup_freed_bytes" | "rates.upstream_bytes_per_second" | "rates.downstream_bytes_per_second" | "runtime.memory_bytes" | "resources.current" | "resources.retired" | "resources.readers" | "resources.active_writers" | "resources.failed" | "resources.invalid" | "versions.total";
         Metric: {
             key: components["schemas"]["MetricKey"];
             label: string;
@@ -2358,13 +2358,13 @@ export interface components {
             sampled_at: string;
             /** Format: date-time */
             started_at: string;
-            /** @description All 41 global metrics in catalog order. */
+            /** @description All 27 global metrics in catalog order. */
             metrics: components["schemas"]["Metric"][];
         };
         AppStatus: {
             /** Format: date-time */
             sampled_at: string;
-            /** @description The 25 application metrics in catalog order. */
+            /** @description The 17 application metrics in catalog order. */
             metrics: components["schemas"]["Metric"][];
         };
         HistorySeries: {
@@ -4079,6 +4079,8 @@ export interface operations {
             query: {
                 /** @description Instructions language. */
                 lang: components["schemas"]["Language"];
+                /** @description Color theme of the embedding page; the opaque-origin document cannot read it. */
+                theme?: "light" | "dark";
             };
             header?: never;
             path: {

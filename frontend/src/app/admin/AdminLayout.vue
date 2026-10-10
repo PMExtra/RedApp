@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Menu } from "@lucide/vue";
+import { Globe, Menu } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 import { SiteFooter, useSiteTexts } from "@/features/bootstrap";
@@ -9,6 +9,7 @@ import { leaveDiscardingDrafts } from "@/shared/forms";
 import { useSiteTitle } from "@/shared/lib";
 import {
   Badge,
+  Button,
   Dialog,
   IconButton,
   LanguageSwitcher,
@@ -83,6 +84,13 @@ onBeforeUnmount(() => {
         </RouterLink>
       </template>
       <template #actions>
+        <Button as-child variant="ghost" size="sm">
+          <a href="/">
+            <Globe aria-hidden="true" />
+            <span class="hidden sm:inline">{{ t("adminShell.publicSite") }}</span>
+            <span class="sr-only sm:hidden">{{ t("adminShell.publicSite") }}</span>
+          </a>
+        </Button>
         <LanguageSwitcher />
         <ThemeToggle />
         <AccountMenu v-if="session.signedIn" />

@@ -58,17 +58,41 @@ function appLabel(app: App): string {
   return state ? `${label} (${state})` : label;
 }
 
-// Scrolling: arrow buttons for pointer users, arrow keys on the focused strip.
+// Scrolling: floating arrow buttons on hover for pointer users, arrow keys on
+// the focused strip. The scrollbar only shows while the strip scrolls, and the
+// edges fade where more applications are hidden.
 const viewport = ref<HTMLElement>();
 const atStart = ref(true);
 const atEnd = ref(true);
+const scrolling = ref(false);
 let observer: ResizeObserver | undefined;
+let scrollTimer: ReturnType<typeof setTimeout> | undefined;
+
+// Hover-only overlay buttons: invisible and click-through until the strip is hovered.
+const arrowClass =
+  "pointer-events-none absolute top-8 flex size-8 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-surface-raised text-fg opacity-0 shadow-md transition-opacity group-hover/strip:pointer-events-auto group-hover/strip:opacity-100 hover:bg-surface-hover [&_svg]:size-4";
+
+const fade = computed(() => {
+  if (!atStart.value && !atEnd.value) return "fade-x";
+  if (!atStart.value) return "fade-start";
+  if (!atEnd.value) return "fade-end";
+  return "";
+});
 
 function measure(): void {
   const element = viewport.value;
   if (!element) return;
   atStart.value = element.scrollLeft <= 1;
   atEnd.value = element.scrollLeft + element.clientWidth >= element.scrollWidth - 1;
+}
+
+function onScroll(): void {
+  measure();
+  scrolling.value = true;
+  clearTimeout(scrollTimer);
+  scrollTimer = setTimeout(() => {
+    scrolling.value = false;
+  }, 800);
 }
 
 function scroll(direction: -1 | 1): void {
@@ -103,7 +127,10 @@ onMounted(() => {
   }
   measure();
 });
-onBeforeUnmount(() => observer?.disconnect());
+onBeforeUnmount(() => {
+  observer?.disconnect();
+  clearTimeout(scrollTimer);
+});
 </script>
 
 <template>
@@ -116,15 +143,15 @@ onBeforeUnmount(() => observer?.disconnect());
       )
     "
   >
-    <header class="flex items-start justify-between gap-4">
+    <header class="flex h-18 items-start justify-between gap-4">
       <div class="flex min-w-0 flex-col gap-1">
         <h2 :id="headingId" class="truncate text-base font-semibold">
           <RouterLink :to="vendorRoute(vendor.id)" class="rounded-sm hover:underline focus-ring">
             {{ name }}
           </RouterLink>
         </h2>
-        <div class="flex flex-wrap items-center gap-2 text-xs text-muted">
-          <span class="font-mono">{{ vendor.id }}</span>
+        <div class="flex h-5 min-w-0 items-center gap-2 overflow-hidden text-xs text-muted">
+          <span class="truncate font-mono">{{ vendor.id }}</span>
           <Badge v-if="vendor.deleted_at" tone="danger">{{
             t("directory.state.deletedOne")
           }}</Badge>
@@ -135,7 +162,7 @@ onBeforeUnmount(() => observer?.disconnect());
         </div>
         <RouterLink
           :to="appsLink"
-          class="w-fit rounded-sm text-sm text-primary hover:underline focus-ring"
+          class="w-fit truncate rounded-sm text-sm text-primary hover:underline focus-ring"
         >
           {{ countLabel }}
         </RouterLink>
@@ -143,87 +170,82 @@ onBeforeUnmount(() => observer?.disconnect());
       <EntityIcon :src="vendorLogo(vendor, locale)" variant="logo" size="lg" />
     </header>
 
-    <div class="flex items-center gap-1">
-      <Button
-        v-if="!atStart || !atEnd"
-        icon
-        size="sm"
-        variant="ghost"
-        class="hidden sm:inline-flex"
-        tabindex="-1"
-        :aria-label="t('directory.vendorCard.scrollLeft')"
-        :disabled="atStart"
-        @click="scroll(-1)"
-      >
-        <ChevronLeft aria-hidden="true" />
-      </Button>
+    <div class="group/strip relative">
       <div
         ref="viewport"
         role="region"
         tabindex="0"
         :aria-label="t('directory.vendorCard.strip', { vendor: name })"
-        class="min-w-0 flex-1 overflow-x-auto rounded-md pb-1 focus-ring"
-        @scroll.passive="measure"
+        :class="cn('strip-scroll rounded-md pb-1 focus-ring', fade, scrolling && 'is-scrolling')"
+        :aria-busy="(incomplete && all.isFetching.value) || undefined"
+        @scroll.passive="onScroll"
         @keydown="onKeydown"
       >
-        <ul class="flex gap-1">
-          <li v-for="app in apps" :key="app.uid" class="w-24 shrink-0">
+        <ul class="flex h-[6.5rem] gap-1">
+          <li v-for="app in apps" :key="app.uid" class="w-22 shrink-0">
             <RouterLink
               :to="appRoute(app)"
               :aria-label="appLabel(app)"
               :class="
                 cn(
-                  'flex flex-col items-center gap-1.5 rounded-lg p-2 text-center text-xs hover:bg-surface-hover focus-ring',
+                  'flex h-full flex-col items-center gap-1.5 rounded-lg p-2 text-center text-xs hover:bg-surface-hover focus-ring',
                   appState(app) !== '' && 'opacity-60',
                 )
               "
             >
               <EntityIcon :src="app.icon" size="lg" />
-              <span class="line-clamp-2 w-full break-words">
+              <span class="line-clamp-2 h-8 w-full break-words">
                 {{ localized(app.name) || app.id }}
               </span>
             </RouterLink>
           </li>
-          <li v-if="!vendor.deleted_at" class="w-24 shrink-0">
+          <li v-if="incomplete && all.isFetching.value" class="w-22 shrink-0" role="status">
+            <span
+              class="flex h-full flex-col items-center justify-center gap-1.5 p-2 text-center text-xs text-muted"
+            >
+              <Spinner />
+              <span class="line-clamp-2 h-8">{{ t("directory.vendorCard.loadingApps") }}</span>
+            </span>
+          </li>
+          <li v-else-if="incomplete && all.error.value" class="w-28 shrink-0" role="alert">
+            <span
+              class="flex h-full flex-col items-center justify-center gap-1.5 p-2 text-center text-xs text-danger"
+            >
+              <span class="line-clamp-3">{{ t("directory.vendorCard.appsFailed") }}</span>
+              <Button size="sm" @click="all.refetch()">{{ t("common.actions.retry") }}</Button>
+            </span>
+          </li>
+          <li v-if="!vendor.deleted_at" class="w-22 shrink-0">
             <RouterLink
               :to="{ name: 'admin-app-new', params: { vendor: vendor.id } }"
               class="flex h-full flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border-strong p-2 text-center text-xs text-muted hover:bg-surface-hover hover:text-fg focus-ring"
             >
               <Plus class="size-6" aria-hidden="true" />
-              {{ t("directory.actions.addApp") }}
+              <span class="line-clamp-2">{{ t("directory.actions.addApp") }}</span>
             </RouterLink>
           </li>
         </ul>
       </div>
-      <Button
-        v-if="!atStart || !atEnd"
-        icon
-        size="sm"
-        variant="ghost"
-        class="hidden sm:inline-flex"
+      <button
+        v-if="!atStart"
+        type="button"
+        tabindex="-1"
+        :aria-label="t('directory.vendorCard.scrollLeft')"
+        :class="cn(arrowClass, 'start-1')"
+        @click="scroll(-1)"
+      >
+        <ChevronLeft aria-hidden="true" />
+      </button>
+      <button
+        v-if="!atEnd"
+        type="button"
         tabindex="-1"
         :aria-label="t('directory.vendorCard.scrollRight')"
-        :disabled="atEnd"
+        :class="cn(arrowClass, 'end-1')"
         @click="scroll(1)"
       >
         <ChevronRight aria-hidden="true" />
-      </Button>
-    </div>
-
-    <p
-      v-if="incomplete && all.isFetching.value"
-      class="flex items-center gap-2 text-xs text-muted"
-      role="status"
-    >
-      <Spinner size="sm" /> {{ t("directory.vendorCard.loadingApps") }}
-    </p>
-    <div
-      v-else-if="incomplete && all.error.value"
-      class="flex items-center gap-2 text-xs text-danger"
-      role="alert"
-    >
-      {{ t("directory.vendorCard.appsFailed") }}
-      <Button size="sm" @click="all.refetch()">{{ t("common.actions.retry") }}</Button>
+      </button>
     </div>
   </article>
 </template>

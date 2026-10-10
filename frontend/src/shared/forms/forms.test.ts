@@ -3,8 +3,10 @@ import { RouterView } from "vue-router";
 import { screen, waitFor } from "@testing-library/vue";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import DraftPage from "@/test/components/DraftPage.vue";
 import { renderWithApp } from "@/test/render";
+import { zodSchema } from "./forms";
 
 const routes = [
   { path: "/edit", component: DraftPage },
@@ -25,6 +27,24 @@ describe("forms", () => {
     await user.tab();
     expect(await screen.findByText("At most 5 characters")).toBeInTheDocument();
     expect(input).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("replaces zod's technical fallbacks with plain messages but keeps custom ones", async () => {
+    const schema = z.object({
+      name: z.string(),
+      mode: z.enum(["direct", "url"]),
+      count: z.number(),
+      title: z.string().min(1),
+      code: z.string().min(3, "Custom message"),
+    });
+    const result = await zodSchema(schema).parse({ count: "x", title: "", code: "a" } as never);
+    expect(Object.fromEntries(result.errors.map((error) => [error.path, error.errors]))).toEqual({
+      name: ["This field is required"],
+      mode: ["This field is required"],
+      count: ["Enter a valid value"],
+      title: ["This field is required"],
+      code: ["Custom message"],
+    });
   });
 
   it("asks before leaving a dirty draft and stays when the user keeps editing", async () => {

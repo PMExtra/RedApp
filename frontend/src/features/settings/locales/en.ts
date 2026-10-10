@@ -68,10 +68,7 @@ export default {
         "Used for metadata, downloads and imports unless a vendor or application sets its own. Environment proxy variables are ignored.",
       urlRequired: "Enter the proxy URL.",
       urlScheme: "Use an http://, https:// or socks5:// URL.",
-      dns: {
-        local: "Host names are resolved by this server.",
-        proxy: "Host names are resolved by the proxy (SOCKS5).",
-      },
+      viaProxy: "Upstream connections go through the proxy, which also resolves host names.",
       direct: "Upstream connections are made directly, without a proxy.",
       save: "Save proxy",
       saved: "Proxy saved. New upstream connections use it; transfers in progress continue.",

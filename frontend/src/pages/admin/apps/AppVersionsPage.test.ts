@@ -1,20 +1,13 @@
 import { screen, waitFor, within } from "@testing-library/vue";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import AppVersionsPage from "./AppVersionsPage.vue";
 import { renderAppPage } from "@/test/appPage";
-import { appStatus, historySeries } from "@/test/factories/metrics";
 import { resource, version } from "@/test/factories/runtime";
 import { mockApi, useHandlers } from "@/test/msw";
 
-vi.mock("uplot", () => import("@/test/uplot"));
-
-function releaseHandlers(counter: { status: number; resources: string[] }) {
+function releaseHandlers(counter: { resources: string[] }) {
   return [
-    mockApi("get", "/admin/api/apps/{vendor}/{app}/status", () => {
-      counter.status++;
-      return appStatus({ "versions.total": 3, "counters.downstream_bytes": 5 * 1024 * 1024 });
-    }),
     mockApi("get", "/admin/api/apps/{vendor}/{app}/versions", ({ request }) => {
       const cursor = new URL(request.url).searchParams.get("cursor");
       return cursor === "page-2"
@@ -36,20 +29,14 @@ function releaseHandlers(counter: { status: number; resources: string[] }) {
 }
 
 describe("versions tab", () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("shows metrics, versions and stored files, and filters files by version", async () => {
-    const counter = { status: 0, resources: [] as string[] };
+  it("shows versions and stored files, and filters files by version", async () => {
+    const counter = { resources: [] as string[] };
     useHandlers(...releaseHandlers(counter));
     await renderAppPage(AppVersionsPage, { tab: "versions" });
     const user = userEvent.setup();
 
-    expect(await screen.findByRole("button", { name: /^Versions: 3/ })).toBeInTheDocument();
-    expect(screen.getByText("5.00 MiB")).toBeInTheDocument();
     const versions = await screen.findByRole("table", { name: "Versions" });
-    expect(within(versions).getByText("0.46.0")).toBeInTheDocument();
+    expect(await within(versions).findByText("0.46.0")).toBeInTheDocument();
     const files = await screen.findByRole("table", { name: "Stored files" });
     expect(within(files).getByText("Failed")).toBeInTheDocument();
     expect(within(files).getByText("upstream: 502")).toBeInTheDocument();
@@ -74,55 +61,5 @@ describe("versions tab", () => {
     expect(within(pager).getByText("Page 2")).toBeInTheDocument();
     await user.click(within(pager).getByRole("button", { name: /Previous page/ }));
     expect(await within(versions).findByText("0.46.0")).toBeInTheDocument();
-  });
-
-  it("refreshes metrics every 5 seconds until auto refresh is turned off", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    const counter = { status: 0, resources: [] as string[] };
-    useHandlers(...releaseHandlers(counter));
-    await renderAppPage(AppVersionsPage, { tab: "versions" });
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
-    await screen.findByRole("button", { name: /^Versions: 3/ });
-    const before = counter.status;
-
-    await vi.advanceTimersByTimeAsync(5_000);
-    await waitFor(() => {
-      expect(counter.status).toBe(before + 1);
-    });
-
-    await user.click(screen.getByRole("switch", { name: "Auto refresh" }));
-    const stopped = counter.status;
-    await vi.advanceTimersByTimeAsync(15_000);
-    expect(counter.status).toBe(stopped);
-  });
-
-  it("opens the history of a metric and loads another range", async () => {
-    const ranges: string[] = [];
-    useHandlers(
-      ...releaseHandlers({ status: 0, resources: [] }),
-      mockApi("get", "/admin/api/apps/{vendor}/{app}/history", ({ request }) => {
-        const url = new URL(request.url);
-        const range = url.searchParams.get("range") as "24h" | "7d" | "30d";
-        ranges.push(`${url.pathname} ${url.searchParams.get("metric") ?? ""} ${range}`);
-        return historySeries("versions.total", [2, 3], {
-          range,
-          scope: "app",
-          app_key: "openai/codex",
-        });
-      }),
-    );
-    await renderAppPage(AppVersionsPage, { tab: "versions" });
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: /^Versions: 3/ }));
-
-    const dialog = await screen.findByRole("dialog", { name: "Versions" });
-    expect(await within(dialog).findByText(/^Latest 3, lowest 2, highest 3\./)).toBeInTheDocument();
-    await user.click(within(dialog).getByRole("button", { name: "24 hours" }));
-    await waitFor(() => {
-      expect(ranges).toEqual([
-        "/admin/api/apps/openai/codex/history versions.total 7d",
-        "/admin/api/apps/openai/codex/history versions.total 24h",
-      ]);
-    });
   });
 });

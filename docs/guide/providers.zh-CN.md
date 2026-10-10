@@ -297,7 +297,7 @@ HTTP 缓存应用可以列出 1 到 16 个来源 URL。
 
 **应用信息** 应用只有详情页和使用说明，不提供文件。其他 Provider 也都有使用说明。
 
-使用说明按语言用 Markdown 编写，允许原始 HTML、JavaScript 和外部资源。它们显示在沙箱框架中，见[安全](security.zh-CN.md#使用说明沙箱)。
+使用说明按语言用 Markdown 编写，允许原始 HTML、JavaScript 和外部资源。它们显示在沙箱框架中，见[安全](security.zh-CN.md#使用说明沙箱)。框架跟随页面的浅色或深色主题，其根元素带有 `data-theme="light"` 或 `data-theme="dark"`，便于自定义样式适配。
 
 内置 Codex 和 Claude Code 应用带有来自预置模板的默认说明。保存空说明会保持为空，不会恢复默认值。使用 **重置** 可以恢复模板文本。
 

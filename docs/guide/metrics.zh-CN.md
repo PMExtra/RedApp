@@ -6,8 +6,8 @@ RedApp 记录磁盘用量、流量、请求和下载资源的指标，并把历�
 
 ## 在哪里查看指标
 
-- **概览**（`/admin/overview`）显示全局指标：16 项常用指标，以及折叠区域中的 25 项诊断指标。
-- Codex 或 Claude Code 应用的 **版本与资源** 页面显示该应用的指标。
+- **概览**（`/admin/overview`）显示全局指标：13 项常用指标，以及折叠区域中的 14 项诊断指标。
+- HTTP 缓存、Codex 或 Claude Code 应用的 **指标** 标签页显示该应用的指标。已删除的应用保留此标签页。
 - 点击指标可打开历史图表，可选 24 小时、7 天（默认）或 30 天。
 
 图表按浏览器所在时区显示时间。数据以 UTC 存储和聚合。容量使用二进制单位（1 KiB = 1024 字节）。
@@ -24,86 +24,72 @@ RedApp 记录磁盘用量、流量、请求和下载资源的指标，并把历�
 
 ### 磁盘（gauge，字节）
 
-| 键 | 含义 |
-| --- | --- |
-| `disk.used_bytes` | 数据目录在磁盘上分配的空间 |
-| `disk.logical_bytes` | 数据目录中所有文件的逻辑大小 |
-| `disk.allocated_cache_bytes` | 完整缓存文件分配的空间 |
-| `disk.allocated_temporary_bytes` | 进行中下载分配的空间 |
-| `disk.allocated_pending_bytes` | 等待移除的文件分配的空间 |
-| `disk.cache_bytes` | 完整缓存文件的逻辑大小 |
-| `disk.temporary_bytes` | 进行中下载的逻辑大小 |
-| `disk.pending_bytes` | 等待移除的文件的逻辑大小 |
-| `disk.other_bytes` | 其他内容分配的空间，例如数据库、托管文件和图标 |
-| `disk.free_bytes` | 文件系统的可用空间 |
+| 键 | 名称 | 含义 |
+| --- | --- | --- |
+| `disk.used_bytes` | 磁盘占用 | 数据目录在磁盘上分配的空间 |
+| `disk.allocated_cache_bytes` | 缓存文件 | 完整缓存文件分配的空间 |
+| `disk.allocated_temporary_bytes` | 未完成下载 | 进行中下载分配的空间 |
+| `disk.allocated_pending_bytes` | 待删除 | 等待移除的文件分配的空间 |
+| `disk.other_bytes` | 其他数据 | 其他内容分配的空间，例如数据库、托管文件和图标 |
+| `disk.free_bytes` | 可用空间 | 文件系统的可用空间 |
 
-“分配”值按磁盘块计算，“逻辑”值按文件大小计算。稀疏文件或小文件会导致两者不同。
+磁盘值按分配的磁盘块计算，而不是按文件大小。稀疏文件或小文件会导致两者不同。
 
 ### 请求（counter，次数）
 
-| 键 | 含义 |
-| --- | --- |
-| `counters.requests` | 对应用文件、安装器和元数据的公开请求 |
-| `counters.artifact_requests` | 对可下载文件的请求 |
-| `counters.cache_hit_requests` | 由完整缓存副本提供的文件请求 |
-| `counters.shared_follower_requests` | 加入已在进行的下载的文件请求 |
-| `counters.miss_requests` | 发起新上游下载的文件请求 |
-| `counters.download_success` | RedApp 完整发送给客户端的文件下载 |
-| `counters.download_errors` | 发送给客户端时失败或中断的文件下载 |
-| `counters.upstream_errors` | 上游连接失败和错误响应 |
+| 键 | 名称 | 含义 |
+| --- | --- | --- |
+| `counters.requests` | 公开请求 | 对应用文件、安装器和元数据的公开请求 |
+| `counters.artifact_requests` | 文件请求 | 对可下载文件的请求 |
+| `counters.cache_hit_requests` | 缓存命中 | 由完整缓存副本提供的文件请求 |
+| `counters.shared_follower_requests` | 共享下载 | 加入已在进行的下载的文件请求 |
+| `counters.miss_requests` | 缓存未命中 | 发起新上游下载的文件请求 |
+| `counters.download_success` | 下载成功 | RedApp 完整发送给客户端的文件下载 |
+| `counters.download_errors` | 下载失败 | 发送给客户端时失败或中断的文件下载 |
+| `counters.upstream_errors` | 上游错误 | 上游连接失败和错误响应 |
 
 健康检查和管理后台请求不计入。
 
 ### 流量与清理（counter，字节）
 
-| 键 | 含义 |
-| --- | --- |
-| `counters.upstream_bytes` | 从上游来源接收的文件字节数 |
-| `counters.downstream_bytes` | 发送给客户端的文件字节数 |
-| `counters.cleanup_freed_bytes` | 清理移除的缓存文件逻辑字节数 |
+| 键 | 名称 | 含义 |
+| --- | --- | --- |
+| `counters.upstream_bytes` | 入站流量 | 从上游来源接收的文件字节数 |
+| `counters.downstream_bytes` | 出站流量 | 发送给客户端的文件字节数 |
+| `counters.cleanup_freed_bytes` | 回收空间 | 清理移除的缓存文件的文件大小总和 |
 
 ### 速率（rate，字节/秒）
 
-| 键 | 含义 |
-| --- | --- |
-| `rates.upstream_bytes_per_second` | 最近 5 秒的上游文件流量 |
-| `rates.downstream_bytes_per_second` | 最近 5 秒的下游文件流量 |
-
-### 运行时（gauge）
-
-| 键 | 单位 | 含义 |
+| 键 | 名称 | 含义 |
 | --- | --- | --- |
-| `runtime.memory_bytes` | 字节 | 进程当前分配的内存 |
-| `runtime.goroutines` | 个 | goroutine 数量 |
-| `runtime.uptime_seconds` | 秒 | 进程启动以来的时间 |
+| `rates.upstream_bytes_per_second` | 入站速度 | 最近 5 秒的上游文件流量 |
+| `rates.downstream_bytes_per_second` | 出站速度 | 最近 5 秒的下游文件流量 |
+
+### 运行时（gauge，字节）
+
+| 键 | 名称 | 含义 |
+| --- | --- | --- |
+| `runtime.memory_bytes` | 内存 | 进程当前分配的内存 |
 
 ### 资源与版本（gauge，个数）
 
 **资源**是可下载文件的一个存储副本。文件重新下载时，新副本是新的资源，旧资源被退役。
 
-| 键 | 含义 |
-| --- | --- |
-| `resources.total` | 所有未删除的资源 |
-| `resources.current` | 作为其文件当前副本的资源 |
-| `resources.retired` | 已被替换或移除但尚未删除的资源 |
-| `resources.readers` | 正在读取资源的下载 |
-| `resources.active_writers` | 正在写入资源的上游下载 |
-| `resources.queued` | 等待下载的资源 |
-| `resources.downloading` | 正在下载的资源 |
-| `resources.resuming` | 正在续传中断下载的资源 |
-| `resources.retry_wait` | 失败后等待重试的资源 |
-| `resources.verifying` | 正在校验的资源 |
-| `resources.complete` | 已完成并通过校验的资源 |
-| `resources.failed` | 下载失败的资源 |
-| `resources.invalid` | 校验失败的资源 |
-| `resources.interrupted` | 因停机而中断的资源 |
-| `versions.total` | 已发现的发布版本；同一版本出现在两个应用中计两次 |
+| 键 | 名称 | 含义 |
+| --- | --- | --- |
+| `resources.current` | 当前文件 | 作为其文件当前副本的资源 |
+| `resources.retired` | 退役文件 | 已被替换或移除但尚未删除的资源 |
+| `resources.readers` | 活跃下载 | 正在读取资源的下载 |
+| `resources.active_writers` | 活跃回源 | 正在写入资源的上游下载 |
+| `resources.failed` | 失败文件 | 下载失败的资源 |
+| `resources.invalid` | 无效文件 | 校验失败的资源 |
+| `versions.total` | 版本数 | 已发现的发布版本；同一版本出现在两个应用中计两次 |
 
-已退役的资源仍有状态，因此各状态计数可能与 `resources.retired` 重叠。
+失败或无效的资源也可能已退役，因此也可能计入 `resources.retired`。
 
 ## 全局指标与应用指标
 
-全部 41 项指标都有全局值。对每个应用，RedApp 记录 14 项 `resources.*` 指标、`versions.total`，以及除 `counters.requests` 外的所有 counter。磁盘、速率和运行时指标只有全局值。
+全部 27 项指标都有全局值。对每个应用，RedApp 记录 17 项指标：6 项 `resources.*` 指标、`versions.total`，以及除 `counters.requests` 外的所有 counter。磁盘、速率和运行时指标只有全局值。
 
 - 应用指标属于应用而不是其来源。更换来源不会拆分历史。
 - `versions.total` 只适用于 Codex 和 Claude Code 应用。

@@ -115,6 +115,8 @@ export default {
     },
     form: {
       required: "必填",
+      requiredMessage: "此项为必填项",
+      invalidValue: "请输入有效的值",
       optional: "可选",
       tooLong: "最多 {max} 个字符",
       unsavedTitle: "放弃未保存的更改？",

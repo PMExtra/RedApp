@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { ExternalLink, KeyRound, LogOut, UserRound } from "@lucide/vue";
+import { KeyRound, LogOut, UserRound } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { confirmDiscardDrafts } from "@/shared/forms";
 import { notifyError } from "@/shared/lib";
@@ -40,12 +40,6 @@ async function signOut() {
     <DropdownMenuItem @select="changePassword">
       <KeyRound aria-hidden="true" />
       {{ t("session.account.changePassword") }}
-    </DropdownMenuItem>
-    <DropdownMenuItem as-child>
-      <a href="/">
-        <ExternalLink aria-hidden="true" />
-        {{ t("session.account.publicSite") }}
-      </a>
     </DropdownMenuItem>
     <DropdownMenuSeparator class="my-1 h-px bg-border" />
     <DropdownMenuItem @select="signOut">

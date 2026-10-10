@@ -121,6 +121,11 @@ export const adminRoutes: RouteRecordRaw[] = [
             component: () => import("@/pages/admin/apps/AppCachePage.vue"),
           },
           {
+            path: "metrics",
+            name: "admin-app-metrics",
+            component: () => import("@/pages/admin/apps/AppMetricsPage.vue"),
+          },
+          {
             path: "files",
             name: "admin-app-files",
             component: () => import("@/pages/admin/apps/AppFilesPage.vue"),

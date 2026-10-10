@@ -6,7 +6,9 @@ import { cn } from "./cn";
 /**
  * Vendor or application icon from an `IconPath` (`""` for none). Square icons
  * fall back to a generic glyph when missing or broken; `logo` keeps the aspect
- * ratio at a fixed height and renders nothing without an image.
+ * ratio at a fixed height and renders nothing without an image. Icons are
+ * drawn for light backgrounds: the light theme shows them on the page itself,
+ * the dark theme on a dimmed light tile.
  */
 const props = withDefaults(
   defineProps<{
@@ -35,7 +37,12 @@ const heights = { xs: "h-5", sm: "h-7", md: "h-9", lg: "h-12", xl: "h-16" };
       v-if="src && !failed"
       :src="src"
       :alt="alt"
-      :class="cn('w-auto max-w-48 object-contain', heights[size])"
+      :class="
+        cn(
+          'w-auto max-w-48 rounded-lg bg-icon-bg object-contain dark:box-content dark:px-2 dark:py-1',
+          heights[size],
+        )
+      "
       @error="failed = true"
     />
   </template>
@@ -43,7 +50,7 @@ const heights = { xs: "h-5", sm: "h-7", md: "h-9", lg: "h-12", xl: "h-16" };
     v-else
     :class="
       cn(
-        'inline-flex shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-surface',
+        'inline-flex shrink-0 items-center justify-center overflow-hidden rounded-lg bg-icon-bg',
         squares[size],
       )
     "
@@ -52,9 +59,14 @@ const heights = { xs: "h-5", sm: "h-7", md: "h-9", lg: "h-12", xl: "h-16" };
       v-if="src && !failed"
       :src="src"
       :alt="alt"
-      class="size-full object-contain p-[12%]"
+      class="size-full object-contain dark:p-[12%]"
       @error="failed = true"
     />
-    <Box v-else class="size-1/2 text-subtle" :aria-label="alt || undefined" :aria-hidden="!alt" />
+    <Box
+      v-else
+      class="size-3/5 text-subtle dark:text-[#6b7280]"
+      :aria-label="alt || undefined"
+      :aria-hidden="!alt"
+    />
   </span>
 </template>

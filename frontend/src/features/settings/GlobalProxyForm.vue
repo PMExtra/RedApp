@@ -95,10 +95,8 @@ function discard() {
       <form v-if="state" class="flex flex-col gap-5" novalidate @submit.prevent="submit">
         <RevisionConflictAlert v-if="save.hasConflict.value" @reload="reload" />
         <ProxyFields v-model="draft" :disabled="save.isPending.value" :url-error="urlError" />
-        <p class="text-sm text-muted">
-          {{
-            t(state.mode === "url" ? `settings.proxy.dns.${state.dns}` : "settings.proxy.direct")
-          }}
+        <p class="text-sm text-muted" aria-live="polite">
+          {{ t(draft.mode === "url" ? "settings.proxy.viaProxy" : "settings.proxy.direct") }}
         </p>
         <div class="flex flex-wrap justify-end gap-2">
           <Button v-if="dirty" :disabled="save.isPending.value" @click="discard">

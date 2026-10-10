@@ -83,4 +83,16 @@ describe("InstructionsDocument", () => {
     expect(next).toHaveAttribute("src", "/api/apps/openai/codex/instructions/document?lang=zh-CN");
     expect(next).not.toBe(frame);
   });
+
+  it("passes the dark theme to the opaque-origin document and reloads on a change", async () => {
+    const { frame } = await renderFrame();
+    usePreferencesStore().setTheme("dark");
+    await vi.waitFor(() => {
+      expect(screen.getByTitle("Usage instructions")).toHaveAttribute(
+        "src",
+        "/api/apps/openai/codex/instructions/document?lang=en&theme=dark",
+      );
+    });
+    expect(screen.getByTitle("Usage instructions")).not.toBe(frame);
+  });
 });

@@ -6,8 +6,8 @@ RedApp records metrics about disk usage, traffic, requests and download resource
 
 ## Where to find metrics
 
-- **Overview** (`/admin/overview`) shows global metrics: 16 common metrics, and 25 diagnostic metrics in a collapsed section.
-- The **Versions and resources** page of a Codex or Claude Code application shows the metrics of that application.
+- **Overview** (`/admin/overview`) shows global metrics: 13 common metrics, and 14 diagnostic metrics in a collapsed section.
+- The **Metrics** tab of an HTTP cache, Codex or Claude Code application shows the metrics of that application. Deleted applications keep this tab.
 - Click a metric to open its history chart. Choose 24 hours, 7 days (default) or 30 days.
 
 Charts show times in your browser's time zone. Data is stored and aggregated in UTC. Sizes use binary units (1 KiB = 1024 bytes).
@@ -24,86 +24,72 @@ Charts show times in your browser's time zone. Data is stored and aggregated in 
 
 ### Disk (gauge, bytes)
 
-| Key | Meaning |
-| --- | --- |
-| `disk.used_bytes` | Space allocated on disk by the data directory |
-| `disk.logical_bytes` | Logical size of all files in the data directory |
-| `disk.allocated_cache_bytes` | Space allocated by complete cached files |
-| `disk.allocated_temporary_bytes` | Space allocated by downloads in progress |
-| `disk.allocated_pending_bytes` | Space allocated by files waiting to be removed |
-| `disk.cache_bytes` | Logical size of complete cached files |
-| `disk.temporary_bytes` | Logical size of downloads in progress |
-| `disk.pending_bytes` | Logical size of files waiting to be removed |
-| `disk.other_bytes` | Space allocated by everything else, such as the database, hosted files and icons |
-| `disk.free_bytes` | Free space available on the file system |
+| Key | Name | Meaning |
+| --- | --- | --- |
+| `disk.used_bytes` | Disk used | Space allocated on disk by the data directory |
+| `disk.allocated_cache_bytes` | Cached files | Space allocated by complete cached files |
+| `disk.allocated_temporary_bytes` | Partial downloads | Space allocated by downloads in progress |
+| `disk.allocated_pending_bytes` | Pending deletion | Space allocated by files waiting to be removed |
+| `disk.other_bytes` | Other data | Space allocated by everything else, such as the database, hosted files and icons |
+| `disk.free_bytes` | Free space | Free space available on the file system |
 
-"Allocated" values count disk blocks. "Logical" values count file sizes. They differ for sparse or small files.
+Disk values count allocated disk blocks, not file sizes. The two differ for sparse or small files.
 
 ### Requests (counter, count)
 
-| Key | Meaning |
-| --- | --- |
-| `counters.requests` | Public requests for application files, installers and metadata |
-| `counters.artifact_requests` | Requests for downloadable files |
-| `counters.cache_hit_requests` | File requests served from a complete cached copy |
-| `counters.shared_follower_requests` | File requests that joined a download already in progress |
-| `counters.miss_requests` | File requests that started a new upstream download |
-| `counters.download_success` | File downloads that RedApp sent to a client completely |
-| `counters.download_errors` | File downloads to a client that failed or were cut off |
-| `counters.upstream_errors` | Upstream connection failures and error responses |
+| Key | Name | Meaning |
+| --- | --- | --- |
+| `counters.requests` | Public requests | Public requests for application files, installers and metadata |
+| `counters.artifact_requests` | File requests | Requests for downloadable files |
+| `counters.cache_hit_requests` | Cache hits | File requests served from a complete cached copy |
+| `counters.shared_follower_requests` | Shared downloads | File requests that joined a download already in progress |
+| `counters.miss_requests` | Cache misses | File requests that started a new upstream download |
+| `counters.download_success` | Downloads served | File downloads that RedApp sent to a client completely |
+| `counters.download_errors` | Downloads failed | File downloads to a client that failed or were cut off |
+| `counters.upstream_errors` | Upstream errors | Upstream connection failures and error responses |
 
 Health checks and admin console requests are not counted.
 
 ### Traffic and cleanup (counter, bytes)
 
-| Key | Meaning |
-| --- | --- |
-| `counters.upstream_bytes` | File bytes received from upstream sources |
-| `counters.downstream_bytes` | File bytes sent to clients |
-| `counters.cleanup_freed_bytes` | Logical bytes of cached files removed by cleanup |
+| Key | Name | Meaning |
+| --- | --- | --- |
+| `counters.upstream_bytes` | Traffic in | File bytes received from upstream sources |
+| `counters.downstream_bytes` | Traffic out | File bytes sent to clients |
+| `counters.cleanup_freed_bytes` | Space reclaimed | Total file size of cached files removed by cleanup |
 
 ### Rates (rate, bytes per second)
 
-| Key | Meaning |
-| --- | --- |
-| `rates.upstream_bytes_per_second` | Upstream file traffic over the last 5 seconds |
-| `rates.downstream_bytes_per_second` | Downstream file traffic over the last 5 seconds |
-
-### Runtime (gauge)
-
-| Key | Unit | Meaning |
+| Key | Name | Meaning |
 | --- | --- | --- |
-| `runtime.memory_bytes` | bytes | Memory currently allocated by the process |
-| `runtime.goroutines` | count | Number of goroutines |
-| `runtime.uptime_seconds` | seconds | Time since the process started |
+| `rates.upstream_bytes_per_second` | Speed in | Upstream file traffic over the last 5 seconds |
+| `rates.downstream_bytes_per_second` | Speed out | Downstream file traffic over the last 5 seconds |
+
+### Runtime (gauge, bytes)
+
+| Key | Name | Meaning |
+| --- | --- | --- |
+| `runtime.memory_bytes` | Memory | Memory currently allocated by the process |
 
 ### Resources and versions (gauge, count)
 
 A **resource** is one stored copy of a downloadable file. When a file is downloaded again, the new copy is a new resource and the old one is retired.
 
-| Key | Meaning |
-| --- | --- |
-| `resources.total` | All resources that are not deleted |
-| `resources.current` | Resources that are the current copy of their file |
-| `resources.retired` | Resources replaced or removed but not yet deleted |
-| `resources.readers` | Downloads currently reading a resource |
-| `resources.active_writers` | Upstream downloads currently writing a resource |
-| `resources.queued` | Resources waiting to download |
-| `resources.downloading` | Resources downloading |
-| `resources.resuming` | Resources resuming an interrupted download |
-| `resources.retry_wait` | Resources waiting to retry after a failure |
-| `resources.verifying` | Resources being verified |
-| `resources.complete` | Resources complete and verified |
-| `resources.failed` | Resources whose download failed |
-| `resources.invalid` | Resources that failed verification |
-| `resources.interrupted` | Resources interrupted by a shutdown |
-| `versions.total` | Release versions seen; the same version in two applications counts twice |
+| Key | Name | Meaning |
+| --- | --- | --- |
+| `resources.current` | Current files | Resources that are the current copy of their file |
+| `resources.retired` | Retired files | Resources replaced or removed but not yet deleted |
+| `resources.readers` | Active downloads | Downloads currently reading a resource |
+| `resources.active_writers` | Active fetches | Upstream downloads currently writing a resource |
+| `resources.failed` | Failed files | Resources whose download failed |
+| `resources.invalid` | Invalid files | Resources that failed verification |
+| `versions.total` | Versions | Release versions seen; the same version in two applications counts twice |
 
-A retired resource also has a status, so the status counts can overlap with `resources.retired`.
+A failed or invalid resource can also be retired, so it can be counted in `resources.retired` too.
 
 ## Global and application metrics
 
-All 41 metrics exist globally. For each application, RedApp records the 14 `resources.*` metrics, `versions.total` and every counter except `counters.requests`. Disk, rate and runtime metrics are global only.
+All 27 metrics exist globally. For each application, RedApp records 17 metrics: the 6 `resources.*` metrics, `versions.total` and every counter except `counters.requests`. Disk, rate and runtime metrics are global only.
 
 - Application metrics belong to the application, not to its source. Changing the source does not split the history.
 - `versions.total` applies only to Codex and Claude Code applications.

@@ -200,7 +200,7 @@ class HTTPServerCLITest(ServerTestCase):
         self.client.login()
         status = self.read("/admin/api/status")
         self.assertEqual(set(status), {"sampled_at", "started_at", "metrics"})
-        self.assertEqual(len(status["metrics"]), 41)
+        self.assertEqual(len(status["metrics"]), 27)
         metrics = {metric["key"]: metric for metric in status["metrics"]}
         self.assertGreater(metrics["disk.free_bytes"]["value"], 0)
         self.assertEqual(metrics["disk.free_bytes"]["group"], "disk")
@@ -217,12 +217,12 @@ class HTTPServerCLITest(ServerTestCase):
                 self.assertEqual(self.read(path + "?limit=50"), {"items": [], "next_cursor": None})
                 self.client.fetch(path + "?limit=101", expect=400)
         for window, resolution in [("24h", 60), ("7d", 3600), ("30d", 3600)]:
-            query = urllib.parse.urlencode({"metric": "disk.cache_bytes", "range": window})
+            query = urllib.parse.urlencode({"metric": "disk.allocated_cache_bytes", "range": window})
             series = self.read("/admin/api/history?" + query)
             self.assertEqual(series["resolution_seconds"], resolution)
             self.assertRegex(series["from"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
             self.assertIsNone(series["app_key"])
-        legacy = urllib.parse.urlencode({"scope": "global", "metric": "disk.cache_bytes", "range": "24h"})
+        legacy = urllib.parse.urlencode({"scope": "global", "metric": "disk.allocated_cache_bytes", "range": "24h"})
         error = self.client.fetch("/admin/api/history?" + legacy, expect=400).json()["error"]
         self.assertEqual(error["code"], "INVALID_QUERY")
 

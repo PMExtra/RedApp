@@ -297,7 +297,7 @@ Hosted applications serve files that administrators provide.
 
 An **App info** application has only a details page and usage instructions. It serves no files. Every other provider also has usage instructions.
 
-Usage instructions are written per language in Markdown. Raw HTML, JavaScript and external resources are allowed. They are displayed in a sandboxed frame; see [Security](security.md#usage-instructions-sandbox).
+Usage instructions are written per language in Markdown. Raw HTML, JavaScript and external resources are allowed. They are displayed in a sandboxed frame; see [Security](security.md#usage-instructions-sandbox). The frame follows the light or dark theme of the page, and its root element carries `data-theme="light"` or `data-theme="dark"` so custom styles can adapt.
 
 Built-in Codex and Claude Code applications come with default instructions from their presets. Saving empty instructions keeps them empty; it does not restore the default. Use **Reset** to return to the preset text.
 
