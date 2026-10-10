@@ -9,9 +9,31 @@ import (
 	"errors"
 	"github.com/PMExtra/RedApp/internal/store"
 	"golang.org/x/crypto/bcrypt"
+	"net"
 	"net/http"
 	"sync"
 	"time"
+)
+
+// Login rate limiting: each client key (IPv4 address or IPv6 /64 prefix) may make
+// attemptLimit attempts per attemptWindow. Independently, a global token bucket
+// bounds the total number of password comparisons so rotating keys cannot buy
+// unbounded bcrypt work. The per-key table is bounded; when it is full the
+// oldest entry is evicted instead of refusing every new client.
+const (
+	attemptLimit   = 10
+	attemptWindow  = 5 * time.Minute
+	attemptEntries = 4096
+	globalBurst    = 20
+	globalRefill   = time.Second
+	sessionLimit   = 128
+	sessionTTL     = 8 * time.Hour
+)
+
+var (
+	ErrLoginFailed  = errors.New("Login failed")
+	ErrRateLimited  = errors.New("Login rate limit exceeded")
+	ErrSessionLimit = errors.New("Session limit exceeded")
 )
 
 type Session struct {
@@ -30,7 +52,11 @@ type Auth struct {
 	revision int
 	sessions map[[32]byte]Session
 	attempts map[string]attempt
-	Secure   bool
+	tokens   float64
+	refilled time.Time
+	// compare and now are replaceable by tests; production uses bcrypt and the wall clock.
+	compare func(hash, password []byte) error
+	now     func() time.Time
 }
 
 func token() string {
@@ -40,8 +66,8 @@ func token() string {
 	}
 	return hex.EncodeToString(b)
 }
-func New(db *store.Store, secure bool, bootstrap func(string)) (*Auth, error) {
-	a := &Auth{db: db, Secure: secure, sessions: map[[32]byte]Session{}, attempts: map[string]attempt{}}
+func New(db *store.Store, bootstrap func(string)) (*Auth, error) {
+	a := &Auth{db: db, sessions: map[[32]byte]Session{}, attempts: map[string]attempt{}, tokens: globalBurst, compare: bcrypt.CompareHashAndPassword, now: time.Now}
 	e := db.DB.QueryRow("SELECT hash,revision FROM admin WHERE id=1").Scan(&a.hash, &a.revision)
 	if e == sql.ErrNoRows {
 		password := token()
@@ -60,40 +86,100 @@ func New(db *store.Store, secure bool, bootstrap func(string)) (*Auth, error) {
 	}
 	return a, nil
 }
-func (a *Auth) Login(ip, password string) (string, Session, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	now := time.Now()
-	for k, v := range a.attempts {
-		if now.Sub(v.Start) > 5*time.Minute {
-			delete(a.attempts, k)
+
+// clientKey aggregates IPv6 clients by /64, the smallest prefix normally assigned to one site.
+func clientKey(ip string) string {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return ip
+	}
+	if v4 := parsed.To4(); v4 != nil {
+		return v4.String()
+	}
+	return parsed.Mask(net.CIDRMask(64, 128)).String() + "/64"
+}
+
+// admit records one attempt for key; the caller holds a.mu.
+func (a *Auth) admit(key string, now time.Time) bool {
+	v, ok := a.attempts[key]
+	if ok && now.Sub(v.Start) > attemptWindow {
+		v, ok = attempt{}, false
+	}
+	if v.Count >= attemptLimit {
+		return false
+	}
+	if a.refilled.IsZero() {
+		a.refilled = now
+	}
+	if elapsed := now.Sub(a.refilled); elapsed > 0 {
+		a.tokens += float64(elapsed) / float64(globalRefill)
+		if a.tokens > globalBurst {
+			a.tokens = globalBurst
 		}
 	}
-	v := a.attempts[ip]
-	if v.Start.IsZero() {
-		if len(a.attempts) >= 4096 {
-			return "", Session{}, errors.New("Login rate limit exceeded")
+	a.refilled = now
+	if a.tokens < 1 {
+		return false
+	}
+	a.tokens--
+	if !ok {
+		if _, exists := a.attempts[key]; !exists && len(a.attempts) >= attemptEntries {
+			a.evict(now)
 		}
 		v.Start = now
 	}
 	v.Count++
-	a.attempts[ip] = v
-	if v.Count > 10 || len(password) > 72 {
-		return "", Session{}, errors.New("Login rate limit exceeded")
+	a.attempts[key] = v
+	return true
+}
+
+// evict drops expired entries, or the oldest entry when none has expired.
+func (a *Auth) evict(now time.Time) {
+	oldest, oldestStart := "", time.Time{}
+	for k, v := range a.attempts {
+		if now.Sub(v.Start) > attemptWindow {
+			delete(a.attempts, k)
+		} else if oldest == "" || v.Start.Before(oldestStart) {
+			oldest, oldestStart = k, v.Start
+		}
 	}
-	if e := bcrypt.CompareHashAndPassword(a.hash, []byte(password)); e != nil {
-		return "", Session{}, errors.New("Login failed")
+	if len(a.attempts) >= attemptEntries {
+		delete(a.attempts, oldest)
 	}
+}
+
+// Login checks the password without holding a.mu so Session checks are never
+// blocked behind bcrypt. A password change that lands during the comparison
+// invalidates the attempt.
+func (a *Auth) Login(ip, password string) (string, Session, error) {
+	key := clientKey(ip)
+	a.mu.Lock()
+	if !a.admit(key, a.now()) {
+		a.mu.Unlock()
+		return "", Session{}, ErrRateLimited
+	}
+	hash, revision := a.hash, a.revision
+	a.mu.Unlock()
+	if len(password) > 72 || a.compare(hash, []byte(password)) != nil {
+		return "", Session{}, ErrLoginFailed
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if revision != a.revision {
+		return "", Session{}, ErrLoginFailed
+	}
+	now := a.now()
 	for k, s := range a.sessions {
 		if now.After(s.Until) {
 			delete(a.sessions, k)
 		}
 	}
-	if len(a.sessions) >= 128 {
-		return "", Session{}, errors.New("Session limit exceeded")
+	if len(a.sessions) >= sessionLimit {
+		return "", Session{}, ErrSessionLimit
 	}
+	delete(a.attempts, key)
 	t := token()
-	s := Session{token(), now.Add(8 * time.Hour), a.revision}
+	s := Session{token(), now.Add(sessionTTL), a.revision}
 	a.sessions[sha256.Sum256([]byte(t))] = s
 	return t, s, nil
 }
@@ -106,7 +192,7 @@ func (a *Auth) Session(r *http.Request) (Session, bool) {
 	defer a.mu.Unlock()
 	key := sha256.Sum256([]byte(c.Value))
 	s, ok := a.sessions[key]
-	if !ok || time.Now().After(s.Until) || s.Revision != a.revision {
+	if !ok || a.now().After(s.Until) || s.Revision != a.revision {
 		delete(a.sessions, key)
 		return Session{}, false
 	}
@@ -115,25 +201,32 @@ func (a *Auth) Session(r *http.Request) (Session, bool) {
 func (a *Auth) CSRF(r *http.Request, s Session) bool {
 	return len(r.Header.Get("X-CSRF-Token")) == 64 && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(s.CSRF)) == 1
 }
+
+// Password hashes outside a.mu; a concurrent change detected by revision fails this one.
 func (a *Auth) Password(old, next string) error {
 	if len(next) < 12 || len(next) > 72 {
 		return errors.New("Password must be between 12 and 72 bytes")
 	}
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	if bcrypt.CompareHashAndPassword(a.hash, []byte(old)) != nil {
+	current, revision := a.hash, a.revision
+	a.mu.Unlock()
+	if a.compare(current, []byte(old)) != nil {
 		return errors.New("Invalid password")
 	}
 	hash, e := bcrypt.GenerateFromPassword([]byte(next), 12)
 	if e != nil {
 		return e
 	}
-	revision := a.revision + 1
-	if _, e = a.db.DB.Exec("UPDATE admin SET hash=?,revision=? WHERE id=1", hash, revision); e != nil {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if revision != a.revision {
+		return errors.New("Password changed concurrently")
+	}
+	if _, e = a.db.DB.Exec("UPDATE admin SET hash=?,revision=? WHERE id=1", hash, revision+1); e != nil {
 		return e
 	}
 	a.hash = hash
-	a.revision = revision
+	a.revision = revision + 1
 	a.sessions = map[[32]byte]Session{}
 	return nil
 }
@@ -144,10 +237,12 @@ func (a *Auth) Logout(r *http.Request) {
 		a.mu.Unlock()
 	}
 }
-func (a *Auth) Cookie(w http.ResponseWriter, t string, requestSecure ...bool) {
-	secure := a.Secure
-	if len(requestSecure) > 0 {
-		secure = requestSecure[0]
+
+// Cookie issues the session cookie, or expires it when t is empty.
+func (a *Auth) Cookie(w http.ResponseWriter, t string, secure bool) {
+	maxAge := int(sessionTTL / time.Second)
+	if t == "" {
+		maxAge = -1
 	}
-	http.SetCookie(w, &http.Cookie{Name: "redapp_session", Value: t, Path: "/admin", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: secure, MaxAge: 8 * 3600})
+	http.SetCookie(w, &http.Cookie{Name: "redapp_session", Value: t, Path: "/admin", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: secure, MaxAge: maxAge})
 }

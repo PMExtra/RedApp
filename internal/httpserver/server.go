@@ -84,7 +84,7 @@ func problem(w http.ResponseWriter, status int, code, message string) {
 	reply(w, status, map[string]any{"error": map[string]any{"code": code, "message": message, "request_id": hex.EncodeToString(id[:]), "retryable": status >= 500 || code == "DIRECTORY_DELETE_PENDING"}})
 }
 func fail(w http.ResponseWriter, status int, message string) {
-	code := map[int]string{400: "INVALID_REQUEST", 401: "AUTH_REQUIRED", 403: "CSRF_REJECTED", 404: "RESOURCE_NOT_FOUND", 405: "METHOD_NOT_ALLOWED", 409: "SETTINGS_REVISION_CONFLICT", 413: "PAYLOAD_TOO_LARGE", 429: "LOGIN_RATE_LIMITED", 502: "UPSTREAM_UNAVAILABLE", 503: "LOCAL_STORAGE_UNAVAILABLE"}[status]
+	code := map[int]string{400: "INVALID_REQUEST", 401: "AUTH_REQUIRED", 403: "CSRF_REJECTED", 404: "RESOURCE_NOT_FOUND", 405: "METHOD_NOT_ALLOWED", 409: "SETTINGS_REVISION_CONFLICT", 413: "PAYLOAD_TOO_LARGE", 502: "UPSTREAM_UNAVAILABLE", 503: "LOCAL_STORAGE_UNAVAILABLE"}[status]
 	problem(w, status, code, message)
 }
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
@@ -538,8 +538,14 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 			return
 		}
 		token, session, err := s.Auth.Login(s.Proxy.ClientIP(r), input.Password)
-		if err != nil {
-			fail(w, 429, "Login failed or rate limit exceeded")
+		if errors.Is(err, auth.ErrRateLimited) {
+			problem(w, 429, "LOGIN_RATE_LIMITED", "Too many login attempts; try again later")
+			return
+		} else if errors.Is(err, auth.ErrSessionLimit) {
+			problem(w, 503, "SESSION_LIMIT_EXCEEDED", "Too many active sessions; try again later")
+			return
+		} else if err != nil {
+			problem(w, 401, "LOGIN_FAILED", "Login failed")
 			return
 		}
 		s.Auth.Cookie(w, token, strings.HasPrefix(requestOrigin, "https://"))

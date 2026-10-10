@@ -673,7 +673,12 @@ export const messages = {
     "请求被拒绝，请检查输入后重试。",
   "Permission check failed. Refresh the page and sign in again.":
     "权限校验失败，请刷新页面并重新登录。",
-  "Login failed or rate limit exceeded": "登录失败或请求过于频繁，请稍后重试。",
+  "Login failed. Check the password and try again.": "登录失败，请检查密码后重试。",
+  "Too many login attempts. Try again later.": "登录尝试过于频繁，请稍后重试。",
+  "Too many requests. Try again later.": "请求过于频繁，请稍后重试。",
+  "Too many configuration previews are active. Wait for one to expire.":
+    "活动的配置预览过多，请等待其过期后重试。",
+  "Too many active sessions. Try again later.": "活动会话过多，请稍后重试。",
   "Service temporarily unavailable. Try again.": "服务暂时不可用，请稍后重试。",
   "Requested data is unavailable.": "请求的数据暂不可用。",
   Refresh: "刷新",
@@ -972,7 +977,11 @@ const errorCodes: Record<string, Message> = {
   INVALID_PATH: "Request rejected. Check your input and retry.",
   APPLICATION_NOT_FOUND: "Requested data is unavailable.",
   RESOURCE_NOT_FOUND: "Requested data is unavailable.",
-  LOGIN_RATE_LIMITED: "Login failed or rate limit exceeded",
+  LOGIN_FAILED: "Login failed. Check the password and try again.",
+  LOGIN_RATE_LIMITED: "Too many login attempts. Try again later.",
+  SESSION_LIMIT_EXCEEDED: "Too many active sessions. Try again later.",
+  PREVIEW_LIMIT_EXCEEDED:
+    "Too many configuration previews are active. Wait for one to expire.",
   METHOD_NOT_ALLOWED: "This operation is not supported.",
   DOWNLOAD_CAPACITY_EXCEEDED: "Download capacity is busy. Try again later.",
   METADATA_UNTRUSTED: "Upstream metadata could not be verified.",
@@ -995,7 +1004,7 @@ export function errorText(reason: unknown): string {
   if (status === 401) return t("Your session expired. Sign in again.");
   if (status === 403)
     return t("Permission check failed. Refresh the page and sign in again.");
-  if (status === 429) return t("Login failed or rate limit exceeded");
+  if (status === 429) return t("Too many requests. Try again later.");
   if (status === 400) return t("Request rejected. Check your input and retry.");
   if (status === 409)
     return t(

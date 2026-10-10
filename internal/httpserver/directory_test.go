@@ -149,7 +149,7 @@ func newDirectoryHarnessWithStore(t *testing.T, dir string, db *store.Store, con
 			t.Fatal(err)
 		}
 	}
-	a, err := auth.New(db, false, func(password string) { h.password = password })
+	a, err := auth.New(db, func(password string) { h.password = password })
 	if err != nil {
 		t.Fatal(err)
 	}

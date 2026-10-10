@@ -100,7 +100,7 @@ func (s *Server) exchangeAPI(w http.ResponseWriter, r *http.Request, session aut
 	}
 	if endpoint == "configuration/import/preview" {
 		if len(s.exchangePreviews) >= 8 {
-			fail(w, 429, "Too many active configuration previews; wait for expiry")
+			problem(w, 429, "PREVIEW_LIMIT_EXCEEDED", "Too many active configuration previews; wait for expiry")
 			return true
 		}
 		raw, choices, e := readExchangeUpload(w, r)

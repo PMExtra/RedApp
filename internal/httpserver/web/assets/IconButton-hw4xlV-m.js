@@ -1,1 +1,0 @@
-import{M as e,O as t,U as n,j as r}from"./bootstrap-hQCw7di0.js";import{p as i}from"./api-CUsUkH9q.js";var a=[`type`,`aria-label`,`title`],o=e({__name:`IconButton`,props:{icon:{},label:{},type:{default:`button`}},setup(e){return(o,s)=>(n(),t(`button`,{type:e.type,class:`icon-button`,"aria-label":e.label,title:e.label},[r(i,{name:e.icon},null,8,[`name`])],8,a))}});export{o as t};
