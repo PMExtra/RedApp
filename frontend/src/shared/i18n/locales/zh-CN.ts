@@ -174,6 +174,7 @@ export default {
       VENDOR_NOT_EMPTY: "请先删除该厂商下的应用。",
       BUILTIN_PROTECTED: "内置项不能删除，可以停用。",
       ENTITY_DELETED: "此项正在删除，只读。",
+      APPLICATION_DISABLED: "应用或其厂商已停用，请先启用。",
       APPLICATION_DELETE_PENDING: "删除仍在进行，请重试。",
       CATEGORY_AMBIGUOUS: "该名称匹配多个分类，请选择其中一个。",
       FILE_CONFLICT: "此路径下的文件已变化，请重新加载后重试。",

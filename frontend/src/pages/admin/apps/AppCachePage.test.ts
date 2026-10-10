@@ -5,6 +5,8 @@ import AppCachePage from "./AppCachePage.vue";
 import { MAINTENANCE_POLL_MS } from "@/features/http-cache";
 import type { Schema } from "@/shared/api";
 import { renderAppPage } from "@/test/appPage";
+import { renderAdminPage } from "@/test/directory";
+import { vendor } from "@/test/factories/directory";
 import {
   codexApp,
   codexConfiguration,
@@ -32,8 +34,9 @@ function card(title: string): HTMLElement {
   return section;
 }
 
-function httpCacheHandlers(app = httpCacheApp()) {
+function httpCacheHandlers(app = httpCacheApp(), owner = vendor({ id: "example" })) {
   return [
+    mockApi("get", "/admin/api/vendors/{vendor}", () => owner),
     mockApi("get", "/admin/api/apps/{vendor}/{app}", () => app),
     mockApi("get", "/admin/api/apps/{vendor}/{app}/sources", () => ({
       items: [
@@ -326,36 +329,71 @@ describe("cache tab of an HTTP cache application", () => {
   });
 });
 
+function releaseHandlers(app = codexApp(), owner = vendor({ id: "openai" })) {
+  return [
+    mockApi("get", "/admin/api/vendors/{vendor}", () => owner),
+    mockApi("get", "/admin/api/apps/{vendor}/{app}", () => app),
+    mockApi("get", "/admin/api/apps/{vendor}/{app}/sources", () => ({ items: [sourceEpoch()] })),
+    mockApi("get", "/admin/api/apps/{vendor}/{app}/prewarm/options", () => prewarmOptions()),
+    mockApi("get", "/admin/api/apps/{vendor}/{app}/configuration", () => codexConfiguration()),
+    mockApi("get", "/admin/api/apps/{vendor}/{app}/retention/status", () => retentionStatus()),
+  ];
+}
+
 describe("cache tab of a release application", () => {
   it("shows prewarm, retention and version cleanup", async () => {
-    useHandlers(
-      mockApi("get", "/admin/api/apps/{vendor}/{app}", () => codexApp()),
-      mockApi("get", "/admin/api/apps/{vendor}/{app}/sources", () => ({ items: [sourceEpoch()] })),
-      mockApi("get", "/admin/api/apps/{vendor}/{app}/prewarm/options", () => prewarmOptions()),
-      mockApi("get", "/admin/api/apps/{vendor}/{app}/configuration", () => codexConfiguration()),
-      mockApi("get", "/admin/api/apps/{vendor}/{app}/retention/status", () => retentionStatus()),
-    );
+    useHandlers(...releaseHandlers());
     await renderAppPage(AppCachePage);
     expect(await screen.findByRole("heading", { name: "Prewarm" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Keep latest versions" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Version cleanup" })).toBeInTheDocument();
     expect(screen.queryByRole("tab")).toBeNull();
+    expect(screen.queryByText("Enable the application first")).toBeNull();
   });
 
   it("keeps a deleted application read-only", async () => {
     useHandlers(
-      mockApi("get", "/admin/api/apps/{vendor}/{app}", () =>
-        codexApp({ deleted_at: "2026-10-09T00:00:00Z", enabled: false }),
-      ),
-      mockApi("get", "/admin/api/apps/{vendor}/{app}/sources", () => ({ items: [sourceEpoch()] })),
-      mockApi("get", "/admin/api/apps/{vendor}/{app}/prewarm/options", () => prewarmOptions()),
-      mockApi("get", "/admin/api/apps/{vendor}/{app}/configuration", () => codexConfiguration()),
-      mockApi("get", "/admin/api/apps/{vendor}/{app}/retention/status", () => retentionStatus()),
+      ...releaseHandlers(codexApp({ deleted_at: "2026-10-09T00:00:00Z", enabled: false })),
     );
     await renderAppPage(AppCachePage);
     await screen.findByRole("heading", { name: "Prewarm" });
     expect(screen.queryByRole("button", { name: "Start prewarming" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Save retention" })).toBeNull();
     expect(screen.getByRole("textbox", { name: /Minimum version to keep/ })).toBeDisabled();
+    expect(screen.queryByText("Enable the application first")).toBeNull();
+  });
+
+  it("asks to enable a disabled application before prewarming or running retention", async () => {
+    useHandlers(...releaseHandlers(codexApp({ enabled: false })));
+    await renderAdminPage("/admin/vendors/openai/apps/codex/cache");
+    const alert = (await screen.findByText("Enable the application first")).closest(
+      "[role=alert]",
+    ) as HTMLElement;
+    expect(alert).toHaveTextContent("This application is disabled.");
+    expect(within(alert).getByRole("link", { name: "Open application settings" })).toHaveAttribute(
+      "href",
+      "/admin/vendors/openai/apps/codex/settings",
+    );
+    expect(await screen.findByRole("button", { name: "Start prewarming" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Preview run" })).toBeDisabled();
+    // Policies stay editable.
+    expect(screen.getByRole("textbox", { name: /Minimum version to keep/ })).toBeEnabled();
+  });
+});
+
+describe("cache tab of an application whose vendor is disabled", () => {
+  it("points to the vendor settings and offers no refresh", async () => {
+    useHandlers(...httpCacheHandlers(httpCacheApp(), vendor({ id: "example", enabled: false })));
+    await renderAdminPage("/admin/vendors/example/apps/mirror/cache");
+    const alert = (await screen.findByText("Enable the application first")).closest(
+      "[role=alert]",
+    ) as HTMLElement;
+    expect(alert).toHaveTextContent("The vendor of this application is disabled.");
+    expect(within(alert).getByRole("link", { name: "Open vendor settings" })).toHaveAttribute(
+      "href",
+      "/admin/vendors/example/settings",
+    );
+    expect(await screen.findByText("/releases/1.2.3/tool.zip")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Refresh / })).toBeNull();
   });
 });

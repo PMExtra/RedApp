@@ -19,9 +19,15 @@ import {
 /**
  * Prewarming of a release or HTTP cache application: start a one-time task,
  * follow it (the job ID survives reloads), cancel or retry it, and for release
- * applications the automatic prewarm policy.
+ * applications the automatic prewarm policy. `inactive` (disabled application
+ * or vendor) keeps the policy editable but blocks starting and retrying jobs.
  */
-const props = defineProps<{ vendor: string; app: string; readOnly?: boolean }>();
+const props = defineProps<{
+  vendor: string;
+  app: string;
+  readOnly?: boolean;
+  inactive?: boolean;
+}>();
 const { t } = useI18n();
 const options = usePrewarmOptions(
   () => props.vendor,
@@ -94,7 +100,7 @@ function retry() {
           :vendor="vendor"
           :app="app"
           :options="options.data.value"
-          :disabled="running"
+          :disabled="running || inactive"
           @started="show"
         />
         <p
@@ -111,6 +117,7 @@ function retry() {
           :job="current"
           :busy="busy"
           :read-only="readOnly"
+          :inactive="inactive"
           @cancel="cancel"
           @retry="retry"
           @dismiss="show(null)"

@@ -116,6 +116,14 @@ export default {
       epochHint:
         "Changing the upstream starts a new source epoch: new requests only use the new source; old cached files stay until cleaned up.",
     },
+    inactive: {
+      title: "Enable the application first",
+      app: "This application is disabled. Prewarming, retention runs and cache refresh only work for an enabled application; policies can still be edited.",
+      vendor:
+        "The vendor of this application is disabled. Prewarming, retention runs and cache refresh only work when the vendor and the application are enabled; policies can still be edited.",
+      openApp: "Open application settings",
+      openVendor: "Open vendor settings",
+    },
     readOnly: {
       vendor: "This vendor is deleted. Its stored data is kept; it can no longer be edited.",
       app: "This application is deleted. Its stored data is kept; it can no longer be edited.",

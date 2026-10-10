@@ -104,7 +104,7 @@ frontend/
 3. **页面**：放在 `src/pages/<entry>/...`。`x-spa-routes` 中的每条路由都渲染真实页面，不保留占位页。
 4. **功能代码**：放在 `src/features/<domain>/`，通过 `index.ts` 导出。查询和变更函数、领域组件、该领域的文本都在这里。
 5. **文本**：在 feature 下建 `locales/en.ts` 与 `locales/zh-CN.ts`（后台）或 `locales/public/en.ts`、`locales/public/zh-CN.ts`（公开页也要用），见“国际化”。
-6. **导航**：后台侧边栏在 `src/app/admin/navigation.ts`；应用和厂商的标签页在 `pages/admin/apps/AppLayout.vue`、`pages/admin/vendors/VendorLayout.vue`。应用有哪些标签由 `@/features/directory` 的 `appTabs` 决定，壳层对不可用的标签显示“不适用”，对已删除的应用显示只读提示，标签页本身不再重复判断。`/admin/vendors/{vendor}/apps/{app}`（不带标签）加载应用后替换为 `defaultAppTab`：发布类应用为版本，`http-cache` 为缓存，`hosted` 为文件，其余及已删除的应用为设置。该路径不在 `x-spa-routes` 中，只用于站内链接（如事件列表）。
+6. **导航**：后台侧边栏在 `src/app/admin/navigation.ts`；应用和厂商的标签页在 `pages/admin/apps/AppLayout.vue`、`pages/admin/vendors/VendorLayout.vue`。应用有哪些标签由 `@/features/directory` 的 `appTabs` 决定，壳层对不可用的标签显示“不适用”，对已删除的应用显示只读提示，标签页本身不再重复判断。`/admin/vendors/{vendor}/apps/{app}`（不带标签，路由名 `admin-app`，在 `x-spa-routes` 中）加载应用后替换为 `defaultAppTab`：发布类应用为版本，`http-cache` 为缓存，`hosted` 为文件，其余及已删除的应用为设置。站内链接（如事件列表）可以直接指向它。
 7. **焦点与标题**：路由切换（路径变化）后焦点自动移到 `<main id="main-content">`；只改查询参数时不移动焦点。动态标题用 `useDocumentTitle(() => name)`，壳层自动拼接站点标题。
 
 ## API 用法
@@ -155,7 +155,7 @@ const save = useRevisionedMutation({
 ```
 
 - 409 `REVISION_CONFLICT` 不弹通知，而是设置 `save.conflict`；页面保留草稿并显示 `<RevisionConflictAlert @reload="save.reload()" />`。`reload()` 重新读取基线，页面自己决定是否重置草稿。
-- 其他失败由全局处理：`MutationCache` 弹出错误通知，内容是本地化的错误码文本、服务端细节（如 `VALIDATION_FAILED` 指出的字段）和请求 ID。页面自行展示某些错误码时，在 `meta: { handledCodes: [...] }`（`useRevisionedMutation` 用 `handledCodes` 选项）中声明；完全不弹用 `meta: { silent: true }`。
+- 其他失败由全局处理：`MutationCache` 弹出错误通知，内容是本地化的错误码文本、服务端细节（如 `VALIDATION_FAILED` 指出的字段）和请求 ID。`ENTITY_DELETED` 与 `APPLICATION_DISABLED` 另外让 `getApp`、`getVendor` 重新读取，页面随之显示只读或“请先启用应用”提示。页面自行展示某些错误码时，在 `meta: { handledCodes: [...] }`（`useRevisionedMutation` 用 `handledCodes` 选项）中声明；完全不弹用 `meta: { silent: true }`。
 - `ifMatch(revision)` / `ifMatchHeader(resource)` / `revisionFromEtag(etag)` 处理 `"7"` 格式。
 - 应用和厂商的配置覆盖是同一个 revision 资源，所有编辑区块必须通过 `@/features/configuration` 的 `useAppConfiguration` / `useAppConfigurationPatch` 读写，否则一个区块保存后其他区块会 409。
 - 配置覆盖表单用 `useOverlayForm({ configuration, paths, schema })`：草稿只含 `paths` 中的字段，未修改时跟随服务端，有修改时（含 409 重新加载后）保留；`patch(values)` 只包含改过的字段，`reset(path)` 恢复模板值并在原值为覆盖时发送 `unset`；保存成功后调用 `load(响应)`。`resetBinding(path)` 直接绑定到 `FieldReset`。

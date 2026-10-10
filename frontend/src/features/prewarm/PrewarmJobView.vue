@@ -22,6 +22,8 @@ const props = defineProps<{
   job: PrewarmJob;
   busy?: boolean;
   readOnly?: boolean;
+  /** The application or vendor is disabled: a retry would be refused. */
+  inactive?: boolean;
 }>();
 const emit = defineEmits<{ cancel: []; retry: []; dismiss: [] }>();
 const i18n = useI18n();
@@ -119,7 +121,7 @@ function label(prefix: string, value: string): string {
           {{ t("prewarm.job.cancel") }}
         </Button>
         <template v-else>
-          <Button v-if="retryable" :loading="busy" @click="emit('retry')">
+          <Button v-if="retryable" :loading="busy" :disabled="inactive" @click="emit('retry')">
             {{ t("prewarm.job.retry") }}
           </Button>
           <Button variant="ghost" :disabled="busy" @click="emit('dismiss')">

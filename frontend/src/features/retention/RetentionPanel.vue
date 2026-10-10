@@ -40,7 +40,13 @@ type Policy = Schema<"RetentionPolicy">;
  * Keep-latest retention of a release application: the saved policy, the last
  * automatic run, and a manual run as preview → review → execute.
  */
-const props = defineProps<{ vendor: string; app: string; readOnly?: boolean }>();
+const props = defineProps<{
+  vendor: string;
+  app: string;
+  readOnly?: boolean;
+  /** The application or vendor is disabled: manual runs are refused. */
+  inactive?: boolean;
+}>();
 const i18n = useI18n();
 const { t } = i18n;
 const format = useFormat();
@@ -332,6 +338,7 @@ const skipped = computed(() => Object.entries(current.value?.result?.skipped ?? 
             :loading="actions.preview.isPending.value"
             :disabled="
               readOnly ||
+              inactive ||
               overlay.dirty.value ||
               !configuration.data.value ||
               actions.execute.isPending.value
@@ -433,7 +440,7 @@ const skipped = computed(() => Object.entries(current.value?.result?.skipped ?? 
               <Button
                 variant="danger"
                 :loading="actions.execute.isPending.value"
-                :disabled="readOnly || expired || current.selected_versions === 0"
+                :disabled="readOnly || inactive || expired || current.selected_versions === 0"
                 @click="execute"
               >
                 {{ t("retention.execute") }}

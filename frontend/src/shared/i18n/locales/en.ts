@@ -178,6 +178,7 @@ export default {
       VENDOR_NOT_EMPTY: "Delete the vendor's applications first.",
       BUILTIN_PROTECTED: "Built-in items cannot be deleted; disable them instead.",
       ENTITY_DELETED: "This item is being deleted and is read-only.",
+      APPLICATION_DISABLED: "The application or its vendor is disabled. Enable it first.",
       APPLICATION_DELETE_PENDING: "Deletion is still in progress. Try again.",
       CATEGORY_AMBIGUOUS: "This name matches several categories; choose one.",
       FILE_CONFLICT: "The file at this path changed. Reload and try again.",

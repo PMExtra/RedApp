@@ -2,20 +2,22 @@
 // Cache tab: prewarm, retention and version cleanup of release applications;
 // cached files, refresh, cleanup and prewarm of HTTP cache applications.
 // AppLayout only shows it for those providers and marks deleted applications.
+// Prewarm, retention runs and cache refresh need an enabled application and
+// vendor (otherwise APPLICATION_DISABLED); the page says so up front.
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRoute } from "vue-router";
+import { RouterLink, useRoute } from "vue-router";
 import {
   AutoCleanupStatus,
   CacheCleanupPanel,
   CacheEntriesPanel,
   CacheRefreshPanel,
 } from "@/features/http-cache";
-import { hasVersions, useApp } from "@/features/directory";
+import { appRoute, hasVersions, useApp, useVendor, vendorRoute } from "@/features/directory";
 import { PrewarmPanel } from "@/features/prewarm";
 import { SourceEpochSelect, VersionCleanup, useSources } from "@/features/releases";
 import { RetentionPanel } from "@/features/retention";
-import { AsyncState, Tabs, type TabItem } from "@/shared/ui";
+import { Alert, AsyncState, Button, Tabs, type TabItem } from "@/shared/ui";
 
 const { t } = useI18n();
 const route = useRoute();
@@ -23,7 +25,16 @@ const vendor = computed(() => String(route.params.vendor));
 const app = computed(() => String(route.params.app));
 const record = useApp(vendor, app);
 const provider = computed(() => record.data.value?.provider);
+const vendorRecord = useVendor(vendor);
 const deleted = computed(() => Boolean(record.data.value?.deleted_at));
+// Which switch has to be turned on before the runtime actions work.
+const disabledBy = computed<"app" | "vendor" | null>(() => {
+  const data = record.data.value;
+  if (!data || data.deleted_at) return null;
+  if (!data.enabled) return "app";
+  return vendorRecord.data.value?.enabled === false ? "vendor" : null;
+});
+const inactive = computed(() => disabledBy.value !== null);
 
 // HTTP cache: one source epoch selection for the file list and cleanup.
 const sourceEpoch = ref<number | null>(null);
@@ -34,10 +45,7 @@ const sources = useSources(vendor, app);
 const canRefresh = computed(() => {
   const current = sources.data.value?.items.find((source) => source.current);
   return (
-    sourceEpoch.value === null &&
-    !deleted.value &&
-    record.data.value?.enabled === true &&
-    current?.active === true
+    sourceEpoch.value === null && !deleted.value && !inactive.value && current?.active === true
   );
 });
 const section = ref("files");
@@ -54,10 +62,30 @@ const sections = computed<TabItem[]>(() => [
     :error="record.error.value"
     @retry="record.refetch()"
   >
-    <div v-if="provider" class="flex flex-col gap-6">
+    <div v-if="provider && record.data.value" class="flex flex-col gap-6">
+      <Alert v-if="disabledBy" tone="warning" :title="t('directory.inactive.title')">
+        {{ t(`directory.inactive.${disabledBy}`) }}
+        <template #actions>
+          <Button size="sm" as-child>
+            <RouterLink
+              :to="
+                disabledBy === 'app'
+                  ? appRoute(record.data.value, 'settings')
+                  : vendorRoute(record.data.value.vendor_id)
+              "
+            >
+              {{
+                disabledBy === "app"
+                  ? t("directory.inactive.openApp")
+                  : t("directory.inactive.openVendor")
+              }}
+            </RouterLink>
+          </Button>
+        </template>
+      </Alert>
       <template v-if="hasVersions(provider)">
-        <PrewarmPanel :vendor="vendor" :app="app" :read-only="deleted" />
-        <RetentionPanel :vendor="vendor" :app="app" :read-only="deleted" />
+        <PrewarmPanel :vendor="vendor" :app="app" :read-only="deleted" :inactive="inactive" />
+        <RetentionPanel :vendor="vendor" :app="app" :read-only="deleted" :inactive="inactive" />
         <VersionCleanup :vendor="vendor" :app="app" :disabled="deleted" />
       </template>
 
@@ -87,7 +115,7 @@ const sections = computed<TabItem[]>(() => [
             </div>
           </template>
           <template #prewarm>
-            <PrewarmPanel :vendor="vendor" :app="app" :read-only="deleted" />
+            <PrewarmPanel :vendor="vendor" :app="app" :read-only="deleted" :inactive="inactive" />
           </template>
         </Tabs>
       </template>

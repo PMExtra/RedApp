@@ -36,8 +36,12 @@ export function shouldRetry(failureCount: number, error: unknown): boolean {
   return isApiError(error) && error.retryable && failureCount < 2;
 }
 
+// Errors meaning the vendor or application changed state meanwhile (deleted or
+// disabled elsewhere): the cached records are refetched so pages show it.
+const entityStateCodes: readonly AnyErrorCode[] = ["ENTITY_DELETED", "APPLICATION_DISABLED"];
+
 export function createQueryClient(options: QueryClientOptions = {}): QueryClient {
-  return new QueryClient({
+  const client: QueryClient = new QueryClient({
     defaultOptions: {
       queries: {
         staleTime: 15_000,
@@ -48,6 +52,10 @@ export function createQueryClient(options: QueryClientOptions = {}): QueryClient
     },
     mutationCache: new MutationCache({
       onError: (error, _variables, _context, mutation) => {
+        if (isApiError(error) && entityStateCodes.includes(error.code)) {
+          void client.invalidateQueries({ queryKey: queryKey("getApp") });
+          void client.invalidateQueries({ queryKey: queryKey("getVendor") });
+        }
         const meta = mutation.meta;
         if (meta?.silent) return;
         if (isApiError(error) && meta?.handledCodes?.includes(error.code)) return;
@@ -55,4 +63,5 @@ export function createQueryClient(options: QueryClientOptions = {}): QueryClient
       },
     }),
   });
+  return client;
 }
