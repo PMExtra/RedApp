@@ -126,8 +126,11 @@ class CheckTests(unittest.TestCase):
                 b'#!/bin/sh\nmodified locally\n'
             )
             rows = m.inspect(root=root, fetch=self.original)
-            self.assertEqual(rows[0]['status'], 'error')
-            self.assertIn('audited digest', rows[0]['error'])
+            modified = next(
+                r for r in rows if r['application'] == 'openai/codex' and r['name'] == 'install.sh'
+            )
+            self.assertEqual(modified['status'], 'error')
+            self.assertIn('audited digest', modified['error'])
             self.assertEqual(len(rows), len(m.inventory()))
 
     def test_redirects_and_shape_fail_closed(self):

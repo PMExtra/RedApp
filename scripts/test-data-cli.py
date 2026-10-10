@@ -7,7 +7,7 @@ import sqlite3
 import tempfile
 import unittest
 
-from cli_test_support import BINARY, ROOT, main, run_cli
+from cli_test_support import BINARY, main, run_cli
 
 BASE_CONFIG_LIMITS = {"max_writers": 16, "max_readers": 512}
 
@@ -31,7 +31,7 @@ class DataDirectoryCLITest(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.directory = Path(temp.name)
         self.data = self.directory / "new-data"
-        self.config_path = self.directory / "config.json"
+        self.config_path = self.directory / "config.yaml"
         self.config = {
             "schema_version": 1,
             "data_dir": str(self.data),
@@ -40,7 +40,7 @@ class DataDirectoryCLITest(unittest.TestCase):
         self.write_config(self.config)
 
     def write_config(self, config):
-        """Write ``config`` as the JSON configuration file."""
+        """Write ``config`` as the YAML configuration file (JSON flow syntax is valid YAML)."""
         self.config_path.write_text(json.dumps(config))
 
     def invoke(self, args, env=None):
@@ -115,34 +115,34 @@ class DataDirectoryCLITest(unittest.TestCase):
         result = self.validate(env={"REDAPP_PUBLIC_URL": "https://example.test/invalid"})
         self.assert_exit(result, 1, "PUBLIC_URL with path")
 
-    def test_duplicate_json_keys_are_rejected(self):
+    def test_duplicate_keys_are_rejected(self):
         self.config_path.write_text(json.dumps(self.config)[:-1] + ',"schema_version":1}')
         result = self.validate()
         self.assert_exit(result, 1, "duplicate key")
-        self.assertIn("Duplicate", result.stderr)
+        self.assertIn("duplicate YAML field", result.stderr)
 
-    def test_old_and_unknown_directories_stay_byte_identical(self):
+    def test_other_schema_and_unknown_directories_stay_byte_identical(self):
         # A refused startup must not change any byte, including creating
         # instance.lock or SQLite sidecars.
-        released = ROOT / "internal/store/testdata/schema_v10.sql"
-        kinds = [(f"schema-{version}", version) for version in range(2, 11)]
-        kinds += [("released-0.8.0", "full"), ("unknown", None)]
-        for kind, old_schema in kinds:
+        redapp_application_id = 0x52644170
+        kinds = [
+            # Another RedApp schema version: same application_id, different user_version.
+            ("other-schema", (redapp_application_id, 11)),
+            # A foreign SQLite file that happens to carry the current user_version.
+            ("foreign-sqlite", (0, 12)),
+            ("unknown", None),
+        ]
+        for kind, pragmas in kinds:
             with self.subTest(kind=kind):
                 data = self.directory / kind
                 data.mkdir()
-                if old_schema == "full":
-                    # The complete released schema 10 with an existing administrator row.
-                    db = sqlite3.connect(data / "state.sqlite")
-                    db.executescript(released.read_text())
-                    db.execute("INSERT INTO admin VALUES(1,'keep',1)")
-                    db.commit()
-                    db.close()
-                elif old_schema is not None:
+                if pragmas is not None:
+                    application_id, user_version = pragmas
                     db = sqlite3.connect(data / "state.sqlite")
                     db.executescript(
-                        "CREATE TABLE schema_version(version INTEGER NOT NULL);"
-                        f"INSERT INTO schema_version VALUES({old_schema});"
+                        f"PRAGMA application_id={application_id};"
+                        f"PRAGMA user_version={user_version};"
+                        "CREATE TABLE keep(value TEXT); INSERT INTO keep VALUES('original');"
                     )
                     db.close()
                 else:

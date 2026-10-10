@@ -208,7 +208,7 @@ class RedAppServer:
     """One ``bin/redapp`` server process with a private working directory.
 
     ``configure(server, port)`` returns ``(arguments, environment)`` for a start
-    on ``port``; the default writes ``config.json`` with ``data_dir`` and
+    on ``port``; the default writes ``config.yaml`` with ``data_dir`` and
     ``listen`` and runs ``serve --config``. Every start probes a new port, so
     ``base_url`` changes across restarts.
     """
@@ -218,7 +218,7 @@ class RedAppServer:
         self.directory.mkdir(parents=True, exist_ok=True)
         self.data_dir = self.directory / "data"
         self.log_path = self.directory / "server.log"
-        self.configure = configure or RedAppServer.json_config
+        self.configure = configure or RedAppServer.yaml_config
         self.process = None
         self.port = None
         self.environment = None
@@ -227,17 +227,13 @@ class RedAppServer:
         self._cached_log = ""
 
     @staticmethod
-    def json_config(server, port):
-        """Default configuration: a JSON file with the data directory and listener."""
-        config = server.directory / "config.json"
+    def yaml_config(server, port):
+        """Default configuration: a YAML file with the data directory and listener."""
+        config = server.directory / "config.yaml"
         config.write_text(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "data_dir": str(server.data_dir),
-                    "listen": f"127.0.0.1:{port}",
-                }
-            )
+            "schema_version: 1\n"
+            f"data_dir: {json.dumps(str(server.data_dir))}\n"
+            f"listen: {json.dumps(f'127.0.0.1:{port}')}\n"
         )
         return ["serve", "--config", str(config)], {}
 
