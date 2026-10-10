@@ -890,8 +890,10 @@ paths:
           content_type: upstream value
           description: |
             `Content-Disposition: attachment`, `Content-Security-Policy: sandbox; default-src 'none'`.
-            Conditional requests and a single byte range are served from the complete cached file
-            (a cold range request first downloads the whole file; multiple ranges return the full file).
+            A miss streams the upstream response to every concurrent client while it is cached. Conditional
+            requests and a single byte range are served like a cached file, waiting for the requested bytes, when
+            the upstream declared the length; otherwise a file still arriving is returned in full. Multiple
+            ranges return the full file.
             `Cache-Control: only-if-cached` on a miss returns `504 CACHE_MISS`; other request cache directives are ignored.
             Uncacheable upstream responses (`no-store`/`private` without a matching rule, `Set-Cookie`, `Vary`
             other than `Accept-Encoding`) are streamed without storing.
@@ -903,9 +905,10 @@ paths:
             `Content-Security-Policy: sandbox; default-src 'none'`. Conditional requests and single byte ranges.
       x-range-support: "hosted and http-cache support a single byte range; release artifacts and metadata do not (`Accept-Ranges: none`)."
       x-streaming: |
-        Release artifacts are streamed while the shared upstream download progresses (many readers follow one writer).
-        Upstream reads have a 60 s idle timeout and no total limit; a failed transfer is aborted mid-body
-        (the connection is reset), never truncated silently. Reverse proxies must disable buffering.
+        Release artifacts and HTTP cache misses are streamed while the shared upstream download progresses (many
+        readers follow one writer). Upstream reads have a 60 s idle timeout and no total limit; a failed transfer is
+        aborted mid-body (the connection is reset), never truncated silently. File responses have no total write
+        deadline; a write that makes no progress for 60 s ends the response. Reverse proxies must disable buffering.
       x-error-codes:
         - APPLICATION_NOT_FOUND
         - FILE_NOT_FOUND
@@ -3433,7 +3436,7 @@ paths:
         - sessionCookie: []
           csrfToken: []
       x-max-body-bytes: 8192
-      x-timeout: Bounded by the HTTP cache upstream limits (60 s idle per attempt, 9 minutes in total).
+      x-timeout: Bounded by the HTTP cache upstream limits (60 s idle per read, bounded resumption, no total limit).
       requestBody:
         required: true
         content:

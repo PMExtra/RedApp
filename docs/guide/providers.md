@@ -61,15 +61,15 @@ A request for `/<vendor>/<app>/<path>` fetches `<source URL>/<path>`.
 
 | Request | Behavior |
 | --- | --- |
-| `GET`, not cached | Downloads the whole file to disk first, then starts the response |
+| `GET`, not cached | Streams the file to the client while it is downloaded and stored |
 | `GET`, cached and fresh | Served from disk without contacting the source |
 | `GET`, cached and expired | Revalidated with the source (`ETag`, `Last-Modified`); `304` keeps the copy, `200` replaces it |
 | `HEAD`, not cached | Sends `HEAD` to the source; nothing is stored |
-| Single byte range | Served from the complete file (`206`); a cold range request downloads the whole file first |
+| Single byte range | `206` from the cached file. While the file is still downloading, the range is sent as soon as its bytes arrive if the source declared the file length; otherwise the full file is returned |
 | Multiple byte ranges | Ignored; the full file is returned |
 | Conditional request | `If-None-Match`, `If-Modified-Since`, `If-Match` and `If-Unmodified-Since` are supported |
 
-Several clients requesting the same missing file share one upstream download.
+Several clients requesting the same missing file share one upstream download, and each receives the bytes as they arrive. The file is stored only once it arrived completely; a download that fails, or that no client reads any more, leaves nothing in the cache. While a file is still downloading, responses carry only the source's `ETag`; a stored file without one gets `"sha256-<hex>"`.
 
 Client request cache directives (`Cache-Control: no-store`, `no-cache`, `max-age`, `Pragma`) are ignored: they never force an upstream fetch, and freshness is governed only by rules and upstream headers. `only-if-cached` is honoured and returns `504` on a miss.
 
@@ -138,7 +138,7 @@ When a rule with a TTL above 0 overrides upstream `no-store` or `private`, RedAp
 
 `stale_fallback` is on by default.
 
-- When all sources fail with a network error, a timeout or a `5xx` status, RedApp serves the expired cached copy instead of an error.
+- When all sources fail with a network error, a timeout or a `5xx` status before responding, RedApp serves the expired cached copy instead of an error. A download that breaks after a source responded cannot fall back; see [Multiple sources](#multiple-sources).
 - Only a complete copy from the same application and the same source epoch is used. There is no maximum age.
 - Each fallback records a warning event.
 - `404` and `410` are not failures; they are returned to the client.
@@ -154,9 +154,9 @@ An HTTP cache application can list 1 to 16 source URLs.
 | `round_robin` | Start at the next source each time, then try the rest |
 | `random` | Try sources in random order, each at most once |
 
-- RedApp moves to the next source only on a network error, a timeout or a `5xx` status.
-- An attempt is abandoned when no data arrives for 60 seconds. One download may take up to 9 minutes across all sources, so very large files on slow links can fail.
-- A file is always taken from a single source. Partial downloads are never combined across sources.
+- RedApp moves to the next source only when a source fails before responding: a network error, a timeout or a `5xx` status.
+- There is no limit on the total download time. A transfer is interrupted when no data arrives for 60 seconds.
+- A file is always taken from a single source. Once a source responded, an interrupted transfer is resumed from the same source with a byte range (up to 6 attempts in total) if the response has a strong validator (an `ETag` that is not weak, or a `Last-Modified` at least one second older than its `Date`) and the source answers with exactly the missing bytes of the same file. Otherwise the download fails: clients receiving it see an interrupted transfer, and nothing is stored. Partial downloads are never combined across sources.
 - Validators (`ETag`, `Last-Modified`) are reused only with the source that issued them.
 - There are no health checks or weights. Fresh cache hits do not advance `round_robin`.
 
