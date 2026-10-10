@@ -1,5 +1,5 @@
 #!/bin/sh
-# 离线重建 Dockerfile runtime 阶段；不需要拉取外部镜像。
+# 未指定 REDAPP_TEST_IMAGE 时，用根 Dockerfile 的 prebuilt runtime 阶段离线打包 bin/redapp；不需要拉取外部镜像（需要 BuildKit）。
 set -eu
 task_root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 task_temp=$(mktemp -d)
@@ -29,19 +29,10 @@ cp "$task_root/bin/redapp" "$task_temp/redapp"
 cp /etc/ssl/certs/ca-certificates.crt "$task_temp/ca-certificates.crt"
 mkdir "$task_temp/data"
 chmod 0700 "$task_temp/data"
-cat > "$task_temp/Dockerfile" <<'DOCKER'
-FROM scratch
-COPY redapp /redapp
-COPY ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --chown=65532:65532 data /var/lib/redapp
-USER 65532:65532
-VOLUME ["/var/lib/redapp"]
-EXPOSE 8080
-HEALTHCHECK --interval=2s --timeout=5s --start-period=1s --retries=5 CMD ["/redapp", "healthcheck"]
-ENTRYPOINT ["/redapp"]
-CMD ["serve"]
-DOCKER
-docker build -t "$task_image" "$task_temp" >/dev/null
+# A private DOCKER_CONFIG must still find user-installed CLI plugins such as buildx.
+if [ -d "${HOME:-}/.docker/cli-plugins" ]; then ln -s "$HOME/.docker/cli-plugins" "$DOCKER_CONFIG/cli-plugins"; fi
+DOCKER_BUILDKIT=1 docker build -f "$task_root/Dockerfile" --target runtime --build-arg RUNTIME_FILES=prebuilt \
+  -t "$task_image" "$task_temp" >/dev/null
 fi
 # Verify actual /etc discovery and one-file selection without starting a service.
 cat > "$task_temp/config.yaml" <<'CONFIG'

@@ -146,8 +146,8 @@ frontend/src/
 ## 脚本
 
 - Python 只用标准库。
-- 生产脚本（CI、发布、安装器维护）用显式检查并抛出带说明的异常或 `sys.exit(<消息>)`，不要用 `assert` 做校验（`python -O` 会移除 `assert`）。**【目标】** 现有脚本中的 `assert` 在阶段 2 替换。
-- 共享逻辑放在支持模块中（如 `installer_test_support.py`、`installer_manifest.py`），不要在脚本之间复制粘贴。
+- 生产脚本（CI、发布、安装器维护）用显式检查并抛出带说明的异常或 `sys.exit(<消息>)`，不要用 `assert` 做校验（`python -O` 会移除 `assert`）。测试脚本可以用 `assert` 或 `unittest` 断言。
+- 共享逻辑放在支持模块中（如 `installer_test_support.py`、`installer_manifest.py`），不要在脚本之间复制粘贴。启动真实 `bin/redapp` 的测试一律使用 `cli_test_support.py`，不要自行选端口、轮询健康检查或拼装登录流程。
 - 格式可读：一行一条语句，不用分号拼接多条语句，不写超长单行表达式；函数有简短 docstring 说明目的。
 - Shell 脚本以 `set -eu` 开头，变量加引号。
 

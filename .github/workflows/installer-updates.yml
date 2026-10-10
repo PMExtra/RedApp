@@ -26,7 +26,7 @@ concurrency:
 jobs:
   validate:
     if: github.repository == 'PMExtra/RedApp'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     outputs:
       changed: ${{ steps.check.outputs.changed }}
@@ -39,7 +39,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: '1.27.1'
+          go-version-file: go.mod
           cache: true
       - name: Compare all official originals with main
         id: check
@@ -48,7 +48,7 @@ jobs:
           python3 scripts/installer_maintenance.py prepare .installer-prepared
       - name: Build trusted validation tools
         if: steps.check.outputs.changed == 'true'
-        run: docker build --pull -t installer-validator -f .github/installer-check/Dockerfile .github/installer-check
+        run: docker build -t installer-validator -f .github/installer-check/Dockerfile .github/installer-check
       - name: Apply patches and test without network or credentials
         if: steps.check.outputs.changed == 'true'
         run: |
@@ -86,7 +86,7 @@ jobs:
   draft-pr:
     needs: [validate, windows-installers]
     if: needs.validate.outputs.changed == 'true' && github.repository == 'PMExtra/RedApp'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       contents: write
@@ -103,7 +103,7 @@ jobs:
           path: ${{ runner.temp }}/installer-bundle
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: '1.27.1'
+          go-version-file: go.mod
           cache: true
       - name: Publish allowed files as an idempotent draft PR
         env:

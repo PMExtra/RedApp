@@ -1,42 +1,46 @@
 VERSION ?= $(shell cat VERSION)
 REVISION ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 
-.PHONY: build binary test check docs-check installers installer-inventory docker frontend frontend-test runtime-test
+NODE_MODULES := frontend/node_modules/.package-lock.json
+# runtime-test and network-test exercise the existing binary on purpose (CI builds
+# it in the pinned native container); they never rebuild it.
+REQUIRE_BINARY := @test -x bin/redapp || { echo 'bin/redapp is missing: run `make binary` or `make build` first' >&2; exit 1; }
+
+.PHONY: build binary check test docs-check toolchain-check frontend frontend-test \
+	runtime-test network-test installers installer-inventory docker
+
 build: frontend
-	sh scripts/build-binary.sh bin/redapp "$(VERSION)" "$(REVISION)"
+	@$(MAKE) --no-print-directory binary
 binary:
 	sh scripts/build-binary.sh bin/redapp "$(VERSION)" "$(REVISION)"
-test: installer-inventory
-	python3 scripts/test-ci-release.py
-	python3 scripts/test-check-docs.py
-	go test -race ./... -count=1 -timeout=180s
-	python3 scripts/test-installers.py --platform shell
-	python3 scripts/test-update-installers.py
-	python3 scripts/test-installer-maintenance.py
-check: docs-check
+
+check: docs-check toolchain-check
 	test -z "$$(gofmt -l cmd internal installers presets)"
 	go vet ./...
 docs-check:
 	python3 scripts/check-docs.py
-installer-inventory:
-	mkdir -p .generated
-	go run ./cmd/preset-inventory > .generated/installer-inventory.json.tmp
-	mv .generated/installer-inventory.json.tmp .generated/installer-inventory.json
-installers: installer-inventory
-	python3 scripts/update-installers.py --application openai/codex --source installers/openai/codex/upstream
-	python3 scripts/update-installers.py --application anthropic/claude-code --source installers/anthropic/claude-code/upstream
-docker:
-	docker build -t redapp:local .
+toolchain-check:
+	python3 scripts/check-toolchain.py
 
-frontend/node_modules/.package-lock.json: frontend/package.json frontend/package-lock.json
+test: installer-inventory
+	python3 scripts/test-ci-release.py
+	python3 scripts/test-check-docs.py
+	python3 scripts/test-check-toolchain.py
+	go test -race ./... -count=1 -timeout=180s
+	python3 scripts/test-installers.py --platform shell
+	python3 scripts/test-update-installers.py
+	python3 scripts/test-installer-maintenance.py
+
+$(NODE_MODULES): frontend/package.json frontend/package-lock.json
 	cd frontend && npm ci --no-audit --no-fund
-frontend: frontend/node_modules/.package-lock.json
+frontend: $(NODE_MODULES)
 	cd frontend && npm run build
-frontend-test: frontend/node_modules/.package-lock.json
+frontend-test: $(NODE_MODULES)
 	cd frontend && npm run typecheck && npm test
 
-# Uses the current native binary; does not rebuild.
-runtime-test:
+# Real processes on loopback ports; the instructions test needs frontend/node_modules (Happy DOM).
+runtime-test: $(NODE_MODULES)
+	$(REQUIRE_BINARY)
 	python3 scripts/test-data-cli.py
 	python3 scripts/test-http-cli.py
 	node scripts/test-instructions-document.mjs
@@ -44,3 +48,19 @@ runtime-test:
 	python3 scripts/test-prewarm-cli.py
 	python3 scripts/test-taxonomy-cli.py
 	python3 scripts/test-configuration-exchange-cli.py
+
+# Manual, needs Internet access: official signed Claude manifest and one real binary (>200 MB).
+network-test:
+	$(REQUIRE_BINARY)
+	python3 scripts/test-prewarm-claude-cli.py
+
+installer-inventory:
+	mkdir -p .generated
+	go run ./cmd/preset-inventory > .generated/installer-inventory.json.tmp
+	mv .generated/installer-inventory.json.tmp .generated/installer-inventory.json
+installers: installer-inventory
+	python3 scripts/update-installers.py --application openai/codex --source installers/openai/codex/upstream
+	python3 scripts/update-installers.py --application anthropic/claude-code --source installers/anthropic/claude-code/upstream
+
+docker:
+	docker build -t redapp:local --build-arg VERSION="$(VERSION)" --build-arg REVISION="$(REVISION)" .

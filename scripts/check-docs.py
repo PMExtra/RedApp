@@ -35,6 +35,7 @@ class Document:
     """Structure of one Markdown file that translations must preserve."""
 
     def __init__(self, path):
+        """Parse the structure of the Markdown file at path."""
         self.path = path
         self.headings = []
         self.code_blocks = []
@@ -43,6 +44,7 @@ class Document:
         self._parse(path.read_text(encoding='utf-8').splitlines())
 
     def _parse(self, lines):
+        """Collect headings, fenced code blocks, tables and links from lines."""
         fence = None
         code = []
         table_rows = 0
@@ -78,21 +80,25 @@ class Document:
 
     @staticmethod
     def _closes(fence, line):
+        """Return whether line closes the open fence."""
         stripped = line.strip()
         marker = fence['marker']
         return stripped.startswith(marker) and set(stripped) == {marker[0]}
 
     @staticmethod
     def _dedent(line, indent):
+        """Remove up to indent leading spaces from a code line."""
         removable = len(line) - len(line.lstrip(' '))
         return line[min(indent, removable):]
 
     def _finish_table(self, rows):
+        """Record a finished table's row count and reset the counter."""
         if rows:
             self.tables.append(rows)
         return 0
 
     def _collect_links(self, number, line):
+        """Collect inline and reference link targets outside inline code."""
         text = INLINE_CODE.sub('', line)
         for match in INLINE_LINK.finditer(text):
             self.links.append((number, match['target']))
@@ -102,6 +108,7 @@ class Document:
 
 
 def relative(path, root):
+    """Return path relative to root in POSIX form."""
     return path.relative_to(root).as_posix()
 
 
@@ -149,6 +156,7 @@ def compare_pair(root, english, chinese):
 
 
 def markdown_files(root):
+    """Yield repository Markdown files outside skipped and hidden directories."""
     for path in sorted(root.rglob('*.md')):
         parts = path.relative_to(root).parts[:-1]
         if any(part in SKIPPED_DIRS or part.startswith('.') for part in parts):
@@ -157,6 +165,7 @@ def markdown_files(root):
 
 
 def link_target_exists(root, source, target):
+    """Return whether a relative link target resolves to an existing path."""
     if target.startswith('<') and target.endswith('>'):
         target = target[1:-1]
     if not target or target.startswith('#') or URL_SCHEME.match(target):
@@ -169,6 +178,7 @@ def link_target_exists(root, source, target):
 
 
 def check_links(root):
+    """Return errors for broken relative links in every Markdown file."""
     errors = []
     for path in markdown_files(root):
         for line, target in Document(path).links:
@@ -190,6 +200,7 @@ def changed_files(root, base):
 
 
 def check_changed_together(pairs, changed):
+    """Return errors for pairs where only one language changed."""
     errors = []
     for english, chinese in pairs:
         a, b = english.as_posix(), chinese.as_posix()
@@ -200,6 +211,7 @@ def check_changed_together(pairs, changed):
 
 
 def run(root, base=None):
+    """Run all documentation checks and return the error messages."""
     pairs = user_doc_pairs(root)
     errors = []
     for english, chinese in pairs:
@@ -211,6 +223,7 @@ def run(root, base=None):
 
 
 def main():
+    """Parse arguments, run the checks and return the process exit code."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--root', type=Path, default=ROOT, help='repository root (default: this checkout)')
     parser.add_argument('--base', help='git ref; require both languages of a changed pair to change')
