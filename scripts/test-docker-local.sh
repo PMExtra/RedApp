@@ -84,7 +84,7 @@ if docker_run --name "$task_name-second" --network none --read-only -v "$task_vo
   echo '第二实例错误地取得独占目录' >&2
   exit 1
 fi
-grep -q 'Data directory is already owned by another instance' "$task_temp/second.log"
+grep -q 'data directory is already owned by another instance' "$task_temp/second.log"
 docker kill "$task_name" >/dev/null
 docker start "$task_name" >/dev/null
 task_try=0
