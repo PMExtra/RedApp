@@ -3,6 +3,7 @@ module github.com/PMExtra/RedApp
 go 1.27.0
 
 require (
+	github.com/ProtonMail/go-crypto v1.5.2
 	github.com/bmatcuk/doublestar/v4 v4.10.2
 	github.com/dustin/go-humanize v1.1.0
 	github.com/mattn/go-sqlite3 v1.14.32
@@ -11,4 +12,9 @@ require (
 	golang.org/x/crypto v0.42.0
 	golang.org/x/net v0.44.0
 	golang.org/x/text v0.42.0
+)
+
+require (
+	github.com/cloudflare/circl v1.6.3 // indirect
+	golang.org/x/sys v0.36.0 // indirect
 )

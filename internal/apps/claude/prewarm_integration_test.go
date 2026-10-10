@@ -22,9 +22,9 @@ import (
 	"github.com/PMExtra/RedApp/internal/store"
 	"github.com/PMExtra/RedApp/internal/testutil"
 	"github.com/PMExtra/RedApp/internal/warmplan"
-	"golang.org/x/crypto/openpgp"
-	"golang.org/x/crypto/openpgp/armor"
-	"golang.org/x/crypto/openpgp/packet"
+	"github.com/ProtonMail/go-crypto/openpgp"
+	"github.com/ProtonMail/go-crypto/openpgp/armor"
+	"github.com/ProtonMail/go-crypto/openpgp/packet"
 )
 
 // Both key and signature exist only in the test binary. Verification keeps the
@@ -45,7 +45,7 @@ func TestSignedClaudePrewarmRealComponentPipeline(t *testing.T) {
 	if err = armored.Close(); err != nil {
 		t.Fatal(err)
 	}
-	pin := hex.EncodeToString(signer.PrimaryKey.Fingerprint[:])
+	pin := hex.EncodeToString(signer.PrimaryKey.Fingerprint)
 	payload := []byte("small signed Claude artifact fixture\n")
 	sum := sha256.Sum256(payload)
 	manifest := Manifest{Version: "1.2.3", Platforms: map[string]Platform{"linux-x64": {Binary: "claude", Checksum: hex.EncodeToString(sum[:]), Size: int64(len(payload))}}}
@@ -103,7 +103,7 @@ func TestSignedClaudePrewarmRealComponentPipeline(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			entry := application.Entry{Descriptor: application.Descriptor{ID: app.Key, TrustRevision: 1, Channels: []string{"latest", "stable"}, DefaultChannelTTLSeconds: 60}, Protocol: &Protocol{upstream: upstream, verifyManifest: verify}, Upstream: upstream, Provider: application.ClaudeCode, UID: app.UID, VendorUID: vendor.UID, SourceEpoch: app.SourceEpoch, Revision: app.Revision, VendorRevision: vendor.Revision, RuntimeRevision: app.RuntimeRevision, VendorRuntimeRevision: vendor.RuntimeRevision, Enabled: true}
+			entry := application.Entry{Descriptor: application.Descriptor{ID: app.Key, TrustRevision: 1, Channels: []string{"latest", "stable"}, DefaultChannelTTLSeconds: 60}, Protocol: newProtocol(upstream, verify), Upstream: upstream, Provider: application.ClaudeCode, UID: app.UID, VendorUID: vendor.UID, SourceEpoch: app.SourceEpoch, Revision: app.Revision, VendorRevision: vendor.Revision, RuntimeRevision: app.RuntimeRevision, VendorRuntimeRevision: vendor.RuntimeRevision, Enabled: true}
 			registry, err := application.NewRegistry([]application.Entry{entry})
 			if err != nil {
 				t.Fatal(err)

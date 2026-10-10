@@ -91,12 +91,14 @@ func Compare(a, b string) (int, error) {
 }
 
 type Protocol struct {
-	upstream       *distributor.Client
-	verifyManifest func([]byte, []byte) error
+	upstream *distributor.Client
+	verify   verifier
 }
 
-func NewProtocol(upstream *distributor.Client) *Protocol {
-	return &Protocol{upstream: upstream, verifyManifest: Verify}
+func NewProtocol(upstream *distributor.Client) *Protocol { return newProtocol(upstream, Verify) }
+
+func newProtocol(upstream *distributor.Client, verify verifier) *Protocol {
+	return &Protocol{upstream: upstream, verify: verify}
 }
 func (p *Protocol) ValidateVersion(v string) (string, error) {
 	if !ValidVersion(v) {
@@ -147,11 +149,7 @@ func (p *Protocol) FetchRelease(ctx context.Context, version string) (applicatio
 	return application.Envelope{Raw: raw, Signature: signature}, nil
 }
 func (p *Protocol) VerifyRelease(version string, envelope application.Envelope) (application.Release, error) {
-	verify := p.verifyManifest
-	if verify == nil {
-		verify = Verify
-	}
-	if err := verify(envelope.Raw, envelope.Signature); err != nil {
+	if err := p.verify(envelope.Raw, envelope.Signature); err != nil {
 		return application.Release{}, err
 	}
 	m, err := parse(envelope.Raw, version)
