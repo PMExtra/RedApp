@@ -1,73 +1,47 @@
 package httpserver
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
-	"strings"
+	"strconv"
 
 	"github.com/PMExtra/RedApp/internal/auth"
+	"github.com/PMExtra/RedApp/internal/download"
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
-// legacyDirectoryAdmin is the pre-contract dispatcher of migration package 1
-// (directory, configuration, admin notes, categories, exchange). Return false
-// unconditionally once the package is migrated, then delete this file
-// together with legacy.go.
+// legacyDirectoryAdmin was the pre-contract dispatcher of migration package 1
+// (directory, configuration, admin notes, categories, exchange). The package
+// is migrated; delete this file together with legacy.go.
 func (s *Server) legacyDirectoryAdmin(w http.ResponseWriter, r *http.Request, session auth.Session) bool {
-	if s.exchangeAPI(w, r, session) || s.categoriesAPI(w, r) || s.directoryAPI(w, r) {
-		return true
-	}
-	return s.legacyChannelTTL(w, r)
+	return false
 }
 
-// legacyChannelTTL serves the removed /admin/api/apps/{key}/settings document
-// (now the configuration path cache_ttl_seconds).
-func (s *Server) legacyChannelTTL(w http.ResponseWriter, r *http.Request) bool {
-	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/admin/api/"), "/")
-	if len(parts) != 4 || parts[0] != "apps" || parts[3] != "settings" {
-		return false
-	}
-	app := parts[1] + "/" + parts[2]
-	entry, ok := s.registry.LookupAny(app)
-	if !ok {
-		problem(w, 404, "APPLICATION_NOT_FOUND", "Application not found")
-		return true
-	}
-	if entry.Protocol == nil {
-		fail(w, 404, "API endpoint not found")
-		return true
-	}
-	if !queryAllowed(r) {
-		fail(w, 400, "Invalid query")
-		return true
-	}
-	switch r.Method {
-	case http.MethodGet:
-		ttl, rev := entry.Descriptor.DefaultChannelTTLSeconds, entry.Revision
-		revisionReply(w, rev, map[string]any{"channel_ttl_seconds": ttl, "revision": rev})
-	case http.MethodPut:
-		rev, err := expectedRevision(r)
-		if err != nil {
-			problem(w, 400, "INVALID_REQUEST", err.Error())
-			return true
-		}
-		var input struct {
-			TTL int `json:"channel_ttl_seconds"`
-		}
-		if decode(w, r, &input) != nil {
-			fail(w, 400, "Invalid settings")
-			return true
-		}
-		if input.TTL < 1 || input.TTL > 86400 {
-			fail(w, 400, "Channel TTL must be between 1 and 86400 seconds")
-			return true
-		}
-		next, e := s.setDirectoryTTL(app, rev, input.TTL)
-		if e != nil {
-			settingsError(w, e)
-			return true
-		}
-		revisionReply(w, next, map[string]any{"channel_ttl_seconds": input.TTL, "revision": next})
+// directoryError and positivePage are pre-contract helpers still used by the
+// legacy handlers of migration packages 2 and 3. New code maps errors with
+// directoryFailure and reads pages with pageQuery.
+func directoryError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errDeletePending), errors.Is(err, download.ErrTransfersActive):
+		problem(w, 409, "DIRECTORY_DELETE_PENDING", "Deletion is not complete. This application is blocked while its tasks stop. Retry deletion; restarting also resumes it.")
+	case errors.Is(err, store.ErrConflict):
+		problem(w, 409, "DIRECTORY_REVISION_CONFLICT", "Configuration changed; reload before saving")
+	case errors.Is(err, sql.ErrNoRows):
+		problem(w, 404, "DIRECTORY_NOT_FOUND", "Vendor or application not found")
+	case errors.Is(err, store.ErrBuiltinTemplate), errors.Is(err, store.ErrDirectoryExists), errors.Is(err, store.ErrDirectoryDeleted), errors.Is(err, store.ErrVendorHasApplications):
+		problem(w, 409, "DIRECTORY_CONFLICT", err.Error())
+	case errors.Is(err, store.ErrInvalidDirectory):
+		problem(w, 400, "INVALID_DIRECTORY", err.Error())
 	default:
-		fail(w, 405, "Method not allowed")
+		problem(w, 503, "DIRECTORY_UNAVAILABLE", "Unable to persist or load the application directory")
 	}
-	return true
+}
+
+func positivePage(raw string, fallback int) (int, bool) {
+	if raw == "" {
+		return fallback, true
+	}
+	n, e := strconv.Atoi(raw)
+	return n, e == nil && n >= 1 && n <= 1000000000 && strconv.Itoa(n) == raw
 }

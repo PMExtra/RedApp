@@ -39,7 +39,7 @@ func TestTemplateInsertionProtectionAndSelectiveCAS(t *testing.T) {
 	if err = s.PermanentlyDeleteApplication(a.Key, a.Revision); !errors.Is(err, ErrBuiltinTemplate) {
 		t.Fatal("provider mismatch bypassed protection", err)
 	}
-	if err = s.PermanentlyDeleteVendor(v.ID, v.Revision); !errors.Is(err, ErrVendorHasApplications) {
+	if err = s.PermanentlyDeleteVendor(v.ID, v.Revision); !errors.Is(err, ErrBuiltinTemplate) {
 		t.Fatal("vendor bypassed protection", err)
 	}
 	// Field-level reset is a configuration unset; an independent entity has nothing to inherit.

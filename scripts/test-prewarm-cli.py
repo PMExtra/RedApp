@@ -95,15 +95,17 @@ class PrewarmCLITest(ServerTestCase):
             ("binary", "codex", "http://prewarm.example"),
         ]
         for name, provider, upstream in apps:
+            source = {"base_urls": [upstream]} if provider == "http-cache" else {"base_url": upstream}
             admin.request(
-                "/admin/api/vendors/prewarm/apps",
+                "/admin/api/apps",
                 {
+                    "vendor": "prewarm",
                     "id": name,
                     "provider": provider,
                     "name": {"en": name, "zh-CN": name},
-                    "base_url": upstream,
                     "cache_ttl_seconds": 60,
                     "enabled": True,
+                    **source,
                 },
                 method="POST",
                 expect=201,

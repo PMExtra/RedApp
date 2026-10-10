@@ -58,8 +58,8 @@ class HTTPServerCLITest(ServerTestCase):
     def enable_builtin_templates(self):
         """Enable the built-in vendors and apps, which start disabled."""
         for vendor, app in BUILTIN_TEMPLATES:
-            v = self.read(f"/admin/api/vendors/{vendor}")["vendor"]
-            a = self.read(f"/admin/api/apps/{vendor}/{app}")["app"]
+            v = self.read(f"/admin/api/vendors/{vendor}")
+            a = self.read(f"/admin/api/apps/{vendor}/{app}")
             self.assertFalse(v["enabled"])
             self.assertFalse(a["enabled"])
             self.assertTrue(a["builtin_template"])
@@ -130,56 +130,69 @@ class HTTPServerCLITest(ServerTestCase):
     def test_dynamic_vendor_and_app_lifecycle(self):
         # Management-only fixtures; they never contact the configured upstream.
         self.client.login()
-        providers = {provider["key"] for provider in self.read("/admin/api/providers")["providers"]}
+        providers = {provider["key"] for provider in self.read("/admin/api/providers")["items"]}
         self.assertEqual(providers, {"info", "hosted", "http-cache", "codex", "claude-code"})
-        vendor = self.client.request(
+        created = self.client.fetch(
             "/admin/api/vendors",
-            {"id": "cli-example", "name": {"en": "CLI fixture", "zh-CN": "CLI 测试"}},
+            {"id": "cli-example", "name": {"en": "CLI fixture", "zh-CN": "CLI 测试"}, "enabled": True},
             method="POST",
             expect=201,
-        )["vendor"]
+        )
+        vendor = created.json()
         self.assertEqual(vendor["revision"], 1)
+        self.assertEqual(created.headers["ETag"], '"1"')
+        self.assertEqual(created.headers["Location"], "/admin/api/vendors/cli-example")
         self.assertTrue(vendor["enabled"])
-        app_create = "/admin/api/vendors/cli-example/apps"
-        app_input = {"id": "files", "name": {"en": "Files", "zh-CN": "文件"}, "provider": "http-cache"}
+        app_create = "/admin/api/apps"
+        app_input = {
+            "vendor": "cli-example",
+            "id": "files",
+            "name": {"en": "Files", "zh-CN": "文件"},
+            "provider": "http-cache",
+            "enabled": True,
+        }
         # HTTP Cache has no implicit base URL.
-        self.client.fetch(app_create, app_input, method="POST", expect=400)
-        app_input["base_url"] = "http://127.0.0.1:9/files"
-        app = self.client.request(app_create, app_input, method="POST", expect=201)["app"]
+        error = self.client.request(app_create, app_input, method="POST", expect=400)
+        self.assertEqual(error["error"]["code"], "VALIDATION_FAILED")
+        app_input["base_urls"] = ["http://127.0.0.1:9/files"]
+        app = self.client.request(app_create, app_input, method="POST", expect=201)
         app_path = "/admin/api/apps/cli-example/files"
         self.assertEqual(app["source_epoch"], 1)
         self.assertEqual(app["cache_ttl_seconds"], 300)
         self.assertIn("cli-example/files", self.public_app_ids())
         self.assertEqual(self.read(app_path + "/cache"), {"items": []})
+        # The entity only toggles its state; everything else is configuration.
         self.client.fetch(app_path, {"id": "renamed"}, method="PATCH", if_match=app["revision"], expect=400)
-        self.client.fetch(app_path, {"provider": "codex"}, method="PATCH", if_match=app["revision"], expect=400)
-        app = self.client.request(
-            app_path, {"base_url": "http://127.0.0.1:9/replacement"}, method="PATCH", if_match=app["revision"]
-        )["app"]
+        self.client.fetch(app_path, {"enabled": False}, method="PATCH", expect=400)
+        configuration = self.client.request(
+            app_path + "/configuration",
+            {"set": {"base_urls": ["http://127.0.0.1:9/replacement"]}},
+            method="PATCH",
+            if_match=app["revision"],
+        )
+        app = self.read(app_path)
         self.assertEqual(app["source_epoch"], 2)
+        self.assertEqual(configuration["revision"], app["revision"])
         self.client.fetch(app_path, {"enabled": False}, method="PATCH", if_match=app["revision"] - 1, expect=409)
         sources = self.read(app_path + "/sources")["sources"]
         self.assertEqual({source["epoch"] for source in sources}, {1, 2})
         self.assertEqual([source["epoch"] for source in sources if source["current"]], [2])
 
         vendor_path = "/admin/api/vendors/cli-example"
-        self.client.fetch(vendor_path, {"confirm_key": "cli-example"}, method="DELETE", if_match=vendor["revision"], expect=409)
-        vendor = self.client.request(vendor_path, {"enabled": False}, method="PATCH", if_match=vendor["revision"])["vendor"]
+        not_empty = self.client.request(vendor_path, method="DELETE", if_match=vendor["revision"], expect=409)
+        self.assertEqual(not_empty["error"]["code"], "VENDOR_NOT_EMPTY")
+        vendor = self.client.request(vendor_path, {"enabled": False}, method="PATCH", if_match=vendor["revision"])
         self.assertNotIn("cli-example/files", self.public_app_ids())
-        self.assertTrue(self.read(app_path)["app"]["enabled"], "vendor disable overwrote application state")
+        self.assertTrue(self.read(app_path)["enabled"], "vendor disable overwrote application state")
         self.client.fetch("/cli-example/files", expect=404)
-        vendor = self.client.request(vendor_path, {"enabled": True}, method="PATCH", if_match=vendor["revision"])["vendor"]
+        vendor = self.client.request(vendor_path, {"enabled": True}, method="PATCH", if_match=vendor["revision"])
         self.assertIn("cli-example/files", self.public_app_ids())
-        deleted = self.client.request(
-            app_path,
-            {"confirm_key": "cli-example/files", "confirm_uid": app["uid"]},
-            method="DELETE",
-            if_match=app["revision"],
-        )
-        self.assertTrue(deleted["deleted"])
+        delete_app = app_path + "?" + urllib.parse.urlencode({"confirm_uid": app["uid"]})
+        self.assertEqual(self.client.request(delete_app, method="DELETE", if_match=app["revision"]), {"cleanup_pending": False})
+        self.client.fetch(delete_app, method="DELETE", if_match=app["revision"], expect=404)
         self.client.fetch(app_path + "/sources", expect=404)
-        deleted = self.client.request(vendor_path, {"confirm_key": "cli-example"}, method="DELETE", if_match=vendor["revision"])
-        self.assertTrue(deleted["deleted"])
+        self.client.fetch(vendor_path, method="DELETE", if_match=vendor["revision"], expect=204)
+        self.client.fetch(vendor_path, expect=404)
 
     def test_status_pagination_and_history(self):
         self.client.login()
@@ -205,43 +218,48 @@ class HTTPServerCLITest(ServerTestCase):
         self.client.login()
         self.enable_builtin_templates()
         # Deleted dynamic entries must not be reseeded on restart.
-        vendor = self.client.request(
+        self.client.request(
             "/admin/api/vendors",
-            {"id": "cli-example", "name": {"en": "CLI fixture", "zh-CN": "CLI 测试"}},
+            {"id": "cli-example", "name": {"en": "CLI fixture", "zh-CN": "CLI 测试"}, "enabled": True},
             method="POST",
             expect=201,
-        )["vendor"]
+        )
         app = self.client.request(
-            "/admin/api/vendors/cli-example/apps",
+            "/admin/api/apps",
             {
+                "vendor": "cli-example",
                 "id": "files",
                 "name": {"en": "Files", "zh-CN": "文件"},
                 "provider": "http-cache",
-                "base_url": "http://127.0.0.1:9/files",
+                "base_urls": ["http://127.0.0.1:9/files"],
+                "enabled": True,
             },
             method="POST",
             expect=201,
-        )["app"]
+        )
         self.client.request(
-            "/admin/api/apps/cli-example/files",
-            {"confirm_key": "cli-example/files", "confirm_uid": app["uid"]},
+            "/admin/api/apps/cli-example/files?confirm_uid=" + app["uid"],
             method="DELETE",
             if_match=app["revision"],
         )
-        vendor = self.read("/admin/api/vendors/cli-example")["vendor"]
-        self.client.request(
-            "/admin/api/vendors/cli-example", {"confirm_key": "cli-example"}, method="DELETE", if_match=vendor["revision"]
-        )
+        vendor = self.read("/admin/api/vendors/cli-example")
+        self.client.fetch("/admin/api/vendors/cli-example", method="DELETE", if_match=vendor["revision"], expect=204)
+        # The release channel TTL is the configuration path cache_ttl_seconds.
         ttls = [("openai/codex", 120), ("anthropic/claude-code", 180)]
         for app, ttl in ttls:
-            path = "/admin/api/apps/" + app + "/settings"
+            path = "/admin/api/apps/" + app + "/configuration"
             previous = self.read(path)
-            saved = self.write(path, {"channel_ttl_seconds": ttl}, previous["revision"])
-            self.assertEqual(saved["channel_ttl_seconds"], ttl)
-            self.client.fetch(path, {"channel_ttl_seconds": 300}, method="PUT", if_match=previous["revision"], expect=409)
-        self.assertEqual(self.read("/admin/api/apps/openai/codex/settings")["channel_ttl_seconds"], 120)
+            response = self.client.fetch(
+                path, {"set": {"cache_ttl_seconds": ttl}}, method="PATCH", if_match=previous["revision"]
+            )
+            saved = response.json()
+            self.assertEqual(response.headers["ETag"], f'"{saved["revision"]}"')
+            self.assertEqual(saved["effective"]["cache_ttl_seconds"], ttl)
+            stale = {"set": {"cache_ttl_seconds": 300}}
+            self.client.fetch(path, stale, method="PATCH", if_match=previous["revision"], expect=409)
+        self.assertEqual(self.read("/admin/api/apps/openai/codex")["cache_ttl_seconds"], 120)
         self.client.fetch("/admin/api/settings", expect=404)
-        self.client.fetch("/admin/api/apps/unknown/tool/settings", expect=404)
+        self.client.fetch("/admin/api/apps/unknown/tool/configuration", expect=404)
 
         site_path = "/admin/api/settings/site"
         site = self.read(site_path)
@@ -297,7 +315,7 @@ class HTTPServerCLITest(ServerTestCase):
         self.client.fetch("/admin/api/apps/cli-example/files", expect=404)
         self.client.fetch("/admin/api/apps/cli-example/files/sources", expect=404)
         for app, ttl in ttls:
-            self.assertEqual(self.read("/admin/api/apps/" + app + "/settings")["channel_ttl_seconds"], ttl)
+            self.assertEqual(self.read("/admin/api/apps/" + app)["cache_ttl_seconds"], ttl)
         healthcheck = run_cli(["healthcheck"], self.server.directory, self.server.environment)
         self.assertEqual(healthcheck.returncode, 0, healthcheck.stderr)
         forwarded = {"Forwarded": "proto=https;host=untrusted.example", "Origin": None}

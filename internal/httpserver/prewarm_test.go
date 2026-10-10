@@ -48,8 +48,7 @@ func startWarm(t *testing.T, h *harness, key string, input any, status int) stor
 }
 func warmApp(t *testing.T, h *harness, provider, base string) {
 	h.createVendor("warm")
-	v, _ := h.server.store.Vendor("warm")
-	h.request("PATCH", "/admin/api/vendors/warm", map[string]any{"revision": v.Revision, "enabled": true}, 200, nil)
+	h.setEnabled("vendors/warm", true)
 	h.createApp("warm", "app", provider, map[string]any{"base_url": base, "enabled": true, "cache_ttl_seconds": 300})
 }
 func TestPrewarmHTTPBackgroundIdempotencyPagesAndRetry(t *testing.T) {
@@ -264,7 +263,7 @@ func TestPrewarmManualIgnoresMetadataChangesAndDeletionDrains(t *testing.T) {
 	second := startWarm(t, h, "warm/app", map[string]any{"request_id": strings.Repeat("b", 32), "paths": []string{"/block"}}, 200)
 	<-deleted
 	app, _ = h.server.store.Application("warm/app")
-	h.request("DELETE", "/admin/api/apps/warm/app", deleteBody(app), 200, nil)
+	h.deleteApp(app.Key, app.UID, app.Revision, 200)
 	h.request("GET", "/admin/api/apps/warm/app/prewarm/"+second.ID, nil, 404, nil)
 	var jobs int
 	if err := h.server.store.DB.QueryRow(`SELECT count(*) FROM prewarm_jobs WHERE app_uid=?`, app.UID).Scan(&jobs); err != nil || jobs != 0 {

@@ -19,9 +19,6 @@ import (
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
-func deleteBody(a store.Application) map[string]any {
-	return map[string]any{"revision": a.Revision, "confirm_key": a.Key, "confirm_uid": a.UID}
-}
 func awaitClosed(t *testing.T, c <-chan struct{}) {
 	t.Helper()
 	select {
@@ -78,15 +75,13 @@ func TestForceDeleteCancelsCacheOriginWithoutInterruptingSibling(t *testing.T) {
 	awaitClosed(t, startedA)
 	awaitClosed(t, startedB)
 	// Invalid requests must not cancel anything.
-	bad := deleteBody(a)
-	bad["revision"] = a.Revision + 100
-	h.request("DELETE", "/admin/api/apps/"+a.Key, bad, 409, nil)
+	h.deleteApp(a.Key, a.UID, a.Revision+100, 409)
 	select {
 	case <-stoppedA:
 		t.Fatal("revision rejection canceled transfer")
 	default:
 	}
-	h.request("DELETE", "/admin/api/apps/"+a.Key, deleteBody(a), 200, nil)
+	h.deleteApp(a.Key, a.UID, a.Revision, 200)
 	awaitClosed(t, stoppedA)
 	select {
 	case got := <-ar:
@@ -113,9 +108,9 @@ func TestForceDeleteCancelsCacheOriginWithoutInterruptingSibling(t *testing.T) {
 	if _, err := h.server.store.Application(b.Key); err != nil {
 		t.Fatal(err)
 	}
-	h.request("DELETE", "/admin/api/apps/"+a.Key, deleteBody(a), 200, nil)
+	expectCode(t, h.deleteApp(a.Key, a.UID, a.Revision, 404), codeApplicationNotFound)
 	replacement := h.createApp("force", "a", "info", nil)
-	h.request("DELETE", "/admin/api/apps/"+a.Key, deleteBody(a), 409, nil)
+	expectCode(t, h.deleteApp(a.Key, a.UID, replacement.Revision, 409), codeRevisionConflict)
 	if row, err := h.server.store.Application(replacement.Key); err != nil || row.UID != replacement.UID || row.DeletedAt != nil {
 		t.Fatal("old delete reached replacement", row, err)
 	}
@@ -139,8 +134,8 @@ func TestForceDeleteTimeoutBlocksAdmissionAndRestartsFromIntent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
-	data, _ := h.request("DELETE", "/admin/api/apps/"+a.Key, deleteBody(a), 409, nil)
-	if !strings.Contains(string(data), "DIRECTORY_DELETE_PENDING") || !strings.Contains(string(data), `"retryable":true`) {
+	data := h.deleteApp(a.Key, a.UID, a.Revision, 409)
+	if expectCode(t, data, codeApplicationDeletePending); !strings.Contains(string(data), `"retryable":true`) {
 		t.Fatal(string(data))
 	}
 	if ctx.Err() == nil {
@@ -152,13 +147,13 @@ func TestForceDeleteTimeoutBlocksAdmissionAndRestartsFromIntent(t *testing.T) {
 	if _, _, err = h.server.store.ApplicationWork(context.Background(), a.StorageID()); !errors.Is(err, store.ErrSourceInactive) {
 		t.Fatal("new work admitted", err)
 	}
-	h.request("DELETE", "/admin/api/apps/"+a.Key, deleteBody(a), 409, nil)
+	expectCode(t, h.deleteApp(a.Key, a.UID, a.Revision, 409), codeApplicationDeletePending)
 	// A failed final transaction must retain the intent and files, with the same retry response.
 	release()
 	if _, err = h.server.store.DB.Exec(`CREATE TEMP TRIGGER fail_final_delete BEFORE DELETE ON applications BEGIN SELECT RAISE(ABORT,'isolated final-delete failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	h.request("DELETE", "/admin/api/apps/"+a.Key, deleteBody(a), 409, nil)
+	expectCode(t, h.deleteApp(a.Key, a.UID, a.Revision, 409), codeApplicationDeletePending)
 	if _, err = os.Stat(filepath.Join(dir, "objects", "hosted", file.ID)); err != nil {
 		t.Fatal("failed transaction deleted the body", err)
 	}
@@ -212,7 +207,7 @@ func TestForceDeleteStopsHostedImportBeforePublishing(t *testing.T) {
 		done <- err
 	}()
 	awaitClosed(t, started)
-	h.request("DELETE", "/admin/api/apps/"+a.Key, deleteBody(a), 200, nil)
+	h.deleteApp(a.Key, a.UID, a.Revision, 200)
 	select {
 	case err := <-done:
 		if err == nil {
@@ -290,7 +285,7 @@ func TestForceDeleteAbortsHostedHTTP2StreamAndPreservesSiblingStream(t *testing.
 		doneB <- e
 	}()
 	awaitClosed(t, startedB)
-	h.request("DELETE", "/admin/api/apps/"+a.Key, deleteBody(a), 200, nil)
+	h.deleteApp(a.Key, a.UID, a.Revision, 200)
 	data, err := io.ReadAll(response.Body)
 	if err == nil || len(data) == size {
 		t.Fatal("held target stream was not aborted", len(data), err)
@@ -353,6 +348,6 @@ func TestForceDeleteDrainsCachedMetadataResponse(t *testing.T) {
 	if calls.Load() != 1 {
 		t.Fatal("fixture must serve durable metadata cache")
 	}
-	h.request("DELETE", "/admin/api/apps/"+a.Key, deleteBody(a), 200, nil)
+	h.deleteApp(a.Key, a.UID, a.Revision, 200)
 	awaitClosed(t, done)
 }

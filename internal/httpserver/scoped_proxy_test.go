@@ -64,15 +64,17 @@ func TestScopedProxiesRouteCatalogArtifactsHTTPAndHostedImports(t *testing.T) {
 	defer second.Close()
 	h.request("POST", "/admin/api/vendors", map[string]any{"id": "routing", "name": map[string]string{"en": "Routing", "zh-CN": "路由"}, "enabled": true}, 201, nil)
 	for _, entry := range []struct{ id, provider string }{{"release", "codex"}, {"cache", "http-cache"}, {"hosted", "hosted"}} {
-		input := map[string]any{"id": entry.id, "provider": entry.provider, "name": map[string]string{"en": entry.id, "zh-CN": entry.id}, "enabled": true}
+		input := map[string]any{"vendor": "routing", "id": entry.id, "provider": entry.provider, "name": map[string]string{"en": entry.id, "zh-CN": entry.id}, "enabled": true}
 		if entry.provider != "hosted" {
 			input["base_url"] = origin.URL
 			input["cache_ttl_seconds"] = 60
 			if entry.provider == "http-cache" {
+				delete(input, "base_url")
+				input["base_urls"] = []string{origin.URL}
 				input["cache_ttl_seconds"] = 0
 			}
 		}
-		h.request("POST", "/admin/api/vendors/routing/apps", input, 201, nil)
+		h.request("POST", "/admin/api/apps", input, 201, nil)
 	}
 	if err := h.server.pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: first.URL}, h.server.pool.Proxy().Revision); err != nil {
 		t.Fatal(err)

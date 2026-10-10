@@ -119,8 +119,14 @@ func (s *Store) ExportConfiguration(options ExportOptions) (configexchange.Packa
 			return p, ErrInvalidDirectory
 		}
 		uid, _, deleted := st.exchangeEntity(sel.Kind, sel.Key)
-		if uid == "" || deleted {
-			return p, ErrInvalidDirectory
+		if uid == "" && sel.Kind == "Vendor" {
+			return p, ErrVendorNotFound
+		}
+		if uid == "" {
+			return p, ErrApplicationNotFound
+		}
+		if deleted {
+			return p, invalidf("%s is deleted", sel.Key)
 		}
 		entries[templateKey(sel.Kind, sel.Key)] = entry{sel.Kind, sel.Key, options.Mode}
 		if sel.Kind == "App" {
@@ -310,15 +316,19 @@ func makeImportPlan(st configurationState, documents []configexchange.Document, 
 		if deleted {
 			return plan, ErrDirectoryDeleted
 		}
-		row := ImportItem{Kind: d.Kind, Key: d.Key(), Target: target, UID: uid, Revision: revision, NotesRevision: candidate.Notes[configKey(d.Kind, uid)].Revision, Action: "create", Differences: []ImportDifference{}, Requirements: []string{}, Omitted: append([]string{}, d.OmittedFields...)}
+		row := ImportItem{Kind: d.Kind, Key: d.Key(), Target: target, UID: uid, Revision: revision, Action: "create", Differences: []ImportDifference{}, Requirements: []string{}, Omitted: append([]string{}, d.OmittedFields...)}
 		if uid != "" {
 			row.Action = "skip"
+			row.NotesRevision = candidate.Notes[configKey(d.Kind, uid)].current()
 		}
 		if choice.Action != "" {
 			row.Action = choice.Action
 		}
-		if row.Action != "create" && row.Action != "skip" && row.Action != "update" || uid == "" && row.Action == "update" || uid != "" && row.Action == "create" {
-			return plan, ErrConflict
+		if uid != "" && row.Action == "create" {
+			return plan, ErrDirectoryExists
+		}
+		if row.Action != "create" && row.Action != "skip" && row.Action != "update" || uid == "" && row.Action == "update" {
+			return plan, invalidf("%s cannot be imported with action %q", target, row.Action)
 		}
 		oldCfg := candidate.Configs[configKey(d.Kind, uid)]
 		var before Object
@@ -334,7 +344,7 @@ func makeImportPlan(st configurationState, documents []configexchange.Document, 
 			row.TemplateMissing = !ok || !t.Present
 			row.TemplateHashMismatch = ok && t.Hash != d.TemplateHash
 			if !ok || !t.Present && (uid == "" || oldCfg.Ref == nil || *oldCfg.Ref != *cfg.Ref) {
-				return plan, fmt.Errorf("%w: template unavailable; use an independent copy", ErrInvalidDirectory)
+				return plan, invalidf("template unavailable; use an independent copy")
 			}
 			if err := validateOverrides(d.Kind, cfg.Overrides); err != nil {
 				return plan, ErrInvalidDirectory
@@ -402,7 +412,7 @@ func makeImportPlan(st configurationState, documents []configexchange.Document, 
 			} else {
 				parent, _, gone := candidate.exchangeEntity("Vendor", meta.Vendor)
 				if parent == "" || gone {
-					return plan, fmt.Errorf("%w: target vendor required", ErrInvalidDirectory)
+					return plan, invalidf("target vendor required")
 				}
 				provider := ""
 				if cfg.Ref != nil {
@@ -424,7 +434,7 @@ func makeImportPlan(st configurationState, documents []configexchange.Document, 
 			if choice.Proxy != nil {
 				// No saved password is bound to an import choice; use keep_effective_proxy.
 				if _, err := networkproxy.KeepRedactedPassword(*choice.Proxy, networkproxy.Config{}); err != nil {
-					return plan, fmt.Errorf("%w: %s", ErrInvalidDirectory, err)
+					return plan, invalidf("%s", err)
 				}
 				proxy = *choice.Proxy
 			} else if choice.KeepEffectiveProxy && before != nil {
@@ -461,7 +471,7 @@ func makeImportPlan(st configurationState, documents []configexchange.Document, 
 				if row.Action == "update" && !choice.UpdateNotes {
 					row.Requirements = append(row.Requirements, "confirm_notes_update")
 				} else {
-					candidate.Notes[configKey(d.Kind, uid)] = AdminNotes{Text: *d.AdminNotes, Revision: old.Revision + 1}
+					candidate.Notes[configKey(d.Kind, uid)] = AdminNotes{Text: *d.AdminNotes, Revision: old.current() + 1}
 				}
 			}
 		}
@@ -695,7 +705,7 @@ func (s *Store) ExecuteConfigurationImport(plan ImportPlan, id string, trust boo
 		return nil
 	}, func(tx *sql.Tx) error {
 		if len(guard) > 0 && !guard[0]() {
-			return ErrConflict
+			return ErrImportGuard
 		}
 		if _, e := tx.Exec(`DELETE FROM configuration_import_receipts WHERE created_s<?`, time.Now().Add(-24*time.Hour).Unix()); e != nil {
 			return e
@@ -710,6 +720,10 @@ func (s *Store) ExecuteConfigurationImport(plan ImportPlan, id string, trust boo
 }
 
 var errImportReceipt = errors.New("import receipt already exists")
+
+// ErrImportGuard means the caller's guard (the preview's session) rejected
+// the import just before commit; nothing was changed.
+var ErrImportGuard = errors.New("import guard rejected the commit")
 
 type CopyApplicationInput struct {
 	SourceUID      string `json:"source_uid"`
@@ -728,25 +742,33 @@ func (s *Store) CopyApplication(source string, input CopyApplicationInput) (Appl
 	target := input.TargetVendor + "/" + input.TargetID
 	err := s.changeConfiguration(func(st *configurationState) error {
 		uid, rev, deleted := st.exchangeEntity("App", source)
-		if uid == "" || deleted || uid != input.SourceUID || rev != input.SourceRevision {
+		switch {
+		case uid == "":
+			return ErrApplicationNotFound
+		case deleted:
+			return ErrDirectoryDeleted
+		case uid != input.SourceUID || rev != input.SourceRevision:
 			return ErrConflict
 		}
 		if existing, _, _ := st.exchangeEntity("App", target); existing != "" {
 			return ErrDirectoryExists
 		}
 		parent, _, gone := st.exchangeEntity("Vendor", input.TargetVendor)
-		if parent == "" || gone {
-			return ErrInvalidDirectory
+		if parent == "" {
+			return ErrVendorNotFound
+		}
+		if gone {
+			return ErrDirectoryDeleted
 		}
 		old := st.Configs[configKey("App", uid)]
 		cfg := ownedConfig{Overrides: Object{}}
 		if input.Mode == "linked" {
 			if old.Ref == nil {
-				return ErrInvalidDirectory
+				return invalidf("linked copies need a source linked to a template")
 			}
 			t, exists := st.Templates[templateKey("App", *old.Ref)]
 			if !exists || !t.Present {
-				return ErrInvalidDirectory
+				return invalidf("the source template is unavailable; use an independent copy")
 			}
 			ref := *old.Ref
 			cfg.Ref = &ref
@@ -772,7 +794,7 @@ func (s *Store) CopyApplication(source string, input CopyApplicationInput) (Appl
 		st.Configs[configKey("App", fresh)] = cfg
 		if input.IncludeNotes {
 			note := st.Notes[configKey("App", uid)]
-			if note.Revision != input.NotesRevision {
+			if note.current() != input.NotesRevision {
 				return ErrConflict
 			}
 			st.Notes[configKey("App", fresh)] = AdminNotes{Text: note.Text, Revision: 1}

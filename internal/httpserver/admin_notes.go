@@ -2,49 +2,73 @@ package httpserver
 
 import (
 	"net/http"
-
-	"github.com/PMExtra/RedApp/internal/store"
 )
 
-// Reached only through admin(), after session and CSRF validation.
-func (s *Server) adminNotesAPI(w http.ResponseWriter, r *http.Request, kind, key string) {
-	w.Header().Set("Cache-Control", "no-store")
-	if !queryAllowed(r) {
-		fail(w, 400, "Unexpected query parameters")
+// Private notes of vendors and applications. They have their own revision
+// (1 before the first save) and never appear in other documents.
+
+type adminNotesDTO struct {
+	Text     string `json:"text"`
+	Revision int64  `json:"revision"`
+}
+
+type adminNotesRequest struct {
+	Text *string `json:"text"`
+}
+
+// notesTarget resolves the notes owner of the route: the store kind, key and
+// the not-found code.
+func notesTarget(r *http.Request) (kind, key string, notFound errorCode, e *apiError) {
+	if r.PathValue("app") == "" {
+		key, e = vendorParam(r)
+		return "vendor", key, codeVendorNotFound, e
+	}
+	key, e = appParam(r)
+	return "app", key, codeApplicationNotFound, e
+}
+
+// getNotes serves getVendorNotes and getAppNotes.
+func (s *Server) getNotes(w http.ResponseWriter, r *http.Request) {
+	kind, key, notFound, e := notesTarget(r)
+	if e != nil {
+		s.writeError(w, r, e)
 		return
 	}
-	if r.Method == http.MethodGet {
-		value, err := s.store.AdminNotes(kind, key)
-		if err != nil {
-			directoryError(w, err)
-			return
-		}
-		revisionReply(w, value.Revision, value)
+	notes, err := s.store.AdminNotes(kind, key)
+	if err != nil {
+		s.writeError(w, r, directoryFailure(err, notFound))
 		return
 	}
-	if r.Method != http.MethodPut {
-		fail(w, 405, "Method not allowed")
+	writeRevision(w, http.StatusOK, notes.Revision, adminNotesDTO{Text: notes.Text, Revision: notes.Revision})
+}
+
+// replaceNotes serves replaceVendorNotes and replaceAppNotes.
+func (s *Server) replaceNotes(w http.ResponseWriter, r *http.Request) {
+	kind, key, notFound, e := notesTarget(r)
+	if e != nil {
+		s.writeError(w, r, e)
 		return
 	}
-	var value store.AdminNotes
-	if err := decodeLimit(w, r, &value, 128<<10); err != nil {
-		fail(w, 400, "Invalid notes")
+	revision, e := ifMatch(r)
+	if e != nil {
+		s.writeError(w, r, e)
 		return
 	}
-	if r.Header.Get("If-Match") != "" {
-		var err error
-		value.Revision, err = expectedRevision(r)
-		if err != nil {
-			fail(w, 400, "Invalid revision")
-			return
-		}
+	var in adminNotesRequest
+	if e = decodeJSON(r, &in); e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	if in.Text == nil {
+		s.fail(w, r, codeInvalidRequest, nil, "text is required")
+		return
 	}
 	s.directoryMu.Lock()
 	defer s.directoryMu.Unlock()
-	value, err := s.store.SaveAdminNotes(kind, key, value.Revision, value.Text)
+	notes, err := s.store.SaveAdminNotes(kind, key, revision, *in.Text)
 	if err != nil {
-		directoryError(w, err)
+		s.writeError(w, r, directoryFailure(err, notFound))
 		return
 	}
-	revisionReply(w, value.Revision, value)
+	writeRevision(w, http.StatusOK, notes.Revision, adminNotesDTO{Text: notes.Text, Revision: notes.Revision})
 }

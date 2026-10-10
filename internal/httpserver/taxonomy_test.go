@@ -5,110 +5,95 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-
-	"github.com/PMExtra/RedApp/internal/store"
 )
 
 func TestCategoriesTagsPublicPrivacyAndSearch(t *testing.T) {
 	h := newHarness(t)
-	h.request("GET", "/admin/api/categories", nil, 401, nil)
-	h.login(h.password)
+	h.expectError("GET", "/admin/api/categories", nil, 401, codeAuthRequired, nil)
+	h.login("")
 	h.request("POST", "/admin/api/vendors", map[string]any{"id": "taxonomy", "name": map[string]string{"en": "Taxonomy", "zh-CN": "分类"}, "enabled": true}, 201, nil)
-	create := func(id string, enabled bool) {
-		h.request("POST", "/admin/api/vendors/taxonomy/apps", map[string]any{"id": id, "provider": "info", "name": map[string]string{"en": "Search " + id, "zh-CN": "中文"}, "enabled": enabled}, 201, nil)
+	for _, app := range []struct {
+		id      string
+		enabled bool
+	}{{"own", true}, {"peer", true}, {"disabled", false}} {
+		h.request("POST", "/admin/api/apps", map[string]any{"vendor": "taxonomy", "id": app.id, "provider": "info", "name": map[string]string{"en": "Search " + app.id, "zh-CN": "中文"}, "enabled": app.enabled}, 201, nil)
 	}
-	create("own", true)
-	create("peer", true)
-	create("disabled", false)
-	save := func(key string, body map[string]any, status int) []byte {
-		raw, _ := h.request("GET", "/admin/api/apps/"+key+"/configuration", nil, 200, nil)
-		body["revision"] = configurationValue(t, raw).Revision
-		raw, _ = h.request("PATCH", "/admin/api/apps/"+key+"/configuration", body, status, nil)
-		return raw
+	// New categories are typed names saved with the application in one request.
+	h.patchConfiguration("apps/taxonomy/own", map[string]any{"set": map[string]any{"categories": []string{}, "tags": []string{"#Private Tag", "private tag"}}, "new_categories": []string{"Tools"}}, 200)
+	h.patchConfiguration("apps/taxonomy/peer", map[string]any{"set": map[string]any{"categories": []string{"tools", "tools"}}}, 200)
+	h.patchConfiguration("apps/taxonomy/disabled", map[string]any{"set": map[string]any{"categories": []string{"tools"}}, "new_categories": []string{"Private only"}}, 200)
+	expectCode(t, h.patchConfiguration("apps/taxonomy/peer", map[string]any{"set": map[string]any{"categories": []string{"unknown"}}}, 400), codeValidationFailed)
+	if peer := h.adminApp("taxonomy/peer"); strings.Join(peer.Categories, ",") != "tools" {
+		t.Fatal("categories not normalized", peer.Categories)
 	}
-	// New categories are typed names saved with the App in one request.
-	save("taxonomy/own", map[string]any{"set": map[string]any{"categories": []string{}, "tags": []string{"#Private Tag", "private tag"}}, "new_categories": []string{"Tools"}}, 200)
-	// The entity PATCH accepts the categories set; the removed single-value field is rejected.
-	peer, _ := h.server.store.Application("taxonomy/peer")
-	h.request("PATCH", "/admin/api/apps/taxonomy/peer", map[string]any{"revision": peer.Revision, "category": "tools"}, 400, nil)
-	h.request("PATCH", "/admin/api/apps/taxonomy/peer", map[string]any{"revision": peer.Revision, "categories": []string{"tools", "tools"}}, 200, nil)
-	if peer, _ = h.server.store.Application("taxonomy/peer"); strings.Join(peer.Categories, ",") != "tools" {
-		t.Fatal("entity PATCH categories", peer.Categories)
+	if own := h.adminApp("taxonomy/own"); strings.Join(own.Tags, ",") != "Private Tag" || strings.Join(own.Categories, ",") != "tools" {
+		t.Fatal("tags not normalized", own.Tags, own.Categories)
 	}
-	save("taxonomy/disabled", map[string]any{"set": map[string]any{"categories": []string{"tools"}}, "new_categories": []string{"Private only"}}, 200)
-	save("taxonomy/peer", map[string]any{"set": map[string]any{"categories": []string{"unknown"}}}, 400)
-	save("taxonomy/peer", map[string]any{"set": map[string]any{"name.en": "x"}, "new_categories": []string{"Orphan"}}, 400)
-	raw, _ := h.request("GET", "/admin/api/categories?q=o", nil, 200, nil)
-	var listing store.Page[store.CategoryListItem]
-	json.Unmarshal(raw, &listing)
-	if listing.Total != 2 || listing.Items[0].ID != "private-only" || listing.Items[0].Applications != 1 || listing.Items[1].ID != "tools" || listing.Items[1].Applications != 3 {
-		t.Fatal("category listing", string(raw))
+	listing := getJSON[pageDTO[categoryDTO]](h, "/admin/api/categories?q=o")
+	if listing.Total != 2 || listing.Limit != 25 || listing.Items[0].ID != "private-only" || listing.Items[0].Applications != 1 || listing.Items[1].ID != "tools" || listing.Items[1].Applications != 3 {
+		t.Fatal("category listing", listing)
 	}
-	own, _ := h.server.store.Application("taxonomy/own")
-	if strings.Join(own.Tags, ",") != "Private Tag" {
-		t.Fatal("tags not normalized", own.Tags)
+	data, headers := h.request("GET", "/admin/api/categories/tools", nil, 200, nil)
+	tools := decodeJSONBody[categoryDTO](t, data)
+	if tools.Builtin || tools.Defaults != nil || tools.TemplateRef != nil || tools.Name.En != "Tools" || headers.Get("ETag") != etag(tools.Revision) || tools.Fields["name.en"].Source != "custom" || bytes.Contains(data, []byte(`"kind"`)) {
+		t.Fatal("category document", string(data))
 	}
-	raw, _ = h.request("GET", "/api/bootstrap", nil, 200, nil)
-	var bootstrapBefore map[string]any
-	json.Unmarshal(raw, &bootstrapBefore)
-	tools := listing.Items[1]
-	h.request("PATCH", "/admin/api/categories/tools", map[string]any{"revision": tools.Revision, "set": map[string]any{"id": "new"}}, 400, nil)
-	oldCSRF := h.csrf
-	h.csrf = ""
-	h.request("PATCH", "/admin/api/categories/tools", map[string]any{"revision": tools.Revision, "set": map[string]any{"name.en": "Blocked"}}, 403, nil)
-	h.csrf = oldCSRF
-	h.request("PATCH", "/admin/api/categories/tools", map[string]any{"revision": tools.Revision, "set": map[string]any{"name.en": "Tools renamed"}}, 200, nil)
-	after, _ := h.server.store.Application("taxonomy/own")
-	if after.Revision != own.Revision || after.RuntimeRevision != own.RuntimeRevision || after.SourceEpoch != own.SourceEpoch {
-		t.Fatal("category rename touched app")
+	h.expectError("GET", "/admin/api/categories/missing", nil, 404, codeCategoryNotFound, nil)
+	h.expectError("GET", "/admin/api/categories/Bad_ID", nil, 400, codeInvalidPath, nil)
+	bootstrapBefore := getJSON[bootstrapDTO](h, "/api/bootstrap")
+	path := "/admin/api/categories/tools"
+	h.expectError("PATCH", path, map[string]any{"set": map[string]any{"id": "new"}}, 400, codeInvalidRequest, ifMatchHeader(tools.Revision))
+	h.expectError("PATCH", path, map[string]any{"set": map[string]any{"name.en": "Blocked"}}, 400, codeIfMatchRequired, nil)
+	h.expectError("PATCH", path, map[string]any{"set": map[string]any{"name.en": "Blocked"}}, 409, codeRevisionConflict, ifMatchHeader(tools.Revision+1))
+	h.expectError("PATCH", path, map[string]any{"unset": []string{"name.en"}}, 400, codeValidationFailed, ifMatchHeader(tools.Revision))
+	h.expectError("PATCH", path, map[string]any{"set": map[string]any{"name.en": "PRIVATE ONLY"}}, 400, codeValidationFailed, ifMatchHeader(tools.Revision))
+	h.expectError("PATCH", path, map[string]any{"set": map[string]any{"name.en": ""}}, 400, codeValidationFailed, ifMatchHeader(tools.Revision))
+	h.expectError("PATCH", "/admin/api/categories/missing", map[string]any{"set": map[string]any{"name.en": "x"}}, 404, codeCategoryNotFound, ifMatchHeader(1))
+	own := h.adminApp("taxonomy/own")
+	data, _ = h.request("PATCH", path, map[string]any{"set": map[string]any{"name.en": "Tools renamed"}}, 200, ifMatchHeader(tools.Revision))
+	if renamed := decodeJSONBody[categoryDTO](t, data); renamed.Revision != tools.Revision+1 || renamed.Name.En != "Tools renamed" || renamed.Applications != 3 {
+		t.Fatal("rename", string(data))
 	}
-	raw, _ = h.request("GET", "/api/bootstrap", nil, 200, nil)
-	var bootstrapAfter map[string]any
-	json.Unmarshal(raw, &bootstrapAfter)
-	if bootstrapAfter["revision"] == bootstrapBefore["revision"] {
-		t.Fatal("public revision unchanged")
+	if after := h.adminApp("taxonomy/own"); after.Revision != own.Revision || after.SourceEpoch != own.SourceEpoch {
+		t.Fatal("category rename touched the application")
 	}
-	// Removed endpoints: tag dictionary, category create/delete and recommendations.
-	h.request("POST", "/admin/api/categories", map[string]any{"id": "x"}, 405, nil)
-	h.request("DELETE", "/admin/api/categories/tools", map[string]any{"revision": 1}, 405, nil)
-	h.request("GET", "/admin/api/taxonomy", nil, 404, nil)
-	h.request("GET", "/admin/categories", nil, 200, nil)
-	h.request("GET", "/admin/taxonomy", nil, 404, nil)
-	h.request("GET", "/api/apps/taxonomy/own/related", nil, 404, nil)
-	for _, path := range []string{"/api/catalog?category=tools&q=Search&limit=1&page=2", "/api/catalog", "/api/bootstrap", "/api/search?q=private", "/api/home"} {
-		raw, _ = h.request("GET", path, nil, 200, nil)
-		for _, secret := range []string{"overrides", "defaults", "proxy_effective", "source_epoch", "base_url", "template_ref", "builtin", "tags", "related"} {
+	if getJSON[bootstrapDTO](h, "/api/bootstrap").Revision == bootstrapBefore.Revision {
+		t.Fatal("public revision unchanged after a rename")
+	}
+	// Category creation and deletion only happen through applications.
+	for _, method := range []string{"POST", "DELETE"} {
+		if code, _, _ := h.raw(method, "/admin/api/categories/tools", nil, "", nil); code < 400 {
+			t.Fatal("category", method, code)
+		}
+	}
+	for _, public := range []string{"/api/catalog?category=tools&q=Search&limit=1&page=2", "/api/catalog", "/api/bootstrap", "/api/search?q=private", "/api/home"} {
+		raw, _ := h.request("GET", public, nil, 200, nil)
+		for _, secret := range []string{"overrides", "defaults", "proxy_effective", "source_epoch", "base_url", "template_ref", "builtin", "tags"} {
 			if bytes.Contains(raw, []byte(`"`+secret+`"`)) {
-				t.Fatal("private projection", path, secret)
+				t.Fatal("private projection", public, secret)
 			}
 		}
-		if bytes.Contains(raw, []byte("Private Tag")) {
-			t.Fatal("tag text published", path)
-		}
-		if strings.Contains(string(raw), "private-only") || strings.Contains(string(raw), "taxonomy/disabled") {
-			t.Fatal("disabled data leaked", path)
+		if bytes.Contains(raw, []byte("Private Tag")) || bytes.Contains(raw, []byte("private-only")) || bytes.Contains(raw, []byte("taxonomy/disabled")) {
+			t.Fatal("private or disabled data published", public)
 		}
 	}
-	raw, _ = h.request("GET", "/api/catalog?category=tools&q=Search&limit=1&page=2", nil, 200, nil)
 	var result struct {
-		Items      []map[string]any
-		Total      int
-		Categories []store.CategoryCount
+		Items      []map[string]any   `json:"items"`
+		Total      int                `json:"total"`
+		Categories []categoryCountDTO `json:"categories"`
 	}
-	json.Unmarshal(raw, &result)
-	if result.Total != 2 || len(result.Items) != 1 || result.Items[0]["key"] != "taxonomy/peer" || len(result.Categories) != 1 || result.Categories[0].Name.En != "Tools renamed" || result.Categories[0].Count != 2 {
+	raw, _ := h.request("GET", "/api/catalog?category=tools&q=Search&limit=1&page=2", nil, 200, nil)
+	if json.Unmarshal(raw, &result) != nil || result.Total != 2 || len(result.Items) != 1 || result.Items[0]["key"] != "taxonomy/peer" || len(result.Categories) != 1 || result.Categories[0].Name.En != "Tools renamed" || result.Categories[0].Count != 2 {
 		t.Fatal(string(raw))
 	}
-	// Counts are site-wide and do not follow the search text; tag search still finds the App.
+	// Counts are site-wide; tag search still finds the application.
 	raw, _ = h.request("GET", "/api/catalog?q=%23private", nil, 200, nil)
-	json.Unmarshal(raw, &result)
-	if result.Total != 1 || result.Items[0]["key"] != "taxonomy/own" || len(result.Categories) != 1 || result.Categories[0].Count != 2 {
+	if json.Unmarshal(raw, &result) != nil || result.Total != 1 || result.Items[0]["key"] != "taxonomy/own" || result.Categories[0].Count != 2 {
 		t.Fatal("tag search or site-wide counts", string(raw))
 	}
-	raw, _ = h.request("GET", "/api/search?q=private", nil, 200, nil)
-	if !bytes.Contains(raw, []byte(`"key":"taxonomy/own"`)) {
-		t.Fatal("public suggestions ignore tags", string(raw))
+	// Names that older data made ambiguous must be chosen explicitly.
+	if _, err := h.store.DB.Exec(`UPDATE categories SET name_zh_cn='Tools renamed' WHERE id='private-only'`); err != nil {
+		t.Fatal(err)
 	}
-	h.request("GET", "/api/catalog?category=bad/slug", nil, 400, nil)
-	h.request("GET", "/admin/api/categories?kind=categories", nil, 400, nil)
+	expectCode(t, h.patchConfiguration("apps/taxonomy/peer", map[string]any{"set": map[string]any{"categories": []string{}}, "new_categories": []string{"tools RENAMED"}}, 409), codeCategoryAmbiguous)
 }

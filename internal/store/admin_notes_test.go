@@ -26,10 +26,10 @@ func TestAdminNotesRestartPreservesDataAndStableIdentity(t *testing.T) {
 
 	for _, item := range []struct{ kind, key string }{{"vendor", v.ID}, {"app", a.Key}} {
 		empty, err := s.AdminNotes(item.kind, item.key)
-		if err != nil || empty != (AdminNotes{}) {
+		if err != nil || empty != (AdminNotes{Revision: 1}) {
 			t.Fatal(empty, err)
 		}
-		if _, err = s.SaveAdminNotes(item.kind, item.key, 0, item.kind+" private\n\ttext"); err != nil {
+		if _, err = s.SaveAdminNotes(item.kind, item.key, 1, item.kind+" private\n\ttext"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -41,7 +41,7 @@ func TestAdminNotesRestartPreservesDataAndStableIdentity(t *testing.T) {
 	defer s.DB.Close()
 	for _, item := range []struct{ kind, key string }{{"vendor", v.ID}, {"app", a.Key}} {
 		got, err := s.AdminNotes(item.kind, item.key)
-		if err != nil || got.Text != item.kind+" private\n\ttext" || got.Revision != 1 {
+		if err != nil || got.Text != item.kind+" private\n\ttext" || got.Revision != 2 {
 			t.Fatal(got, err)
 		}
 	}
@@ -64,7 +64,7 @@ func TestAdminNotesRestartPreservesDataAndStableIdentity(t *testing.T) {
 	}
 	for _, item := range []struct{ kind, key string }{{"vendor", v2.ID}, {"app", a2.Key}} {
 		got, err := s.AdminNotes(item.kind, item.key)
-		if err != nil || got != (AdminNotes{}) {
+		if err != nil || got != (AdminNotes{Revision: 1}) {
 			t.Fatal("notes leaked to recreated identity", got, err)
 		}
 	}

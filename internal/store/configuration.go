@@ -82,7 +82,7 @@ func (p *ConfigurationPatch) UnmarshalJSON(raw []byte) error {
 		}
 	}
 	if p.Revision < 1 {
-		return fmt.Errorf("%w: positive revision is required", ErrInvalidDirectory)
+		return invalidf("positive revision is required")
 	}
 	return nil
 }
@@ -149,6 +149,24 @@ func paths(kind string) []string {
 		return append(out, "localized_icons.en", "localized_icons.zh-CN")
 	}
 	return append(out, "instructions.en", "instructions.zh-CN", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "retention", "prewarm", "categories", "tags")
+}
+
+// AppPathApplies reports whether an application configuration path (or a
+// top-level spec field such as http_policy) applies to the provider: base_url
+// to release providers, base_urls, source_strategy and http_policy to
+// http-cache, retention and prewarm to release providers and
+// cache_ttl_seconds to every provider with an upstream.
+func AppPathApplies(provider, path string) bool {
+	field, _, _ := strings.Cut(path, ".")
+	switch field {
+	case "base_url", "retention", "prewarm":
+		return presets.VersionsProvider(provider)
+	case "base_urls", "source_strategy", "http_policy":
+		return provider == "http-cache"
+	case "cache_ttl_seconds":
+		return provider == "http-cache" || presets.VersionsProvider(provider)
+	}
+	return true
 }
 func leaf(in Object, path string) (any, bool) {
 	parts := strings.Split(path, ".")
@@ -220,7 +238,7 @@ func strict(value Object, out any) error {
 	d := json.NewDecoder(bytes.NewReader(encode(value)))
 	d.DisallowUnknownFields()
 	if err := d.Decode(out); err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidDirectory, err)
+		return invalidf("%v", err)
 	}
 	return nil
 }
@@ -261,7 +279,7 @@ func validateOverrides(kind string, over Object) error {
 			}
 			child, ok := v.(map[string]any)
 			if !ok || len(child) == 0 {
-				return fmt.Errorf("%w: unknown override %s", ErrInvalidDirectory, p)
+				return invalidf("unknown override %s", p)
 			}
 			if err := walk(child, p+"."); err != nil {
 				return err
@@ -283,7 +301,7 @@ func (st *configurationState) effective(kind, uid string) (Object, error) {
 	} else {
 		t, ok := st.Templates[templateKey(kind, *c.Ref)]
 		if !ok {
-			return nil, fmt.Errorf("%w: unknown template %s", ErrInvalidDirectory, *c.Ref)
+			return nil, invalidf("unknown template %s", *c.Ref)
 		}
 		effective = merge(t.Spec, c.Overrides)
 	}
@@ -739,7 +757,7 @@ func materialize(st *configurationState, before configurationState) error {
 			a.Categories, a.Tags = []string{}, []string{}
 		}
 		if typed.Provider != a.Provider {
-			return fmt.Errorf("%w: Provider is immutable", ErrInvalidDirectory)
+			return invalidf("Provider is immutable")
 		}
 		in := ApplicationInput{ID: a.ID, Name: LocalizedText{typed.Name.En, typed.Name.ZhCN}, Description: LocalizedText{typed.Description.En, typed.Description.ZhCN}, Icon: typed.Icon, Provider: typed.Provider, BaseURL: typed.BaseURL, BaseURLs: typed.BaseURLs, SourceStrategy: typed.SourceStrategy, CacheTTLSeconds: typed.CacheTTLSeconds, Enabled: a.Enabled}
 		if err = validateApplication(&in); err != nil {
@@ -1209,7 +1227,7 @@ func applyPatch(c *ownedConfig, kind string, patch ConfigurationPatch) error {
 			}
 			normalized, err := normalize(values)
 			if err != nil {
-				return fmt.Errorf("%w: %s", ErrInvalidDirectory, err)
+				return invalidf("%s", err)
 			}
 			patch.Set[p] = encode(normalized)
 		}
@@ -1226,17 +1244,17 @@ func applyPatch(c *ownedConfig, kind string, patch ConfigurationPatch) error {
 			}
 		}
 		if !allowed[p] {
-			return fmt.Errorf("%w: field %s cannot be overridden", ErrInvalidDirectory, p)
+			return invalidf("field %s cannot be overridden", p)
 		}
 		used[p] = true
 	}
 	for _, p := range patch.Unset {
 		if !allowed[p] || used[p] {
-			return fmt.Errorf("%w: invalid or conflicting unset %s", ErrInvalidDirectory, p)
+			return invalidf("invalid or conflicting unset %s", p)
 		}
 		used[p] = true
 		if c.Ref == nil {
-			return fmt.Errorf("%w: independent configuration has no inheritance source", ErrInvalidDirectory)
+			return invalidf("independent configuration has no inheritance source")
 		}
 	}
 	if c.Overrides == nil {
@@ -1305,7 +1323,7 @@ func (s *Store) patchConfiguration(kind, key string, patch ConfigurationPatch, e
 			raw, ok := patch.Set["categories"]
 			var ids []string
 			if kind != "App" || !ok || json.Unmarshal(raw, &ids) != nil {
-				return fmt.Errorf("%w: new categories require the categories field", ErrInvalidDirectory)
+				return invalidf("new categories require the categories field")
 			}
 			created, err := st.resolveNewCategories(patch.NewCategories)
 			if err != nil {
@@ -1335,7 +1353,7 @@ func (s *Store) patchConfiguration(kind, key string, patch ConfigurationPatch, e
 							return e
 						}
 						if _, hasList := patch.Set["base_urls"]; !hasList && normalized != a.BaseURL {
-							return fmt.Errorf("%w: HTTP cache sources use base_urls; base_url must match the first source", ErrInvalidDirectory)
+							return invalidf("HTTP cache sources use base_urls; base_url must match the first source")
 						}
 					}
 				}
@@ -1353,7 +1371,7 @@ func (s *Store) patchConfiguration(kind, key string, patch ConfigurationPatch, e
 			saved, _ := decodeProxy(effective["proxy"])
 			kept, err := networkproxy.KeepRedactedPassword(submitted, saved)
 			if err != nil {
-				return fmt.Errorf("%w: %s", ErrInvalidDirectory, err)
+				return invalidf("%w", err)
 			}
 			set := make(map[string]json.RawMessage, len(patch.Set))
 			for key, value := range patch.Set {
@@ -1395,7 +1413,24 @@ func (s *Store) PatchVendorConfiguration(id string, patch ConfigurationPatch) (C
 	}
 	return s.VendorConfiguration(id)
 }
+
+// PatchApplicationConfiguration applies an administrator patch. Every set or
+// unset path must apply to the application's provider (AppPathApplies).
 func (s *Store) PatchApplicationConfiguration(key string, patch ConfigurationPatch) (Configuration, error) {
+	app, err := s.Application(key)
+	if err != nil {
+		return Configuration{}, err
+	}
+	for path := range patch.Set {
+		if !AppPathApplies(app.Provider, path) {
+			return Configuration{}, invalidf("%s does not apply to the %s provider", path, app.Provider)
+		}
+	}
+	for _, path := range patch.Unset {
+		if !AppPathApplies(app.Provider, path) {
+			return Configuration{}, invalidf("%s does not apply to the %s provider", path, app.Provider)
+		}
+	}
 	if err := s.patchConfiguration("App", key, patch, nil, nil); err != nil {
 		return Configuration{}, err
 	}
@@ -1529,10 +1564,10 @@ func (s *Store) ReconcileTemplates(set presets.Set) error {
 			key := templateKey(t.Kind, t.Key)
 			if prev, ok := previous[key]; ok {
 				if !reflect.DeepEqual(prev.Metadata, t.Metadata) {
-					return fmt.Errorf("%w: template identity changed", ErrInvalidDirectory)
+					return invalidf("template identity changed")
 				}
 				if t.Kind == "App" && prev.Spec["provider"] != t.Spec["provider"] {
-					return fmt.Errorf("%w: template Provider changed", ErrInvalidDirectory)
+					return invalidf("template Provider changed")
 				}
 			}
 			st.Templates[key] = t
@@ -1640,7 +1675,7 @@ func (s *Store) CreateConfiguredVendor(in VendorInput, ref *string) (Vendor, err
 		if ref != nil {
 			t, ok := st.Templates[templateKey("Vendor", *ref)]
 			if !ok || !t.Present {
-				return fmt.Errorf("%w: unknown template", ErrInvalidDirectory)
+				return invalidf("unknown template")
 			}
 			c.Ref = ref
 			c.Spec = nil
@@ -1677,7 +1712,7 @@ func (s *Store) CreateConfiguredApplication(vendor string, in ApplicationInput, 
 			}
 		}
 		if parent.UID == "" {
-			return sql.ErrNoRows
+			return ErrVendorNotFound
 		}
 		if parent.DeletedAt != nil {
 			return ErrDirectoryDeleted
@@ -1691,7 +1726,7 @@ func (s *Store) CreateConfiguredApplication(vendor string, in ApplicationInput, 
 		if ref != nil {
 			t, ok := st.Templates[templateKey("App", *ref)]
 			if !ok || !t.Present || t.Spec["provider"] != in.Provider {
-				return fmt.Errorf("%w: unknown or incompatible template", ErrInvalidDirectory)
+				return invalidf("unknown or incompatible template")
 			}
 			c.Ref = ref
 			c.Spec = nil
@@ -1909,7 +1944,7 @@ func (s *Store) PatchGlobalProxy(expected int64, c networkproxy.Config) (int64, 
 		}
 		kept, err := networkproxy.KeepRedactedPassword(c, st.GlobalProxy)
 		if err != nil {
-			return fmt.Errorf("%w: %s", ErrInvalidDirectory, err)
+			return invalidf("%s", err)
 		}
 		st.GlobalProxy = kept
 		st.GlobalProxyRevision++
