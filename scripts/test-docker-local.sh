@@ -116,15 +116,19 @@ if grep -q 'Initial admin password' "$task_temp/recreated.log"; then
 fi
 docker stop --time 20 "$task_name" >/dev/null
 docker cp "$task_name:/state/state.sqlite" "$task_temp/state.sqlite"
-python3 - "$task_temp/state.sqlite" <<'PY'
+# The expected schema is store.SchemaVersion of this checkout.
+task_schema=$(awk '$1 == "const" && $2 == "SchemaVersion" && $3 == "=" { print $4 }' "$task_root/internal/store/store.go")
+test -n "$task_schema"
+python3 - "$task_temp/state.sqlite" "$task_schema" <<'PY'
 import sqlite3
 import sys
+schema = int(sys.argv[2])
 with sqlite3.connect('file:' + sys.argv[1] + '?mode=ro&immutable=1', uri=True) as db:
     # Explicit check: assert would vanish under python -O / PYTHONOPTIMIZE.
     application_id = db.execute('PRAGMA application_id').fetchone()[0]
     user_version = db.execute('PRAGMA user_version').fetchone()[0]
-    if (application_id, user_version) != (0x52644170, 12):
+    if (application_id, user_version) != (0x52644170, schema):
         sys.exit(f'Unexpected persisted schema identity: {application_id:#x} v{user_version}')
-print('Fresh schema 12 persisted through runtime restart/recreation')
+print(f'Fresh schema {schema} persisted through runtime restart/recreation')
 PY
 echo "Docker runtime (${REDAPP_TEST_PLATFORM:-host})：无配置默认启动、YAML 单文件选择/失败保护、新writer/reader字段和容量简写、环境变量改路径/端口、禁用网络、非 root、只读根、持久性/健康/实例锁/崩溃恢复通过。"

@@ -3,13 +3,18 @@
 import hashlib
 import json
 from pathlib import Path
+import re
 import sqlite3
 import tempfile
 import unittest
 
-from cli_test_support import BINARY, main, run_cli
+from cli_test_support import BINARY, ROOT, main, run_cli
 
 BASE_CONFIG_LIMITS = {"max_writers": 16, "max_readers": 512}
+# store.SchemaVersion of this checkout.
+SCHEMA_VERSION = int(
+    re.search(r"^const SchemaVersion = (\d+)$", (ROOT / "internal/store/store.go").read_text(), re.M).group(1)
+)
 
 
 def fingerprint(directory):
@@ -127,9 +132,9 @@ class DataDirectoryCLITest(unittest.TestCase):
         redapp_application_id = 0x52644170
         kinds = [
             # Another RedApp schema version: same application_id, different user_version.
-            ("other-schema", (redapp_application_id, 11)),
+            ("other-schema", (redapp_application_id, SCHEMA_VERSION - 1)),
             # A foreign SQLite file that happens to carry the current user_version.
-            ("foreign-sqlite", (0, 12)),
+            ("foreign-sqlite", (0, SCHEMA_VERSION)),
             ("unknown", None),
         ]
         for kind, pragmas in kinds:
