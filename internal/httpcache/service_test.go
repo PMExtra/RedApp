@@ -258,21 +258,177 @@ func TestHeadAndRequestCacheDirectives(t *testing.T) {
 	if err != nil || w.Code != 504 || calls.Load() != 1 {
 		t.Fatal("only-if-cached contacted origin", w.Code, err)
 	}
-	if _, err = f.serve(t, "GET", http.Header{"Cache-Control": {"no-store"}}); err != nil {
-		t.Fatal(err)
+	// A client request directive never selects a private upstream transfer:
+	// the shared response is stored under the shared policy.
+	if w, err = f.serve(t, "GET", http.Header{"Cache-Control": {"no-store"}}); err != nil || w.Body.String() != "body" {
+		t.Fatal(w.Body.String(), err)
 	}
-	if len(f.rows(t)) != 0 {
-		t.Fatal("request no-store persisted body")
+	if len(f.rows(t)) != 1 || calls.Load() != 2 {
+		t.Fatal("request no-store bypassed the shared cache", calls.Load())
 	}
-	if _, err = f.serve(t, "GET", http.Header{}); err != nil {
-		t.Fatal(err)
+	for _, h := range []http.Header{
+		{"Cache-Control": {"no-store"}},
+		{"Cache-Control": {"no-cache"}},
+		{"Cache-Control": {"max-age=0"}},
+		{"Cache-Control": {"max-age=0, must-revalidate"}},
+		{"Pragma": {"no-cache"}},
+	} {
+		if w, err = f.serve(t, "GET", h); err != nil || w.Code != 200 || w.Body.String() != "body" {
+			t.Fatal(h, w.Code, err)
+		}
+		if w, err = f.serve(t, "HEAD", h); err != nil || w.Code != 200 {
+			t.Fatal(h, w.Code, err)
+		}
 	}
-	before := calls.Load()
-	if _, err = f.serve(t, "GET", http.Header{"Cache-Control": {"max-age=0"}}); err != nil {
-		t.Fatal(err)
+	if calls.Load() != 2 {
+		t.Fatal("request directive forced an upstream request for a fresh entry", calls.Load())
 	}
-	if calls.Load() != before+1 {
-		t.Fatal("request max-age=0 skipped validation")
+	if w, err = f.serve(t, "GET", http.Header{"Cache-Control": {"only-if-cached"}}); err != nil || w.Code != 200 || calls.Load() != 2 {
+		t.Fatal("only-if-cached missed a fresh entry", w.Code, err)
+	}
+}
+
+// Anonymous clients share one upstream transfer even when every request asks
+// the cache to bypass storage.
+func TestConcurrentRequestNoStoreSharesOneUpstreamFetch(t *testing.T) {
+	const readers = 8
+	var calls atomic.Int64
+	entered, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	f := newFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			close(entered)
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		io.WriteString(w, "body")
+	}), 300)
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	type reply struct {
+		body string
+		err  error
+	}
+	done := make(chan reply, readers)
+	serve := func() {
+		w, err := f.serve(t, "GET", http.Header{"Cache-Control": {"no-store, no-cache"}, "Pragma": {"no-cache"}})
+		done <- reply{w.Body.String(), err}
+	}
+	go serve()
+	<-entered
+	for i := 1; i < readers; i++ {
+		go serve()
+	}
+	waitForFlightWaiters(t, f.s, readers)
+	releaseOnce.Do(func() { close(release) })
+	for i := 0; i < readers; i++ {
+		if got := <-done; got.err != nil || got.body != "body" {
+			t.Fatal(got)
+		}
+	}
+	if calls.Load() != 1 || len(f.rows(t)) != 1 {
+		t.Fatal("request no-store multiplied upstream transfers", calls.Load())
+	}
+}
+
+// An uncacheable shared result is claimed by one reader; every other waiter
+// makes its own direct transfer instead of consuming the retry bound.
+func TestConcurrentReadersOfUncacheablePathAllSucceed(t *testing.T) {
+	const readers = 32
+	var calls atomic.Int64
+	entered, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	f := newFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		if calls.Add(1) == 1 {
+			close(entered)
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		io.WriteString(w, "body")
+	}), 300)
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	type reply struct {
+		body string
+		err  error
+	}
+	done := make(chan reply, readers)
+	serve := func() {
+		w, err := f.serve(t, "GET", http.Header{})
+		done <- reply{w.Body.String(), err}
+	}
+	go serve()
+	<-entered
+	for i := 1; i < readers; i++ {
+		go serve()
+	}
+	waitForFlightWaiters(t, f.s, readers)
+	releaseOnce.Do(func() { close(release) })
+	for i := 0; i < readers; i++ {
+		if got := <-done; got.err != nil || got.body != "body" {
+			t.Fatal(got)
+		}
+	}
+	if calls.Load() != readers || len(f.rows(t)) != 0 {
+		t.Fatal("uncacheable readers were not served by direct transfers", calls.Load())
+	}
+	if f.budget.readers.Load() != 0 || f.budget.writers.Load() != 0 {
+		t.Fatal("capacity leaked")
+	}
+}
+
+// waitForFlightWaiters observes admission into one shared flight. It polls
+// in-memory state under a deadline; correctness never depends on timing.
+func waitForFlightWaiters(t *testing.T, s *Service, n int) {
+	t.Helper()
+	deadline := time.NewTimer(3 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for {
+		s.mu.Lock()
+		joined := 0
+		for _, f := range s.flights {
+			joined += len(f.waiters)
+		}
+		s.mu.Unlock()
+		if joined == n {
+			return
+		}
+		select {
+		case <-deadline.C:
+			t.Fatal("readers did not join the shared flight", joined)
+		case <-tick.C:
+		}
+	}
+}
+
+// Repeated ErrFetchAgain ends with an error instead of looping forever.
+func TestServeBoundsFetchAgainRetries(t *testing.T) {
+	var calls atomic.Int64
+	f := newFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		io.WriteString(w, "body")
+	}), 300)
+	// A completed flight whose published generation has already disappeared
+	// makes every joining caller retry with current storage state.
+	done := make(chan struct{})
+	close(done)
+	churned := &flight{done: done, finished: true, waiters: map[*fetchWaiter]bool{}, cancel: func() {}, result: fetchResult{row: &Row{GenerationID: "collected"}}}
+	f.s.mu.Lock()
+	f.s.flights[flightKey(f.entry, "file", "")] = churned
+	f.s.mu.Unlock()
+	w, err := f.serve(t, "GET", http.Header{})
+	if !errors.Is(err, ErrFetchContended) || w.Code != 200 || w.Body.Len() != 0 || calls.Load() != 0 {
+		t.Fatal("unbounded or misreported ErrFetchAgain retry", err, w.Code, calls.Load())
+	}
+	if f.budget.readers.Load() != 0 || f.budget.writers.Load() != 0 {
+		t.Fatal("capacity leaked")
 	}
 }
 

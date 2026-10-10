@@ -14,6 +14,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
 	"io"
+	mathrand "math/rand/v2"
 	"net/http"
 	"os"
 	"strconv"
@@ -87,10 +88,16 @@ type Generation struct {
 	finishWork     func()
 	done           bool
 	readers        int
+	hashing        bool // pinned by a manager-owned verification running without mu
+	rangeable      bool // upstream advertised or served byte ranges for this generation
 	samples        []sample
 	upstreamStatus int
 	downloadNS     int64
 }
+
+// active generations own their files: a writer, readers or an in-flight hash.
+func (g *Generation) active() bool { return g.running || g.readers > 0 || g.hashing }
+
 type sample struct {
 	time  time.Time
 	bytes int64
@@ -123,9 +130,17 @@ type View struct {
 	DownloadNS   int64
 	SampledAt    time.Time
 }
+
+// Lock invariant: mu guards in-memory state and short database/file metadata
+// operations, but is never held while hashing a whole file. A complete-file
+// SHA256 runs in a manager-owned goroutine registered in verifying; callers
+// wait for it without mu and then re-run admission, which re-checks generation
+// identity and state. A generation being hashed is pinned (hashing) and is not
+// removed until that verification commits its result under mu.
 type Manager struct {
 	publicationMu sync.Mutex // Configuration publication and Close only; never acquired while holding mu.
 	mu            sync.Mutex
+	verifying     map[string]*verification // logical resource ID -> in-flight verification
 	dir           string
 	db            *store.Store
 	upstreams     map[string]*distributor.Client
@@ -140,6 +155,12 @@ type Manager struct {
 	maxWriters    int
 	jobs          int
 	httpReaders   int
+	// Upstream transfer policy: a body read waiting idleTimeout without bytes
+	// fails the attempt; transient failures retry up to retryAttempts times.
+	idleTimeout   time.Duration
+	retryAttempts int
+	retryBase     time.Duration
+	retryMax      time.Duration
 	// Unexported fault barrier used only by package tests; production leaves it nil.
 	testFault func(string, *Generation)
 }
@@ -155,7 +176,8 @@ func NewApplications(dir string, db *store.Store, clients map[string]*distributo
 		upstreams[app] = client
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m := &Manager{dir: dir, db: db, upstreams: upstreams, current: map[string]*Generation{}, all: map[string]*Generation{}, ctx: ctx, cancel: cancel, maxBytes: 4 << 30, maxReaders: 512, maxWriters: 16}
+	m := &Manager{dir: dir, db: db, upstreams: upstreams, current: map[string]*Generation{}, all: map[string]*Generation{}, verifying: map[string]*verification{}, ctx: ctx, cancel: cancel, maxBytes: 4 << 30, maxReaders: 512, maxWriters: 16,
+		idleTimeout: distributor.DefaultIdleTimeout, retryAttempts: 6, retryBase: time.Second, retryMax: 30 * time.Second}
 	if e := m.recover(); e != nil {
 		cancel()
 		m.closeFiles()
@@ -254,10 +276,139 @@ func verified(f *os.File, n int64, expected string) bool {
 	return verifiedContext(context.Background(), f, n, expected)
 }
 func verifiedContext(ctx context.Context, f *os.File, n int64, expected string) bool {
+	ok, err := hashMatches(ctx, f, n, expected)
+	return ok && err == nil
+}
+
+// hashMatches reports whether the first n bytes of f have the expected digest.
+// A non-nil error means the check was cancelled and proves nothing about the
+// content; unreadable or short content is reported as a mismatch.
+func hashMatches(ctx context.Context, f *os.File, n int64, expected string) (bool, error) {
 	h := sha256.New()
 	copied, e := io.Copy(h, verificationReader{ctx, io.NewSectionReader(f, 0, n)})
-	return e == nil && copied == n && hex.EncodeToString(h.Sum(nil)) == expected
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return e == nil && copied == n && hex.EncodeToString(h.Sum(nil)) == expected, nil
 }
+
+// fileCheck is a whole-file verification result bound to the inode it read.
+type fileCheck struct {
+	info  os.FileInfo
+	valid bool
+}
+
+// checkFile hashes a cache file without holding mu. A nil result with a nil
+// error means the file could not be opened as a regular cache file.
+func checkFile(ctx context.Context, path string, n int64, expected string) (*fileCheck, error) {
+	f, err := openRegular(path)
+	if err != nil {
+		return nil, nil
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, nil
+	}
+	ok := false
+	if st.Size() == n {
+		if ok, err = hashMatches(ctx, f, n, expected); err != nil {
+			return nil, err
+		}
+	}
+	return &fileCheck{info: st, valid: ok}, nil
+}
+
+// matches reports whether path is still the exact inode and size that was hashed.
+func (c *fileCheck) matches(st os.FileInfo) bool {
+	return c != nil && st != nil && os.SameFile(c.info, st) && st.Size() == c.info.Size() && st.ModTime().Equal(c.info.ModTime())
+}
+
+// verification is one in-flight whole-file check for a logical resource.
+// err is written before done is closed and is returned to every waiter.
+type verification struct {
+	done chan struct{}
+	err  error
+}
+
+var errVerificationPending = errors.New("Cache verification in progress")
+
+// startVerificationLocked runs check without mu under application work owned
+// by the manager, so a waiter's cancellation never aborts it for the others.
+// commit runs under mu with the hashing result (or the cancellation error).
+func (m *Manager) startVerificationLocked(r Resource, check func(context.Context) (*fileCheck, error), commit func(*fileCheck, error) error) error {
+	if m.verifying[r.ID] != nil {
+		return errVerificationPending
+	}
+	ctx, finish, err := m.db.ApplicationWork(m.ctx, r.Application)
+	if err != nil {
+		return err
+	}
+	v := &verification{done: make(chan struct{})}
+	m.verifying[r.ID] = v
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		defer finish()
+		m.checkpoint("verification.before_hash", nil)
+		result, err := check(ctx)
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		delete(m.verifying, r.ID)
+		v.err = commit(result, err)
+		close(v.done)
+	}()
+	return nil
+}
+
+// verifyDormantLocked re-admits a dormant complete head only after its bytes
+// verify. Cancellation leaves it untouched; only proven-invalid content retires.
+func (m *Manager) verifyDormantLocked(g *Generation) error {
+	path, n, hash := g.Path, g.Bytes, g.Resource.Hash
+	err := m.startVerificationLocked(g.Resource, func(ctx context.Context) (*fileCheck, error) {
+		return checkFile(ctx, path, n, hash)
+	}, func(check *fileCheck, err error) error {
+		g.hashing = false
+		if err != nil {
+			return err
+		}
+		if m.current[g.Resource.ID] != g || g.Retired || g.State != "complete" || !g.dormant || g.Path != path {
+			// Ownership changed while hashing; removal deferred by the pin happens now.
+			if g.Retired && !g.running && g.readers == 0 && g.State != "deleted" {
+				return m.removeLocked(g)
+			}
+			return nil
+		}
+		if st, e := os.Lstat(path); e == nil && check.matches(st) && check.valid {
+			g.dormant = false
+			return nil
+		}
+		return m.discardCompleteLocked(g)
+	})
+	if err == nil {
+		g.hashing = true
+	}
+	return err
+}
+
+// discardCompleteLocked retires a complete head whose bytes are missing or invalid.
+func (m *Manager) discardCompleteLocked(g *Generation) error {
+	g.Retired = true
+	g.Error = "Completed cache file is missing or invalid"
+	m.save(g)
+	if err := m.db.RetireGeneration(g.Resource.Application, g.ID, time.Now()); err != nil {
+		return err
+	}
+	if m.current[g.Resource.ID] == g {
+		delete(m.current, g.Resource.ID)
+	}
+	m.removeLocked(g)
+	return nil
+}
+
+// createLocked returns errVerificationPending when an existing blob must be
+// verified first; the verification then installs either a complete generation
+// reusing the blob or a queued download generation.
 func (m *Manager) createLocked(r Resource, fullRetry bool, contexts ...context.Context) (*Generation, error) {
 	ctx := m.ctx
 	if len(contexts) > 0 {
@@ -269,7 +420,6 @@ func (m *Manager) createLocked(r Resource, fullRetry bool, contexts ...context.C
 	if e := m.validateResource(r); e != nil {
 		return nil, e
 	}
-	g := &Generation{ctx: ctx, ID: id(), Resource: r, State: "queued", Total: -1, Started: time.Now(), changed: make(chan struct{}), FullRetry: fullRetry}
 	// Only complete, revalidated content may be reused across logical resources.
 	// In-flight writers are never coalesced by content digest.
 	if blob, e := m.db.Blob(r.Application, r.Hash); e == nil {
@@ -277,27 +427,65 @@ func (m *Manager) createLocked(r Resource, fullRetry bool, contexts ...context.C
 			return nil, ErrArtifactLimit
 		}
 		path := m.blobPath(r)
-		f, err := openRegular(path)
-		if err == nil {
-			st, statErr := f.Stat()
-			valid := statErr == nil && st.Size() == blob.SizeBytes && (r.Size == nil || *r.Size == st.Size()) && verifiedContext(ctx, f, st.Size(), r.Hash)
-			f.Close()
-			if valid {
-				g.Path, g.Bytes, g.Total, g.State, g.done = path, blob.SizeBytes, blob.SizeBytes, "complete", true
-				g.Finished = time.Now()
-				if e = m.db.CreateGeneration(m.record(g)); e != nil {
-					return nil, e
-				}
-				m.current[r.ID], m.all[g.ID] = g, g
-				return g, nil
+		if st, err := os.Lstat(path); err == nil && st.Mode().IsRegular() && st.Size() == blob.SizeBytes && (r.Size == nil || *r.Size == st.Size()) {
+			if e = m.verifyBlobLocked(r, fullRetry, path, blob.SizeBytes); e != nil {
+				return nil, e
 			}
+			return nil, errVerificationPending
 		}
 	} else if !errors.Is(e, sql.ErrNoRows) {
 		return nil, e
 	}
+	return m.createPartLocked(ctx, r, fullRetry)
+}
+
+// verifyBlobLocked hashes an existing blob without mu, then installs a complete
+// generation if the same inode verified, or a queued download otherwise.
+func (m *Manager) verifyBlobLocked(r Resource, fullRetry bool, path string, size int64) error {
+	return m.startVerificationLocked(r, func(ctx context.Context) (*fileCheck, error) {
+		return checkFile(ctx, path, size, r.Hash)
+	}, func(check *fileCheck, err error) error {
+		if err != nil {
+			return err
+		}
+		if m.closed {
+			return errors.New("Server is shutting down")
+		}
+		if m.current[r.ID] != nil {
+			return nil // Another admission installed a head; waiters re-run admission.
+		}
+		if e := m.db.CheckSourceActive(r.Application, r.SourceFence); e != nil {
+			return e
+		}
+		st, statErr := os.Lstat(path)
+		if statErr == nil && check != nil && !check.matches(st) {
+			return nil // Replaced while hashing (e.g. a repair published); verify again.
+		}
+		if statErr == nil && check != nil && check.valid {
+			blob, e := m.db.Blob(r.Application, r.Hash)
+			if e != nil && !errors.Is(e, sql.ErrNoRows) {
+				return e
+			}
+			if e == nil && blob.SizeBytes == size {
+				g := &Generation{ctx: m.ctx, ID: id(), Resource: r, Path: path, Bytes: size, Total: size, State: "complete", done: true, Started: time.Now(), changed: make(chan struct{}), FullRetry: fullRetry}
+				g.Finished = time.Now()
+				if e = m.db.CreateGeneration(m.record(g)); e != nil {
+					return e
+				}
+				m.current[r.ID], m.all[g.ID] = g, g
+				return nil
+			}
+		}
+		_, e := m.createPartLocked(m.ctx, r, fullRetry)
+		return e
+	})
+}
+
+func (m *Manager) createPartLocked(ctx context.Context, r Resource, fullRetry bool) (*Generation, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	g := &Generation{ctx: ctx, ID: id(), Resource: r, State: "queued", Total: -1, Started: time.Now(), changed: make(chan struct{}), FullRetry: fullRetry}
 	if m.jobs >= m.maxWriters {
 		return nil, ErrWriterLimit
 	}
@@ -338,9 +526,44 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 			finish()
 		}
 	}()
+	for first := true; ; first = false {
+		reader, hit, wait, err := m.admit(ctx, r, finish, first)
+		if wait == nil {
+			keep = err == nil
+			return reader, hit, err
+		}
+		// Only this caller stops waiting on cancellation; the manager-owned
+		// verification continues for other waiters and commits its own result.
+		m.checkpoint("acquire.wait_verification", nil)
+		select {
+		case <-ctx.Done():
+			return nil, false, ctx.Err()
+		case <-wait.done:
+		}
+		if wait.err != nil {
+			return nil, false, wait.err
+		}
+	}
+}
+
+// admit performs one admission pass under mu. A non-nil verification means the
+// caller must wait for it without mu and then re-run admission.
+func (m *Manager) admit(ctx context.Context, r Resource, finish func(), first bool) (*Reader, bool, *verification, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.checkpoint("acquire_before_db_validation", nil)
+	if first {
+		m.checkpoint("acquire_before_db_validation", nil)
+	}
+	reader, hit, err := m.admitLocked(ctx, r, finish)
+	if errors.Is(err, errVerificationPending) {
+		if v := m.verifying[r.ID]; v != nil {
+			return nil, false, v, nil
+		}
+	}
+	return reader, hit, nil, err
+}
+
+func (m *Manager) admitLocked(ctx context.Context, r Resource, finish func()) (*Reader, bool, error) {
 	if e := m.validateResource(r); e != nil {
 		return nil, false, e
 	}
@@ -355,6 +578,9 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 	}
 	if m.readersLocked() >= m.maxReaders {
 		return nil, false, ErrReaderLimit
+	}
+	if m.verifying[r.ID] != nil {
+		return nil, false, errVerificationPending
 	}
 	g := m.current[r.ID]
 	// A previous admission may finish its readers, but cannot recruit new
@@ -388,25 +614,17 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 		if valid && g.dormant {
 			// Inactive recovery preserves files without changing their ownership.
 			// Re-admission must verify the bytes before trusting that dormant head.
-			f, err := openRegular(g.Path)
-			valid = err == nil && verifiedContext(ctx, f, g.Bytes, g.Resource.Hash)
-			if f != nil {
-				f.Close()
+			if e := m.verifyDormantLocked(g); e != nil {
+				return nil, false, e
 			}
+			return nil, false, errVerificationPending
 		}
 		if !valid {
-			g.Retired = true
-			g.Error = "Completed cache file is missing or invalid"
-			m.save(g)
-			if err := m.db.RetireGeneration(r.Application, g.ID, time.Now()); err != nil {
+			if err := m.discardCompleteLocked(g); err != nil {
 				return nil, false, err
 			}
-			delete(m.current, r.ID)
-			m.removeLocked(g)
 			g = nil
 			hit = false
-		} else {
-			g.dormant = false
 		}
 	}
 	if g == nil {
@@ -431,16 +649,19 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 		}
 		g.file = f
 	}
-	if !g.done && !g.running {
+	// A retained part from an exhausted or interrupted transfer resumes.
+	resume := g.done && !g.running && g.State == "interrupted"
+	if (!g.done || resume) && !g.running {
 		if m.jobs >= m.maxWriters {
 			return nil, false, ErrWriterLimit
 		}
+		g.done = false
 		if err := m.startLocked(g); err != nil {
+			g.done = resume
 			return nil, false, err
 		}
 	}
 	g.readers++
-	keep = true
 	return &Reader{m: m, g: g, ctx: ctx, Kind: kind, finishWork: finish}, hit, nil
 }
 func (r *Reader) Read(p []byte) (int, error) {
@@ -517,7 +738,7 @@ func (m *Manager) retireLocked(g *Generation) error {
 }
 
 func (m *Manager) removeLocked(g *Generation) error {
-	if g.running || g.readers > 0 {
+	if g.active() {
 		return nil
 	}
 	if g.file != nil {
@@ -557,11 +778,54 @@ func (m *Manager) removeLocked(g *Generation) error {
 	return nil
 }
 
-var unsafeResume = errors.New("Unsafe upstream resume; a new generation is required")
+var (
+	unsafeResume    = errors.New("Unsafe upstream resume; a new generation is required")
+	errHashMismatch = errors.New("Complete file SHA256 does not match")
+	errTruncated    = errors.New("Artifact truncated")
+)
 
 type upstreamHTTPError int
 
 func (e upstreamHTTPError) Error() string { return fmt.Sprintf("Upstream HTTP %d", int(e)) }
+
+// causeError keeps a stable user-visible message while preserving its cause
+// for classification. transient marks failures a later attempt may resolve.
+type causeError struct {
+	message   string
+	cause     error
+	transient bool
+}
+
+func (e *causeError) Error() string { return e.message }
+func (e *causeError) Unwrap() error { return e.cause }
+
+// retryable reports transport-level failures; integrity, length, encoding,
+// disk and client HTTP errors are final.
+func retryable(err error) bool {
+	var status upstreamHTTPError
+	var cause *causeError
+	switch {
+	case errors.Is(err, distributor.ErrConnection), errors.Is(err, errTruncated):
+		return true
+	case errors.As(err, &status):
+		return status >= 500 || status == http.StatusRequestTimeout || status == http.StatusTooManyRequests
+	case errors.As(err, &cause):
+		return cause.transient
+	}
+	return false
+}
+
+// retryDelay is exponential backoff with jitter in [d/2, d], capped at retryMax.
+func (m *Manager) retryDelay(attempt int) time.Duration {
+	d := m.retryMax
+	if attempt < 30 && m.retryBase<<attempt < m.retryMax {
+		d = m.retryBase << attempt
+	}
+	if d <= 1 {
+		return d
+	}
+	return d/2 + mathrand.N(d/2+1)
+}
 
 func (m *Manager) attempt(g *Generation) error {
 	m.mu.Lock()
@@ -594,7 +858,7 @@ func (m *Manager) attempt(g *Generation) error {
 	if client == nil {
 		return errors.New("Unknown persisted resource application")
 	}
-	resp, e := client.Get(g.ctx, g.Resource.Source, headers)
+	resp, e := client.Get(distributor.WithIdleTimeout(g.ctx, m.idleTimeout), g.Resource.Source, headers)
 	if e != nil {
 		return e
 	}
@@ -628,6 +892,9 @@ func (m *Manager) attempt(g *Generation) error {
 	g.Total = total
 	if offset == 0 {
 		g.ETag = resp.Header.Get("ETag")
+	}
+	if resp.StatusCode == http.StatusPartialContent || strings.EqualFold(resp.Header.Get("Accept-Ranges"), "bytes") {
+		g.rangeable = true
 	}
 	g.State = "downloading"
 	e = m.save(g)
@@ -664,7 +931,7 @@ func (m *Manager) attempt(g *Generation) error {
 			}
 			written, we := g.file.WriteAt(buf[:n], offset)
 			if we != nil {
-				return errors.New("Disk write failed")
+				return &causeError{"Disk write failed", we, false}
 			}
 			if written != n {
 				return io.ErrShortWrite
@@ -686,13 +953,13 @@ func (m *Manager) attempt(g *Generation) error {
 		}
 		if re != nil {
 			if re != io.EOF {
-				return errors.New("Upstream download interrupted")
+				return &causeError{"Upstream download interrupted", re, true}
 			}
 			break
 		}
 	}
 	if total >= 0 && offset != total {
-		return errors.New("Artifact truncated")
+		return errTruncated
 	}
 	if g.Resource.Size != nil && offset != *g.Resource.Size {
 		return errors.New("Artifact length does not match")
@@ -736,9 +1003,9 @@ func (m *Manager) run(g *Generation) {
 	defer g.finishWork()
 	defer m.wg.Done()
 	var err error
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; ; attempt++ {
 		err = m.attempt(g)
-		if err == nil || errors.Is(err, unsafeResume) || g.ctx.Err() != nil {
+		if err == nil || !retryable(err) || g.ctx.Err() != nil || attempt+1 >= m.retryAttempts {
 			break
 		}
 		m.mu.Lock()
@@ -747,10 +1014,12 @@ func (m *Manager) run(g *Generation) {
 		m.save(g)
 		signal(g)
 		m.mu.Unlock()
+		wait := time.NewTimer(m.retryDelay(attempt))
 		select {
 		case <-g.ctx.Done():
-		case <-time.After(time.Duration(attempt+1) * 50 * time.Millisecond):
+		case <-wait.C:
 		}
+		wait.Stop()
 	}
 	if err == nil {
 		m.mu.Lock()
@@ -761,11 +1030,17 @@ func (m *Manager) run(g *Generation) {
 		m.checkpoint("download.before_verify", g)
 		start := time.Now()
 		if !verifiedContext(g.ctx, g.file, g.Bytes, g.Resource.Hash) {
-			err = errors.New("Complete file SHA256 does not match")
+			err = errHashMismatch
 		}
 		m.mu.Lock()
 		g.VerificationNS = time.Since(start).Nanoseconds()
 		m.mu.Unlock()
+	}
+	// Hash any blob already published for this digest before taking mu;
+	// publishLocked trusts this result only for the same unchanged inode.
+	var existing *fileCheck
+	if err == nil {
+		existing, _ = checkFile(g.ctx, m.blobPath(g.Resource), g.Bytes, g.Resource.Hash)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -793,7 +1068,7 @@ func (m *Manager) run(g *Generation) {
 			err = errors.New("File fsync failed")
 		}
 		if err == nil && !g.Retired && m.current[g.Resource.ID] == g {
-			err = m.publishLocked(g)
+			err = m.publishLocked(g, existing)
 		}
 	}
 	if err == nil {
@@ -825,14 +1100,16 @@ func (m *Manager) run(g *Generation) {
 		}
 		g.Error = err.Error()
 		g.State = "failed"
-		if strings.Contains(g.Error, "SHA256") {
+		if errors.Is(err, errHashMismatch) {
 			g.State = "invalid"
 		}
-		if g.ctx.Err() != nil {
+		// Exhausted transient failures keep a resumable prefix; the next
+		// admission resumes it with Range. Integrity failures never do.
+		if g.ctx.Err() != nil || retryable(err) && g.Bytes > 0 && (g.ETag != "" || g.rangeable) {
 			g.State = "interrupted"
 		}
 		m.save(g)
-		m.recordFailure(g)
+		m.recordFailure(g, err)
 		m.db.AddFor(g.Resource.MetricScope(), "upstream_errors", 1)
 		if m.current[g.Resource.ID] == g && g.State != "interrupted" {
 			delete(m.current, g.Resource.ID)
@@ -905,7 +1182,30 @@ func (m *Manager) Close() error {
 	return nil
 }
 
-func failureCategory(message string) string {
+// failureCategory classifies typed errors first; message patterns remain for
+// persisted messages without an error value and for local stable messages.
+func failureCategory(err error, message string) string {
+	var status upstreamHTTPError
+	switch {
+	case errors.Is(err, errHashMismatch):
+		return "hash"
+	case errors.Is(err, unsafeResume):
+		return "range"
+	case errors.Is(err, distributor.ErrUnsafeEncoding):
+		return "encoding"
+	case errors.As(err, &status):
+		return "http"
+	}
+	if err != nil {
+		switch distributor.Classify(err) {
+		case distributor.KindDNS:
+			return "dns"
+		case distributor.KindTLS:
+			return "tls"
+		case distributor.KindTimeout:
+			return "timeout"
+		}
+	}
 	for _, c := range []struct{ pattern, category string }{{"SHA256", "hash"}, {"resume", "range"}, {"Content-Encoding", "encoding"}, {"Disk", "disk"}, {"fsync", "disk"}, {"length", "length"}, {"truncated", "length"}, {"HTTP", "http"}, {"DNS", "dns"}, {"TLS", "tls"}, {"timeout", "timeout"}, {"commit", "database"}} {
 		if strings.Contains(message, c.pattern) {
 			return c.category

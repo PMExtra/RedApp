@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import tempfile
 from installer_manifest import ROOT, applications
-from installer_maintenance import digest, download, script_shape, apply_patch, validate_shell
+from installer_maintenance import digest, download, script_shape, apply_patch, validate_shell, same_unsigned
 
 
 def exchange(a, b):
@@ -50,9 +50,19 @@ def main():
             raw=(args.source/name).read_bytes() if args.source else download(installer['source'])
             script_shape(name,raw)
             explicit=args.powershell_sha256 if installer['shell']=='powershell' else args.shell_sha256
-            expected=explicit or manifest['files'][name]['sha256']
-            if not re.fullmatch('[0-9a-f]{64}',expected) or digest(raw)!=expected:
-                raise ValueError(name+': audited digest differs; review and provide the expected SHA256')
+            if explicit:
+                # A maintainer-reviewed digest pins the exact bytes, signature included.
+                if not re.fullmatch('[0-9a-f]{64}',explicit) or digest(raw)!=explicit:
+                    raise ValueError(name+': audited digest differs; review and provide the expected SHA256')
+            else:
+                # Same rule as daily maintenance: a re-signed copy of the audited script is unchanged,
+                # so keep the audited bytes instead of churning upstream/provenance.
+                audited=(stage/'upstream'/name).read_bytes()
+                if digest(audited)!=manifest['files'][name]['sha256']:
+                    raise ValueError(name+': committed upstream differs from its audited digest')
+                if not same_unsigned(raw,audited):
+                    raise ValueError(name+': audited digest differs; review and provide the expected SHA256')
+                raw=audited
             (stage/'upstream'/name).write_bytes(raw)
             (stage/'generated'/name).write_bytes(apply_patch(raw,stage/'patches'/(name+'.patch')))
             manifest['files'][name].update(bytes=len(raw),sha256=digest(raw),source=installer['source'])

@@ -269,7 +269,7 @@ func (m *Manager) recover() error {
 				return e
 			}
 			delete(m.current, g.Resource.ID)
-			m.recordFailure(g)
+			m.recordFailure(g, nil)
 			continue
 		}
 		f, e = openRegular(g.Path)
@@ -324,14 +324,21 @@ func (m *Manager) recover() error {
 	return m.db.DeleteExpiredCleanupPreviews(time.Now())
 }
 
-func (m *Manager) publishLocked(g *Generation) error {
+// publishLocked reuses existing (hashed without mu) when it describes the same
+// unchanged blob inode; only a blob replaced since then is hashed under mu.
+func (m *Manager) publishLocked(g *Generation, existing *fileCheck) error {
 	path := m.blobPath(g.Resource)
 	if e := ensureDirectory(filepath.Dir(path)); e != nil {
 		return e
 	}
 	if f, e := openRegular(path); e == nil {
 		st, se := f.Stat()
-		valid := se == nil && st.Size() == g.Bytes && verified(f, g.Bytes, g.Resource.Hash)
+		valid := se == nil && st.Size() == g.Bytes
+		if valid && existing.matches(st) {
+			valid = existing.valid
+		} else if valid {
+			valid = verified(f, g.Bytes, g.Resource.Hash)
+		}
 		f.Close()
 		if !valid {
 			// Existing readers keep the old inode but must observe failure;
@@ -389,7 +396,7 @@ func (m *Manager) collectBlob(r Resource) (int64, error) {
 	// A just-published blob can exist before its row commits. Existing generations
 	// still pin the same content while their writer or reader owns that inode.
 	for _, g := range m.all {
-		if g.Resource.Application == r.Application && g.Resource.Hash == r.Hash && g.Path == path && (g.running || g.readers > 0) {
+		if g.Resource.Application == r.Application && g.Resource.Hash == r.Hash && g.Path == path && g.active() {
 			return 0, nil
 		}
 	}
@@ -447,12 +454,12 @@ func (m *Manager) removeOrphans() error {
 	}
 	return nil
 }
-func (m *Manager) recordFailure(g *Generation) {
+func (m *Manager) recordFailure(g *Generation, err error) {
 	// The structured method is shared by metadata and download diagnostics.
 	var status *int
 	if g.upstreamStatus >= 100 && g.upstreamStatus <= 599 {
 		v := g.upstreamStatus
 		status = &v
 	}
-	_ = m.db.RecordEvent(store.Event{UpstreamStatus: status, AppID: g.Resource.MetricScope(), Version: g.Resource.Version, ResourceKey: g.Resource.Key, GenerationID: g.ID, Category: failureCategory(g.Error), Code: "download_failed", Message: g.Error})
+	_ = m.db.RecordEvent(store.Event{UpstreamStatus: status, AppID: g.Resource.MetricScope(), Version: g.Resource.Version, ResourceKey: g.Resource.Key, GenerationID: g.ID, Category: failureCategory(err, g.Error), Code: "download_failed", Message: g.Error})
 }

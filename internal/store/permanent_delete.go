@@ -16,14 +16,27 @@ func queueDelete(tx *sql.Tx, path string) error {
 	_, err := tx.Exec(`INSERT OR IGNORE INTO pending_object_deletes(path) VALUES(?)`, path)
 	return err
 }
+
+// PermanentlyDeleteApplication soft-deletes (if needed) and purges the
+// application's rows in one transaction, serialized with other configuration writers.
 func (s *Store) PermanentlyDeleteApplication(key string, revision int64) error {
 	if protected, err := s.canonicalApplicationProtected(key); err != nil {
 		return err
 	} else if protected {
 		return ErrBuiltinTemplate
 	}
-	// Physical purge may run under Downloads.mu. Admission is fenced before
-	// entering that callback, so this cleanup never acquires the publication gate.
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+	return s.permanentlyDeleteApplicationLocked(key, revision, true)
+}
+
+// permanentlyDeleteApplicationLocked requires configMu. Purging an application
+// that is already soft-deleted changes no published configuration, so it never
+// prepares a publication; that path may therefore run under Downloads.mu.
+// Without allowPublish a live application is a conflict rather than a publication.
+func (s *Store) permanentlyDeleteApplicationLocked(key string, revision int64, allowPublish bool) error {
+	// Persist buffered counters first so global totals keep the application's final traffic.
+	s.SettleCounters()
 	current, e := s.Application(key)
 	if e != nil {
 		return e
@@ -32,16 +45,24 @@ func (s *Store) PermanentlyDeleteApplication(key string, revision int64) error {
 		return ErrConflict
 	}
 	if current.DeletedAt == nil {
-		if e = s.DeleteApplication(key, revision); e != nil {
-			return e
+		if !allowPublish {
+			return ErrConflict
 		}
-		revision++
+		return s.changeConfigurationLocked(func(st *configurationState) error {
+			return st.softDeleteApplication(key, revision)
+		}, func(tx *sql.Tx) error { return purgeApplication(tx, key, revision+1) })
 	}
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if err = purgeApplication(tx, key, revision); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func purgeApplication(tx *sql.Tx, key string, revision int64) error {
 	a, err := readApplication(tx, key)
 	if err != nil {
 		return err
@@ -140,12 +161,15 @@ func (s *Store) PermanentlyDeleteApplication(key string, revision int64) error {
 		return err
 	}
 	// Existing vendor order/records and globally shared icon objects are not app-owned.
-	if _, err = tx.Exec(`UPDATE catalog_state SET revision=revision+1 WHERE id=1`); err != nil {
-		return err
-	}
-	return tx.Commit()
+	_, err = tx.Exec(`UPDATE catalog_state SET revision=revision+1 WHERE id=1`)
+	return err
 }
+
+// PermanentlyDeleteVendor soft-deletes (if needed) and removes the vendor in one
+// transaction, serialized with other configuration writers.
 func (s *Store) PermanentlyDeleteVendor(id string, revision int64) error {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
 	current, e := s.Vendor(id)
 	if e != nil {
 		return e
@@ -154,16 +178,21 @@ func (s *Store) PermanentlyDeleteVendor(id string, revision int64) error {
 		return ErrConflict
 	}
 	if current.DeletedAt == nil {
-		if e = s.DeleteVendor(id, revision); e != nil {
-			return e
-		}
-		revision++
+		return s.changeConfigurationLocked(func(st *configurationState) error {
+			return st.softDeleteVendor(id, revision)
+		}, func(tx *sql.Tx) error { return purgeVendor(tx, id, revision+1) })
 	}
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if err = purgeVendor(tx, id, revision); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+func purgeVendor(tx *sql.Tx, id string, revision int64) error {
 	v, err := readVendor(tx, id)
 	if err != nil {
 		return err
@@ -178,10 +207,8 @@ func (s *Store) PermanentlyDeleteVendor(id string, revision int64) error {
 	if count != 0 {
 		return ErrVendorHasApplications
 	}
-	if _, err = tx.Exec(`DELETE FROM vendors WHERE uid=?`, v.UID); err != nil {
-		return err
-	}
-	return tx.Commit()
+	_, err = tx.Exec(`DELETE FROM vendors WHERE uid=?`, v.UID)
+	return err
 }
 
 var deleteObjectPath = regexp.MustCompile(`^objects/(parts/[0-9a-f]{32}\.part|http/[0-9a-f]{32}\.body|hosted/[0-9a-f]{32}|blobs/[0-9a-f]{64})$`)

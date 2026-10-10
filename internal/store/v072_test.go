@@ -172,6 +172,9 @@ func TestV072PermanentRemovalIsScopedAndRestartable(t *testing.T) {
 	}
 	s.AddFor(a.MetricsID(), "download_success", 1)
 	s.RecordEvent(Event{AppID: a.MetricsID(), Category: "fixture", Code: "late", Message: "late"})
+	if err = s.FlushCounters(); err != nil {
+		t.Fatal(err)
+	}
 	for _, table := range []string{"metric_counters", "events", "settings"} {
 		var n int
 		s.DB.QueryRow(`SELECT count(*) FROM `+table+` WHERE app_id=?`, a.MetricsID()).Scan(&n)

@@ -28,7 +28,7 @@ class ReleaseTests(unittest.TestCase):
                     status='completed', conclusion='success', path='.github/workflows/ci.yml')
         for override in [dict(head_sha='b' * 40), dict(head_branch='feature'), dict(event='pull_request'),
                          dict(conclusion='failure'), dict(status='in_progress'), dict(path='other.yml')]:
-            with self.assertRaises(AssertionError):
+            with self.assertRaises(SystemExit):
                 selection.select([{**base, **override}], 'a' * 40)
         self.assertEqual(selection.select([base, {**base, 'id': 2}], 'a' * 40)['id'], 2)
 
@@ -37,7 +37,7 @@ class ReleaseTests(unittest.TestCase):
         valid = [dict(name=f'runtime-{sha}-{arch}', expired=False) for arch in ('amd64', 'arm64')]
         selection.validate_artifacts(valid, sha)
         for invalid in [valid[:1], [valid[0], {**valid[1], 'expired': True}], valid + valid[:1]]:
-            with self.assertRaises(AssertionError):
+            with self.assertRaises(SystemExit):
                 selection.validate_artifacts(invalid, sha)
 
     def test_corrupt_or_wrong_commit_never_loads(self):
@@ -48,8 +48,17 @@ class ReleaseTests(unittest.TestCase):
             for metadata in [{**expected, 'revision':'b'*40, 'sha256':'0'*64}, {**expected, 'sha256':'0'*64}]:
                 args.directory.joinpath('metadata.json').write_text(json.dumps(metadata))
                 with patch.object(artifact.subprocess, 'run') as load:
-                    with self.assertRaises(AssertionError): artifact.run(args)
+                    with self.assertRaises(SystemExit): artifact.run(args)
                     load.assert_not_called()
+
+    def test_version_and_identity_gates(self):
+        for version in ('0.7.15', '1.0.0', '12.34.56'):
+            artifact.checked_metadata(None, version, 'a' * 40, 'arm64')
+        for version, revision, arch in [('v1.0.0', 'a' * 40, 'amd64'), ('1.0', 'a' * 40, 'amd64'),
+                                        ('1.0.0-rc1', 'a' * 40, 'amd64'), ('1.0.0', 'a' * 39, 'amd64'),
+                                        ('1.0.0', 'a' * 40, '386')]:
+            with self.assertRaises(SystemExit):
+                artifact.checked_metadata(None, version, revision, arch)
 
 
 if __name__ == '__main__':

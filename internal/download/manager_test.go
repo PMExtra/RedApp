@@ -44,7 +44,12 @@ func resource(c *distributor.Client, b []byte) Resource {
 const testApp = "openai/codex"
 
 func newTestManager(dir string, db *store.Store, c *distributor.Client) (*Manager, error) {
-	return NewApplications(dir, db, map[string]*distributor.Client{testApp: c})
+	m, err := NewApplications(dir, db, map[string]*distributor.Client{testApp: c})
+	if err == nil {
+		// Package tests keep the production retry count with short backoff.
+		m.retryBase, m.retryMax = time.Millisecond, 10*time.Millisecond
+	}
+	return m, err
 }
 func authorize(t *testing.T, m *Manager, r Resource) {
 	t.Helper()

@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"bytes"
+	_ "embed"
 	"fmt"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
@@ -15,9 +16,17 @@ import (
 
 var instructionsMarkdown = goldmark.New(goldmark.WithExtensions(extension.GFM), goldmark.WithRendererOptions(renderer.WithUnsafe(), goldrenderer.WithNodeRenderers(util.Prioritized(copyCodeRenderer{}, 100))))
 
+//go:embed instructions_height.js
+var instructionsHeightScript string
+
+// The CSP sandbox gives the document an opaque origin even when opened directly,
+// so its scripts cannot use the administrator session. The embedding iframe
+// carries the same sandbox flags.
+const instructionsDocumentPolicy = "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation; default-src * data: blob:; script-src * 'unsafe-inline' 'unsafe-eval' data: blob:; style-src * 'unsafe-inline'; frame-ancestors 'self'"
+
 // A separately served HTML document gives administrator-authored scripts normal
-// browser parsing/execution semantics. It carries only public application data.
-// This deliberately trusted same-origin document is not an isolation boundary.
+// browser parsing/execution semantics, including external resources. It carries
+// only public application data.
 func (s *Server) instructionsDocument(w http.ResponseWriter, r *http.Request, origin string) bool {
 	if !strings.HasPrefix(r.URL.Path, "/api/apps/") || !strings.HasSuffix(r.URL.Path, "/instructions/document") {
 		return false
@@ -65,7 +74,7 @@ func (s *Server) instructionsDocument(w http.ResponseWriter, r *http.Request, or
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
-	w.Header().Set("Content-Security-Policy", "default-src * data: blob:; script-src * 'unsafe-inline' 'unsafe-eval' data: blob:; style-src * 'unsafe-inline'; frame-ancestors 'self'")
-	fmt.Fprintf(w, `<!doctype html><html lang="%s"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><base target="_top"><style>body{font:15px/1.65 system-ui,sans-serif;margin:0;padding:1px;color:#27364b;background:white}h1,h2,h3{line-height:1.3}pre{overflow:auto;background:#f4f6f9;padding:16px;border-radius:8px}img,video{max-width:100%%}button{border:1px solid #cbd5e1;background:white;border-radius:6px;padding:8px 16px;cursor:pointer}table{border-collapse:collapse}td,th{border:1px solid #ddd;padding:8px}a{color:#185fbc}%s</style></head><body>%s<script>%s</script></body></html>`, lang, instructionsCopyStyle, s.interpolateInstructionVariables(entry, body.String(), origin, lang), instructionsCopyScript)
+	w.Header().Set("Content-Security-Policy", instructionsDocumentPolicy)
+	fmt.Fprintf(w, `<!doctype html><html lang="%s"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><base target="_top"><style>body{font:15px/1.65 system-ui,sans-serif;margin:0;padding:1px;color:#27364b;background:white}h1,h2,h3{line-height:1.3}pre{overflow:auto;background:#f4f6f9;padding:16px;border-radius:8px}img,video{max-width:100%%}button{border:1px solid #cbd5e1;background:white;border-radius:6px;padding:8px 16px;cursor:pointer}table{border-collapse:collapse}td,th{border:1px solid #ddd;padding:8px}a{color:#185fbc}%s</style></head><body>%s<script>%s</script><script>%s</script></body></html>`, lang, instructionsCopyStyle, s.interpolateInstructionVariables(entry, body.String(), origin, lang), instructionsCopyScript, instructionsHeightScript)
 	return true
 }

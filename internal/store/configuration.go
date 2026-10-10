@@ -120,7 +120,9 @@ type configurationState struct {
 }
 
 // SetConfigurationPrepare installs the runtime coordinator. Every authoritative
-// Store configuration writer serializes through configMu, including direct users.
+// Store configuration writer serializes through configMu, including direct users,
+// admin notes and permanent deletion. Lock order: configMu before the publication
+// gate and the downloads mutex.
 func (s *Store) SetConfigurationPrepare(prepare func(DirectorySnapshot) (ConfigurationPublication, error)) {
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
@@ -887,6 +889,11 @@ func (s *Store) changeConfiguration(change func(*configurationState) error) erro
 func (s *Store) changeConfigurationAtomic(change func(*configurationState) error, finalize func(*sql.Tx) error) error {
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
+	return s.changeConfigurationLocked(change, finalize)
+}
+
+// changeConfigurationLocked requires configMu and may prepare a runtime publication.
+func (s *Store) changeConfigurationLocked(change func(*configurationState) error, finalize func(*sql.Tx) error) error {
 	baseline, err := s.configurationState()
 	if err != nil {
 		return err
@@ -1290,6 +1297,27 @@ func (s *Store) patchConfiguration(kind, key string, patch ConfigurationPatch, e
 					}
 				}
 			}
+		}
+		if raw, ok := patch.Set["proxy"]; ok {
+			var submitted networkproxy.Config
+			if json.Unmarshal(raw, &submitted) != nil {
+				return ErrInvalidDirectory
+			}
+			effective, err := st.effective(kind, uid)
+			if err != nil {
+				return err
+			}
+			saved, _ := decodeProxy(effective["proxy"])
+			kept, err := networkproxy.KeepRedactedPassword(submitted, saved)
+			if err != nil {
+				return fmt.Errorf("%w: %s", ErrInvalidDirectory, err)
+			}
+			set := make(map[string]json.RawMessage, len(patch.Set))
+			for key, value := range patch.Set {
+				set[key] = value
+			}
+			set["proxy"] = encode(kept)
+			patch.Set = set
 		}
 		c := st.Configs[configKey(kind, uid)]
 		if err := applyPatch(&c, kind, patch); err != nil {
@@ -1859,7 +1887,11 @@ func (s *Store) PatchGlobalProxy(expected int64, c networkproxy.Config) (int64, 
 		if st.GlobalProxyRevision != expected {
 			return ErrConflict
 		}
-		st.GlobalProxy = c
+		kept, err := networkproxy.KeepRedactedPassword(c, st.GlobalProxy)
+		if err != nil {
+			return fmt.Errorf("%w: %s", ErrInvalidDirectory, err)
+		}
+		st.GlobalProxy = kept
 		st.GlobalProxyRevision++
 		return nil
 	})

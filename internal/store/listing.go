@@ -21,6 +21,7 @@ func (s *Store) VersionPage(app, after string, limit int) ([]VersionStats, error
 	if requireApp(app) != nil || limit < 1 || limit > 101 {
 		return nil, errors.New("Invalid version page")
 	}
+	s.SettleCounters()
 	rows, err := s.DB.Query("SELECT version,first_seen_s,artifact_requests,downstream_bytes FROM app_versions WHERE app_id=? AND version>? ORDER BY version ASC LIMIT ?", app, after, limit)
 	if err != nil {
 		return nil, err
@@ -102,6 +103,7 @@ func (s *Store) VersionNumberPage(app string, page, limit int) (Page[VersionStat
 	if requireApp(app) != nil || page < 1 || page > 1000000000 || limit < 1 || limit > 100 {
 		return Page[VersionStats]{}, errors.New("Invalid version page")
 	}
+	s.SettleCounters()
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return Page[VersionStats]{}, err

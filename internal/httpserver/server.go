@@ -84,7 +84,7 @@ func problem(w http.ResponseWriter, status int, code, message string) {
 	reply(w, status, map[string]any{"error": map[string]any{"code": code, "message": message, "request_id": hex.EncodeToString(id[:]), "retryable": status >= 500 || code == "DIRECTORY_DELETE_PENDING"}})
 }
 func fail(w http.ResponseWriter, status int, message string) {
-	code := map[int]string{400: "INVALID_REQUEST", 401: "AUTH_REQUIRED", 403: "CSRF_REJECTED", 404: "RESOURCE_NOT_FOUND", 405: "METHOD_NOT_ALLOWED", 409: "SETTINGS_REVISION_CONFLICT", 413: "PAYLOAD_TOO_LARGE", 429: "LOGIN_RATE_LIMITED", 502: "UPSTREAM_UNAVAILABLE", 503: "LOCAL_STORAGE_UNAVAILABLE"}[status]
+	code := map[int]string{400: "INVALID_REQUEST", 401: "AUTH_REQUIRED", 403: "CSRF_REJECTED", 404: "RESOURCE_NOT_FOUND", 405: "METHOD_NOT_ALLOWED", 409: "SETTINGS_REVISION_CONFLICT", 413: "PAYLOAD_TOO_LARGE", 502: "UPSTREAM_UNAVAILABLE", 503: "LOCAL_STORAGE_UNAVAILABLE"}[status]
 	problem(w, status, code, message)
 }
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
@@ -421,6 +421,8 @@ func (s *Server) asset(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	} else if strings.HasSuffix(name, ".woff2") {
 		w.Header().Set("Content-Type", "font/woff2")
+		// Fonts are CORS fetches; sandboxed instruction documents have an opaque origin.
+		w.Header().Set("Access-Control-Allow-Origin", "*")
 	} else if strings.HasSuffix(name, ".txt") {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	} else {
@@ -435,6 +437,7 @@ func (s *Server) serveResource(w http.ResponseWriter, r *http.Request, resource 
 		return
 	}
 	defer finish()
+	defer s.DB.SettleCounters() // Persist this transfer's counters promptly; failures are reported, never fatal.
 	app := resource.Application
 	metricApp := resource.MetricScope()
 	if err := s.DB.AddFor(metricApp, "artifact_requests", 1); err != nil {
@@ -466,12 +469,9 @@ func (s *Server) serveResource(w http.ResponseWriter, r *http.Request, resource 
 		n, re := rd.Read(buf)
 		if n > 0 {
 			written, we := w.Write(buf[:n])
-			if e := s.DB.AddFor(metricApp, "downstream_bytes", int64(written)); e != nil {
-				panic(http.ErrAbortHandler)
-			}
-			if e := s.DB.AddVersion(app, resource.Version, 0, int64(written)); e != nil {
-				panic(http.ErrAbortHandler)
-			}
+			// Counters are buffered in memory; accounting never aborts a client transfer.
+			_ = s.DB.AddFor(metricApp, "downstream_bytes", int64(written))
+			_ = s.DB.AddVersion(app, resource.Version, 0, int64(written))
 			if we != nil {
 				s.DB.AddFor(metricApp, "download_errors", 1)
 				return
@@ -538,8 +538,14 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 			return
 		}
 		token, session, err := s.Auth.Login(s.Proxy.ClientIP(r), input.Password)
-		if err != nil {
-			fail(w, 429, "Login failed or rate limit exceeded")
+		if errors.Is(err, auth.ErrRateLimited) {
+			problem(w, 429, "LOGIN_RATE_LIMITED", "Too many login attempts; try again later")
+			return
+		} else if errors.Is(err, auth.ErrSessionLimit) {
+			problem(w, 503, "SESSION_LIMIT_EXCEEDED", "Too many active sessions; try again later")
+			return
+		} else if err != nil {
+			problem(w, 401, "LOGIN_FAILED", "Login failed")
 			return
 		}
 		s.Auth.Cookie(w, token, strings.HasPrefix(requestOrigin, "https://"))
@@ -742,7 +748,7 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 			if app != "" || s.Upstream == nil {
 				break
 			}
-			v := s.Upstream.Proxy()
+			v := s.Upstream.Proxy().Redacted()
 			revisionReply(w, v.Revision, v)
 			return
 		case "settings/public-url":
@@ -832,7 +838,7 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 				settingsError(w, e)
 				return
 			}
-			v := s.Upstream.Proxy()
+			v := s.Upstream.Proxy().Redacted()
 			revisionReply(w, v.Revision, v)
 			return
 		case "settings/public-url":

@@ -1,20 +1,23 @@
 VERSION ?= $(shell cat VERSION)
 REVISION ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 
-.PHONY: build binary test check installers installer-inventory docker frontend frontend-test runtime-test
+.PHONY: build binary test check docs-check installers installer-inventory docker frontend frontend-test runtime-test
 build: frontend
 	sh scripts/build-binary.sh bin/redapp "$(VERSION)" "$(REVISION)"
 binary:
 	sh scripts/build-binary.sh bin/redapp "$(VERSION)" "$(REVISION)"
 test: installer-inventory
 	python3 scripts/test-ci-release.py
+	python3 scripts/test-check-docs.py
 	go test -race ./... -count=1 -timeout=180s
 	python3 scripts/test-installers.py --platform shell
 	python3 scripts/test-update-installers.py
 	python3 scripts/test-installer-maintenance.py
-check:
+check: docs-check
 	test -z "$$(gofmt -l cmd internal installers presets)"
 	go vet ./...
+docs-check:
+	python3 scripts/check-docs.py
 installer-inventory:
 	mkdir -p .generated
 	go run ./cmd/preset-inventory > .generated/installer-inventory.json.tmp

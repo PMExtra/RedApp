@@ -48,7 +48,7 @@ func (s *Service) Warm(ctx context.Context, entry application.Entry, path string
 	ctx = context.WithValue(ctx, warmContextKey{}, true)
 	ctx = context.WithValue(ctx, fetchObserverKey{}, func(n int64) error { return budget.Consume(n) })
 	ctx = context.WithValue(ctx, fetchLengthKey{}, func(n int64) error { return budget.CheckLength(n) })
-	for tries := 0; tries < 16; tries++ {
+	for tries := 0; tries < fetchAgainLimit; tries++ {
 		if ctx.Err() != nil {
 			item.Reason = "cancelled"
 			return item
@@ -157,6 +157,9 @@ func (s *Service) warmCurrent(ctx context.Context, entry application.Entry, path
 	result, err := s.sharedFetch(ctx, entry, path, old)
 	if errors.Is(err, ErrFetchAgain) {
 		return warmplan.Item{Status: "failed", Reason: "generation_changed"}
+	}
+	if errors.Is(err, errUncacheableFlight) {
+		return warmplan.Item{Status: "not_cacheable", Reason: result.blockReason}
 	}
 	if errors.Is(err, warmplan.ErrLimited) {
 		return warmplan.Item{Status: "skipped", Reason: "read_limit"}

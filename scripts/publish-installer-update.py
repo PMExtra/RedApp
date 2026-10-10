@@ -131,7 +131,7 @@ def publish_app(root,payload,app,files,prs,allowed,api,run_url,remote,env,refs):
                 raise ValueError('Unowned branch '+branch+' differs from this update; refusing to replace it')
         else:
             head=git(root,'commit-tree',tree,'-p',baseline,env=env,input=b'Update official '+app.encode()+b' installers\n').decode().strip()
-            # The empty lease rejects the push if the branch appeared concurrently; no force push.
+            # The empty lease only creates the branch; it rejects the push if the branch appeared concurrently.
             git(root,'push','--force-with-lease=refs/heads/'+branch+':',remote,head+':refs/heads/'+branch,env=env)
         current=api.create(app,branch,body_for(payload,app,head,run_url))
         print(app+' draft PR: '+current['html_url'])
@@ -156,5 +156,5 @@ if __name__=='__main__':
     try:main()
     except subprocess.CalledProcessError as error:
         # Subprocess output can contain HTTP credentials; never copy it into public logs.
-        raise SystemExit(f'Installer publication git operation failed (exit {error.returncode}); inspect repository permissions or branch changes. No force push was used.')
+        raise SystemExit(f'Installer publication git operation failed (exit {error.returncode}); inspect repository permissions or branch changes. Branch pushes and deletions are guarded by --force-with-lease on the expected commit, so a concurrently changed branch is not overwritten or deleted.')
     except (OSError,ValueError,KeyError,zipfile.BadZipFile) as error:raise SystemExit('Installer publication failed: '+str(error))

@@ -189,7 +189,8 @@ export const messages = {
  'success': '成功',
 
  "HTTP / HTTPS / SOCKS5 proxy for metadata, artifacts and imports. Select Direct connection to disable the proxy. Environment proxy variables are ignored; SOCKS5 uses proxy-side DNS.": "元数据、制品与导入使用 HTTP / HTTPS / SOCKS5 代理。选择直接连接可禁用代理。不使用环境代理变量；SOCKS5 在代理侧解析 DNS。",
- "Enter one complete URL with percent-encoded credentials. The saved URL is visible to administrators.": "输入包含百分号编码凭据的完整 URL。保存的 URL 对管理员可见。",
+ "Enter one complete URL with percent-encoded credentials.": "输入包含百分号编码凭据的完整 URL。",
+ "The saved password is hidden as ****. Keep **** to retain it for the same scheme, user and host, or enter a new password.": "已保存的密码显示为 ****。保留 **** 可在协议、用户名和主机不变时沿用原密码，也可输入新密码。",
  "Global": "全局",
 
  Reset: "重置", "Restore the template default": "恢复模板默认值",
@@ -665,15 +666,18 @@ export const messages = {
     "支持 Markdown、HTML、JavaScript 和外部资源，仅管理员可编辑说明。",
   "Disabled by vendor": "厂商已禁用",
   "Proxy URL": "代理 URL",
-  "Enter one complete URL with percent-encoded credentials. The saved URL is visible to administrators. Empty means direct.":
-    "输入包含百分号编码凭据的完整 URL。管理员可查看已保存的 URL。留空表示直连。",
   "Connection failed. Check your connection and retry.":
     "连接失败，请检查网络后重试。",
   "Request rejected. Check your input and retry.":
     "请求被拒绝，请检查输入后重试。",
   "Permission check failed. Refresh the page and sign in again.":
     "权限校验失败，请刷新页面并重新登录。",
-  "Login failed or rate limit exceeded": "登录失败或请求过于频繁，请稍后重试。",
+  "Login failed. Check the password and try again.": "登录失败，请检查密码后重试。",
+  "Too many login attempts. Try again later.": "登录尝试过于频繁，请稍后重试。",
+  "Too many requests. Try again later.": "请求过于频繁，请稍后重试。",
+  "Too many configuration previews are active. Wait for one to expire.":
+    "活动的配置预览过多，请等待其过期后重试。",
+  "Too many active sessions. Try again later.": "活动会话过多，请稍后重试。",
   "Service temporarily unavailable. Try again.": "服务暂时不可用，请稍后重试。",
   "Requested data is unavailable.": "请求的数据暂不可用。",
   Refresh: "刷新",
@@ -972,7 +976,11 @@ const errorCodes: Record<string, Message> = {
   INVALID_PATH: "Request rejected. Check your input and retry.",
   APPLICATION_NOT_FOUND: "Requested data is unavailable.",
   RESOURCE_NOT_FOUND: "Requested data is unavailable.",
-  LOGIN_RATE_LIMITED: "Login failed or rate limit exceeded",
+  LOGIN_FAILED: "Login failed. Check the password and try again.",
+  LOGIN_RATE_LIMITED: "Too many login attempts. Try again later.",
+  SESSION_LIMIT_EXCEEDED: "Too many active sessions. Try again later.",
+  PREVIEW_LIMIT_EXCEEDED:
+    "Too many configuration previews are active. Wait for one to expire.",
   METHOD_NOT_ALLOWED: "This operation is not supported.",
   DOWNLOAD_CAPACITY_EXCEEDED: "Download capacity is busy. Try again later.",
   METADATA_UNTRUSTED: "Upstream metadata could not be verified.",
@@ -995,7 +1003,7 @@ export function errorText(reason: unknown): string {
   if (status === 401) return t("Your session expired. Sign in again.");
   if (status === 403)
     return t("Permission check failed. Refresh the page and sign in again.");
-  if (status === 429) return t("Login failed or rate limit exceeded");
+  if (status === 429) return t("Too many requests. Try again later.");
   if (status === 400) return t("Request rejected. Check your input and retry.");
   if (status === 409)
     return t(

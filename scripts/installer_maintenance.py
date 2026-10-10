@@ -109,7 +109,7 @@ def inspect(root=ROOT,fetch=download):
             current=fetch(item['url']);script_shape(item['name'],current)
             row['current_sha256']=digest(current);row['data']=current
             # Re-signing alone does not change what RedApp generates or serves.
-            row['status']='unchanged' if unsigned(current)==unsigned(body) else 'changed'
+            row['status']='unchanged' if same_unsigned(current,body) else 'changed'
         except (OSError,ValueError,UnicodeError,TimeoutError) as error:
             row['error']=str(error) if not isinstance(error,urllib.error.HTTPError) else f'Upstream HTTP {error.code}'
         rows.append(row)
@@ -147,13 +147,22 @@ def prepare(destination,root=ROOT,fetch=download):
     return changed
 
 # Generated scripts are modified, so an upstream Authenticode block would only claim an
-# invalid signature. Cutting from the trailing begin marker keeps patches independent of
-# re-signing; any marker left elsewhere stops for review.
+# invalid signature. Only one trailing block is removed: it starts at the last begin marker,
+# contains no other marker and ends at EOF. Any marker left elsewhere stops for review, so
+# code between or before signature blocks can never be dropped silently.
 SIGNATURE_BEGIN=b'# SIG # Begin signature block'
-SIGNATURE_BLOCK=re.compile(rb'\r?\n'+re.escape(SIGNATURE_BEGIN)+rb'\r?\n.*# SIG # End signature block\s*\Z',re.S)
+SIGNATURE_END=b'# SIG # End signature block'
+SIGNATURE_BLOCK=re.compile(rb'\r?\n'+re.escape(SIGNATURE_BEGIN)+rb'\r?\n(?:(?!'+re.escape(SIGNATURE_BEGIN)+rb'|'+re.escape(SIGNATURE_END)+rb').)*'+re.escape(SIGNATURE_END)+rb'\s*\Z',re.S)
 
 def unsigned(original):
-    return SIGNATURE_BLOCK.sub(b'',original)
+    body=SIGNATURE_BLOCK.sub(b'',original,count=1)
+    if SIGNATURE_BEGIN in body or SIGNATURE_END in body:
+        raise ValueError('Authenticode marker outside a single trailing signature block; maintainer review is required')
+    return body
+
+# Shared by daily checks and local updates: re-signing alone is not an upstream change.
+def same_unsigned(current,audited):
+    return unsigned(current)==unsigned(audited)
 
 # Line offsets are accepted; fuzz, rejected or reversed hunks are conflicts.
 def apply_patch(original,patch):

@@ -143,7 +143,10 @@ func TestSettingsCASAndPairedCountersRollback(t *testing.T) {
 	if _, err = s.DB.Exec(`CREATE TRIGGER fail_app_counter BEFORE INSERT ON metric_counters WHEN NEW.scope='app' BEGIN SELECT RAISE(FAIL,'app fault'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.AddFor("openai/codex", "upstream_bytes", 7); err == nil {
+	if err = s.AddFor("openai/codex", "upstream_bytes", 7); err != nil {
+		t.Fatal("buffered add failed", err)
+	}
+	if err = s.FlushCounters(); err == nil {
 		t.Fatal("counter fault ignored")
 	}
 	counters, _ := s.Counters()
@@ -151,7 +154,8 @@ func TestSettingsCASAndPairedCountersRollback(t *testing.T) {
 		t.Fatal("half counter committed")
 	}
 	s.DB.Exec("DROP TRIGGER fail_app_counter")
-	if err = s.AddFor("openai/codex", "upstream_bytes", 7); err != nil {
+	// The failed increment is retained and committed by the next flush exactly once.
+	if err = s.FlushCounters(); err != nil {
 		t.Fatal(err)
 	}
 	global, _ := s.Counters()
@@ -267,6 +271,9 @@ func TestWALDataSurvivesAbruptProcessExit(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err = s.AddFor("openai/codex", "upstream_bytes", 13); err != nil {
+			t.Fatal(err)
+		}
+		if err = s.FlushCounters(); err != nil {
 			t.Fatal(err)
 		}
 		os.Exit(0)

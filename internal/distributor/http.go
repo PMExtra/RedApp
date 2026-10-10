@@ -6,7 +6,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
-	"fmt"
 	"github.com/PMExtra/RedApp/internal/identity"
 	"io"
 	"net"
@@ -14,7 +13,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -25,6 +23,63 @@ import (
 // or proxy credentials. Invalid redirects, encoding and certificates are not
 // retryable connection failures.
 var ErrConnection = errors.New("Upstream connection failed")
+
+// ErrUnsafeEncoding rejects a response whose representation is not identity.
+var ErrUnsafeEncoding = errors.New("Unsafe upstream Content-Encoding")
+
+// ErrorKind classifies an upstream failure for diagnostics only.
+type ErrorKind uint8
+
+const (
+	KindNetwork ErrorKind = iota
+	KindDNS
+	KindTLS
+	KindTimeout
+	KindRedirect
+)
+
+// RequestError keeps a stable public message without exposing the URL or
+// proxy credentials, while retaining the failure class. It matches
+// ErrConnection only for retryable transport failures.
+type RequestError struct {
+	Kind      ErrorKind
+	retryable bool
+	message   string
+}
+
+func (e *RequestError) Error() string {
+	if e.message != "" {
+		return e.message
+	}
+	return ErrConnection.Error()
+}
+func (e *RequestError) Is(target error) bool { return target == ErrConnection && e.retryable }
+
+// Classify reports the failure class of a request error or of a raw
+// transport/body read error.
+func Classify(err error) ErrorKind {
+	var request *RequestError
+	if errors.As(err, &request) {
+		return request.Kind
+	}
+	var dns *net.DNSError
+	var certificate *tls.CertificateVerificationError
+	var unknownAuthority x509.UnknownAuthorityError
+	var hostname x509.HostnameError
+	var invalidCertificate x509.CertificateInvalidError
+	var record tls.RecordHeaderError
+	var alert tls.AlertError
+	var network net.Error
+	switch {
+	case errors.As(err, &dns):
+		return KindDNS
+	case errors.As(err, &certificate) || errors.As(err, &unknownAuthority) || errors.As(err, &hostname) || errors.As(err, &invalidCertificate) || errors.As(err, &record) || errors.As(err, &alert):
+		return KindTLS
+	case errors.As(err, &network) && network.Timeout():
+		return KindTimeout
+	}
+	return KindNetwork
+}
 
 type redirectPolicyError struct{ error }
 
@@ -99,7 +154,9 @@ func (p *Pool) newClient(base string, mode ClientMode, appUID, vendorUID string)
 	u, _ := url.Parse(base)
 	c := &Client{Base: u, mode: mode, pool: p}
 	c.transports = &transportSwitch{current: transportReference{pool: p, configured: mode != PublicRelease, appUID: appUID, vendorUID: vendorUID}}
-	c.HTTP = &http.Client{Transport: c.transports, Timeout: 5 * time.Minute, CheckRedirect: c.checkRedirect}
+	// No Client.Timeout: it would bound whole body streaming. The transport
+	// bounds dial/TLS/response headers and Do bounds idle body reads.
+	c.HTTP = &http.Client{Transport: c.transports, CheckRedirect: c.checkRedirect}
 	return c, nil
 }
 
@@ -246,7 +303,16 @@ func (c *Client) Do(ctx context.Context, method, source string, headers http.Hea
 	if err = c.Validate(u); err != nil {
 		return nil, err
 	}
-	r, err := http.NewRequestWithContext(ctx, method, u.String(), nil)
+	// There is no overall client deadline: the returned body owns this
+	// request context and cancels it on Close or after an idle read.
+	requestCtx, cancel := context.WithCancel(ctx)
+	owned := false
+	defer func() {
+		if !owned {
+			cancel()
+		}
+	}()
+	r, err := http.NewRequestWithContext(requestCtx, method, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -285,8 +351,11 @@ func (c *Client) Do(ctx context.Context, method, source string, headers http.Hea
 		var unknownAuthority x509.UnknownAuthorityError
 		var hostname x509.HostnameError
 		var invalidCertificate x509.CertificateInvalidError
-		if errors.As(err, &redirect) || errors.As(err, &certificate) || errors.As(err, &unknownAuthority) || errors.As(err, &hostname) || errors.As(err, &invalidCertificate) {
-			return nil, errors.New("Upstream connection failed")
+		if errors.As(err, &redirect) {
+			return nil, &RequestError{Kind: KindRedirect}
+		}
+		if errors.As(err, &certificate) || errors.As(err, &unknownAuthority) || errors.As(err, &hostname) || errors.As(err, &invalidCertificate) {
+			return nil, &RequestError{Kind: KindTLS}
 		}
 		networkErr := err
 		var urlErr *url.Error
@@ -294,10 +363,8 @@ func (c *Client) Do(ctx context.Context, method, source string, headers http.Hea
 			networkErr = urlErr.Err
 		}
 		var network net.Error
-		if errors.As(networkErr, &network) || errors.Is(networkErr, io.EOF) || errors.Is(networkErr, io.ErrUnexpectedEOF) {
-			return nil, ErrConnection
-		}
-		return nil, errors.New("Upstream connection failed")
+		retryable := errors.As(networkErr, &network) || errors.Is(networkErr, io.EOF) || errors.Is(networkErr, io.ErrUnexpectedEOF)
+		return nil, &RequestError{Kind: Classify(networkErr), retryable: retryable}
 	}
 	unsafeEncoding := resp.Uncompressed
 	for _, value := range resp.Header.Values("Content-Encoding") {
@@ -309,7 +376,9 @@ func (c *Client) Do(ctx context.Context, method, source string, headers http.Hea
 	}
 	if unsafeEncoding {
 		resp.Body.Close()
-		return nil, fmt.Errorf("Unsafe upstream Content-Encoding")
+		return nil, ErrUnsafeEncoding
 	}
+	watchBody(resp, idleTimeoutFor(ctx), cancel)
+	owned = true
 	return resp, nil
 }

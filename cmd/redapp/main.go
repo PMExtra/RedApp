@@ -149,7 +149,8 @@ func serve(c config.Deployment) error {
 	if err != nil {
 		return err
 	}
-	defer db.DB.Close()
+	defer db.Close() // Runs after all transfer services stop, flushing their final counters.
+	defer db.StartCounterFlush(store.CounterFlushInterval, func(err error) { log.Printf("Counter flush failed; increments retained for retry: %v", err) })()
 	db.SetDistributionValidation(builtin.ValidateDescriptors)
 	// Validate/reconcile all authoritative configurations before recovery mutates data.
 	if err = db.EnsureEntityTemplates(); err != nil {
@@ -200,7 +201,7 @@ func serve(c config.Deployment) error {
 	if err := manager.ConfigureLimits(c.DownloadLimits.MaxWriters, c.DownloadLimits.MaxReaders, c.DownloadLimits.MaxArtifactBytes); err != nil {
 		return err
 	}
-	a, err := auth.New(db, false, func(password string) {
+	a, err := auth.New(db, func(password string) {
 		log.Printf("Initial admin password: %s; change it after signing in and protect these logs.", password)
 	})
 	if err != nil {

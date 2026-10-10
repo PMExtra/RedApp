@@ -34,6 +34,9 @@ it("preserves structured problem fields and localizes by stable code before stat
     ["CLEANUP_INVALID", 409, "Create a new preview"],
     ["DIRECTORY_DELETE_PENDING", 409, "Retry deletion"],
     ["METADATA_UNTRUSTED", 502, "could not be verified"],
+    ["LOGIN_FAILED", 401, "Check the password"],
+    ["LOGIN_RATE_LIMITED", 429, "Too many login attempts"],
+    ["PREVIEW_LIMIT_EXCEEDED", 429, "configuration previews"],
   ] as const) {
     vi.stubGlobal(
       "fetch",

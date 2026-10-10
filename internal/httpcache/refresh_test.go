@@ -369,11 +369,11 @@ func TestPermanentDeletionCancelsWholeRefreshAndSharedFollowers(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-started
-	// Join the same refresh flight as a public no-cache reader.
+	// Join the same refresh flight as a public reader of the now-stale entry.
+	f.clock.Add(3601)
 	follower := make(chan error, 1)
 	go func() {
 		r := httptest.NewRequest("GET", "http://local/file", nil)
-		r.Header.Set("Cache-Control", "no-cache")
 		follower <- f.s.Serve(httptest.NewRecorder(), r, f.entry, "file")
 	}()
 	deadline := time.Now().Add(time.Second)
@@ -398,7 +398,7 @@ func TestPermanentDeletionCancelsWholeRefreshAndSharedFollowers(t *testing.T) {
 	if calls.Load() != 1 || f.budget.readers.Load() != 0 || f.budget.writers.Load() != 0 {
 		t.Fatal("next batch restarted or leases leaked", calls.Load())
 	}
-	if err = f.db.FinishApplicationDeletion(uid); err != nil {
+	if err = f.db.FinishApplicationDeletion(uid, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = f.s.ExecuteRefresh(context.Background(), f.entry, preview.ID); err == nil {
