@@ -66,6 +66,13 @@ export function displayFormError(message: string | undefined): string | undefine
   }
 }
 
+/** Number of Unicode code points, for limits the server counts in characters. */
+export function codePointLength(value: string): number {
+  let length = 0;
+  for (const _ of value) length++;
+  return length;
+}
+
 /** UTF-8 byte length, for limits the server counts in bytes (passwords). */
 export function utf8Length(value: string): number {
   return new TextEncoder().encode(value).length;

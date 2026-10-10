@@ -1,6 +1,6 @@
 import { computed, ref, toValue, type MaybeRefOrGetter } from "vue";
 import { useMutation, useQueryClient, type QueryKey } from "@tanstack/vue-query";
-import { isApiError, type ApiError } from "./errors";
+import { isApiError, type AnyErrorCode, type ApiError } from "./errors";
 import { ifMatch } from "./revision";
 
 export interface RevisionedMutationOptions<TData, TVariables> {
@@ -14,6 +14,8 @@ export interface RevisionedMutationOptions<TData, TVariables> {
    */
   queryKey?: MaybeRefOrGetter<QueryKey | undefined>;
   onSuccess?: (data: TData, variables: TVariables) => void;
+  /** Further error codes the caller presents itself (no global error toast). */
+  handledCodes?: readonly AnyErrorCode[];
 }
 
 /**
@@ -29,7 +31,7 @@ export function useRevisionedMutation<TData, TVariables = void>(
   const conflict = ref<ApiError | null>(null);
 
   const mutation = useMutation<TData, Error, TVariables>({
-    meta: { handledCodes: ["REVISION_CONFLICT"] },
+    meta: { handledCodes: ["REVISION_CONFLICT", ...(options.handledCodes ?? [])] },
     mutationFn: (variables) => {
       const revision = toValue(options.revision);
       if (revision === undefined) {
