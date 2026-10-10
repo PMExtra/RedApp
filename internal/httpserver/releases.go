@@ -1,10 +1,7 @@
 package httpserver
 
 import (
-	"bytes"
 	"database/sql"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"slices"
@@ -13,7 +10,6 @@ import (
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/identity"
-	"github.com/PMExtra/RedApp/internal/jsoncheck"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -71,56 +67,6 @@ func (s *Server) refuseDisabled(w http.ResponseWriter, r *http.Request, e applic
 	return true
 }
 
-// cursorPage is a cursor-paginated list document.
-type cursorPage[T any] struct {
-	Items      []T     `json:"items"`
-	NextCursor *string `json:"next_cursor"`
-}
-
-// releaseCursor is the opaque continuation of a release list. It binds the
-// endpoint, the source epoch (storage ID) and the filter, so a cursor from
-// another list, application, epoch or filter is INVALID_CURSOR.
-type releaseCursor struct {
-	Endpoint string `json:"e"`
-	Storage  string `json:"s"`
-	Filter   string `json:"f"`
-	Last     string `json:"l"`
-}
-
-func encodeReleaseCursor(c releaseCursor) *string {
-	raw, err := json.Marshal(c)
-	if err != nil {
-		panic(err)
-	}
-	value := base64.RawURLEncoding.EncodeToString(raw)
-	return &value
-}
-
-// readReleaseCursor returns the last item of the previous page, "" without a cursor.
-func readReleaseCursor(r *http.Request, want releaseCursor) (string, *apiError) {
-	raw := r.URL.Query().Get("cursor")
-	if raw == "" {
-		return "", nil
-	}
-	invalid := newError(codeInvalidCursor, nil, "cursor does not belong to this list; start from the first page")
-	data, err := base64.RawURLEncoding.Strict().DecodeString(raw)
-	if err != nil || len(raw) > 2048 || jsoncheck.Strict(data) != nil {
-		return "", invalid
-	}
-	var c releaseCursor
-	d := json.NewDecoder(bytes.NewReader(data))
-	d.DisallowUnknownFields()
-	if d.Decode(&c) != nil || d.More() || c.Last == "" {
-		return "", invalid
-	}
-	last := c.Last
-	c.Last = ""
-	if c != want {
-		return "", invalid
-	}
-	return last, nil
-}
-
 type versionDTO struct {
 	Version         string    `json:"version"`
 	FirstSeen       time.Time `json:"first_seen"`
@@ -158,8 +104,8 @@ func (s *Server) listVersions(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, apiErr)
 		return
 	}
-	scope := releaseCursor{Endpoint: "versions", Storage: e.StorageID()}
-	last, apiErr := readReleaseCursor(r, scope)
+	scope := cursorScope(e.StorageID())
+	last, apiErr := decodeAfterCursor(r, "listVersions", scope)
 	if apiErr != nil {
 		s.writeError(w, r, apiErr)
 		return
@@ -178,7 +124,7 @@ func (s *Server) listVersions(w http.ResponseWriter, r *http.Request) {
 	if last != "" {
 		i := slices.Index(ordered, last)
 		if i < 0 {
-			s.fail(w, r, codeInvalidCursor, nil, "cursor does not belong to this list; start from the first page")
+			s.writeError(w, r, invalidCursor())
 			return
 		}
 		start = i + 1
@@ -190,8 +136,7 @@ func (s *Server) listVersions(w http.ResponseWriter, r *http.Request) {
 		page.Items = append(page.Items, versionDTO{Version: row.Version, FirstSeen: row.FirstSeen.UTC(), Requests: row.ArtifactRequests, DownstreamBytes: row.DownstreamBytes})
 	}
 	if end < len(ordered) {
-		scope.Last = ordered[end-1]
-		page.NextCursor = encodeReleaseCursor(scope)
+		page.NextCursor = afterCursor("listVersions", scope, ordered[end-1])
 	}
 	writeOK(w, page)
 }
@@ -236,8 +181,8 @@ func (s *Server) listResources(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	scope := releaseCursor{Endpoint: "resources", Storage: e.StorageID(), Filter: version}
-	last, apiErr := readReleaseCursor(r, scope)
+	scope := cursorScope(e.StorageID(), version)
+	last, apiErr := decodeAfterCursor(r, "listResources", scope)
 	if apiErr != nil {
 		s.writeError(w, r, apiErr)
 		return
@@ -269,8 +214,7 @@ func (s *Server) listResources(w http.ResponseWriter, r *http.Request) {
 		page.Items = append(page.Items, item)
 	}
 	if end < len(views) {
-		scope.Last = views[end-1].ID
-		page.NextCursor = encodeReleaseCursor(scope)
+		page.NextCursor = afterCursor("listResources", scope, views[end-1].ID)
 	}
 	writeOK(w, page)
 }

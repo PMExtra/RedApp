@@ -12,7 +12,6 @@ import (
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/pathmatch"
-	"github.com/PMExtra/RedApp/internal/store"
 )
 
 func TestPathMatchUsesCanonicalDecodedPaths(t *testing.T) {
@@ -74,13 +73,13 @@ func TestSourcesListEpochsWithProviderFields(t *testing.T) {
 		body, _ := h.request("GET", path+"/sources", nil, 200, nil)
 		return decodeJSONBody[sourceListDTO](t, body)
 	}
-	updateApp(t, h, app.Key, func(c *store.ApplicationChanges) { c.CacheTTLSeconds = 0 })
+	h.patchApp(app.Key, map[string]any{"cache_ttl_seconds": 60})
 	if list := sources(api); len(list.Items) != 1 || list.Items[0].Epoch != 1 {
 		t.Fatal("a TTL edit created a source epoch", list)
 	}
 	reordered := []string{base[1], base[0]}
-	updateApp(t, h, app.Key, func(c *store.ApplicationChanges) { c.BaseURLs = reordered })
-	updateApp(t, h, app.Key, func(c *store.ApplicationChanges) { c.BaseURLs = reordered; c.SourceStrategy = "round_robin" })
+	h.patchApp(app.Key, map[string]any{"base_urls": reordered})
+	h.patchApp(app.Key, map[string]any{"source_strategy": "round_robin"})
 	list := sources(api)
 	if len(list.Items) != 3 {
 		t.Fatal("source order and strategy changes did not isolate their epochs", list)
@@ -103,7 +102,7 @@ func TestSourcesListEpochsWithProviderFields(t *testing.T) {
 	h.expectError("GET", "/admin/api/apps/source-test/unknown/sources", nil, 404, codeApplicationNotFound, nil)
 	h.expectError("GET", "/admin/api/apps/source-test/Files/sources", nil, 400, codeInvalidPath, nil)
 	// Disabled and deleted applications stay inspectable; no epoch is active.
-	updateApp(t, h, app.Key, func(c *store.ApplicationChanges) { c.BaseURLs = reordered; c.Enabled = false })
+	h.setAppEnabled(app.Key, false)
 	for _, item := range sources(api).Items {
 		if item.Active {
 			t.Fatal("disabled source remained active", item)
@@ -154,13 +153,13 @@ func TestCacheEntriesPaginateByPathPerSourceEpoch(t *testing.T) {
 		}
 	}
 	body, _ := h.request("GET", api+"/cache/entries?limit=1", nil, 200, nil)
-	first := decodeJSONBody[cacheEntryPageDTO](t, body)
+	first := decodeJSONBody[cursorPage[cacheEntryDTO]](t, body)
 	if len(first.Items) != 1 || first.NextCursor == nil || len(*first.NextCursor) > maxCursorLength {
 		t.Fatal("first page", string(body))
 	}
 	// A new source epoch has its own entries; the old one stays readable and
 	// its cursors are bound to it.
-	updateApp(t, h, app.Key, func(c *store.ApplicationChanges) { c.BaseURL = upstream.URL + "/other" })
+	h.patchApp(app.Key, map[string]any{"base_urls": []string{upstream.URL + "/other"}})
 	h.request("GET", "/"+app.Key+"/a.bin", nil, 200, nil)
 	if current := cacheEntries(t, h, api, ""); len(current) != 1 || current[0].SourceURL != upstream.URL+"/other/a.bin" {
 		t.Fatal("current epoch listing", current)

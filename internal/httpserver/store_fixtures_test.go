@@ -7,9 +7,10 @@ import (
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
-// Fixtures of the maintenance tests (releases, retention, prewarm, hosted
-// files). They change configuration through the store, so these tests do
-// not depend on the directory and configuration API.
+// Store-backed fixtures for tests outside the directory area (releases,
+// retention, prewarm, hosted files, HTTP cache, overview, settings). They
+// change configuration through the store, so these tests do not depend on the
+// directory and configuration API.
 
 func configValue(t *testing.T, value any) json.RawMessage {
 	t.Helper()

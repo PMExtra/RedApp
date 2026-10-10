@@ -59,7 +59,7 @@ func TestStatusReportsCatalogMetricsWithStableGroups(t *testing.T) {
 	h.expectError("GET", "/admin/api/apps/fixture/unknown/status", nil, 404, codeApplicationNotFound, nil)
 	h.expectError("GET", "/admin/api/status?verbose=1", nil, 400, codeInvalidQuery, nil)
 	// Disabled and deleted applications stay readable.
-	updateApp(t, h, key, func(c *store.ApplicationChanges) { c.Enabled = false })
+	h.setAppEnabled(key, false)
 	h.request("GET", "/admin/api/apps/"+key+"/status", nil, 200, nil)
 	row, _ := h.store.Application(key)
 	if err := h.store.DeleteApplication(key, row.Revision); err != nil {
@@ -121,7 +121,7 @@ func TestEventsPaginateNewestFirstWithPublicKeys(t *testing.T) {
 	path := "/admin/api/events?limit=2"
 	for pages := 0; ; pages++ {
 		body, _ := h.request("GET", path, nil, 200, nil)
-		page := decodeJSONBody[eventPageDTO](t, body)
+		page := decodeJSONBody[cursorPage[eventDTO]](t, body)
 		if strings.Contains(string(body), files.UID) || len(page.Items) > 2 {
 			t.Fatal("event page", string(body))
 		}
@@ -147,7 +147,7 @@ func TestEventsPaginateNewestFirstWithPublicKeys(t *testing.T) {
 		}
 	}
 	body, _ := h.request("GET", "/admin/api/events?limit=1", nil, 200, nil)
-	cursor := *decodeJSONBody[eventPageDTO](t, body).NextCursor
+	cursor := *decodeJSONBody[cursorPage[eventDTO]](t, body).NextCursor
 	for _, query := range []string{"cursor=not-a-cursor", "cursor=e30", "cursor=" + cursor + "x"} {
 		h.expectError("GET", "/admin/api/events?"+query, nil, 400, codeInvalidCursor, nil)
 	}
@@ -158,4 +158,59 @@ func TestEventsPaginateNewestFirstWithPublicKeys(t *testing.T) {
 	}
 	// The application event list was removed.
 	h.request("GET", "/admin/api/apps/"+files.Key+"/events", nil, 404, nil)
+}
+
+// Application metrics belong to the application's stable identity: they add
+// up across its source epochs, while version counts only cover the current
+// epoch and never public keys or inapplicable providers.
+func TestAppMetricsFollowTheApplicationAcrossSourceEpochs(t *testing.T) {
+	data := []byte("official archive")
+	h := newHarness(t)
+	h.upstreamProxy(codexRelease("0.159.2", map[string][]byte{"archive.tgz": data}, nil))
+	key := h.releaseApp("fixture", "codex", "codex")
+	other := h.createApp("fixture", "claude", "claude-code", map[string]any{"base_url": fixtureUpstream})
+	files := h.createApp("fixture", "files", application.HttpCache, map[string]any{"base_url": fixtureUpstream})
+	h.login("")
+	h.request("GET", "/"+key+"/releases/0.159.2/archive.tgz", nil, 200, nil)
+	first, _ := h.store.Application(key)
+	if err := h.store.SeenFor(first.StorageID(), "0.1.0"); err != nil {
+		t.Fatal(err)
+	}
+	h.patchApp(key, map[string]any{"base_url": fixtureUpstream + "/mirror"})
+	current, _ := h.store.Application(key)
+	if current.SourceEpoch != first.SourceEpoch+1 {
+		t.Fatal("base URL change kept the source epoch")
+	}
+	h.request("GET", "/"+key+"/releases/0.159.2/archive.tgz", nil, 200, nil)
+	for owner, version := range map[string]string{other.StorageID(): "3.0.0", files.StorageID(): "not-a-version"} {
+		if err := h.store.SeenFor(owner, version); err != nil {
+			t.Fatal(err)
+		}
+	}
+	metrics := func(path string) map[string]*float64 {
+		t.Helper()
+		body, _ := h.request("GET", path, nil, 200, nil)
+		values := map[string]*float64{}
+		for _, metric := range decodeJSONBody[appStatusDTO](t, body).Metrics {
+			values[metric.Key] = metric.Value
+		}
+		return values
+	}
+	app := metrics("/admin/api/apps/" + key + "/status")
+	if *app["resources.total"] != 2 || *app["counters.artifact_requests"] != 2 || *app["versions.total"] != 1 {
+		t.Fatal("application metrics did not follow the application across epochs", *app["resources.total"], *app["counters.artifact_requests"], *app["versions.total"])
+	}
+	if global := metrics("/admin/api/status"); *global["versions.total"] != 2 {
+		t.Fatal("global versions counted an old epoch or an HTTP cache application", *global["versions.total"])
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	h.server.SampleHistory(ctx, func(e error) { t.Fatal(e) })
+	var value int64
+	if err := h.store.DB.QueryRow("SELECT CAST(value AS INTEGER) FROM metric_samples WHERE scope='app' AND app_id=? AND metric='counters.artifact_requests'", current.MetricsID()).Scan(&value); err != nil || value != 2 {
+		t.Fatal("history sampler did not use the stable identity", value, err)
+	}
+	if err := h.store.DB.QueryRow("SELECT count(*) FROM metric_samples WHERE scope='app' AND (app_id=? OR (app_id=? AND metric='versions.total'))", key, files.MetricsID()).Scan(&value); err != nil || value != 0 {
+		t.Fatal("history sampled a public key or an inapplicable metric", value, err)
+	}
 }

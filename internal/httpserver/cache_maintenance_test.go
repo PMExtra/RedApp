@@ -14,7 +14,6 @@ import (
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/cachepolicy"
 	"github.com/PMExtra/RedApp/internal/pathmatch"
-	"github.com/PMExtra/RedApp/internal/store"
 )
 
 // cacheFixture serves every path with its own path as body; requests counts
@@ -120,7 +119,7 @@ func TestCacheCleanupFreezesSelectionPerSourceEpoch(t *testing.T) {
 	}
 	// A historical epoch is cleaned by building the preview for it; the preview
 	// ID alone selects that epoch afterwards.
-	updateApp(t, h, app.Key, func(c *store.ApplicationChanges) { c.BaseURL = upstream.server.URL + "/new-source" })
+	h.patchApp(app.Key, map[string]any{"base_urls": []string{upstream.server.URL + "/new-source"}})
 	fetch("/remove/current.bin")
 	body, _ = h.request("POST", api+"/cache/cleanup/preview", map[string]any{"match": match, "basis": "fetched_at", "before": before, "source_epoch": 1}, 201, nil)
 	historical := decodePreview(t, body)
@@ -141,7 +140,7 @@ func TestCacheCleanupFreezesSelectionPerSourceEpoch(t *testing.T) {
 	// The removed source_epoch follow-up parameter is rejected.
 	h.expectError("POST", api+"/cache/cleanup/"+historical.ID+"/execute?source_epoch=1", nil, 400, codeInvalidQuery, nil)
 	// Disabled applications keep cache management.
-	updateApp(t, h, app.Key, func(c *store.ApplicationChanges) { c.Enabled = false })
+	h.setAppEnabled(app.Key, false)
 	h.request("GET", "/"+app.Key+"/remove/current.bin", nil, 404, nil)
 	h.request("POST", api+"/cache/cleanup/preview", map[string]any{"basis": "fetched_at", "before": time.Now().UTC()}, 201, nil)
 }
@@ -202,7 +201,7 @@ func TestCachePreviewErrors(t *testing.T) {
 	h.expectError("GET", api+"/cache/cleanup/"+cleanup.ID, nil, 404, codePreviewNotFound, nil)
 	h.expectError("POST", api+"/cache/cleanup/"+cleanup.ID+"/execute", nil, 404, codePreviewNotFound, nil)
 	// A disabled application has no active source to refresh.
-	updateApp(t, h, app.Key, func(c *store.ApplicationChanges) { c.Enabled = false })
+	h.setAppEnabled(app.Key, false)
 	h.expectError("POST", api+"/cache/refresh/preview", map[string]any{"match": glob}, 409, codeSourceChanged, nil)
 	h.expectError("POST", api+"/cache/refresh", map[string]any{"path": "/file.bin"}, 409, codeSourceChanged, nil)
 	h.expectError("POST", api+"/cache/refresh/"+twoFiles.ID+"/execute", nil, 409, codePreviewStale, nil)
@@ -437,7 +436,7 @@ func TestCacheRefreshSingleOutcomesAndPreviewFences(t *testing.T) {
 	private.Store(false)
 	body, _ = h.request("POST", api+"/cache/refresh/preview", glob, 201, nil)
 	beforeSource := decodePreview(t, body)
-	updateApp(t, h, app.Key, func(c *store.ApplicationChanges) { c.BaseURL = upstream.URL + "/replacement" })
+	h.patchApp(app.Key, map[string]any{"base_urls": []string{upstream.URL + "/replacement"}})
 	h.expectError("POST", api+"/cache/refresh/"+beforeSource.ID+"/execute", nil, 409, codePreviewStale, nil)
 	h.expectError("POST", api+"/cache/refresh", input, 404, codeCacheEntryNotFound, nil)
 }

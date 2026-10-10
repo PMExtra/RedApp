@@ -23,6 +23,12 @@ type pageCursor struct {
 	Skip      int    `json:"skip,omitempty"`
 }
 
+// cursorPage is a cursor-paginated list document.
+type cursorPage[T any] struct {
+	Items      []T     `json:"items"`
+	NextCursor *string `json:"next_cursor"`
+}
+
 // maxCursorLength is the specification's limit for cursors (NextCursor).
 const maxCursorLength = 2048
 
@@ -55,7 +61,7 @@ func decodePageCursor(r *http.Request, operation, scope string) (*pageCursor, *a
 	if token == "" {
 		return nil, nil
 	}
-	invalid := newError(codeInvalidCursor, nil, "cursor is not a next_cursor of this list; start again without a cursor")
+	invalid := invalidCursor()
 	if len(token) > maxCursorLength {
 		return nil, invalid
 	}
@@ -70,4 +76,28 @@ func decodePageCursor(r *http.Request, operation, scope string) (*pageCursor, *a
 		return nil, invalid
 	}
 	return &c, nil
+}
+
+// invalidCursor is the INVALID_CURSOR error of every cursor-paginated list.
+func invalidCursor() *apiError {
+	return newError(codeInvalidCursor, nil, "cursor is not a next_cursor of this list; start again without a cursor")
+}
+
+// decodeAfterCursor reads a cursor that continues after one item and returns
+// that item, or "" without a cursor. Only listCacheEntries issues prefix
+// continuations.
+func decodeAfterCursor(r *http.Request, operation, scope string) (string, *apiError) {
+	c, e := decodePageCursor(r, operation, scope)
+	if e != nil || c == nil {
+		return "", e
+	}
+	if c.Prefix {
+		return "", invalidCursor()
+	}
+	return string(c.Last), nil
+}
+
+// afterCursor returns the cursor that continues after the item last.
+func afterCursor(operation, scope, last string) *string {
+	return encodePageCursor(pageCursor{Operation: operation, Scope: scope, Last: []byte(last)})
 }

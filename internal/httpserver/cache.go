@@ -137,11 +137,6 @@ type cacheEntryDTO struct {
 	FreshUntil   time.Time  `json:"fresh_until"`
 }
 
-type cacheEntryPageDTO struct {
-	Items      []cacheEntryDTO `json:"items"`
-	NextCursor *string         `json:"next_cursor"`
-}
-
 func cacheEntryDocument(row httpcache.Row) cacheEntryDTO {
 	out := cacheEntryDTO{GenerationID: row.GenerationID, Path: "/" + row.Path, SizeBytes: row.SizeBytes, SHA256: row.SHA256, SourceURL: row.SourceURL, FetchedAt: row.FetchedAt.UTC(), ValidatedAt: row.ValidatedAt.UTC(), FreshUntil: row.FreshUntil.UTC()}
 	if row.ETag != "" {
@@ -198,7 +193,7 @@ func (s *Server) listCacheEntries(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, storageError(err))
 		return
 	}
-	page := cacheEntryPageDTO{Items: []cacheEntryDTO{}}
+	page := cursorPage[cacheEntryDTO]{Items: []cacheEntryDTO{}}
 	if len(rows) > limit {
 		rows = rows[:limit]
 		page.NextCursor = encodePageCursor(nextEntryCursor(scope, after, rows))
@@ -552,16 +547,14 @@ func (s *Server) listPreviewItems(w http.ResponseWriter, r *http.Request, kind, 
 		return
 	}
 	scope := cursorScope(preview.ID)
-	cursor, e := decodePageCursor(r, operation, scope)
+	after, e := decodeAfterCursor(r, operation, scope)
 	if e != nil {
 		s.writeError(w, r, e)
 		return
 	}
-	after := ""
-	if cursor != nil {
-		after = string(cursor.Last)
+	if after != "" {
 		if n, err := strconv.ParseInt(after, 10, 64); err != nil || n < 0 || strconv.FormatInt(n, 10) != after {
-			s.fail(w, r, codeInvalidCursor, nil, "cursor is not a next_cursor of this list; start again without a cursor")
+			s.writeError(w, r, invalidCursor())
 			return
 		}
 	}
@@ -575,7 +568,7 @@ func (s *Server) listPreviewItems(w http.ResponseWriter, r *http.Request, kind, 
 		out.Items = append(out.Items, maintenanceItemDTO{Ordinal: item.Ordinal, GenerationID: item.GenerationID, Path: "/" + strings.TrimPrefix(item.Path, "/"), SizeBytes: item.SizeBytes, ResultStatus: item.ResultStatus, ErrorCode: optionalText(item.ErrorCode)})
 	}
 	if page.NextCursor != "" {
-		out.NextCursor = encodePageCursor(pageCursor{Operation: operation, Scope: scope, Last: []byte(page.NextCursor)})
+		out.NextCursor = afterCursor(operation, scope, page.NextCursor)
 	}
 	writeOK(w, out)
 }

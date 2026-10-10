@@ -143,19 +143,51 @@ func (s *Server) adminRouteExists(r *http.Request) bool {
 // with 404; api, assets and health paths (and unknown /admin/api/ paths) get
 // the router-level NOT_FOUND error. It reports whether the request was handled.
 func (s *Server) reservedPath(w http.ResponseWriter, r *http.Request, vendor string) bool {
-	switch vendor {
-	case "admin":
-		if strings.HasPrefix(r.URL.Path, "/admin/api/") {
-			s.fail(w, r, codeNotFound, nil, "No route matches this path")
-		} else {
-			s.spaDocument(w, r, true, http.StatusNotFound)
-		}
+	switch {
+	case reservedNotFound(r.URL.Path):
+		s.reservedRouteError(w, r)
 		return true
-	case "api", "assets", "health":
-		s.fail(w, r, codeNotFound, nil, "No route matches this path")
+	case vendor == "admin":
+		s.spaDocument(w, r, true, http.StatusNotFound)
 		return true
 	}
 	return false
+}
+
+// reservedRouteError answers a reserved path that no operation serves with
+// r.Method. ServeMux matches every GET path with the /{vendor} page and file
+// routes, so its own 404/405 decision does not apply: the path exists only if
+// an operation route matches it for some method (405 with Allow), otherwise it
+// is NOT_FOUND.
+func (s *Server) reservedRouteError(w http.ResponseWriter, r *http.Request) {
+	var allow []string
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		probe := r.Clone(r.Context())
+		probe.Method = method
+		if _, pattern := s.mux.Handler(probe); pattern != "" && !strings.HasPrefix(pattern, "GET /{vendor}") {
+			allow = append(allow, method)
+			if method == http.MethodGet {
+				allow = append(allow, http.MethodHead)
+			}
+		}
+	}
+	if len(allow) == 0 {
+		s.fail(w, r, codeNotFound, nil, "No route matches this path")
+		return
+	}
+	w.Header().Set("Allow", strings.Join(allow, ", "))
+	s.fail(w, r, codeMethodNotAllowed, nil, "Method not allowed for this path")
+}
+
+// reservedNotFound reports whether path is under a reserved first segment
+// whose unknown paths are the router-level NOT_FOUND: /admin/api/, /api/,
+// /assets/ and /health/.
+func reservedNotFound(path string) bool {
+	if strings.HasPrefix(path, "/admin/api/") {
+		return true
+	}
+	first, _, _ := strings.Cut(strings.TrimPrefix(path, "/"), "/")
+	return first == "api" || first == "assets" || first == "health"
 }
 
 // getVendorPage serves the public document for a published vendor and the

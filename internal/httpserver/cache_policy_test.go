@@ -39,23 +39,6 @@ func setCachePolicy(t *testing.T, h *harness, key string, config cachepolicy.Con
 	return saved
 }
 
-// updateApp edits an application through the store; change starts from the
-// saved fields (BaseURLs is nil so that a BaseURL edit replaces the sources).
-func updateApp(t *testing.T, h *harness, key string, change func(*store.ApplicationChanges)) store.Application {
-	t.Helper()
-	a, err := h.store.Application(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := store.ApplicationChanges{Name: a.Name, Description: a.Description, Icon: a.Icon, BaseURL: a.BaseURL, SourceStrategy: a.SourceStrategy, CacheTTLSeconds: a.CacheTTLSeconds, Enabled: a.Enabled}
-	change(&c)
-	updated, err := h.store.UpdateApplication(key, a.Revision, c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return updated
-}
-
 // cacheEntries reads every cache entry page of api (an application's admin
 // API path) with query parameters appended to the first request.
 func cacheEntries(t *testing.T, h *harness, api, query string) []cacheEntryDTO {
@@ -64,7 +47,7 @@ func cacheEntries(t *testing.T, h *harness, api, query string) []cacheEntryDTO {
 	path := api + "/cache/entries" + query
 	for {
 		body, _ := h.request("GET", path, nil, 200, nil)
-		page := decodeJSONBody[cacheEntryPageDTO](t, body)
+		page := decodeJSONBody[cursorPage[cacheEntryDTO]](t, body)
 		all = append(all, page.Items...)
 		if page.NextCursor == nil {
 			return all

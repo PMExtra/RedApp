@@ -68,9 +68,6 @@ func TestRouteTableMatchesSpec(t *testing.T) {
 		} else if rt.serve == nil {
 			t.Errorf("%s: no handler", op.id)
 		}
-		if rt.legacy {
-			continue
-		}
 		var query []string
 		for _, p := range spec.parameters(pathItems[op.path].(map[string]any), op.raw) {
 			if p["in"] == "query" {

@@ -165,7 +165,7 @@ func TestHomepagePinsKeepOrderAndShowPinState(t *testing.T) {
 		t.Fatal("pin missing from the public homepage", string(data))
 	}
 	// Disabled and deleted applications stay pinned and are labelled.
-	updateApp(t, h, "acme/one", func(c *store.ApplicationChanges) { c.Enabled = false })
+	h.setAppEnabled("acme/one", false)
 	three, _ := h.store.Application("acme/three")
 	if err := h.store.DeleteApplication("acme/three", three.Revision); err != nil {
 		t.Fatal(err)

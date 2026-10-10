@@ -206,7 +206,7 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 	h.http = httptest.NewServer(h.server)
 	jar, err := cookiejar.New(nil)
 	must(err)
-	h.client = &http.Client{Jar: jar, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }, Transport: &contractTransport{t: t, spec: openAPISpec(t), server: h.server, base: h.http.Client().Transport}}
+	h.client = &http.Client{Jar: jar, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }, Transport: &contractTransport{t: t, spec: openAPISpec(t), base: h.http.Client().Transport}}
 	var once sync.Once
 	h.close = func() {
 		once.Do(func() {
@@ -403,22 +403,17 @@ func (h *harness) publicCatalog() (string, map[string]publicAppDTO) {
 }
 
 // contractTransport validates every response against api/openapi.yaml.
-// Operations still served by legacy handlers are skipped until migrated.
 // JSON bodies are buffered for schema validation; other bodies stream.
 type contractTransport struct {
-	t      *testing.T
-	spec   *contractSpec
-	server *Server
-	base   http.RoundTripper
+	t    *testing.T
+	spec *contractSpec
+	base http.RoundTripper
 }
 
 func (c *contractTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	response, err := c.base.RoundTrip(r)
 	if err != nil {
 		return response, err
-	}
-	if c.legacy(r) {
-		return response, nil
 	}
 	var body []byte
 	media, _, _ := mime.ParseMediaType(response.Header.Get("Content-Type"))
@@ -449,33 +444,14 @@ func (c *contractTransport) check(r *http.Request, status int, header http.Heade
 	}
 }
 
-// legacy reports whether the request is answered by a legacy admin handler.
-func (c *contractTransport) legacy(r *http.Request) bool {
-	probe := r.Clone(r.Context())
-	_, pattern := c.server.mux.Handler(probe)
-	for _, method := range legacyCatchAll {
-		if pattern == method+" /admin/api/" {
-			return true
-		}
-	}
-	for _, rt := range c.server.routes {
-		if rt.legacy && rt.servedBy == "" && muxPattern(rt.method, rt.path) == pattern {
-			return true
-		}
-	}
-	return false
-}
-
 // serve runs one request in process (for requests that need a chosen
 // RemoteAddr or Host) and validates the response like contractTransport.
 func (h *harness) serve(r *http.Request) *httptest.ResponseRecorder {
 	h.t.Helper()
 	w := httptest.NewRecorder()
 	h.server.ServeHTTP(w, r)
-	c := &contractTransport{t: h.t, spec: openAPISpec(h.t), server: h.server}
-	if !c.legacy(r) {
-		c.check(r, w.Code, w.Header(), w.Body.Bytes(), true)
-	}
+	c := &contractTransport{t: h.t, spec: openAPISpec(h.t)}
+	c.check(r, w.Code, w.Header(), w.Body.Bytes(), true)
 	return w
 }
 
@@ -505,14 +481,16 @@ func (h *harness) releaseApp(vendor, app, provider string) string {
 }
 
 // codexRelease serves one Codex release whose assets are the given files,
-// with channels/latest pointing at it. served counts artifact requests.
+// with channels/latest pointing at it. served counts artifact requests. Asset
+// URLs are the official ones, which every configured upstream (base path)
+// accepts and rebinds to itself.
 func codexRelease(version string, files map[string][]byte, served func(name string)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/channels/latest") || strings.HasSuffix(r.URL.Path, "/release.json") {
 			release := codex.Release{Tag: "rust-v" + version}
 			for name, body := range files {
 				digest := sha256.Sum256(body)
-				release.Assets = append(release.Assets, codex.Asset{Name: name, Digest: "sha256:" + hex.EncodeToString(digest[:]), URL: fixtureUpstream + "/releases/" + version + "/" + name})
+				release.Assets = append(release.Assets, codex.Asset{Name: name, Digest: "sha256:" + hex.EncodeToString(digest[:]), URL: "https://releases.openai.com/codex/releases/" + version + "/" + name})
 			}
 			_ = json.NewEncoder(w).Encode(release)
 			return

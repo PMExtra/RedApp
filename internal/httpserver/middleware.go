@@ -116,6 +116,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // routerError converts ServeMux's own 404/405 responses into Error documents.
 func (s *Server) routerError(w http.ResponseWriter, r *http.Request) {
+	if reservedNotFound(r.URL.Path) {
+		s.reservedRouteError(w, r)
+		return
+	}
 	handler, _ := s.mux.Handler(r)
 	probe := &routerProbe{header: http.Header{}}
 	handler.ServeHTTP(probe, r)
@@ -232,11 +236,6 @@ func (s *Server) handler(rt *route) http.Handler {
 				s.fail(w, r, codeCSRFRejected, nil, "CSRF validation failed")
 				return
 			}
-		}
-		if rt.legacy {
-			// Pre-contract handlers validate their own queries and bodies.
-			rt.serve(w, r)
-			return
 		}
 		if !rt.handlerChecksQuery {
 			if e := checkQuery(r, rt.query); e != nil {

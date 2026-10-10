@@ -32,15 +32,12 @@ type route struct {
 	// paths registers the handler for each listed path instead of path; used
 	// for /admin/{ui_path}, which ServeMux cannot register next to /{vendor}/{app}.
 	paths []string
-	// legacy marks an admin operation still served by the pre-contract handler
-	// (legacy.go). It keeps the old paths and response shapes until migrated.
-	legacy bool
 }
 
-// routeTable is the registration table, grouped by migration package.
+// routeTable is the registration table, grouped by area.
 func (s *Server) routeTable() []route {
 	return []route{
-		// Foundation: health, public API, pages, assets, distribution, auth.
+		// Health, public API, pages, assets, distribution, authentication.
 		{method: "GET", path: "/health/live", operation: "getLiveness", serve: s.getLiveness},
 		{method: "GET", path: "/health/ready", operation: "getReadiness", serve: s.getReadiness},
 		{method: "GET", path: "/api/bootstrap", operation: "getBootstrap", serve: s.getBootstrap},
@@ -71,7 +68,7 @@ func (s *Server) routeTable() []route {
 		{method: "DELETE", path: "/admin/api/session", operation: "deleteSession", serve: s.deleteSession, auth: authAdmin},
 		{method: "POST", path: "/admin/api/password", operation: "changePassword", serve: s.changePassword, auth: authAdmin, maxBody: 8192},
 
-		// Package 1: directory, configuration, admin notes, categories, exchange.
+		// Directory, configuration, admin notes, categories, exchange.
 		{method: "GET", path: "/admin/api/providers", operation: "listProviders", serve: s.listProviders, auth: authAdmin},
 		{method: "GET", path: "/admin/api/vendors", operation: "listVendors", serve: s.listVendors, auth: authAdmin, query: []string{"q", "state", "page", "limit"}},
 		{method: "POST", path: "/admin/api/vendors", operation: "createVendor", serve: s.createVendor, auth: authAdmin, maxBody: 65536},
@@ -100,7 +97,7 @@ func (s *Server) routeTable() []route {
 		{method: "POST", path: "/admin/api/configuration/import/{preview_id}/execute", operation: "executeImport", serve: s.executeImport, auth: authAdmin, maxBody: 8192},
 		{method: "POST", path: "/admin/api/apps/{vendor}/{app}/copy", operation: "copyApp", serve: s.copyApp, auth: authAdmin, maxBody: 65536},
 
-		// Package 2: releases, retention, prewarm, hosted file administration.
+		// Releases, retention, prewarm, hosted file administration.
 		{method: "GET", path: "/admin/api/apps/{vendor}/{app}/versions", operation: "listVersions", serve: s.listVersions, auth: authAdmin, query: []string{"limit", "cursor"}},
 		{method: "GET", path: "/admin/api/apps/{vendor}/{app}/resources", operation: "listResources", serve: s.listResources, auth: authAdmin, query: []string{"version", "limit", "cursor"}},
 		{method: "POST", path: "/admin/api/apps/{vendor}/{app}/version-cleanup/preview", operation: "previewVersionCleanup", serve: s.previewVersionCleanup, auth: authAdmin, maxBody: 8192},
@@ -123,7 +120,7 @@ func (s *Server) routeTable() []route {
 		{method: "GET", path: "/admin/api/apps/{vendor}/{app}/files/transfers/{transfer_id}", operation: "getHostedTransfer", serve: s.getHostedTransfer, auth: authAdmin},
 		{method: "DELETE", path: "/admin/api/apps/{vendor}/{app}/files/transfers/{transfer_id}", operation: "cancelHostedTransfer", serve: s.cancelHostedTransfer, auth: authAdmin},
 
-		// Package 3: HTTP cache administration, overview, settings.
+		// Overview, settings, HTTP cache administration.
 		{method: "GET", path: "/admin/api/status", operation: "getStatus", serve: s.getStatus, auth: authAdmin},
 		{method: "GET", path: "/admin/api/history", operation: "getHistory", serve: s.getHistory, auth: authAdmin, query: []string{"metric", "range"}},
 		{method: "GET", path: "/admin/api/events", operation: "listEvents", serve: s.listEvents, auth: authAdmin, query: []string{"limit", "cursor"}},
@@ -153,11 +150,6 @@ func (s *Server) routeTable() []route {
 	}
 }
 
-// legacyCatchAll keeps the pre-contract admin paths that no longer exist in the
-// specification reachable until their area is migrated. Delete it together
-// with legacy.go.
-var legacyCatchAll = []string{"GET", "POST", "PUT", "PATCH", "DELETE"}
-
 // muxPattern converts a specification path template into a ServeMux pattern:
 // greedy parameters (x-greedy) take the rest of the path and "/" matches only
 // itself.
@@ -185,9 +177,5 @@ func (s *Server) register(mux *http.ServeMux) {
 		for _, p := range paths {
 			mux.Handle(muxPattern(rt.method, p), s.handler(rt))
 		}
-	}
-	legacy := &route{path: "/admin/api/", operation: "legacyAdmin", serve: s.legacyAdmin, auth: authAdmin, legacy: true}
-	for _, method := range legacyCatchAll {
-		mux.Handle(method+" /admin/api/", s.handler(legacy))
 	}
 }
