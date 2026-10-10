@@ -251,12 +251,16 @@ func resolvedDial(ctx context.Context, network, addr string, requirePublic bool)
 	if e != nil {
 		return nil, e
 	}
-	ips, e := net.DefaultResolver.LookupIPAddr(ctx, host)
+	// Requests have no overall deadline, so name resolution is bounded here
+	// like the dial itself.
+	lookupCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ips, e := net.DefaultResolver.LookupIPAddr(lookupCtx, host)
+	cancel()
 	if e != nil {
 		return nil, e
 	}
 	if len(ips) == 0 {
-		return nil, errors.New("DNS returned no addresses")
+		return nil, &net.DNSError{Err: "DNS returned no addresses", Name: host, IsNotFound: true}
 	}
 	for _, ip := range ips {
 		if requirePublic && !publicIP(ip.IP) {

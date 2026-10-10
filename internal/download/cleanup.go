@@ -49,7 +49,7 @@ func (m *Manager) preview(app string, ids map[string]bool, guard *store.Retentio
 		job.Selected = append(job.Selected, Selection{Resource: rid, Generation: g.ID, Version: g.Resource.Version, Key: g.Resource.Key, Bytes: g.Bytes})
 		selected[g.ID] = true
 		job.LogicalBytes += g.Bytes
-		if g.running || g.readers > 0 {
+		if g.active() {
 			job.ActiveGenerations++
 		}
 	}
@@ -63,7 +63,7 @@ func (m *Manager) preview(app string, ids map[string]bool, guard *store.Retentio
 		seen[g.Resource.Hash] = true
 		reclaimable := true
 		for _, other := range m.all {
-			if other.Resource.Application == app && other.Resource.Hash == g.Resource.Hash && other.State == "complete" && (!selected[other.ID] || other.running || other.readers > 0) {
+			if other.Resource.Application == app && other.Resource.Hash == g.Resource.Hash && other.State == "complete" && (!selected[other.ID] || other.active()) {
 				reclaimable = false
 				break
 			}

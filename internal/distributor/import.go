@@ -6,9 +6,14 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 var ErrImport = errors.New("Import source could not be downloaded")
+
+// importTimeout preserves the administrator import transfer window that the
+// shared client deadline used to provide.
+const importTimeout = 5 * time.Minute
 
 func importURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
@@ -53,13 +58,18 @@ func (p *Pool) FetchImport(ctx context.Context, appUID, vendorUID, raw string) (
 		r.Header.Set("Accept-Encoding", "identity")
 		return nil
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	// An import keeps its overall transfer window; the body also fails early
+	// when the source stops sending bytes.
+	importCtx, cancel := context.WithTimeout(ctx, importTimeout)
+	request, err := http.NewRequestWithContext(importCtx, http.MethodGet, u.String(), nil)
 	if err != nil {
+		cancel()
 		return nil, ErrImport
 	}
 	request.Header.Set("Accept-Encoding", "identity")
 	response, err := client.Do(request)
 	if err != nil {
+		cancel()
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
@@ -67,7 +77,9 @@ func (p *Pool) FetchImport(ctx context.Context, appUID, vendorUID, raw string) (
 	}
 	if response.StatusCode != 200 || response.Uncompressed || (response.Header.Get("Content-Encoding") != "" && !strings.EqualFold(response.Header.Get("Content-Encoding"), "identity")) {
 		response.Body.Close()
+		cancel()
 		return nil, ErrImport
 	}
+	watchBody(response, idleTimeoutFor(ctx), cancel)
 	return response, nil
 }

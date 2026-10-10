@@ -100,6 +100,9 @@ var ErrNotFound = errors.New("Application resource not found")
 var ErrUpstream = errors.New("Trusted upstream metadata unavailable")
 var ErrBusy = errors.New("Metadata concurrency limit exceeded")
 
+// MetadataTimeout bounds one whole metadata request, including its body.
+const MetadataTimeout = 5 * time.Minute
+
 // HTTPError retains the upstream status for structured operational events.
 type HTTPError struct{ Status int }
 
@@ -114,6 +117,9 @@ func (e *HTTPError) Unwrap() error {
 // ReadBody centralizes bounded reads and preserves missing-resource versus
 // unavailable-upstream errors. Signature failures must never become a 404.
 func ReadBody(ctx context.Context, client *distributor.Client, path string, limit int64) ([]byte, error) {
+	// Metadata keeps an overall deadline; only artifact streams are unbounded.
+	ctx, cancel := context.WithTimeout(ctx, MetadataTimeout)
+	defer cancel()
 	r, err := client.Get(ctx, client.URL(path), http.Header{})
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUpstream, err)
