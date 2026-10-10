@@ -3,15 +3,16 @@
 import argparse
 import hashlib
 import json
-import re
 import subprocess
 from pathlib import Path
 
+from release_checks import require, require_commit, require_version
+
 
 def checked_metadata(directory, version, revision, arch):
-    assert re.fullmatch(r'0\.\d+\.\d+', version), 'Invalid stable version'
-    assert re.fullmatch(r'[0-9a-f]{40}', revision), 'Exact commit required'
-    assert arch in ('amd64', 'arm64'), 'Unsupported architecture'
+    require_version(version)
+    require_commit(revision)
+    require(arch in ('amd64', 'arm64'), 'Unsupported architecture')
     return {'version': version, 'revision': revision, 'architecture': arch,
             'image_tag': f'redapp:ci-{revision}-{arch}'}
 
@@ -30,14 +31,14 @@ def run(args):
         (args.directory / 'metadata.json').write_text(json.dumps(metadata, sort_keys=True) + '\n')
     else:
         metadata = json.loads((args.directory / 'metadata.json').read_text())
-        assert all(metadata.get(k) == v for k, v in expected.items()), 'Artifact identity mismatch'
-        assert metadata['sha256'] == checksum(archive), 'Artifact checksum mismatch'
+        require(all(metadata.get(k) == v for k, v in expected.items()), 'Artifact identity mismatch')
+        require(metadata.get('sha256') == checksum(archive), 'Artifact checksum mismatch')
         subprocess.run(['docker', 'load', '-i', str(archive)], check=True)
     info = json.loads(subprocess.check_output(['docker', 'image', 'inspect', expected['image_tag']]))[0]
-    assert info['Os'] == 'linux' and info['Architecture'] == args.arch, 'Image platform mismatch'
-    labels = info['Config']['Labels']
-    assert labels['org.opencontainers.image.version'] == args.version, 'Image version mismatch'
-    assert labels['org.opencontainers.image.revision'] == args.revision, 'Image revision mismatch'
+    require(info['Os'] == 'linux' and info['Architecture'] == args.arch, 'Image platform mismatch')
+    labels = info['Config'].get('Labels') or {}
+    require(labels.get('org.opencontainers.image.version') == args.version, 'Image version mismatch')
+    require(labels.get('org.opencontainers.image.revision') == args.revision, 'Image revision mismatch')
     print(json.dumps(expected))
 
 
