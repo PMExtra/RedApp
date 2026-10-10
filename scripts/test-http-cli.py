@@ -5,7 +5,7 @@ import re
 import subprocess
 import urllib.parse
 
-from cli_test_support import BINARY, ServerTestCase, main, run_cli
+from cli_test_support import BINARY, ROOT, ServerTestCase, main, run_cli
 
 PUBLIC_URL = "https://environment.example.test"
 BUILTIN_TEMPLATES = [("openai", "codex"), ("anthropic", "claude-code")]
@@ -104,13 +104,14 @@ class HTTPServerCLITest(ServerTestCase):
         self.assertEqual(self.read("/admin/api/session")["csrf_token"], csrf)
         self.assertEqual(self.read("/admin/api/vendors?page=1&limit=12")["total"], 2)
         self.enable_builtin_templates()
-        spa_paths = [
-            "/",
-            "/openai/codex",
-            "/anthropic/claude-code",
-            "/admin/settings/site",
-            "/admin/vendors/openai/apps/codex/settings",
-        ]
+        spa_paths = ["/", "/openai/codex", "/anthropic/claude-code"]
+        # Admin pages use the separate admin entry; a bundle without it (the
+        # pre-rewrite frontend) must fail instead of serving the public entry.
+        has_admin_entry = (ROOT / "internal" / "httpserver" / "web" / "admin.html").exists()
+        if has_admin_entry:
+            spa_paths += ["/admin/overview", "/admin/settings/site", "/admin/vendors/openai/apps/codex/settings"]
+        else:
+            self.client.fetch("/admin/overview", expect=500)
         for path in spa_paths:
             with self.subTest(path=path):
                 response = self.client.fetch(path)
@@ -118,7 +119,9 @@ class HTTPServerCLITest(ServerTestCase):
                 self.assertIn("script-src 'self'", response.headers["Content-Security-Policy"])
                 self.assertEqual(response.headers["Cache-Control"], "no-store")
                 self.assertIn("/assets/", response.text())
-        page = self.client.fetch("/admin/overview").text()
+        page = self.client.fetch("/").text()
+        if has_admin_entry:
+            page += self.client.fetch("/admin/overview").text()
         assets = re.findall(r'(?:src|href)="(/assets/[^" ]+)"', page)
         self.assertTrue(assets, "SPA shell references no assets")
         for asset in assets:

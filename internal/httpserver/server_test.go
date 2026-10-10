@@ -15,7 +15,6 @@ func TestRouterErrorsUseTheErrorDocument(t *testing.T) {
 		status       int
 		code         errorCode
 	}{
-		{"GET", "/unknown", 404, codeVendorNotFound},
 		{"POST", "/", 405, codeMethodNotAllowed},
 		{"PUT", "/api/bootstrap", 405, codeMethodNotAllowed},
 		{"GET", "/?unexpected=1", 400, codeInvalidQuery},
@@ -24,12 +23,9 @@ func TestRouterErrorsUseTheErrorDocument(t *testing.T) {
 		{"GET", "/api/catalog?q=", 400, codeInvalidQuery},
 		{"GET", "/admin/api/session", 401, codeAuthRequired},
 		{"POST", "/health/live", 405, codeMethodNotAllowed},
-		{"GET", "/install.sh", 404, codeVendorNotFound},
 		{"GET", "/api/info", 404, codeNotFound},
 		{"GET", "/api/apps/openai", 404, codeNotFound},
 		{"GET", "/assets/a/b/c", 404, codeNotFound},
-		{"GET", "/apps/codex", 404, codeApplicationNotFound},
-		{"GET", "/Bad/codex", 400, codeInvalidPath},
 		{"GET", "/openai//codex", 400, codeInvalidPath},
 		{"GET", "/openai/codex/%2e%2e/x", 400, codeInvalidPath},
 		{"GET", "/openai/codex/a%2Fb", 400, codeInvalidPath},
@@ -43,8 +39,11 @@ func TestRouterErrorsUseTheErrorDocument(t *testing.T) {
 			t.Errorf("%s %s: 405 without Allow", tc.method, tc.path)
 		}
 	}
-	if code, body, _ := h.raw("GET", "/admin/unknown", nil, "", nil); code != 404 || !bytes.Contains(body, []byte("<!doctype html")) && !bytes.Contains(body, []byte("<!DOCTYPE html")) {
+	if code, body, _ := h.raw("GET", "/admin/unknown", nil, "", nil); code != 404 || entryDocument(body) != "admin" {
 		t.Fatalf("unknown admin page: %d %.80s", code, body)
+	}
+	if code, body, _ := h.raw("GET", "/unknown", nil, "", nil); code != 404 || entryDocument(body) != "public" {
+		t.Fatalf("unknown vendor page: %d %.80s", code, body)
 	}
 }
 

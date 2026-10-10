@@ -5,35 +5,49 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"io/fs"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/PMExtra/RedApp/internal/application"
 )
 
-func TestPublicPagesAndUnknownPaths(t *testing.T) {
+func TestSPADocumentsFollowTheRouteFamilies(t *testing.T) {
 	h := newHarness(t)
-	for _, path := range []string{"/", "/all", "/all?q=x&category=tools&page=2", "/openai", "/openai/codex", "/anthropic/claude-code", "/admin/login?returnTo=/admin/vendors", "/admin/overview", "/admin/settings/site", "/admin/vendors?state=deleted&cleanup=pending", "/admin/vendors/anthropic/apps/claude-code/settings", "/admin/vendors/anthropic/apps/claude-code/versions"} {
+	h.createVendor("acme")
+	h.createApp("acme", "hidden", "info", map[string]any{"enabled": false})
+	document := func(path string, status int, entry string) {
+		t.Helper()
 		code, body, header := h.raw("GET", path, nil, "", nil)
-		if code != 200 || !strings.Contains(header.Get("Content-Type"), "text/html") || !strings.Contains(header.Get("Content-Security-Policy"), "script-src 'self'") || len(body) == 0 {
-			t.Fatalf("%s %d %s", path, code, body)
+		if code != status || entryDocument(body) != entry || !strings.Contains(header.Get("Content-Type"), "text/html") || !strings.Contains(header.Get("Content-Security-Policy"), "script-src 'self'") {
+			t.Fatalf("%s: %d %q %v", path, code, entryDocument(body), header)
 		}
 	}
-	// Admin documents for objects or tabs that do not exist are served with 404.
-	for _, path := range []string{"/admin/missing", "/admin/vendors/missing", "/admin/vendors/anthropic/apps/claude-code/files", "/admin/vendors/anthropic/apps/missing/settings", "/admin/a/b/c/d"} {
-		if code, _, header := h.raw("GET", path, nil, "", nil); code != 404 || !strings.Contains(header.Get("Content-Type"), "text/html") {
-			t.Fatalf("%s: %d %v", path, code, header)
-		}
+	for _, path := range []string{"/", "/all", "/all?q=x&category=tools&page=2", "/openai", "/openai/codex", "/anthropic/claude-code", "/acme"} {
+		document(path, 200, "public")
+	}
+	for _, path := range []string{"/admin/login?returnTo=/admin/vendors", "/admin/overview", "/admin/settings/site", "/admin/vendors?state=deleted&cleanup=pending", "/admin/vendors/acme/apps/hidden/settings", "/admin/vendors/anthropic/apps/claude-code/settings", "/admin/vendors/anthropic/apps/claude-code/versions"} {
+		document(path, 200, "admin")
+	}
+	// Unknown admin pages, missing objects and unsupported tabs: admin document with 404.
+	for _, path := range []string{"/admin/missing", "/admin/vendors/missing", "/admin/vendors/anthropic/apps/claude-code/files", "/admin/vendors/anthropic/apps/missing/settings", "/admin/a/b/c/d", "/admin/api"} {
+		document(path, 404, "admin")
+	}
+	// Unknown or unpublished vendors and applications: public document with 404.
+	for _, path := range []string{"/missing", "/install.sh", "/acme/hidden", "/acme/missing", "/apps/codex", "/Bad/codex", "/all/x"} {
+		document(path, 404, "public")
 	}
 	for _, tc := range []struct {
 		path string
 		code errorCode
 	}{
-		{"/openai/missing", codeApplicationNotFound},
-		{"/missing", codeVendorNotFound},
 		{"/openai/codex/missing", codeFileNotFound},
+		{"/acme/hidden/file", codeApplicationNotFound},
 		{"/api/x/y/z", codeNotFound},
 		{"/api/info", codeNotFound},
+		{"/health", codeNotFound},
+		{"/assets/a/b/c", codeNotFound},
 		{"/admin/vendors?state=gone", codeInvalidQuery},
 		{"/openai?unknown=1", codeInvalidQuery},
 	} {
@@ -47,6 +61,36 @@ func TestPublicPagesAndUnknownPaths(t *testing.T) {
 	}
 	if code, _, header := h.raw("GET", "/openai/codex/", nil, "", nil); code != 308 || header.Get("Location") != "/openai/codex" {
 		t.Fatal("trailing slash redirect", code, header)
+	}
+	for _, path := range []string{"/assets/public-fixture.js", "/assets/style-fixture.css", "/assets/JetBrainsMono-OFL-v2.304.txt"} {
+		h.request("GET", path, nil, 200, nil)
+	}
+}
+
+// The committed bundle must provide both entry documents and every asset they reference.
+func TestEmbeddedFrontendBundleIsServable(t *testing.T) {
+	h := newHarness(t, withEmbeddedFrontend())
+	code, page, _ := h.raw("GET", "/", nil, "", nil)
+	if code != 200 {
+		t.Fatal("public document", code)
+	}
+	if _, err := fs.Stat(h.server.frontend, adminSPADocument); err != nil {
+		// The pre-rewrite bundle has no admin entry; admin pages then fail
+		// instead of falling back to the public document.
+		h.expectError("GET", "/admin/overview", nil, 500, codeInternalError, nil)
+	} else {
+		code, admin, _ := h.raw("GET", "/admin/overview", nil, "", nil)
+		if code != 200 {
+			t.Fatal("admin document", code)
+		}
+		page = append(page, admin...)
+	}
+	assets := regexp.MustCompile(`(?:src|href)="(/assets/[^"]+)"`).FindAllSubmatch(page, -1)
+	if len(assets) == 0 {
+		t.Fatal("entry documents reference no assets")
+	}
+	for _, asset := range assets {
+		h.request("GET", string(asset[1]), nil, 200, nil)
 	}
 }
 

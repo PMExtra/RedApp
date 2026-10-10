@@ -28,7 +28,7 @@ func (s *Server) getBuildAsset(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, codeFileNotFound, nil, "Asset not found")
 		return
 	}
-	body, err := fs.ReadFile(web, "web/assets/"+name)
+	body, err := fs.ReadFile(s.frontend, buildAssetsDir+"/"+name)
 	if err != nil {
 		s.fail(w, r, codeFileNotFound, nil, "Asset not found")
 		return

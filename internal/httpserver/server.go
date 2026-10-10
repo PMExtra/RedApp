@@ -4,6 +4,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -50,6 +51,9 @@ type Deps struct {
 	DataDir        string
 	Started        time.Time    // process start; zero means now
 	Logger         *slog.Logger // nil means slog.Default()
+	// Frontend is the frontend build (index.html, admin.html, assets/); nil
+	// means the build embedded from internal/httpserver/web.
+	Frontend fs.FS
 }
 
 // Option adjusts a Server at construction.
@@ -89,6 +93,7 @@ type Server struct {
 	dataDir     string
 	started     time.Time
 	log         *slog.Logger
+	frontend    fs.FS
 
 	mux    *http.ServeMux
 	routes []route
@@ -137,6 +142,14 @@ func New(deps Deps, options ...Option) (*Server, error) {
 	}
 	if s.log == nil {
 		s.log = slog.Default()
+	}
+	s.frontend = deps.Frontend
+	if s.frontend == nil {
+		embedded, err := fs.Sub(web, "web")
+		if err != nil {
+			return nil, fmt.Errorf("httpserver: embedded frontend: %w", err)
+		}
+		s.frontend = embedded
 	}
 	for _, apply := range options {
 		apply(s)

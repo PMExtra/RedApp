@@ -127,7 +127,8 @@ x-spa-routes:
     Paths that return the SPA document (`200 text/html`). Any other `/admin/...` path returns the SPA
     document with status 404. Vendor and application segments must exist (not necessarily enabled) for
     admin routes; public `/<vendor>` and `/<vendor>/<app>` routes require the vendor and application to be
-    published. Tab availability follows provider capabilities: `files` only for `hosted`; `cache` for
+    published, otherwise they return `index.html` with status 404 so that the SPA shows its not-found page.
+    Tab availability follows provider capabilities: `files` only for `hosted`; `cache` for
     `http-cache`, `codex`, `claude-code`; `versions` for `codex`, `claude-code`.
     The frontend has two entries so that public visitors never download administrator code:
     public routes (`/`, `/all`, `/{vendor}`, `/{vendor}/{app}`) serve `index.html`, and every `/admin/...`
@@ -583,18 +584,21 @@ paths:
       operationId: getVendorPage
       tags: [pages]
       summary: Serve the SPA document for a published vendor.
-      description: Reserved vendor IDs (`admin`, `api`, `assets`, `health`, `all`) never reach this route.
+      description: |
+        Any other single segment (unknown, disabled or deleted vendors, or not a vendor ID at all) returns
+        `index.html` with status 404. `/admin` and `/all` have their own routes; the reserved IDs `api`, `assets`
+        and `health` return the router-level `404 NOT_FOUND` error.
       parameters:
         - $ref: '#/components/parameters/SpaQuery'
         - $ref: '#/components/parameters/SpaPage'
-      x-error-codes: [VENDOR_NOT_FOUND]
+      x-error-codes: []
       responses:
         '200':
           $ref: '#/components/responses/SpaDocument'
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/PublicSpaDocumentNotFound'
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
@@ -607,15 +611,19 @@ paths:
       operationId: getAppPage
       tags: [pages]
       summary: Serve the SPA document for a published application.
-      description: '`/{vendor}/{app}/` (trailing slash) redirects with `308` to `/{vendor}/{app}`.'
-      x-error-codes: [APPLICATION_NOT_FOUND]
+      description: |
+        `/{vendor}/{app}/` (trailing slash) redirects with `308` to `/{vendor}/{app}`. Unknown or unpublished
+        applications and invalid identities return `index.html` with status 404. Paths below `/admin/` (other
+        than `x-spa-routes`) return `admin.html` with status 404 (see `getAdminPage`); paths whose first segment is
+        `api`, `assets` or `health` return the router-level `404 NOT_FOUND` error.
+      x-error-codes: []
       responses:
         '200':
           $ref: '#/components/responses/SpaDocument'
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/PublicSpaDocumentNotFound'
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
@@ -4624,6 +4632,17 @@ components:
             type: string
     SpaDocumentNotFound:
       description: The administrator SPA document `admin.html` served with status 404 for unknown admin routes.
+      content:
+        text/html:
+          schema:
+            type: string
+    PublicSpaDocumentNotFound:
+      description: The public SPA document `index.html` served with status 404 for unknown or unpublished vendors and applications.
+      headers:
+        Content-Security-Policy:
+          description: Same policy as `SpaDocument`.
+          schema:
+            type: string
       content:
         text/html:
           schema:

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
@@ -56,6 +58,8 @@ type harnessConfig struct {
 	store   *store.Store
 	options []Option
 	proxies TrustedProxies
+	// embeddedFrontend serves the committed build instead of frontendFixture.
+	embeddedFrontend bool
 	// keepTemplatesDisabled leaves the embedded templates disabled as in
 	// production; by default the fixture enables them for route coverage.
 	keepTemplatesDisabled bool
@@ -83,6 +87,11 @@ func withTrustedProxies(t *testing.T, cidrs ...string) harnessOption {
 		t.Fatal(err)
 	}
 	return func(c *harnessConfig) { c.proxies = p }
+}
+
+// withEmbeddedFrontend serves the committed frontend build from internal/httpserver/web.
+func withEmbeddedFrontend() harnessOption {
+	return func(c *harnessConfig) { c.embeddedFrontend = true }
 }
 
 func keepTemplatesDisabled() harnessOption {
@@ -182,8 +191,13 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 	prewarmer, err := prewarm.New(db, registry, catalogService, manager, httpCache)
 	must(err)
 	maintenance := &releasemaintenance.Service{DB: db, Registry: registry, Catalog: catalogService, Downloads: manager, AutomaticPrewarm: prewarmer.Automatic}
+	var frontend fs.FS = frontendFixture
+	if cfg.embeddedFrontend {
+		frontend = nil
+	}
 	h.server, err = New(Deps{
-		Version: "test", Store: db, Registry: registry, Catalog: catalogService, Downloads: manager,
+		Frontend: frontend,
+		Version:  "test", Store: db, Registry: registry, Catalog: catalogService, Downloads: manager,
 		HTTPCache: httpCache, Hosted: hostedFiles, Auth: a, TrustedProxies: cfg.proxies, Pool: pool, Icons: icons,
 		History: metricHistory, PublicSettings: public, Prewarmer: prewarmer, Maintenance: maintenance,
 		DataDir: cfg.dir, Started: time.Now(), Logger: slog.New(slog.NewTextHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
@@ -514,4 +528,27 @@ func codexRelease(version string, files map[string][]byte, served func(name stri
 		}
 		_, _ = w.Write(body)
 	})
+}
+
+// frontendFixture is the frontend build used by the harness: the two entry
+// documents carry distinct markers and assets cover every served type, so
+// tests do not depend on the committed bundle.
+var frontendFixture = fstest.MapFS{
+	"index.html":                                {Data: []byte(`<!doctype html><html><head><script type="module" src="/assets/public-fixture.js"></script></head><body data-entry="public"></body></html>`)},
+	"admin.html":                                {Data: []byte(`<!doctype html><html><head><script type="module" src="/assets/admin-fixture.js"></script></head><body data-entry="admin"></body></html>`)},
+	"assets/public-fixture.js":                  {Data: []byte("export {}\n")},
+	"assets/admin-fixture.js":                   {Data: []byte("export {}\n")},
+	"assets/style-fixture.css":                  {Data: []byte("body{}\n")},
+	"assets/JetBrainsMono-Regular-v2.304.woff2": {Data: []byte("wOF2")},
+	"assets/JetBrainsMono-OFL-v2.304.txt":       {Data: []byte("SIL Open Font License\n")},
+}
+
+// entryDocument reports which SPA entry a response body is ("public", "admin" or "").
+func entryDocument(body []byte) string {
+	for _, entry := range []string{"public", "admin"} {
+		if bytes.Contains(body, []byte(`data-entry="`+entry+`"`)) {
+			return entry
+		}
+	}
+	return ""
 }

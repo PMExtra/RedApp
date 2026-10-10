@@ -115,17 +115,7 @@ func TestHealthProbes(t *testing.T) {
 
 func TestBuildAssetsAndUploadedIcons(t *testing.T) {
 	h := newHarness(t)
-	entries, err := web.ReadDir("web/assets")
-	if err != nil || len(entries) == 0 {
-		t.Fatal(err)
-	}
-	var script string
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".js") {
-			script = e.Name()
-			break
-		}
-	}
+	script := "public-fixture.js"
 	_, header := h.request("GET", "/assets/"+script, nil, 200, nil)
 	if header.Get("Content-Type") != "text/javascript; charset=utf-8" || header.Get("Cache-Control") != immutableCache {
 		t.Fatal(header)

@@ -10,14 +10,15 @@ import (
 	"github.com/PMExtra/RedApp/internal/identity"
 )
 
-// SPA documents of the embedded frontend build. Public routes use the public
-// entry and /admin routes the admin entry. Until a bundle contains the admin
-// entry, admin routes fall back to the public document (the pre-rewrite
-// bundle is one SPA for both). Changing the build layout only touches these
-// names.
+// Layout of the frontend build (x-spa-routes.documents): two entry documents
+// and the flat assets directory at the root of the bundle. Public routes use
+// the public entry and every /admin page, including its 404 document, uses the
+// admin entry; admin pages never fall back to the public document. Changing
+// the build layout only touches these names.
 const (
-	publicSPADocument = "web/index.html"
-	adminSPADocument  = "web/admin.html"
+	publicSPADocument = "index.html"
+	adminSPADocument  = "admin.html"
+	buildAssetsDir    = "assets"
 )
 
 const spaPolicy = "default-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'"
@@ -49,11 +50,9 @@ var adminSPARoutes = []string{
 func (s *Server) spaDocument(w http.ResponseWriter, r *http.Request, admin bool, status int) {
 	name := publicSPADocument
 	if admin {
-		if _, err := fs.Stat(web, adminSPADocument); err == nil {
-			name = adminSPADocument
-		}
+		name = adminSPADocument
 	}
-	body, err := web.ReadFile(name)
+	body, err := fs.ReadFile(s.frontend, name)
 	if err != nil {
 		s.fail(w, r, codeInternalError, err, "Frontend bundle is unavailable")
 		return
@@ -140,47 +139,59 @@ func (s *Server) adminRouteExists(r *http.Request) bool {
 }
 
 // reservedPath handles requests whose first segment is a reserved vendor ID
-// (admin, api, assets, health, all) that reached a /{vendor} route: unknown
-// admin pages get the admin document with 404, API paths an Error document.
-// It reports whether the request was handled.
+// that reached a /{vendor} route: unknown admin pages get the admin document
+// with 404; api, assets and health paths (and unknown /admin/api/ paths) get
+// the router-level NOT_FOUND error. It reports whether the request was handled.
 func (s *Server) reservedPath(w http.ResponseWriter, r *http.Request, vendor string) bool {
-	if identity.ValidVendor(vendor) {
-		return false
-	}
-	if vendor == "admin" && !strings.HasPrefix(r.URL.Path, "/admin/api/") {
-		s.spaDocument(w, r, true, http.StatusNotFound)
+	switch vendor {
+	case "admin":
+		if strings.HasPrefix(r.URL.Path, "/admin/api/") {
+			s.fail(w, r, codeNotFound, nil, "No route matches this path")
+		} else {
+			s.spaDocument(w, r, true, http.StatusNotFound)
+		}
 		return true
-	}
-	if identity.ValidSlug(vendor) {
+	case "api", "assets", "health":
 		s.fail(w, r, codeNotFound, nil, "No route matches this path")
 		return true
 	}
 	return false
 }
 
+// getVendorPage serves the public document for a published vendor and the
+// same document with 404 for anything else, so the SPA shows its not-found page.
 func (s *Server) getVendorPage(w http.ResponseWriter, r *http.Request) {
 	vendor := r.PathValue("vendor")
 	if s.reservedPath(w, r, vendor) {
-		return
-	}
-	if !identity.ValidVendor(vendor) {
-		s.fail(w, r, codeVendorNotFound, nil, "Vendor not found")
 		return
 	}
 	if e := spaQueryValid(r); e != nil {
 		s.writeError(w, r, e)
 		return
 	}
-	if _, ok := s.publishedVendor(w, r, vendor); ok {
-		s.spaDocument(w, r, false, http.StatusOK)
+	status := http.StatusNotFound
+	if identity.ValidVendor(vendor) {
+		v, err := s.store.Vendor(vendor)
+		if err != nil && !isNotFound(err) {
+			s.writeError(w, r, storageError(err))
+			return
+		}
+		if err == nil && v.Enabled && v.DeletedAt == nil {
+			status = http.StatusOK
+		}
 	}
+	s.spaDocument(w, r, false, status)
 }
 
+// getAppPage serves the public document for a published application and the
+// same document with 404 for anything else.
 func (s *Server) getAppPage(w http.ResponseWriter, r *http.Request) {
 	if s.reservedPath(w, r, r.PathValue("vendor")) {
 		return
 	}
-	if _, ok := s.publishedApp(w, r); ok {
-		s.spaDocument(w, r, false, http.StatusOK)
+	status := http.StatusNotFound
+	if _, ok := s.registry.Lookup(r.PathValue("vendor") + "/" + r.PathValue("app")); ok {
+		status = http.StatusOK
 	}
+	s.spaDocument(w, r, false, status)
 }

@@ -212,9 +212,9 @@ try {
   // Scripts keep running, but in an opaque origin without the admin session.
   assert(documentPolicy.startsWith("sandbox allow-scripts "));
   assert(!documentPolicy.includes("allow-same-origin"));
-  const admin = await request("/admin/overview");
+  const spa = await request("/openai/codex");
   assert(
-    admin.headers.get("Content-Security-Policy").includes("script-src 'self'"),
+    spa.headers.get("Content-Security-Policy").includes("script-src 'self'"),
   );
   const page = browser.newPage();
   console.log("Loading fixture instruction document");
