@@ -828,17 +828,7 @@ func materialize(st *configurationState, before configurationState) error {
 			}
 			a.RuntimeRevision = prev.RuntimeRevision
 			changed := prev.Enabled != a.Enabled || !reflect.DeepEqual(prev.DeletedAt, a.DeletedAt) || prev.BaseURL != a.BaseURL || !reflect.DeepEqual(prev.BaseURLs, a.BaseURLs) || prev.SourceStrategy != a.SourceStrategy || prev.CacheTTLSeconds != a.CacheTTLSeconds || !reflect.DeepEqual(before.Policies[a.MetricsID()], st.Policies[a.MetricsID()])
-			key := ""
-			if a.Provider == "codex" {
-				key = "openai/codex"
-			}
-			if a.Provider == "claude-code" {
-				key = "anthropic/claude-code"
-			}
-			c := st.Configs[configKey("App", a.UID)]
-			if c.Ref != nil {
-				key = *c.Ref
-			}
+			key := st.distributionKey(*a)
 			if key != "" && before.Distributions[key].Digest != st.Distributions[key].Digest {
 				changed = true
 			}
@@ -1508,18 +1498,11 @@ func (s *Store) ReconcileTemplates(set presets.Set) error {
 		for i := range st.Applications {
 			a := &st.Applications[i]
 			c := st.Configs[configKey("App", a.UID)]
-			distributionKey := ""
-			if a.Provider == "codex" {
-				distributionKey = "openai/codex"
-			}
-			if a.Provider == "claude-code" {
-				distributionKey = "anthropic/claude-code"
-			}
+			distributionKey := st.distributionKey(*a)
 			changed := false
 			if c.Ref != nil {
 				key := templateKey("App", *c.Ref)
 				changed = previous[key].Hash != st.Templates[key].Hash
-				distributionKey = *c.Ref
 			}
 			if distributionKey != "" && previousDistributions[distributionKey].Digest != st.Distributions[distributionKey].Digest {
 				changed = true
@@ -1705,6 +1688,18 @@ func distributionDigest(d presets.Descriptor) string {
 	sum := sha256.Sum256(encode(contract))
 	return hex.EncodeToString(sum[:])
 }
+
+// distributionKey names the trusted distribution an application runs with: its
+// template reference, or the provider's built-in template for an independent
+// configuration. Applications of content providers without a template have none.
+func (st *configurationState) distributionKey(a Application) string {
+	if c := st.Configs[configKey("App", a.UID)]; c.Ref != nil {
+		return *c.Ref
+	}
+	key, _ := presets.ReleaseTemplateKey(a.Provider)
+	return key
+}
+
 func (st *configurationState) refreshReviewedContracts() error {
 	st.ReviewedDescriptors = nil
 	st.TemplateBindings = map[string]string{}
@@ -1721,7 +1716,7 @@ func (st *configurationState) refreshReviewedContracts() error {
 			return fmt.Errorf("invalid trusted Provider binding for %s", key)
 		}
 		st.ReviewedDescriptors = append(st.ReviewedDescriptors, d.Descriptor)
-		if (d.Provider == "codex" && key == "openai/codex") || (d.Provider == "claude-code" && key == "anthropic/claude-code") {
+		if builtin, _ := presets.ReleaseTemplateKey(d.Provider); builtin == key {
 			st.ProviderDefaults[d.Provider] = d.Descriptor.Upstream
 		}
 	}
@@ -1730,16 +1725,8 @@ func (st *configurationState) refreshReviewedContracts() error {
 		if c.Ref != nil {
 			st.TemplateBindings[a.UID] = *c.Ref
 		}
-		if a.Provider == "codex" || a.Provider == "claude-code" {
-			key := st.TemplateBindings[a.UID]
-			if key == "" {
-				if a.Provider == "codex" {
-					key = "openai/codex"
-				} else {
-					key = "anthropic/claude-code"
-				}
-			}
-			d, ok := st.Distributions[key]
+		if presets.VersionsProvider(a.Provider) {
+			d, ok := st.Distributions[st.distributionKey(a)]
 			if ok && d.Provider != a.Provider {
 				return fmt.Errorf("missing trusted distribution for %s", a.Key)
 			}
@@ -1770,17 +1757,10 @@ func (st *configurationState) acceptMissingCompiledContracts() error {
 		byKey[templateKey(t.Kind, t.Key)] = t
 	}
 	for _, a := range st.Applications {
-		if a.Provider != "codex" && a.Provider != "claude-code" {
+		if !presets.VersionsProvider(a.Provider) {
 			continue
 		}
-		key := "openai/codex"
-		if a.Provider == "claude-code" {
-			key = "anthropic/claude-code"
-		}
-		c := st.Configs[configKey("App", a.UID)]
-		if c.Ref != nil {
-			key = *c.Ref
-		}
+		key := st.distributionKey(a)
 		if _, ok := st.Distributions[key]; ok {
 			continue
 		}

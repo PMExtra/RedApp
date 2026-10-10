@@ -56,8 +56,27 @@ func (r Retention) Validate() error {
 	}
 	return nil
 }
-func VersionsProvider(provider string) bool { return provider == "codex" || provider == "claude-code" }
-func DefaultRetention() *Retention          { return &Retention{KeepLatest: 3} }
+
+// VersionsProvider reports whether a provider serves immutable releases.
+func VersionsProvider(provider string) bool {
+	_, ok := ReleaseTemplateKey(provider)
+	return ok
+}
+
+// ReleaseTemplateKey names the built-in application template whose reviewed
+// distribution a release provider uses when the application has no template
+// reference of its own.
+func ReleaseTemplateKey(provider string) (string, bool) {
+	switch provider {
+	case "codex":
+		return "openai/codex", true
+	case "claude-code":
+		return "anthropic/claude-code", true
+	}
+	return "", false
+}
+
+func DefaultRetention() *Retention { return &Retention{KeepLatest: 3} }
 
 type AppSpec struct {
 	Categories      []string            `json:"categories"`

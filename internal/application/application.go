@@ -9,7 +9,6 @@ import (
 	"github.com/PMExtra/RedApp/presets"
 	"io"
 	"net/http"
-	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -20,25 +19,16 @@ import (
 	"github.com/PMExtra/RedApp/internal/identity"
 )
 
-var slug = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
-
 type Key struct{ Vendor, App string }
 
+// ParseKey accepts only a canonical vendor/app identity; identity owns the
+// slug grammar and the reserved vendor names.
 func ParseKey(id string) (Key, error) {
-	p := strings.Split(id, "/")
-	if len(p) != 2 {
-		return Key{}, errors.New("Application identity must be vendor/app")
+	vendor, app, ok := strings.Cut(id, "/")
+	if !ok || !identity.ValidKey(id) {
+		return Key{}, errors.New("Invalid canonical application identity")
 	}
-	for _, s := range p {
-		if len(s) < 1 || len(s) > 63 || !slug.MatchString(s) {
-			return Key{}, errors.New("Invalid canonical application identity")
-		}
-	}
-	switch p[0] {
-	case "admin", "api", "assets", "health", "all":
-		return Key{}, errors.New("Reserved application vendor")
-	}
-	return Key{p[0], p[1]}, nil
+	return Key{vendor, app}, nil
 }
 func (k Key) String() string { return k.Vendor + "/" + k.App }
 
@@ -254,7 +244,7 @@ func PrepareRegistry(entries []Entry) (*PreparedRegistry, error) {
 		}
 		channels := map[string]bool{}
 		for _, ch := range d.Channels {
-			if !slug.MatchString(ch) || channels[ch] {
+			if !identity.ValidSlug(ch) || channels[ch] {
 				return nil, fmt.Errorf("Invalid or duplicate channel for %s", d.ID)
 			}
 			channels[ch] = true
