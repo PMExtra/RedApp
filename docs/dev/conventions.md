@@ -1,6 +1,6 @@
 # 编码约定
 
-本文是 [AGENTS.md](../../AGENTS.md) 中规则的细化。标注 **【目标】** 的条目描述重构完成后的状态，括号内注明落地阶段；现有代码尚未完全满足，新代码应直接按目标写，修改旧代码时顺手对齐，但不要为此扩大 PR 范围。
+本文是 [AGENTS.md](../../AGENTS.md) 中规则的细化。
 
 ## Go
 
@@ -29,6 +29,7 @@
 ### context
 
 - `context.Context` 是第一个参数，命名为 `ctx`，不存进结构体。
+- 例外：组件生命周期的 context（启动时传入、关闭时取消）可以保存在长期存在的服务结构体中，供它自己的后台工作使用。请求范围的 context 不保存。
 - 不用 context 传可选参数或业务数据；只用于取消、截止时间和请求范围的元数据（如 request_id）。
 
 ### 可测试性
@@ -56,7 +57,10 @@
 
 - 只用 `log/slog`，不用标准库 `log`。`cmd/redapp` 创建唯一的 logger，经构造函数选项（`WithLogger`）、`httpserver.Deps.Logger` 或 `releasemaintenance.Service.Log` 交给每个组件；没有传入时组件丢弃日志，测试默认不输出。不用回调上报后台错误。
 - 后台组件用 `logging.For(log, "<component>")` 加 `component` 字段，错误一律用 `logging.Error(err)`（`error` 字段，遮盖 URL 凭据）。用户运维文档的“日志”一节列出各组件，新增组件时同步更新。
-- 字段名统一：`app`（`<vendor>/<app>`）、`storage_id`、`job_id`、`preview_id`、`generation_id`、`transfer_id`、`version`、`state`、`reason`、`outcome`、`error`。
+- 字段名统一：`app`（`<vendor>/<app>`）、`storage_id`、`job_id`、`preview_id`、`generation_id`、`transfer_id`、`version`、`state`、`reason`、`outcome`、`error`。这份清单覆盖领域 ID 和通用字段；其他字段同样用 snake_case 并在各处同名：
+  - 同一条日志的第二个错误用 `state_error`（状态写入失败）或 `event_error`（事件写入失败），同样经 `logging.Redact` 遮盖；资源和托管文件用 `resource`、`file_id`。
+  - HTTP 访问日志：`request_id`、`method`、`path`、`status`、`bytes`、`duration_ms`、`client`、`operation`、`code`、`client_cancelled`。
+  - schema 迁移：`from_schema`、`to_schema`、`backup`。
 - 级别：`ERROR` 表示需要运维处理的失败（如状态写不进数据库）；`WARN` 表示会自动重试或恢复的失败；`INFO` 表示启动、停止和低频的后台结果；每轮都会重复的“无变化”结果用 `DEBUG`。
 - 后台循环不按请求或按文件逐条记录。可能每秒重复的失败只记第一次和恢复（如计数器写入）。
 - 持有 mutex 时不写日志：先记下字段，解锁后再记（例如在 `defer mu.Unlock()` 之前登记一个记录日志的 `defer`）。
@@ -154,7 +158,7 @@ frontend/src/
 - **按行为命名测试文件**：`revision_conflict_test.go`、`cache_cleanup_test.go`。不要用版本或过程命名，例如 `v072_test.go`、`review_test.go`、`upgrade_v071_test.go`。
 - 测试函数名描述行为：`TestImportRejectsDuplicateApplication`。
 - 不用 `time.Sleep` 做同步。用 channel、`sync.WaitGroup`、可注入时钟或轮询加超时等待明确的条件。
-- 测试数据通过共享工厂函数构造（**【目标】** 每个包一个 `_test.go` 中的工厂，或跨包的测试辅助，阶段 2），不要在每个测试里手写整份配置。HTTP 测试统一用 `internal/httpserver/harness_test.go` 的 `newHarness`，它还按规范校验每个响应。
+- 测试数据通过共享工厂函数构造（每个包一个 `_test.go` 中的工厂，或跨包的测试辅助），不要在每个测试里手写整份配置。HTTP 测试统一用 `internal/httpserver/harness_test.go` 的 `newHarness`，它还按规范校验每个响应。
 - 断言可观察行为（HTTP 响应、持久化结果、公开 API 返回值），不断言私有字段、调用次数或实现细节。
 - 不写同义反复的测试：例如把常量和自身比较、只验证 mock 返回了 mock 设定的值。
 - 表驱动测试覆盖同一行为的多个输入；不要为每种参数组合复制一份测试。
@@ -163,14 +167,14 @@ frontend/src/
 ## 脚本
 
 - Python 只用标准库。
-- 生产脚本（CI、发布、安装器维护）用显式检查并抛出带说明的异常或 `sys.exit(<消息>)`，不要用 `assert` 做校验（`python -O` 会移除 `assert`）。测试脚本可以用 `assert` 或 `unittest` 断言。
+- 生产脚本（CI、发布、安装器维护）用显式检查并抛出带说明的异常或 `sys.exit(<消息>)`，不要用 `assert` 做校验（`python -O` 会移除 `assert`）。测试脚本可以用 `assert` 或 `unittest` 断言；但门禁中的安装器契约（`installer_tests_*.py`、安装器候选与更新回归）用 `installer_test_support.require`，避免被 `PYTHONOPTIMIZE` 关闭。
 - 共享逻辑放在支持模块中（如 `installer_test_support.py`、`installer_manifest.py`），不要在脚本之间复制粘贴。启动真实 `bin/redapp` 的测试一律使用 `cli_test_support.py`，不要自行选端口、轮询健康检查或拼装登录流程。
 - 格式可读：一行一条语句，不用分号拼接多条语句，不写超长单行表达式；函数有简短 docstring 说明目的。
 - Shell 脚本以 `set -eu` 开头，变量加引号。
 
 ## 文档
 
-- 用户文档（`README.md`、`docs/guide/*`）中英成对：`x.md` 与 `x.zh-CN.md` 必须在同一 PR 中修改，标题层级、代码块和表格保持一致。`make docs-check` 检查结构和链接，PR 上的 CI 还检查两种语言是否同时修改。
+- 用户文档（`README.md`、`docs/guide/*`）中英成对：`x.md` 与 `x.zh-CN.md` 必须在同一 PR 中修改并保持内容一致，标题层级、代码块和表格保持一致。`make docs-check` 检查结构和链接，PR 上的 CI 还检查两种语言是否同时修改。
 - 开发者文档（`AGENTS.md`、`docs/dev/`）只用中文。
 - 不带版本号的文档只描述当前行为，不写“v0.x 新增”“从某版本起”之类的历史；历史看 git log。
 - 不新增过程性文档（验收记录、验证日志、测试契约、版本规格、路线图）。验证证据写在 PR 描述里。
