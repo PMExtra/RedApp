@@ -105,7 +105,7 @@ func TestAutomaticOriginHTTPIsolationAndSecurity(t *testing.T) {
 		}
 	}
 	public := "https://published.example"
-	if _, err := h.server.public.Set(&public, 0); err != nil {
+	if _, err := h.server.public.Set(&public, 1); err != nil {
 		t.Fatal(err)
 	}
 	body, _ := json.Marshal(map[string]string{"password": h.password})

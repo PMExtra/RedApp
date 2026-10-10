@@ -164,7 +164,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 
 ## SQLite schema
 
-- schema 内嵌在 `internal/store/schema.sql`，版本写入 `PRAGMA user_version`，常量为 `store.SchemaVersion`（当前为 12）。`PRAGMA application_id` 固定为 RedApp 的标识，用来拒绝版本号碰巧相同的其他 SQLite 文件。
+- schema 内嵌在 `internal/store/schema.sql`，版本写入 `PRAGMA user_version`，常量为 `store.SchemaVersion`（当前为 13）。`PRAGMA application_id` 固定为 RedApp 的标识，用来拒绝版本号碰巧相同的其他 SQLite 文件。
 - 新目录（为空或只含实例锁）创建全新 schema，并在首次启动前 checkpoint 到主文件。已有数据库以只读、immutable 方式检查 `application_id` 与 `user_version`，任一不符就拒绝启动，不改写、不删除，也不创建 WAL/SHM 文件。不比较表结构：1.0 前每次 schema 变化都提升版本。
 - 属于厂商或应用的行以 UID 引用父行并 `ON DELETE CASCADE`；应用引用厂商不级联，因为必须先删除应用并登记其对象文件。发布、缓存和指标数据以存储命名空间或指标命名空间为键，永久删除应用时按前缀删除；同一版本的元数据、渠道、资源和下载代际随版本级联删除。
 - 1.0 前没有迁移，规则见 [ADR 0001](adr/0001-pre-1.0-no-migrations.md)。

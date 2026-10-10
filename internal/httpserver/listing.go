@@ -16,7 +16,6 @@ import (
 
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/jsoncheck"
-	"github.com/PMExtra/RedApp/internal/store"
 )
 
 type listCursor struct {
@@ -183,49 +182,4 @@ func (s *Server) applicationList(w http.ResponseWriter, r *http.Request, app, en
 	}
 	page.Items = s.publicViews(page.Items)
 	reply(w, 200, page)
-}
-
-func (s *Server) eventList(w http.ResponseWriter, r *http.Request, app string) {
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", "GET")
-		fail(w, 405, "List endpoints require GET")
-		return
-	}
-	metricScope := app
-	if app != "" {
-		entry, ok := s.registry.LookupAny(app)
-		if !ok {
-			fail(w, 404, "Application not found")
-			return
-		}
-		metricScope = entry.MetricsID()
-	}
-	limit, _, last, err := parseListQuery(r, app, "events")
-	if err != nil {
-		fail(w, 400, err.Error())
-		return
-	}
-	var before int64
-	if last != "" {
-		before, err = strconv.ParseInt(last, 10, 64)
-		if err != nil || before <= 0 || strconv.FormatInt(before, 10) != last {
-			fail(w, 400, "Invalid event cursor")
-			return
-		}
-	}
-	rows, err := s.store.EventPage(metricScope, before, limit+1)
-	if err != nil {
-		fail(w, 503, "Failed to read events")
-		return
-	}
-	var next *string
-	if len(rows) > limit {
-		rows = rows[:limit]
-		next = nextListCursor(app, "events", "", strconv.FormatInt(rows[limit-1].ID, 10))
-	}
-	scopes := s.publicScopes()
-	for i := range rows {
-		rows[i].AppID = publicScope(rows[i].AppID, scopes)
-	}
-	reply(w, 200, listPage[store.ListedEvent]{Items: rows, NextCursor: next})
 }

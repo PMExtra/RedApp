@@ -38,11 +38,7 @@ func listingServer(t *testing.T) (*Server, *store.Store) {
 func listRequest(s *Server, app, endpoint, query string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "http://internal/list"+query, nil)
-	if endpoint == "events" {
-		s.eventList(w, r, app)
-	} else {
-		s.applicationList(w, r, app, endpoint)
-	}
+	s.applicationList(w, r, app, endpoint)
 	return w
 }
 func decodeList[T any](t *testing.T, w *httptest.ResponseRecorder) listPage[T] {
@@ -60,7 +56,7 @@ func decodeList[T any](t *testing.T, w *httptest.ResponseRecorder) listPage[T] {
 	return page
 }
 
-func TestVersionAndEventPaginationAreBoundedAndScoped(t *testing.T) {
+func TestVersionPaginationIsBoundedAndScoped(t *testing.T) {
 	s, db := listingServer(t)
 	app, other := "openai/codex", "anthropic/claude-code"
 	expected := make([]string, 0, 105)
@@ -107,47 +103,11 @@ func TestVersionAndEventPaginationAreBoundedAndScoped(t *testing.T) {
 	if w := listRequest(s, other, "versions", "?cursor="+cursor); w.Code != 400 {
 		t.Fatal("cross-app cursor accepted", w.Code)
 	}
-	for i := 0; i < 5; i++ {
-		owner := app
-		if i%2 == 0 {
-			owner = other
-		}
-		if err := db.RecordEvent(store.Event{AppID: owner, Version: "1.0.0", Category: "metadata", Code: "metadata_fetch_failed", Message: fmt.Sprint(i)}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	events := decodeList[store.ListedEvent](t, listRequest(s, "", "events", "?limit=2"))
-	if len(events.Items) != 2 || events.Items[0].ID <= events.Items[1].ID || events.NextCursor == nil {
-		t.Fatal("events are not bounded in descending id order")
-	}
-	eventCursor := *events.NextCursor
-	next := decodeList[store.ListedEvent](t, listRequest(s, "", "events", "?limit=2&cursor="+eventCursor))
-	if len(next.Items) != 2 || next.Items[0].ID >= events.Items[1].ID {
-		t.Fatal("event page repeated rows")
-	}
-	owned := decodeList[store.ListedEvent](t, listRequest(s, app, "events", "?limit=1"))
-	if len(owned.Items) != 1 || owned.Items[0].AppID != app || owned.NextCursor == nil {
-		t.Fatal("event app filter missing")
-	}
-	owned = decodeList[store.ListedEvent](t, listRequest(s, app, "events", "?limit=1&cursor="+*owned.NextCursor))
-	if len(owned.Items) != 1 || owned.Items[0].AppID != app || owned.NextCursor != nil {
-		t.Fatal("event app continuation crossed scope")
-	}
-	if w := listRequest(s, app, "events", "?cursor="+eventCursor); w.Code != 400 {
-		t.Fatal("global event cursor used for application")
-	}
-	for _, query := range []string{"?limit=0", "?limit=101", "?limit=01", "?limit=2&limit=3", "?cursor=", "?cursor=not-base64", "?version=1.0.0", "?app=" + url.QueryEscape(other), "?limit=1;bad=1", "?cursor=" + cursor} {
-		if w := listRequest(s, "", "events", query); w.Code != 400 {
-			t.Fatalf("query %q accepted: %d", query, w.Code)
-		}
-	}
 	if err := db.DB.Close(); err != nil {
 		t.Fatal(err)
 	}
-	for _, endpoint := range []string{"versions", "events"} {
-		if w := listRequest(s, app, endpoint, ""); w.Code != 503 {
-			t.Fatalf("database failure returned %d", w.Code)
-		}
+	if w := listRequest(s, app, "versions", ""); w.Code != 503 {
+		t.Fatalf("database failure returned %d", w.Code)
 	}
 }
 

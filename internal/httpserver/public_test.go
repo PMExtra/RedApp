@@ -108,7 +108,7 @@ func TestBootstrapHasNoApplicationData(t *testing.T) {
 	}
 	revision := string(info["revision"])
 	public := "https://published.example"
-	if _, err := h.server.public.Set(&public, 0); err != nil {
+	if _, err := h.server.public.Set(&public, 1); err != nil {
 		t.Fatal(err)
 	}
 	data, _ = h.request("GET", "/api/bootstrap", nil, 200, nil)

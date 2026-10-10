@@ -134,7 +134,7 @@ func TestPreflightAcceptsValidDatabaseWithPendingWAL(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.DB.Close()
-	if _, err = s.SaveSiteSettings(0, map[string]string{"title": "pending"}); err != nil {
+	if _, err = s.SaveSiteSettings(1, map[string]string{"title": "pending"}); err != nil {
 		t.Fatal(err)
 	}
 	if info, err := os.Stat(filepath.Join(dir, databaseName+"-wal")); err != nil || info.Size() == 0 {

@@ -90,7 +90,7 @@ func TestHTTPProxyTLSResumeAndPrivateCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	transport := c.transports.current.Load()
-	if err := c.pool.SetProxy(ProxyUpdate{Mode: "direct"}, 0); err == nil || c.transports.current.Load() != transport || c.pool.Proxy().Revision != 1 {
+	if err := c.pool.SetProxy(ProxyUpdate{Mode: "direct"}, 1); err == nil || c.transports.current.Load() != transport || c.pool.Proxy().Revision != 2 {
 		t.Fatal("stale proxy update changed the active transport")
 	}
 	if _, err := c.Get(context.Background(), sourceURL(c, "channels/latest"), nil); err == nil {
@@ -300,22 +300,22 @@ func TestSiblingSharesProxyUpdatesButKeepsOriginBoundary(t *testing.T) {
 func TestProxyURLKeepsExactEncodingAcrossReload(t *testing.T) {
 	c, db, _ := proxyFixture(t)
 	want := "http://user%40name:p%3Aa%2Fss@proxy.example:3128"
-	if err := c.pool.SetProxy(ProxyUpdate{Mode: "url", URL: want}, 0); err != nil {
+	if err := c.pool.SetProxy(ProxyUpdate{Mode: "url", URL: want}, 1); err != nil {
 		t.Fatal(err)
 	}
 	err := c.pool.LoadProxy(db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.pool.Proxy().URL != want || c.pool.Proxy().Revision != 1 {
-		t.Fatalf("reloaded proxy = %+v; want URL %s at revision 1", c.pool.Proxy(), want)
+	if c.pool.Proxy().URL != want || c.pool.Proxy().Revision != 2 {
+		t.Fatalf("reloaded proxy = %+v; want URL %s at revision 2", c.pool.Proxy(), want)
 	}
 	for _, bad := range []string{"http://u:p%0Ass@proxy.example:3128", "http://proxy.example:3128?", "http://proxy.example:3128#"} {
-		if err = c.pool.SetProxy(ProxyUpdate{Mode: "url", URL: bad}, 1); err == nil {
+		if err = c.pool.SetProxy(ProxyUpdate{Mode: "url", URL: bad}, 2); err == nil {
 			t.Fatal("invalid URL accepted", bad)
 		}
 	}
-	if c.pool.Proxy().URL != want || c.pool.Proxy().Revision != 1 {
+	if c.pool.Proxy().URL != want || c.pool.Proxy().Revision != 2 {
 		t.Fatal("failed update altered transport")
 	}
 }

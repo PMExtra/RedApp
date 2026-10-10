@@ -159,6 +159,11 @@ func (c *Pool) Proxy() ProxyView {
 	}
 	return ProxyView{Mode: mode, URL: conf.Server, DNS: dns, Revision: c.proxyRevision}
 }
+
+// SetProxy saves the global proxy under CAS. It returns ErrInvalidProxySettings
+// for an invalid setting, also wrapping networkproxy.ErrRedactedMismatch when
+// the redacted password is submitted for another proxy, and store.ErrConflict
+// when expected is stale.
 func (c *Pool) SetProxy(update ProxyUpdate, expected int64) error {
 	if c.proxyStore == nil {
 		return errors.New("Upstream proxy settings are unavailable")
@@ -168,8 +173,11 @@ func (c *Pool) SetProxy(update ProxyUpdate, expected int64) error {
 		return invalidProxy("Invalid proxy settings")
 	}
 	_, err := c.proxyStore.PatchGlobalProxy(expected, conf)
+	if errors.Is(err, networkproxy.ErrRedactedMismatch) {
+		return fmt.Errorf("%w: %w", ErrInvalidProxySettings, networkproxy.ErrRedactedMismatch)
+	}
 	if errors.Is(err, store.ErrInvalidDirectory) {
-		return invalidProxy("Redacted password requires the saved proxy scheme, username and host")
+		return invalidProxy("Invalid proxy settings")
 	}
 	return err
 }

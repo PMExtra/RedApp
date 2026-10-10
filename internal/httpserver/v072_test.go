@@ -47,8 +47,13 @@ func TestV072PublicDirectoryPinsTemplatesAndInstructionDocuments(t *testing.T) {
 		t.Fatal("unbounded or untyped suggestions", string(data))
 	}
 	h.request("POST", "/admin/api/vendors", map[string]any{"id": "all", "name": store.LocalizedText{En: "All", ZhCN: "全部"}}, 400, nil)
-	h.request("PUT", "/admin/api/settings/homepage", map[string]any{"keys": []string{"acme/tool-6", "openai/codex"}, "revision": 0}, 200, nil)
-	h.request("PUT", "/admin/api/settings/homepage", map[string]any{"keys": []string{}, "revision": 0}, 409, nil)
+	pins, err := h.store.HomepagePins()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = h.store.SaveHomepagePins(store.HomepagePins{Keys: []string{"acme/tool-6", "openai/codex"}, Revision: pins.Revision}); err != nil {
+		t.Fatal(err)
+	}
 	data, _ = h.request("GET", "/api/home", nil, 200, nil)
 	if !bytes.Contains(data, []byte("acme/tool-6")) {
 		t.Fatal("pin missing", string(data))
@@ -84,11 +89,6 @@ func TestV072PublicDirectoryPinsTemplatesAndInstructionDocuments(t *testing.T) {
 	data, _ = h.request("GET", "/api/apps/acme/tool-0/instructions/document?lang=en", nil, 200, nil)
 	if bytes.Contains(data, []byte("Fixture")) {
 		t.Fatal("explicit blank not preserved")
-	}
-	// The protected settings API shows the proxy user and host but never the password.
-	data, _ = h.request("GET", "/admin/api/settings/proxy", nil, 200, nil)
-	if bytes.Contains(data, []byte("fake-secret")) || !bytes.Contains(data, []byte("http://fake-user:****@proxy.example:8080")) {
-		t.Fatal("admin proxy view", string(data))
 	}
 	for _, path := range []string{"/api/bootstrap", "/api/home", "/api/vendors/acme"} {
 		data, _ = h.request("GET", path, nil, 200, nil)

@@ -1909,7 +1909,7 @@ func (s *Store) PatchGlobalProxy(expected int64, c networkproxy.Config) (int64, 
 		}
 		kept, err := networkproxy.KeepRedactedPassword(c, st.GlobalProxy)
 		if err != nil {
-			return fmt.Errorf("%w: %s", ErrInvalidDirectory, err)
+			return fmt.Errorf("%w: %w", ErrInvalidDirectory, err)
 		}
 		st.GlobalProxy = kept
 		st.GlobalProxyRevision++
