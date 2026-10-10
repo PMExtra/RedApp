@@ -78,7 +78,7 @@ test "$(docker inspect --format '{{len .Mounts}}' "$task_name")" = 1
 test "$(docker inspect --format '{{range .Mounts}}{{if eq .Type "volume"}}{{.Destination}}{{end}}{{end}}' "$task_name")" = '/var/lib/redapp'
 # Capture bootstrap logs privately; never print credentials to a report.
 docker logs "$task_name" >"$task_temp/first.log" 2>&1
-grep -q 'data directory /var/lib/redapp' "$task_temp/first.log"
+grep -q 'msg="RedApp started" .* data_dir=/var/lib/redapp' "$task_temp/first.log"
 test "$(grep -c 'Initial admin password' "$task_temp/first.log")" = 1
 if docker_run --name "$task_name-second" --network none --read-only -v "$task_volume:/var/lib/redapp" "$task_image" >"$task_temp/second.log" 2>&1; then
   echo '第二实例错误地取得独占目录' >&2
@@ -109,7 +109,7 @@ while [ "$task_try" -lt 20 ]; do
 done
 docker exec "$task_name" /redapp healthcheck
 docker logs "$task_name" >"$task_temp/recreated.log" 2>&1
-grep -q 'listener :18081, data directory /state' "$task_temp/recreated.log"
+grep -q 'msg="RedApp started" .* listen=:18081 data_dir=/state' "$task_temp/recreated.log"
 if grep -q 'Initial admin password' "$task_temp/recreated.log"; then
   echo '重建容器后数据库未保持' >&2
   exit 1
