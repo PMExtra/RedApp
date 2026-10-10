@@ -132,7 +132,12 @@ func (s *Service) Serve(w http.ResponseWriter, r *http.Request, entry applicatio
 		if fetchErr != nil {
 			return fetchErr
 		}
-		return s.serveResult(w, r, result, relativePath)
+		// A joined stream that stopped before its first byte while this request
+		// still wants the file is retried with a new fetch (see serveStream).
+		if err = s.serveResult(w, r, result, relativePath); errors.Is(err, ErrFetchAgain) {
+			continue
+		}
+		return err
 	}
 }
 
@@ -393,6 +398,11 @@ var streamFirstByte func(*stream)
 func (s *Service) serveStream(w http.ResponseWriter, r *http.Request, st *stream) error {
 	defer s.leaveStream(st)
 	if err := st.body.Await(r.Context(), 1); err != nil {
+		// The fill was stopped, not failed upstream, while this request still
+		// waits: its last other reader left before this one joined.
+		if errors.Is(err, context.Canceled) && r.Context().Err() == nil {
+			return ErrFetchAgain
+		}
 		return streamError(err)
 	}
 	if streamFirstByte != nil {
