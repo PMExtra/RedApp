@@ -1298,6 +1298,27 @@ func (s *Store) patchConfiguration(kind, key string, patch ConfigurationPatch, e
 				}
 			}
 		}
+		if raw, ok := patch.Set["proxy"]; ok {
+			var submitted networkproxy.Config
+			if json.Unmarshal(raw, &submitted) != nil {
+				return ErrInvalidDirectory
+			}
+			effective, err := st.effective(kind, uid)
+			if err != nil {
+				return err
+			}
+			saved, _ := decodeProxy(effective["proxy"])
+			kept, err := networkproxy.KeepRedactedPassword(submitted, saved)
+			if err != nil {
+				return fmt.Errorf("%w: %s", ErrInvalidDirectory, err)
+			}
+			set := make(map[string]json.RawMessage, len(patch.Set))
+			for key, value := range patch.Set {
+				set[key] = value
+			}
+			set["proxy"] = encode(kept)
+			patch.Set = set
+		}
 		c := st.Configs[configKey(kind, uid)]
 		if err := applyPatch(&c, kind, patch); err != nil {
 			return err
@@ -1866,7 +1887,11 @@ func (s *Store) PatchGlobalProxy(expected int64, c networkproxy.Config) (int64, 
 		if st.GlobalProxyRevision != expected {
 			return ErrConflict
 		}
-		st.GlobalProxy = c
+		kept, err := networkproxy.KeepRedactedPassword(c, st.GlobalProxy)
+		if err != nil {
+			return fmt.Errorf("%w: %s", ErrInvalidDirectory, err)
+		}
+		st.GlobalProxy = kept
 		st.GlobalProxyRevision++
 		return nil
 	})

@@ -69,6 +69,63 @@ func (c Config) Validate(allowInherit bool) error {
 	}
 	return nil
 }
+
+// RedactedPassword replaces saved proxy passwords in administrative responses.
+// A write may submit it only to keep the password saved for the same proxy.
+const RedactedPassword = "****"
+
+var ErrRedactedMismatch = errors.New("redacted proxy password requires the saved proxy scheme, username and host")
+
+// RedactURL replaces a non-empty password; scheme, username and host stay
+// visible. Unparseable values are withheld entirely.
+func RedactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	if u.User == nil {
+		return raw
+	}
+	if password, ok := u.User.Password(); !ok || password == "" {
+		return raw
+	}
+	user := url.User(u.User.Username()).String()
+	u.User = nil
+	return u.Scheme + "://" + user + ":" + RedactedPassword + "@" + strings.TrimPrefix(u.String(), u.Scheme+"://")
+}
+
+// Redacted returns the configuration as shown to administrators.
+func (c Config) Redacted() Config {
+	c.URL = RedactURL(c.URL)
+	return c
+}
+
+// KeepRedactedPassword resolves a submitted RedactedPassword to the saved URL.
+// A different scheme, username or host is rejected so a saved password is never
+// sent to another proxy. Other submissions are returned unchanged.
+func KeepRedactedPassword(submitted, saved Config) (Config, error) {
+	if submitted.Mode != "url" {
+		return submitted, nil
+	}
+	u, err := url.Parse(submitted.URL)
+	if err != nil || u.User == nil {
+		return submitted, nil
+	}
+	if password, ok := u.User.Password(); !ok || password != RedactedPassword {
+		return submitted, nil
+	}
+	if saved.Mode == "url" {
+		s, err := url.Parse(saved.URL)
+		if err == nil && s.User != nil {
+			password, ok := s.User.Password()
+			if ok && password != "" && s.Scheme == u.Scheme && s.Host == u.Host && s.User.Username() == u.User.Username() {
+				return saved, nil
+			}
+		}
+	}
+	return submitted, ErrRedactedMismatch
+}
+
 func Resolve(app Config, appID string, vendor Config, vendorID string, global Config) Effective {
 	c, scope, id := app, "app", appID
 	if c.Mode == "inherit" {

@@ -26,19 +26,27 @@ func invalidProxy(message string) error {
 	return fmt.Errorf("%w: %s", ErrInvalidProxySettings, message)
 }
 
-// The administrative API returns the exact saved URL, including encoded userinfo.
-// It must never be included in public output, diagnostics, or events.
+// ProxyView holds the exact saved URL, including encoded userinfo. Administrative
+// responses use Redacted; the URL must never be included in public output,
+// diagnostics, or events.
 type ProxyView struct {
 	Mode     string `json:"mode"`
 	URL      string `json:"url,omitempty"`
-	Server   string `json:"server"`
 	DNS      string `json:"dns"`
 	Revision int64  `json:"revision"`
 }
+
+// Redacted replaces a saved password with networkproxy.RedactedPassword.
+func (v ProxyView) Redacted() ProxyView {
+	v.URL = networkproxy.RedactURL(v.URL)
+	return v
+}
+
+// ProxyUpdate requires an explicit mode. A URL whose password is
+// networkproxy.RedactedPassword keeps the saved password of the same proxy.
 type ProxyUpdate struct {
-	Mode   string `json:"mode,omitempty"`
-	URL    string `json:"url,omitempty"`
-	Server string `json:"server"`
+	Mode string `json:"mode"`
+	URL  string `json:"url,omitempty"`
 }
 
 // Pool owns proxy state independently of application instances. Strict public
@@ -167,25 +175,20 @@ func (c *Pool) Proxy() ProxyView {
 	if conf.Server != "" {
 		mode, dns = "url", "proxy"
 	}
-	return ProxyView{Mode: mode, URL: conf.Server, Server: conf.Server, DNS: dns, Revision: c.proxyRevision}
+	return ProxyView{Mode: mode, URL: conf.Server, DNS: dns, Revision: c.proxyRevision}
 }
 func (c *Pool) SetProxy(update ProxyUpdate, expected int64) error {
 	if c.proxyStore == nil {
 		return errors.New("Upstream proxy settings are unavailable")
 	}
 	conf := networkproxy.Config{Mode: update.Mode, URL: update.URL}
-	if conf.Mode == "" {
-		conf = networkproxy.Direct()
-		if update.Server != "" {
-			conf = networkproxy.Config{Mode: "url", URL: update.Server}
-		}
-	} else if update.Server != "" {
-		return invalidProxy("Ambiguous proxy fields")
-	}
 	if err := conf.Validate(false); err != nil {
 		return invalidProxy("Invalid proxy settings")
 	}
 	_, err := c.proxyStore.PatchGlobalProxy(expected, conf)
+	if errors.Is(err, store.ErrInvalidDirectory) {
+		return invalidProxy("Redacted password requires the saved proxy scheme, username and host")
+	}
 	return err
 }
 

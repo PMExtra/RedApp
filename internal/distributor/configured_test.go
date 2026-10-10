@@ -198,7 +198,7 @@ func TestPoolProxyIndependentOfApplicationsAndSharedAcrossModes(t *testing.T) {
 		io.WriteString(w, "proxied")
 	}))
 	defer proxy.Close()
-	if err = pool.SetProxy(ProxyUpdate{Server: strings.Replace(proxy.URL, "://", "://proxy-user:proxy-secret@", 1)}, pool.Proxy().Revision); err != nil {
+	if err = pool.SetProxy(ProxyUpdate{Mode: "url", URL: strings.Replace(proxy.URL, "://", "://proxy-user:proxy-secret@", 1)}, pool.Proxy().Revision); err != nil {
 		t.Fatal(err)
 	}
 	general, _ := pool.NewClient("http://internal.invalid/files", GeneralHTTP)
@@ -222,14 +222,14 @@ func TestPoolProxyIndependentOfApplicationsAndSharedAcrossModes(t *testing.T) {
 	configured, _ := pool.NewClient(local.URL+"/files", ConfiguredRelease)
 	public, _ := pool.NewClient("https://127.0.0.1/files", PublicRelease)
 	before := pool.transports.Load()
-	if err = release.SetProxy(ProxyUpdate{Server: ""}, pool.Proxy().Revision); err != nil {
+	if err = release.SetProxy(ProxyUpdate{Mode: "direct"}, pool.Proxy().Revision); err != nil {
 		t.Fatal(err)
 	}
 	after := pool.transports.Load()
-	if before == after || after.public.Proxy != nil || after.configured.Proxy != nil || general.Proxy().Server != "" {
+	if before == after || after.public.Proxy != nil || after.configured.Proxy != nil || general.Proxy().URL != "" {
 		t.Fatal("proxy modes or settings did not switch together")
 	}
-	if err = general.SetProxy(ProxyUpdate{Server: proxy.URL}, 0); err == nil || pool.transports.Load() != after {
+	if err = general.SetProxy(ProxyUpdate{Mode: "url", URL: proxy.URL}, 0); err == nil || pool.transports.Load() != after {
 		t.Fatal("stale CAS replaced shared transport")
 	}
 	// A configured client created before the update regains its private direct

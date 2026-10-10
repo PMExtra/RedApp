@@ -207,11 +207,11 @@ try {
   );
   const path = "/api/apps/openai/codex/instructions/document?lang=en";
   const documentResponse = await request(path);
-  assert(
-    documentResponse.headers
-      .get("Content-Security-Policy")
-      .includes("'unsafe-inline'"),
-  );
+  const documentPolicy = documentResponse.headers.get("Content-Security-Policy");
+  assert(documentPolicy.includes("'unsafe-inline'"));
+  // Scripts keep running, but in an opaque origin without the admin session.
+  assert(documentPolicy.startsWith("sandbox allow-scripts "));
+  assert(!documentPolicy.includes("allow-same-origin"));
   const admin = await request("/admin/overview");
   assert(
     admin.headers.get("Content-Security-Policy").includes("script-src 'self'"),
@@ -360,7 +360,7 @@ try {
   assert.equal(page.evaluate('document.querySelector(".copy-code").textContent'), '复制');
   assert.equal(page.evaluate('document.querySelector(".copy-code").disabled'), false);
   console.log(
-    "Real HTTP instruction document: Markdown-only copy controls, exact whitespace/newlines, check/Copied feedback and three-second reset, keyboard focus, clipboard failure, controlled placeholders, inline and external local fixture scripts, bilingual navigation and separate CSP headers passed (Happy DOM; no GUI).",
+    "Real HTTP instruction document: Markdown-only copy controls, exact whitespace/newlines, check/Copied feedback and three-second reset, keyboard focus, clipboard failure, controlled placeholders, inline and external local fixture scripts, bilingual navigation and separate sandboxed CSP headers passed (Happy DOM; no GUI).",
   );
 } finally {
   await browser.abort();

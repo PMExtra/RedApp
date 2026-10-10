@@ -212,11 +212,11 @@ with tempfile.TemporaryDirectory(prefix="redapp-http-cli-") as temp:
         proxy_path = "/admin/api/settings/proxy"
         proxy = read(proxy_path)
         proxy_url = "http://fixture-user:fixture-only-password@127.0.0.1:3128"
-        proxy = write(proxy_path, {"server": proxy_url}, proxy["revision"])
-        assert proxy["server"] == proxy_url
+        proxy = write(proxy_path, {"mode": "url", "url": proxy_url}, proxy["revision"])
+        assert proxy["url"] == "http://fixture-user:****@127.0.0.1:3128" and "server" not in proxy
         assert "fixture-only-password" not in json.dumps(read("/api/bootstrap"))
-        proxy = write(proxy_path, {"server": ""}, proxy["revision"])
-        assert proxy["server"] == ""
+        proxy = write(proxy_path, {"mode": "direct"}, proxy["revision"])
+        assert proxy["mode"] == "direct" and "url" not in proxy
         with request("/admin/overview") as response:
             assets = re.findall(r'(?:src|href)="(/assets/[^" ]+)"', response.read().decode())
         assert assets

@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import SelectMenu from "./SelectMenu.vue";
-import type { ProxyConfig, ProxyEffective } from "../configuration";
+import { computed } from "vue";
+import {
+  REDACTED_PROXY_PASSWORD,
+  type ProxyConfig,
+  type ProxyEffective,
+} from "../configuration";
 import { t } from "../i18n";
 const props = defineProps<{
   modelValue: ProxyConfig;
@@ -9,6 +14,9 @@ const props = defineProps<{
   disabled?: boolean;
 }>();
 const emit = defineEmits<{ "update:modelValue": [ProxyConfig] }>();
+const redacted = computed(() =>
+  (props.modelValue.url || "").includes(`:${REDACTED_PROXY_PASSWORD}@`),
+);
 function mode(value: string) {
   emit(
     "update:modelValue",
@@ -54,6 +62,16 @@ function mode(value: string) {
       "
     />
     </div>
+    <p
+      v-if="modelValue.mode === 'url' && redacted"
+      class="muted small-text redacted-password-hint"
+    >
+      {{
+        t(
+          "The saved password is hidden as ****. Keep **** to retain it for the same scheme, user and host, or enter a new password.",
+        )
+      }}
+    </p>
     <p v-if="!global" class="muted small-text">
       {{
         t(

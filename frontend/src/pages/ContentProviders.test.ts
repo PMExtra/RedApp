@@ -145,7 +145,7 @@ it("embeds localized executable instruction documents without downloads for Info
   );
   expect(
     wrapper.get(".usage-instructions iframe").attributes("sandbox"),
-  ).toBeUndefined();
+  ).not.toContain("allow-same-origin");
   expect(wrapper.find(".usage-instructions img").exists()).toBe(false);
   expect(wrapper.find(".download-prefix").exists()).toBe(false);
   expect(wrapper.find(".installation-layout").exists()).toBe(false);

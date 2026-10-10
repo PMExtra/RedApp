@@ -150,7 +150,7 @@ func (s *Server) configurationAPI(w http.ResponseWriter, r *http.Request, kind, 
 		directoryError(w, err)
 		return
 	}
-	revisionReply(w, value.Revision, value)
+	revisionReply(w, value.Revision, redactConfiguration(value))
 }
 
 // UnmarshalJSON retains which leaves the legacy request explicitly supplied.

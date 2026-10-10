@@ -189,7 +189,8 @@ export const messages = {
  'success': '成功',
 
  "HTTP / HTTPS / SOCKS5 proxy for metadata, artifacts and imports. Select Direct connection to disable the proxy. Environment proxy variables are ignored; SOCKS5 uses proxy-side DNS.": "元数据、制品与导入使用 HTTP / HTTPS / SOCKS5 代理。选择直接连接可禁用代理。不使用环境代理变量；SOCKS5 在代理侧解析 DNS。",
- "Enter one complete URL with percent-encoded credentials. The saved URL is visible to administrators.": "输入包含百分号编码凭据的完整 URL。保存的 URL 对管理员可见。",
+ "Enter one complete URL with percent-encoded credentials.": "输入包含百分号编码凭据的完整 URL。",
+ "The saved password is hidden as ****. Keep **** to retain it for the same scheme, user and host, or enter a new password.": "已保存的密码显示为 ****。保留 **** 可在协议、用户名和主机不变时沿用原密码，也可输入新密码。",
  "Global": "全局",
 
  Reset: "重置", "Restore the template default": "恢复模板默认值",
@@ -665,8 +666,6 @@ export const messages = {
     "支持 Markdown、HTML、JavaScript 和外部资源，仅管理员可编辑说明。",
   "Disabled by vendor": "厂商已禁用",
   "Proxy URL": "代理 URL",
-  "Enter one complete URL with percent-encoded credentials. The saved URL is visible to administrators. Empty means direct.":
-    "输入包含百分号编码凭据的完整 URL。管理员可查看已保存的 URL。留空表示直连。",
   "Connection failed. Check your connection and retry.":
     "连接失败，请检查网络后重试。",
   "Request rejected. Check your input and retry.":
