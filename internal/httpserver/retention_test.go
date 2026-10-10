@@ -211,9 +211,12 @@ func TestRetentionRejectsChangedPolicySourceAndChannels(t *testing.T) {
 			case "ttl":
 				h.patchApp(a.Key, map[string]any{"cache_ttl_seconds": 1})
 			}
-			if change == "expired_preview" {
+			switch change {
+			case "expired_preview":
 				h.expectError("POST", retentionPath+"/"+p.ID+"/execute", nil, 404, codePreviewNotFound, nil)
-			} else {
+			case "disabled":
+				h.expectError("POST", retentionPath+"/"+p.ID+"/execute", nil, 409, codeApplicationDisabled, nil)
+			default:
 				h.expectError("POST", retentionPath+"/"+p.ID+"/execute", nil, 409, codePreviewStale, nil)
 			}
 			var count int
@@ -442,7 +445,10 @@ func TestRetentionPreviewRequiresSavedRevisionAndValidPreview(t *testing.T) {
 	h.expectError("POST", "/admin/api/apps/retention/binary/version-cleanup/"+p.ID+"/execute", nil, 404, codePreviewNotFound, nil)
 
 	h.setAppEnabled("retention/binary", false)
-	h.expectError("POST", retentionPath+"/preview", nil, 409, codeSourceChanged, ifMatchHeader(h.appRevision("retention/binary")))
+	h.expectError("POST", retentionPath+"/preview", nil, 409, codeApplicationDisabled, ifMatchHeader(h.appRevision("retention/binary")))
+	h.setVendorEnabled("retention", false)
+	h.setAppEnabled("retention/binary", true)
+	h.expectError("POST", retentionPath+"/preview", nil, 409, codeApplicationDisabled, ifMatchHeader(h.appRevision("retention/binary")))
 	h.markDeleted("retention/binary")
 	h.expectError("POST", retentionPath+"/preview", nil, 409, codeEntityDeleted, ifMatchHeader(h.appRevision("retention/binary")))
 	h.expectError("POST", retentionPath+"/"+p.ID+"/execute", nil, 409, codeEntityDeleted, nil)

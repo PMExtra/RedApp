@@ -61,6 +61,16 @@ func (s *Server) refuseDeleted(w http.ResponseWriter, r *http.Request, e applica
 	return true
 }
 
+// refuseDisabled writes APPLICATION_DISABLED for actions that need an enabled
+// application (and vendor): retention runs and prewarm.
+func (s *Server) refuseDisabled(w http.ResponseWriter, r *http.Request, e application.Entry) bool {
+	if e.Enabled {
+		return false
+	}
+	s.fail(w, r, codeApplicationDisabled, nil, "The application or its vendor is disabled; enable it first")
+	return true
+}
+
 // cursorPage is a cursor-paginated list document.
 type cursorPage[T any] struct {
 	Items      []T     `json:"items"`

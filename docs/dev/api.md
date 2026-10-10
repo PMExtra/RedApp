@@ -34,6 +34,7 @@
 - **并发控制**：每个可编辑资源返回 `revision` 和 `ETag: "<revision>"`。所有写操作必须带 `If-Match`，缺失或格式错误返回 `400 IF_MATCH_REQUIRED`，过期返回 `409 REVISION_CONFLICT`。请求体不再携带 `revision`。按 UID 防止误伤同名重建对象的守卫（`confirm_uid`、`source_uid`、`notes_revision`）不匹配时也返回 `409 REVISION_CONFLICT`。选择 409 而不是 HTTP 标准的 412，是为了让“过期草稿”只有一个错误码，前端统一保留草稿并重新加载。
 - **不需要 `If-Match` 的写操作**：登录/登出/改密码、上传图标、导入导出、对预览或任务 ID 的动作（ID 已绑定冻结的状态）、托管文件删除（文件 ID 不可变，替换用 `expected_id`）、HTTP 缓存单文件刷新与路径匹配测试。依赖已保存配置的动作（保留预览、复制应用）要求 `If-Match`。
 - **分页**：无限增长的列表（事件、版本、资源、缓存条目、预览条目）用游标 `limit`/`cursor` → `items`/`next_cursor`；需要页码的有限列表（厂商、应用、分类、托管文件、保留与预热条目）用 `page`/`limit` → `items`/`page`/`limit`/`total`/`total_pages`。`limit` 最大 100，默认值写在各操作。页码超出时返回空 `items`，不再回退到最后一页。
+- **禁用的应用**：需要已启用应用的动作（保留、预热等）在应用或其厂商被禁用时返回 409 `APPLICATION_DISABLED`（不可重试）；其他工作包遇到同样情况复用这个错误码，不用 `SOURCE_CHANGED`。
 - **错误**：响应体固定为 `{"error": {"code", "message", "request_id", "retryable"}}`，每个场景有显式 `code`，前端只按 `code` 判断。`retryable` 由目录决定，不由 HTTP 状态推导。
 
 ### 错误码的归属
@@ -196,7 +197,7 @@
 | 预览只返回一次估算 | 预览持久化 `reclaimable_bytes`、`active_generations`、`unknown_versions`，执行结果中仍可读（schema 13） |
 | 预览、执行失败都是 409 `CLEANUP_INVALID` | 未知或过期 404 `PREVIEW_NOT_FOUND`；来源变化 409 `PREVIEW_STALE`；预览期间来源变化 409 `SOURCE_CHANGED`；不存在的 `source_epoch` 404 `SOURCE_NOT_FOUND`；已删除应用 409 `ENTITY_DELETED` |
 | 保留预览请求体 `{revision}` | `If-Match`；`201`（带 `Location`）；预览生成期间配置被修改也返回 409 `REVISION_CONFLICT` |
-| 保留失败都是 409 `RETENTION_INVALID` | 渠道无法验证 502 `CHANNELS_UNVERIFIED`；读取并发已满 503 `TRANSFER_CAPACITY`；应用已禁用或来源变化 409 `SOURCE_CHANGED`；执行时策略、来源或渠道变化 409 `PREVIEW_STALE`；未知或过期 404 `PREVIEW_NOT_FOUND` |
+| 保留失败都是 409 `RETENTION_INVALID` | 渠道无法验证 502 `CHANNELS_UNVERIFIED`；读取并发已满 503 `TRANSFER_CAPACITY`；应用或厂商已禁用（预览和执行）409 `APPLICATION_DISABLED`；预览期间来源变化 409 `SOURCE_CHANGED`；执行时策略、来源或渠道变化 409 `PREVIEW_STALE`；未知或过期 404 `PREVIEW_NOT_FOUND` |
 | 保留预览 `expires` | `created_at`、`expires_at`、`executed_at`、`result` |
 | 保留条目响应带 `result` | 新增 `GET .../retention/{id}` 读取预览和回执；条目响应只是分页 |
 | 保留执行返回回执 | 返回带 `result` 的预览；已执行的预览直接返回已有回执，不再改写保留状态 |
@@ -223,7 +224,7 @@
 | 取消返回 `{cancel_requested: true}` | `202` 返回任务 |
 | 选项 `release`（布尔）、`limits` | `kind`（`release`/`http_cache`）、`default_limits` |
 | 任务 `created`/`updated`，PascalCase `AppRevision`/`VendorRevision`，可省略的 `reason`/`target`/`platforms` | `created_at`/`updated_at`，删除内部 revision，字段总是存在（可为 `null`/`[]`） |
-| 输入错误 400 `INVALID_REQUEST`，其他失败都是 409 `PREWARM_CONFLICT` | 字段值无效 400 `VALIDATION_FAILED`；`request_id` 冲突或过期 409 `PREWARM_REQUEST_CONFLICT`；重试运行中的任务 409 `OPERATION_IN_PROGRESS`；应用已禁用或来源变化 409 `SOURCE_CHANGED` |
+| 输入错误 400 `INVALID_REQUEST`，其他失败都是 409 `PREWARM_CONFLICT` | 字段值无效 400 `VALIDATION_FAILED`；`request_id` 冲突或过期 409 `PREWARM_REQUEST_CONFLICT`；重试运行中的任务 409 `OPERATION_IN_PROGRESS`；应用或厂商已禁用 409 `APPLICATION_DISABLED`；来源变化 409 `SOURCE_CHANGED` |
 
 ### 托管文件
 

@@ -51,6 +51,18 @@ func (h *harness) setAppEnabled(key string, enabled bool) {
 	}
 }
 
+// setVendorEnabled enables or disables vendor.
+func (h *harness) setVendorEnabled(vendor string, enabled bool) {
+	h.t.Helper()
+	v, err := h.store.Vendor(vendor)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if _, err = h.store.PatchVendorFields(vendor, v.Revision, nil, &enabled); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
 // markDeleted starts the deletion of key without finishing it, leaving the
 // application deleted and read-only.
 func (h *harness) markDeleted(key string) {

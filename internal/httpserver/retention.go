@@ -127,7 +127,7 @@ func (s *Server) previewRetention(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, apiErr)
 		return
 	}
-	if s.refuseDeleted(w, r, e) {
+	if s.refuseDeleted(w, r, e) || s.refuseDisabled(w, r, e) {
 		return
 	}
 	// The preview must reflect the policy the administrator saw, not a newer one.
@@ -152,7 +152,7 @@ func (s *Server) previewRetention(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, download.ErrReaderLimit):
 		s.fail(w, r, codeTransferCapacity, err, "Transfer capacity is currently full; retry later")
 	case errors.Is(err, store.ErrSourceInactive), errors.Is(err, store.ErrConflict):
-		s.fail(w, r, codeSourceChanged, err, "The application is disabled or its source changed; retry after it is enabled and published")
+		s.fail(w, r, codeSourceChanged, err, "The application source changed during the preview; retry")
 	default:
 		s.writeError(w, r, storageError(err))
 	}
@@ -227,6 +227,9 @@ func (s *Server) executeRetention(w http.ResponseWriter, r *http.Request) {
 	if p.ExecutedAt != nil {
 		// The preview ID is the idempotency key: repeat the stored receipt.
 		s.writeRetentionPreview(w, r, http.StatusOK, e, p)
+		return
+	}
+	if s.refuseDisabled(w, r, e) {
 		return
 	}
 	if p.AppID != e.StorageID() {

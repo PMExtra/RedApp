@@ -176,7 +176,9 @@ func TestPrewarmBusyCancelAndReadLimit(t *testing.T) {
 	}
 }
 
-func TestPrewarmCapabilitiesAndDeletedApplications(t *testing.T) {
+func TestPrewarmCapabilitiesAndDisabledOrDeletedApplications(t *testing.T) {
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "body") }))
+	defer origin.Close()
 	h := newHarness(t)
 	h.login(h.password)
 	h.createVendor("warm")
@@ -187,7 +189,13 @@ func TestPrewarmCapabilitiesAndDeletedApplications(t *testing.T) {
 	}
 	h.expectError("GET", "/admin/api/apps/warm/missing/prewarm/options", nil, 404, codeApplicationNotFound, nil)
 	h.expectError("GET", "/admin/api/apps/warm/Bad_Id/prewarm/options", nil, 400, codeInvalidPath, nil)
-	a := h.createApp("warm", "cache", "http-cache", map[string]any{"base_url": "http://warm.example"})
+	a := h.createApp("warm", "app", "http-cache", map[string]any{"base_url": origin.URL})
+	job := startWarm(t, h, map[string]any{"request_id": strings.Repeat("c", 32), "paths": []string{"/a"}}, 201)
+	warmJob(t, h, job.ID)
+	h.setAppEnabled(a.Key, false)
+	h.request("GET", "/admin/api/apps/"+a.Key+"/prewarm/jobs/"+job.ID, nil, 200, nil)
+	h.expectError("POST", "/admin/api/apps/"+a.Key+"/prewarm/jobs", map[string]any{"request_id": strings.Repeat("a", 32), "paths": []string{"/a"}}, 409, codeApplicationDisabled, nil)
+	h.expectError("POST", "/admin/api/apps/"+a.Key+"/prewarm/jobs/"+job.ID+"/retry", map[string]string{"request_id": strings.Repeat("b", 32)}, 409, codeApplicationDisabled, nil)
 	h.markDeleted(a.Key)
 	h.request("GET", "/admin/api/apps/"+a.Key+"/prewarm/options", nil, 200, nil)
 	h.expectError("POST", "/admin/api/apps/"+a.Key+"/prewarm/jobs", map[string]any{"request_id": strings.Repeat("a", 32), "paths": []string{"/a"}}, 409, codeEntityDeleted, nil)

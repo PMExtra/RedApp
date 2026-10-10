@@ -95,7 +95,7 @@ func (s *Server) writePrewarmStart(w http.ResponseWriter, r *http.Request, e app
 	case errors.Is(err, store.ErrConflict), errors.Is(err, store.ErrExpired):
 		s.fail(w, r, codePrewarmRequestConflict, err, "request_id was used with a different request or its job expired; generate a new ID")
 	case errors.Is(err, store.ErrSourceInactive):
-		s.fail(w, r, codeSourceChanged, err, "The application is disabled or its source changed; retry after it is enabled and published")
+		s.fail(w, r, codeSourceChanged, err, "The application source changed; retry")
 	default:
 		s.writeError(w, r, storageError(err))
 	}
@@ -103,7 +103,7 @@ func (s *Server) writePrewarmStart(w http.ResponseWriter, r *http.Request, e app
 
 func (s *Server) startPrewarm(w http.ResponseWriter, r *http.Request) {
 	e, ok := s.maintainedApp(w, r, prewarmCapable)
-	if !ok || s.refuseDeleted(w, r, e) {
+	if !ok || s.refuseDeleted(w, r, e) || s.refuseDisabled(w, r, e) {
 		return
 	}
 	var input struct {
@@ -211,7 +211,7 @@ func (s *Server) cancelPrewarmJob(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) retryPrewarmJob(w http.ResponseWriter, r *http.Request) {
 	e, job, ok := s.prewarmJobOf(w, r)
-	if !ok || s.refuseDeleted(w, r, e) {
+	if !ok || s.refuseDeleted(w, r, e) || s.refuseDisabled(w, r, e) {
 		return
 	}
 	var input struct {
