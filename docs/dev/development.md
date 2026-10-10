@@ -134,7 +134,7 @@ python3 scripts/check-docs.py --base main     # 另外要求成对文档同时�
 - 产物过期或缺失：对仍在 main 上的同一提交重跑 CI，再重跑原发布任务。若 main 已前进，使用新版本和新提交，不能移动旧 tag。
 - 注册表多标签写入不是原子的。推广中途网络失败时，核对四个标签后重跑同一任务，不重新编译或更换产物。
 - 发布 runner 必须先安装 `qemu-user`/`binutils`，再注册 Docker binfmt；顺序颠倒会让 ARM 容器验收时报 exec format error。
-- 候选和 `ci-<SHA>` 架构标签目前没有自动清理策略。
+- 候选和 `ci-<SHA>` 架构标签没有自动清理策略。
 
 ## Schema 迁移
 
