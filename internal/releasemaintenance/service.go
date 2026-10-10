@@ -6,17 +6,23 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/PMExtra/RedApp/internal/application"
-	"github.com/PMExtra/RedApp/internal/catalog"
-	"github.com/PMExtra/RedApp/internal/download"
-	"github.com/PMExtra/RedApp/internal/store"
+	"log/slog"
 	"sort"
 	"sync/atomic"
 	"time"
+
+	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/internal/catalog"
+	"github.com/PMExtra/RedApp/internal/download"
+	"github.com/PMExtra/RedApp/internal/logging"
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
 const Interval = 15 * time.Minute
 const VersionLimit = 100
+
+// pruneBatches bounds the expired previews and receipts removed per pass.
+const pruneBatches = 100
 
 var ErrChannels = errors.New("declared channel could not be verified")
 
@@ -26,16 +32,10 @@ type Service struct {
 	Catalog          *catalog.Service
 	Downloads        *download.Manager
 	AutomaticPrewarm func(context.Context)
-	running          atomic.Bool
-	next             atomic.Int64
-}
-type Preview struct {
-	ID               string                   `json:"id"`
-	Versions         []store.RetentionVersion `json:"-"`
-	SelectedVersions int                      `json:"selected_versions"`
-	LogicalBytes     int64                    `json:"logical_bytes"`
-	ReclaimableBytes int64                    `json:"reclaimable_bytes"`
-	Expires          time.Time                `json:"expires"`
+	// Log receives retention outcomes and failures; nil discards them.
+	Log     *slog.Logger
+	running atomic.Bool
+	next    atomic.Int64
 }
 
 // Status is the persisted record of the last retention run of an application.
@@ -168,70 +168,68 @@ func Select(protocol application.Protocol, storage string, keep int, views []dow
 	}
 	return out, ids
 }
-func (s *Service) Preview(ctx context.Context, key string) (Preview, error) {
+
+// Preview freezes a manual retention run of the saved policy.
+func (s *Service) Preview(ctx context.Context, key string) (store.Preview, error) {
 	return s.preview(ctx, key, false)
 }
-func (s *Service) preview(ctx context.Context, key string, automatic bool) (Preview, error) {
+func (s *Service) preview(ctx context.Context, key string, automatic bool) (store.Preview, error) {
 	e, ok := s.Registry.Lookup(key)
 	if !ok || !e.Active() || e.Protocol == nil {
-		return Preview{}, store.ErrSourceInactive
+		return store.Preview{}, store.ErrSourceInactive
 	}
 	ctx, finish, err := s.DB.ApplicationWork(ctx, e.StorageID())
 	if err != nil {
-		return Preview{}, err
+		return store.Preview{}, err
 	}
 	defer finish()
 	policy, hash, err := s.DB.Retention(key)
 	if err != nil {
-		return Preview{}, err
+		return store.Preview{}, err
 	}
 	if automatic && !policy.Enabled {
-		return Preview{}, store.ErrConflict
+		return store.Preview{}, store.ErrConflict
 	}
 	releaseBudget, err := s.Downloads.AcquireHTTPReader()
 	if err != nil {
-		return Preview{}, err
+		return store.Preview{}, err
 	}
 	defer releaseBudget()
 	channels := map[string]store.RetentionChannel{}
 	if len(e.Descriptor.Channels) == 0 {
-		return Preview{}, ErrChannels
+		return store.Preview{}, ErrChannels
 	}
 	for _, name := range e.Descriptor.Channels {
 		release, err := s.Catalog.Release(ctx, key, name)
 		if err != nil || release.Version == "" {
-			return Preview{}, ErrChannels
+			return store.Preview{}, ErrChannels
 		}
 		cached, err := s.DB.Channel(e.StorageID(), name)
 		if err != nil || cached.Version != release.Version {
-			return Preview{}, ErrChannels
+			return store.Preview{}, ErrChannels
 		}
 		channels[name] = store.RetentionChannel{Version: cached.Version, FetchedAt: cached.FetchedAt, ExpiresAt: cached.ExpiresAt}
 	}
 	versions, ids := Select(e.Protocol, e.StorageID(), policy.KeepLatest, s.Downloads.Snapshot(), channels)
-	guard := store.RetentionGuard{Automatic: automatic, SourceFence: store.SourceFence{AppRuntimeRevision: e.RuntimeRevision, VendorRuntimeRevision: e.VendorRuntimeRevision}, Hash: hash, Channels: channels, Versions: versions}
-	job, err := s.Downloads.PreviewRetention(e.StorageID(), ids, guard)
-	if err != nil {
-		return Preview{}, err
-	}
-	count := 0
-	for _, v := range versions {
-		if v.Selected {
-			count++
-		}
-	}
-	return Preview{ID: job.ID, Versions: versions, SelectedVersions: count, LogicalBytes: job.LogicalBytes, ReclaimableBytes: job.ReclaimableBlobBytes, Expires: job.Expires}, nil
+	guard := store.RetentionGuard{Automatic: automatic, Hash: hash, Channels: channels}
+	fence := store.SourceFence{AppRuntimeRevision: e.RuntimeRevision, VendorRuntimeRevision: e.VendorRuntimeRevision}
+	return s.Downloads.PreviewRetention(ctx, e.StorageID(), fence, guard, versions, ids)
 }
-func (s *Service) Execute(ctx context.Context, key, id string) (store.RetentionReceipt, error) {
+func (s *Service) Execute(ctx context.Context, key, id string) (store.ReleaseReceipt, error) {
 	e, ok := s.Registry.Lookup(key)
 	if !ok || e.Protocol == nil {
-		return store.RetentionReceipt{}, store.ErrSourceInactive
+		return store.ReleaseReceipt{}, store.ErrSourceInactive
 	}
 	receipt, err := s.Downloads.CleanupRetention(ctx, e.StorageID(), id)
-	s.record(e, receipt, err)
+	s.record(e, id, receipt, err)
 	return receipt, err
 }
-func (s *Service) record(e application.Entry, receipt store.RetentionReceipt, err error) {
+
+func (s *Service) log() *slog.Logger { return logging.For(s.Log, "retention") }
+
+// record persists the outcome of one run and logs it: failures as warnings,
+// skips and runs that retired versions as information.
+func (s *Service) record(e application.Entry, previewID string, receipt store.ReleaseReceipt, err error) {
 	now := time.Now().UTC()
 	status := Status{Attempt: now, Outcome: "success", RetiredVersions: receipt.RetiredVersions, LogicalBytes: receipt.LogicalBytes}
 	old, _ := s.DB.RetentionStatus(e.UID)
@@ -242,7 +240,7 @@ func (s *Service) record(e application.Entry, receipt store.RetentionReceipt, er
 		status.Success = &now
 	} else {
 		status.Outcome = "failure"
-		if errors.Is(err, ErrChannels) || errors.Is(err, store.ErrConflict) || errors.Is(err, store.ErrSourceInactive) || errors.Is(err, store.ErrExpired) || errors.Is(err, context.Canceled) {
+		if errors.Is(err, ErrChannels) || errors.Is(err, store.ErrConflict) || errors.Is(err, store.ErrPreviewStale) || errors.Is(err, store.ErrSourceInactive) || errors.Is(err, store.ErrExpired) || errors.Is(err, context.Canceled) {
 			status.Outcome = "skip"
 		}
 		status.Reason = "retention_execution_failed"
@@ -254,7 +252,21 @@ func (s *Service) record(e application.Entry, receipt store.RetentionReceipt, er
 		}
 	}
 	raw, _ := json.Marshal(status)
-	_ = s.DB.SaveRetentionStatus(e.UID, raw)
+	attrs := []any{slog.String("app", e.Descriptor.ID), slog.String("outcome", status.Outcome)}
+	if previewID != "" {
+		attrs = append(attrs, slog.String("preview_id", previewID))
+	}
+	if saveErr := s.DB.SaveRetentionStatus(e.UID, raw); saveErr != nil {
+		s.log().Error("retention status was not saved", append(attrs, logging.Error(saveErr))...)
+	}
+	switch {
+	case status.Outcome == "failure":
+		s.log().Warn("retention failed", append(attrs, slog.String("reason", status.Reason), logging.Error(err))...)
+	case status.Outcome == "skip":
+		s.log().Info("retention skipped", append(attrs, slog.String("reason", status.Reason))...)
+	case receipt.RetiredVersions > 0:
+		s.log().Info("retention retired versions", append(attrs, slog.Int("versions", receipt.RetiredVersions), slog.Int64("bytes", receipt.LogicalBytes))...)
+	}
 }
 
 // NextCheck is the time of the next scheduled pass, nil while Run is not active.
@@ -308,7 +320,8 @@ func (s *Service) Pass(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
-	if s.DB.DeleteExpiredCleanupPreviews(time.Now()) != nil {
+	if err := s.DB.PrunePreviews(ctx, time.Now(), pruneBatches); err != nil {
+		s.log().Error("expired previews were not removed; retention pass skipped", logging.Error(err))
 		return
 	}
 	for _, e := range s.Registry.Entries() {
@@ -320,7 +333,7 @@ func (s *Service) Pass(ctx context.Context) {
 		}
 		r, _, err := s.DB.Retention(e.Descriptor.ID)
 		if err != nil {
-			s.record(e, store.RetentionReceipt{}, err)
+			s.record(e, "", store.ReleaseReceipt{}, err)
 			continue
 		}
 		if !r.Enabled {
@@ -328,7 +341,7 @@ func (s *Service) Pass(ctx context.Context) {
 		}
 		preview, err := s.preview(ctx, e.Descriptor.ID, true)
 		if err != nil {
-			s.record(e, store.RetentionReceipt{}, err)
+			s.record(e, "", store.ReleaseReceipt{}, err)
 			continue
 		}
 		_, _ = s.Execute(ctx, e.Descriptor.ID, preview.ID)

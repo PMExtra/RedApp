@@ -39,6 +39,10 @@ export function uploadWithProgress<T>(options: UploadOptions): Promise<T> {
       request.abort();
     };
     options.signal?.addEventListener("abort", abort, { once: true });
+    // However the request ends (load, error, abort), the signal may outlive it.
+    request.addEventListener("loadend", () => {
+      options.signal?.removeEventListener("abort", abort);
+    });
     request.upload.addEventListener("progress", (event) => {
       options.onProgress?.({
         loaded: event.loaded,
@@ -52,7 +56,6 @@ export function uploadWithProgress<T>(options: UploadOptions): Promise<T> {
       reject(networkError(new Error("Upload failed")));
     });
     request.addEventListener("load", () => {
-      options.signal?.removeEventListener("abort", abort);
       let body: unknown;
       try {
         body = request.responseText ? JSON.parse(request.responseText) : undefined;

@@ -189,7 +189,7 @@ Automatic cleanup is off until you save at least one rule.
 - Each rule has a pattern, a basis (`fetched_at` or `last_access`) and a minimum age.
 - The **first** rule whose pattern matches a file decides. If that file is not old enough yet, later rules are not tried.
 - RedApp runs automatic cleanup every 15 minutes, starting 15 minutes after startup.
-- Each pass scans at most 1,000 files and removes at most 100 per application. The next pass continues where the last one stopped.
+- Each pass scans at most 1,000 files and removes at most 100 files per application. The next pass continues where the last one stopped.
 - Only the current source epoch of enabled applications is processed. Old epochs need manual cleanup.
 
 ### Previews and receipts

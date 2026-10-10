@@ -109,7 +109,12 @@ export function useVersionCleanup(vendor: Name, app: Name) {
         }),
       ),
     onSuccess: () => {
-      for (const operation of ["listResources", "listVersions", "getAppStatus"] as const) {
+      for (const operation of [
+        "listResources",
+        "listVersions",
+        "listSources",
+        "getAppStatus",
+      ] as const) {
         void queryClient.invalidateQueries({ queryKey: [operation, path()] });
       }
     },

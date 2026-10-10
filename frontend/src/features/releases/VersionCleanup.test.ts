@@ -8,12 +8,15 @@ import { renderWithApp } from "@/test/render";
 
 const props = { vendor: "openai", app: "codex" };
 
-function sources() {
+/** The sources; the historical one is gone once `emptied()` (its last copies deleted). */
+function sources(emptied = () => false) {
   return mockApi("get", "/admin/api/apps/{vendor}/{app}/sources", () => ({
-    items: [
-      sourceEpoch({ epoch: 1, current: false, base_url: "https://old.example.com" }),
-      sourceEpoch(),
-    ],
+    items: emptied()
+      ? [sourceEpoch()]
+      : [
+          sourceEpoch({ epoch: 1, current: false, base_url: "https://old.example.com" }),
+          sourceEpoch(),
+        ],
   }));
 }
 
@@ -32,7 +35,7 @@ describe("version cleanup", () => {
     let previewBody: unknown;
     let executed: string | undefined;
     useHandlers(
-      sources(),
+      sources(() => executed !== undefined),
       mockApi(
         "post",
         "/admin/api/apps/{vendor}/{app}/version-cleanup/preview",
@@ -66,6 +69,13 @@ describe("version cleanup", () => {
     await user.click(within(dialog).getByRole("button", { name: "Delete selected copies" }));
     expect(await screen.findByText(/Cleanup executed/)).toBeInTheDocument();
     expect(executed).toBe(versionCleanupPreview().id);
+
+    // The source list follows: the emptied historical source is gone.
+    await user.click(screen.getByRole("combobox", { name: "Cache source" }));
+    expect(await screen.findByRole("option", { name: /Source 2 \(current\)/ })).toBeVisible();
+    await waitFor(() => {
+      expect(screen.queryByRole("option", { name: /historical/ })).toBeNull();
+    });
   });
 
   it("drops a preview that became stale and asks for a new one", async () => {

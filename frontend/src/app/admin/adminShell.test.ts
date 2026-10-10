@@ -6,6 +6,8 @@ import { bootstrap, session } from "@/test/factories";
 import { globalStatus } from "@/test/factories/metrics";
 import { apiError, mockApi, noContent, useHandlers } from "@/test/msw";
 import { renderEntry } from "@/test/render";
+import { renderAdminPage } from "@/test/directory";
+import { vendor, vendorConfiguration } from "@/test/factories/directory";
 
 const PASSWORD = "correct horse battery";
 const emptyPage = { items: [], page: 1, limit: 25, total: 0, total_pages: 1 };
@@ -166,5 +168,103 @@ describe("admin shell", () => {
       current_password: "old password!",
       new_password: "a much longer password",
     });
+  });
+});
+
+describe("unsaved drafts around leaving actions", () => {
+  async function dirtyVendorSettings(onSignOut: () => Response | Promise<Response>) {
+    useHandlers(
+      mockApi("get", "/admin/api/vendors/{vendor}", () => vendor()),
+      mockApi("get", "/admin/api/vendors/{vendor}/configuration", () => vendorConfiguration()),
+      mockApi("delete", "/admin/api/session", onSignOut),
+      mockApi("get", "/admin/api/status", () => globalStatus()),
+    );
+    const rendered = await renderAdminPage("/admin/vendors/example/settings");
+    await rendered.user.type(await screen.findByLabelText(/^Name \(English\)/), " Labs");
+    return rendered;
+  }
+
+  async function answerDiscard(user: ReturnType<typeof userEvent.setup>, answer: string) {
+    const dialog = await screen.findByRole("alertdialog", { name: "Discard unsaved changes?" });
+    await user.click(within(dialog).getByRole("button", { name: answer }));
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+    });
+  }
+
+  it("keeps guarding the draft after a failed sign-out and asks once on success", async () => {
+    let fail = true;
+    const { router, user } = await dirtyVendorSettings(() => {
+      if (!fail) return noContent();
+      fail = false;
+      return apiError("INTERNAL_ERROR");
+    });
+    await user.click(screen.getByRole("button", { name: "Administrator" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Sign out" }));
+    await answerDiscard(user, "Discard");
+    expect(await screen.findByText("An unexpected server error occurred.")).toBeInTheDocument();
+    expect(router.currentRoute.value.name).toBe("admin-vendor-settings");
+
+    // The earlier answer does not carry over to a later navigation.
+    void router.push("/admin/overview");
+    await answerDiscard(user, "Keep editing");
+    expect(router.currentRoute.value.name).toBe("admin-vendor-settings");
+
+    await user.click(screen.getByRole("button", { name: "Administrator" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Sign out" }));
+    await answerDiscard(user, "Discard");
+    expect(await screen.findByText("You have signed out.")).toBeInTheDocument();
+    expect(router.currentRoute.value.name).toBe("admin-login");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("confirms the draft before changing the password, then goes to sign-in", async () => {
+    useHandlers(mockApi("post", "/admin/api/password", () => noContent()));
+    const { router, user } = await dirtyVendorSettings(() => noContent());
+    await user.click(screen.getByRole("button", { name: "Administrator" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Change password" }));
+    await answerDiscard(user, "Keep editing");
+    expect(screen.queryByRole("dialog", { name: "Change password" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Administrator" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Change password" }));
+    await answerDiscard(user, "Discard");
+    const dialog = await screen.findByRole("dialog", { name: "Change password" });
+    await user.type(within(dialog).getByLabelText(/^Current password/), "old password!");
+    await user.type(within(dialog).getByLabelText(/^New password/), "a much longer password");
+    await user.type(
+      within(dialog).getByLabelText(/^Confirm new password/),
+      "a much longer password",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Change password" }));
+    expect(
+      await screen.findByText("Password changed. Sign in with the new password."),
+    ).toBeInTheDocument();
+    expect(router.currentRoute.value.name).toBe("admin-login");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("leaves a deleted vendor without asking, and asks again afterwards", async () => {
+    useHandlers(
+      mockApi("delete", "/admin/api/vendors/{vendor}", () => noContent()),
+      mockApi("get", "/admin/api/vendors", () => ({ ...emptyPage, limit: 12 })),
+    );
+    const { router, user } = await dirtyVendorSettings(() => noContent());
+    await user.click(screen.getByRole("button", { name: "Delete vendor" }));
+    const confirmDelete = await screen.findByRole("alertdialog", {
+      name: "Delete vendor example?",
+    });
+    await user.click(within(confirmDelete).getByRole("button", { name: "Delete" }));
+    await waitFor(() => {
+      expect(router.currentRoute.value.name).toBe("admin-vendors");
+    });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
+    // A new draft elsewhere is guarded as usual.
+    await router.push("/admin/vendors/example/settings");
+    await user.type(await screen.findByLabelText(/^Name \(English\)/), "!");
+    void router.push("/admin/overview");
+    await answerDiscard(user, "Keep editing");
+    expect(router.currentRoute.value.name).toBe("admin-vendor-settings");
   });
 });

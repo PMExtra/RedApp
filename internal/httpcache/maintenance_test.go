@@ -40,9 +40,9 @@ func TestMaintenancePaginationFrozenBoundaryAndWholeCleanup(t *testing.T) {
 	seedMaintenanceRows(t, f, 1205)
 	// An insert immediately after capturing the high-water mark must not join
 	// the selection, even though subsequent selection pages can see it.
-	_, err := f.sql(t).Exec(`CREATE TRIGGER add_after_highwater AFTER INSERT ON http_cleanup_previews BEGIN
+	_, err := f.sql(t).Exec(`CREATE TRIGGER add_after_highwater AFTER INSERT ON previews BEGIN
 		INSERT INTO http_cache_generations(id,storage_id,path,sha256,size_bytes,fetched_at_s,validated_at_s,last_access_bucket_s,fresh_until_s,headers_json,is_current)
-		SELECT lower(hex(randomblob(16))),NEW.storage_id,'late/file',sha256,7,fetched_at_s,validated_at_s,0,fresh_until_s,'{}',1 FROM http_cache_generations LIMIT 1;
+		SELECT lower(hex(randomblob(16))),'app/'||NEW.app_uid||'-e'||NEW.source_epoch,'late/file',sha256,7,fetched_at_s,validated_at_s,0,fresh_until_s,'{}',1 FROM http_cache_generations LIMIT 1;
 	END`)
 	if err != nil {
 		t.Fatal(err)
@@ -52,41 +52,37 @@ func TestMaintenancePaginationFrozenBoundaryAndWholeCleanup(t *testing.T) {
 		t.Fatal(preview, err)
 	}
 	var criteria []byte
-	if err = f.sql(t).QueryRow(`SELECT selection_json FROM http_cleanup_previews WHERE id=?`, preview.ID).Scan(&criteria); err != nil {
+	if err = f.sql(t).QueryRow(`SELECT criteria_json FROM previews WHERE id=?`, preview.ID).Scan(&criteria); err != nil {
 		t.Fatal(err)
 	}
 	if len(criteria) > 512 || strings.Contains(string(criteria), "generation_id") {
 		t.Fatal("selection embedded the entire row set", len(criteria))
 	}
-	cursor, seen, last := "", 0, int64(0)
+	seen, last := 0, int64(0)
 	for {
-		page, err := f.s.PreviewItems(f.entry.StorageID(), "cleanup", preview.ID, cursor, 25)
-		if err != nil || len(page.Items) > 25 || page.TotalFiles != 1205 || page.TotalBytes != 1205*7 {
+		page, err := f.db.PreviewItems(context.Background(), preview.ID, last, 25, false)
+		if err != nil || len(page) > 25 {
 			t.Fatal(page, err)
 		}
-		for _, item := range page.Items {
-			if item.Ordinal <= last || item.Path == "late/file" {
+		if len(page) == 0 {
+			break
+		}
+		for _, item := range page {
+			if item.Ordinal <= last || item.Label == "late/file" {
 				t.Fatal("unstable page or late insert", item)
 			}
 			last = item.Ordinal
 			seen++
 		}
-		cursor = page.NextCursor
-		if cursor == "" {
-			break
-		}
 	}
 	if seen != 1205 {
 		t.Fatal("pagination lost or repeated items", seen)
 	}
-	if _, err = f.s.PreviewItems(f.entry.StorageID(), "refresh", preview.ID, "", 25); !errors.Is(err, ErrInvalidPreview) {
+	if _, err = f.s.LookupPreview(f.entry.StorageID(), "refresh", preview.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("kind confused", err)
 	}
-	if _, err = f.s.PreviewItems("different/epoch", "cleanup", preview.ID, "", 25); !errors.Is(err, store.ErrNotFound) {
+	if _, err = f.s.LookupPreview("different/epoch", "cleanup", preview.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("ownership confused", err)
-	}
-	if _, err = f.s.PreviewItems(f.entry.StorageID(), "cleanup", preview.ID, "01", 25); !errors.Is(err, ErrInvalidPreview) {
-		t.Fatal("noncanonical cursor", err)
 	}
 	result, err := f.s.ExecuteCleanup(context.Background(), f.entry, preview.ID)
 	if err != nil || result.RetiredFiles != 1205 || result.RetiredBytes != 1205*7 {
@@ -120,11 +116,15 @@ func TestMaintenanceReceiptsExpiryPruningAndRestart(t *testing.T) {
 	if _, err = f.s.LookupPreview(f.entry.StorageID(), "refresh", preview.ID); err != nil {
 		t.Fatal("running expired", err)
 	}
-	page, err := f.s.PreviewItems(f.entry.StorageID(), "refresh", preview.ID, "", 25)
+	running, err := f.s.LookupPreview(f.entry.StorageID(), "refresh", preview.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = f.s.recordPreviewItem(context.Background(), f.entry, "refresh", preview.ID, page.Items[0].Ordinal, "refreshed", ""); err != nil {
+	page, err := f.db.PreviewItems(context.Background(), preview.ID, 0, 25, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = f.s.recordPreviewItem(context.Background(), running, page[0].Ordinal, "refreshed", ""); err != nil {
 		t.Fatal(err)
 	}
 	if err = f.s.recoverPreviews(context.Background()); err != nil {
@@ -145,15 +145,15 @@ func TestMaintenanceReceiptsExpiryPruningAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	var items, headers int
-	f.sql(t).QueryRow(`SELECT COUNT(*) FROM http_cleanup_preview_items WHERE preview_id=?`, preview.ID).Scan(&items)
-	f.sql(t).QueryRow(`SELECT COUNT(*) FROM http_cleanup_previews WHERE id=?`, preview.ID).Scan(&headers)
+	f.sql(t).QueryRow(`SELECT COUNT(*) FROM preview_items WHERE preview_id=?`, preview.ID).Scan(&items)
+	f.sql(t).QueryRow(`SELECT COUNT(*) FROM previews WHERE id=?`, preview.ID).Scan(&headers)
 	if items != 205 || headers != 1 {
 		t.Fatal("unbounded cascade or early header deletion", items, headers)
 	}
 	if err = f.s.prunePreviews(context.Background(), 1); err != nil {
 		t.Fatal(err)
 	}
-	f.sql(t).QueryRow(`SELECT COUNT(*) FROM http_cleanup_previews WHERE id=?`, preview.ID).Scan(&headers)
+	f.sql(t).QueryRow(`SELECT COUNT(*) FROM previews WHERE id=?`, preview.ID).Scan(&headers)
 	if headers != 0 {
 		t.Fatal("empty expired header retained")
 	}

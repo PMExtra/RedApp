@@ -31,7 +31,8 @@ import (
 var web embed.FS
 
 // Deps are the services the HTTP layer is built on. Every field except
-// Version, Started and Logger is required; New validates them once.
+// Version, Started, Logger, MaxDownloadsPerClient and Frontend is required;
+// New validates them once.
 type Deps struct {
 	Version        string // build version; "" reports "dev"
 	Store          *store.Store
@@ -50,7 +51,11 @@ type Deps struct {
 	Maintenance    *releasemaintenance.Service
 	DataDir        string
 	Started        time.Time    // process start; zero means now
-	Logger         *slog.Logger // nil means slog.Default()
+	Logger         *slog.Logger // nil discards the logs
+	// MaxDownloadsPerClient bounds the concurrent file downloads of one
+	// client (IPv4 address or IPv6 /64); 0 means
+	// config.DefaultMaxDownloadsPerClient.
+	MaxDownloadsPerClient int
 	// Frontend is the frontend build (index.html, admin.html, assets/); nil
 	// means the build embedded from internal/httpserver/web.
 	Frontend fs.FS
@@ -70,6 +75,12 @@ func WithConfigurationCheck(check func(store.DirectorySnapshot) error) Option {
 // application's running work to stop (default 15 seconds).
 func WithDeleteWait(wait time.Duration) Option {
 	return func(s *Server) { s.deleteWait = wait }
+}
+
+// WithClock replaces the clock that ages the cached readiness result
+// (default time.Now).
+func WithClock(now func() time.Time) Option {
+	return func(s *Server) { s.now = now }
 }
 
 // Server is the HTTP layer: routing, middleware, request parsing and response
@@ -95,11 +106,16 @@ type Server struct {
 	log         *slog.Logger
 	frontend    fs.FS
 
+	downloadSlots *clientDownloads
+
 	mux    *http.ServeMux
 	routes []route
 
 	configurationCheck func(store.DirectorySnapshot) error
 	deleteWait         time.Duration
+	now                func() time.Time
+
+	readiness readiness
 
 	exchangeMu       sync.Mutex
 	exchangePreviews map[string]exchangePreview
@@ -130,7 +146,7 @@ func New(deps Deps, options ...Option) (*Server, error) {
 		proxies: deps.TrustedProxies, pool: deps.Pool, icons: deps.Icons, history: deps.History,
 		public: deps.PublicSettings, prewarmer: deps.Prewarmer, maintenance: deps.Maintenance,
 		dataDir: deps.DataDir, started: deps.Started, log: deps.Logger,
-		deleteWait: 15 * time.Second,
+		deleteWait: 15 * time.Second, now: time.Now,
 	}
 	if s.version == "" {
 		s.version = "dev"
@@ -139,8 +155,16 @@ func New(deps Deps, options ...Option) (*Server, error) {
 		s.started = time.Now().UTC()
 	}
 	if s.log == nil {
-		s.log = slog.Default()
+		s.log = slog.New(slog.DiscardHandler)
 	}
+	maxDownloads := deps.MaxDownloadsPerClient
+	if maxDownloads == 0 {
+		maxDownloads = config.DefaultMaxDownloadsPerClient
+	}
+	if maxDownloads < 0 {
+		return nil, errors.New("httpserver: MaxDownloadsPerClient must not be negative")
+	}
+	s.downloadSlots = newClientDownloads(maxDownloads)
 	s.frontend = deps.Frontend
 	if s.frontend == nil {
 		embedded, err := fs.Sub(web, "web")

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -457,5 +458,65 @@ func TestLastReaderLeavingStopsTheFill(t *testing.T) {
 	})
 	if len(f.rows(t)) != 0 {
 		t.Fatal("abandoned fill was published")
+	}
+}
+
+// A request arriving while a fill stops because its only reader left must not
+// inherit that stop: it fetches the file again instead of failing.
+func TestRequestAfterLastReaderLeftFetchesAgain(t *testing.T) {
+	var calls atomic.Int32
+	f := newFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			w.Header().Set("Content-Length", "5")
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+			<-r.Context().Done()
+			return
+		}
+		io.WriteString(w, "fresh")
+	}), 300)
+	// The stopped fill pauses before it records its end, until the second
+	// request has either joined it or started its own fetch.
+	stopped, release := make(chan *stream, 1), make(chan struct{})
+	var once, releaseOnce sync.Once
+	streamFillFailed = func(st *stream) {
+		once.Do(func() {
+			stopped <- st
+			<-release
+		})
+	}
+	t.Cleanup(func() { streamFillFailed = nil })
+	resume := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(resume) // runs before the fixture closes, so a failure cannot block Close
+	ctx, cancel := context.WithCancel(context.Background())
+	first := make(chan error, 1)
+	go func() {
+		r := httptest.NewRequest(http.MethodGet, "http://redapp.example/vendor/app/file", nil).WithContext(ctx)
+		first <- f.s.Serve(httptest.NewRecorder(), r, f.entry, "file")
+	}()
+	waitFor(t, "first request never reached the stream", func() bool {
+		f.s.mu.Lock()
+		defer f.s.mu.Unlock()
+		return len(f.s.streams) == 1
+	})
+	cancel()
+	if err := <-first; !errors.Is(err, context.Canceled) {
+		t.Fatal("first request", err)
+	}
+	old := <-stopped
+	second := make(chan error, 1)
+	w := httptest.NewRecorder()
+	go func() {
+		r := httptest.NewRequest(http.MethodGet, "http://redapp.example/vendor/app/file", nil)
+		second <- f.s.Serve(w, r, f.entry, "file")
+	}()
+	waitFor(t, "second request neither joined nor fetched", func() bool {
+		f.s.mu.Lock()
+		defer f.s.mu.Unlock()
+		return old.readers > 0 || calls.Load() == 2
+	})
+	resume()
+	if err := <-second; err != nil || w.Code != http.StatusOK || w.Body.String() != "fresh" {
+		t.Fatal(w.Code, w.Body.String(), err)
 	}
 }

@@ -23,6 +23,8 @@ const props = defineProps<{
   sourceEpoch: number | null;
   disabled?: boolean;
 }>();
+/** `busy`: a preview or job is open, so the page must keep the source epoch. */
+const emit = defineEmits<{ "update:busy": [busy: boolean] }>();
 const { t } = useI18n();
 const timeZone = localTimeZone();
 const match = ref<PathMatch>({ type: "glob", pattern: "/" });
@@ -65,6 +67,14 @@ const locked = computed(() => props.disabled || create.isPending.value || jobAct
 
 // A preview belongs to the selection it was made from.
 watch([match, basis, beforeLocal, () => props.sourceEpoch], () => close(false), { deep: true });
+
+watch(
+  () => previewId.value !== null || jobActive.value || create.isPending.value,
+  (busy) => {
+    emit("update:busy", busy);
+  },
+  { immediate: true },
+);
 
 function close(expired: boolean) {
   previewId.value = null;

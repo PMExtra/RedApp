@@ -225,14 +225,12 @@ type cleanupSelectionDTO struct {
 	Bytes        int64  `json:"bytes"`
 }
 
-func cleanupSelection(items []store.CleanupSelection) ([]cleanupSelectionDTO, int64) {
+func cleanupSelection(items []store.CleanupSelection) []cleanupSelectionDTO {
 	out := make([]cleanupSelectionDTO, 0, len(items))
-	var total int64
 	for _, item := range items {
 		out = append(out, cleanupSelectionDTO{GenerationID: item.GenerationID, Version: item.Version, ResourceKey: item.ResourceKey, Bytes: item.SnapshotBytes})
-		total += item.SnapshotBytes
 	}
-	return out, total
+	return out
 }
 
 type versionCleanupDTO struct {
@@ -248,17 +246,37 @@ type versionCleanupDTO struct {
 	UnknownVersions   []string              `json:"unknown_versions"`
 }
 
-func versionCleanup(p store.CleanupPreview) versionCleanupDTO {
-	_, epoch, _ := identity.ParseStorageID(p.AppID)
-	selected, logical := cleanupSelection(p.Selection)
-	unknown := p.UnknownVersions
-	if unknown == nil {
-		unknown = []string{}
+// writeVersionCleanup writes a version cleanup preview with its whole
+// frozen selection.
+func (s *Server) writeVersionCleanup(w http.ResponseWriter, r *http.Request, status int, p store.Preview) {
+	summary, err := store.ReleaseSummary(p)
+	if err != nil {
+		s.writeError(w, r, storageError(err))
+		return
 	}
-	return versionCleanupDTO{
-		ID: p.ID, SourceEpoch: epoch, CreatedAt: p.CreatedAt.UTC(), ExpiresAt: p.ExpiresAt.UTC(), ExecutedAt: utcPointer(p.ExecutedAt),
-		Selected: selected, LogicalBytes: logical, ReclaimableBytes: p.ReclaimableBytes, ActiveGenerations: p.ActiveGenerations, UnknownVersions: unknown,
+	items, err := s.store.AllPreviewItems(r.Context(), p.ID)
+	if err != nil {
+		s.writeError(w, r, storageError(err))
+		return
 	}
+	selection := []store.CleanupSelection{}
+	for _, item := range items {
+		detail, err := store.ReleaseDetail(item)
+		if err != nil {
+			s.writeError(w, r, storageError(err))
+			return
+		}
+		selection = append(selection, detail.Generations...)
+	}
+	out := versionCleanupDTO{
+		ID: p.ID, SourceEpoch: p.SourceEpoch, CreatedAt: p.CreatedAt.UTC(), ExpiresAt: p.ExpiresAt.UTC(), ExecutedAt: utcPointer(p.ExecutedAt),
+		Selected: cleanupSelection(selection), LogicalBytes: p.SelectedBytes, ReclaimableBytes: summary.ReclaimableBytes, ActiveGenerations: p.ActiveItems, UnknownVersions: summary.UnknownVersions,
+	}
+	if status == http.StatusCreated {
+		writeCreated(w, "", 0, out)
+		return
+	}
+	writeOK(w, out)
 }
 
 func utcPointer(t *time.Time) *time.Time {
@@ -303,20 +321,12 @@ func (s *Server) previewVersionCleanup(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	job, err := s.downloads.Preview(storage, ids, unknown)
-	if err == nil {
-		var row store.CleanupPreview
-		if row, err = s.store.CleanupPreview(storage, job.ID); err == nil {
-			writeCreated(w, "", 0, versionCleanup(row))
-			return
-		}
+	preview, err := s.downloads.Preview(storage, ids, unknown)
+	if err != nil {
+		s.writeError(w, r, previewBuildFailure(err))
+		return
 	}
-	switch {
-	case errors.Is(err, store.ErrSourceInactive), errors.Is(err, store.ErrConflict):
-		s.fail(w, r, codeSourceChanged, err, "The application source changed during the preview; retry")
-	default:
-		s.writeError(w, r, storageError(err))
-	}
+	s.writeVersionCleanup(w, r, http.StatusCreated, preview)
 }
 
 func (s *Server) executeVersionCleanup(w http.ResponseWriter, r *http.Request) {
@@ -324,28 +334,18 @@ func (s *Server) executeVersionCleanup(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, ok := s.pathUID(w, r, "preview_id")
-	if !ok || s.refuseDeleted(w, r, e) {
+	if _, ok = s.pathUID(w, r, "preview_id"); !ok || s.refuseDeleted(w, r, e) {
 		return
 	}
-	preview, err := s.store.ApplicationCleanupPreview(e.UID, id)
-	if err == nil && preview.Retention != nil {
-		err = store.ErrNotFound
+	preview, ok := s.previewRecord(w, r, e, store.PreviewVersionCleanup)
+	if !ok {
+		return
 	}
-	if err == nil {
-		err = s.downloads.Cleanup(preview.AppID, id)
+	if err := s.downloads.Cleanup(preview.StorageID(), preview.ID); err != nil {
+		s.writeError(w, r, previewError(err))
+		return
 	}
-	if err == nil {
-		preview, err = s.store.CleanupPreview(preview.AppID, id)
-	}
-	switch {
-	case err == nil:
-		writeOK(w, versionCleanup(preview))
-	case isNotFound(err), errors.Is(err, store.ErrExpired), errors.Is(err, store.ErrConflict):
-		s.fail(w, r, codePreviewNotFound, err, "The preview is unknown or expired; build a new preview")
-	case errors.Is(err, store.ErrSourceInactive):
-		s.fail(w, r, codePreviewStale, err, "The application source changed since the preview; nothing was removed")
-	default:
-		s.writeError(w, r, storageError(err))
+	if preview, ok = s.previewRecord(w, r, e, store.PreviewVersionCleanup); ok {
+		s.writeVersionCleanup(w, r, http.StatusOK, preview)
 	}
 }

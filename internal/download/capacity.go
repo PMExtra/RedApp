@@ -31,7 +31,7 @@ func (m *Manager) AcquireHTTPReader() (func(), error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
-		return nil, errors.New("server is shutting down")
+		return nil, ErrClosed
 	}
 	if m.readersLocked() >= m.maxReaders {
 		return nil, ErrReaderLimit
@@ -47,7 +47,7 @@ func (m *Manager) AcquireHTTPWriter() (func(), error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
-		return nil, errors.New("server is shutting down")
+		return nil, ErrClosed
 	}
 	if m.jobs >= m.maxWriters {
 		return nil, ErrWriterLimit
@@ -92,4 +92,12 @@ func (m *Manager) PurgeApplication(uid string, remove func() error) error {
 		}
 	}
 	return nil
+}
+
+// Closed reports whether Close has started; afterwards new work fails with
+// ErrClosed.
+func (m *Manager) Closed() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.closed
 }

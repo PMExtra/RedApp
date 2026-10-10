@@ -30,7 +30,8 @@ export interface paths {
         };
         /**
          * Report that the database answers and the data directory is writable.
-         * @description Pings SQLite and creates then removes a temporary file in the data directory.
+         * @description Pings SQLite and creates then removes a temporary file in the data directory. The result answers probes for
+         *     5 s; concurrent probes share one check.
          *     Never contacts upstreams. Not counted in metrics. Used by `redapp healthcheck`.
          */
         get: operations["getReadiness"];

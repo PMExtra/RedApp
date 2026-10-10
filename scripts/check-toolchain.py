@@ -7,6 +7,9 @@
   Dockerfile NODE_IMAGE tag matches.
 - Container base images are pinned by digest; workflows pin actions by commit SHA,
   never use pull_request_target and never pull floating images during builds.
+- Every actions/checkout step sets ``persist-credentials: false``. Privileged
+  helper images are pinned: setup-qemu-action names an ``image:`` by digest and
+  setup-buildx-action uses the ``docker`` driver or pins its BuildKit image by digest.
 """
 from pathlib import Path
 import re
@@ -23,6 +26,54 @@ def dockerfile_arg(text, name):
     if len(values) != 1:
         raise ValueError(f"Dockerfile must define ARG {name} exactly once")
     return values[0]
+
+
+def workflow_steps(text):
+    """Yield ``(action, step text)`` for each list item of block YAML that has ``uses:``.
+
+    An item extends over the following lines that are blank or indented deeper
+    than its ``-``.
+    """
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        start = re.match(r"(\s*)-\s+\S", line)
+        if not start:
+            continue
+        indent = len(start.group(1))
+        end = index + 1
+        while end < len(lines) and (not lines[end].strip() or len(lines[end]) - len(lines[end].lstrip()) > indent):
+            end += 1
+        step = "\n".join(lines[index:end])
+        uses = re.search(rf"^(?: {{{indent}}}-\s+| {{{indent + 2}}})uses:\s*(\S+)", step, re.MULTILINE)
+        if uses:
+            yield uses.group(1), step
+
+
+def step_option(step, key):
+    """Return the unquoted value of ``key:`` inside a step, or None."""
+    match = re.search(rf"^\s+{re.escape(key)}:\s*(.*?)\s*(?:#.*)?$", step, re.MULTILINE)
+    return match.group(1).strip("'\"") if match else None
+
+
+def check_steps(name, text):
+    """Return the problems of individual action steps of one workflow."""
+    problems = []
+    for action, step in workflow_steps(text):
+        if action.startswith("actions/checkout@"):
+            if step_option(step, "persist-credentials") != "false":
+                problems.append(f"{name}: actions/checkout must set persist-credentials: false")
+        elif action.startswith("docker/setup-qemu-action@"):
+            if not re.search(DIGEST + "$", step_option(step, "image") or ""):
+                problems.append(f"{name}: docker/setup-qemu-action needs an image: pinned by digest")
+        elif action.startswith("docker/setup-buildx-action@"):
+            driver = step_option(step, "driver") or "docker-container"
+            options = step_option(step, "driver-opts") or ""
+            if driver != "docker" and not re.search(rf"image=moby/buildkit:[^\s,]+{DIGEST}", options):
+                problems.append(
+                    f"{name}: docker/setup-buildx-action must use driver: docker "
+                    "or pin driver-opts image=moby/buildkit by digest"
+                )
+    return problems
 
 
 def check(root):
@@ -73,13 +124,16 @@ def check(root):
             problems.append(f"{name}: use node-version-file: frontend/.node-version instead of node-version")
         if "pull_request_target" in text:
             problems.append(f"{name}: pull_request_target is not allowed")
-        if re.search(r"docker build[^\n]*--pull", text):
+        # A backslash-continued shell line is still the same command.
+        commands = re.sub(r"\\\n\s*", " ", text)
+        if re.search(r"docker (?:buildx )?build[^\n]*--pull", commands):
             problems.append(f"{name}: docker build --pull makes validation non-reproducible")
         for action in re.findall(r"^\s*(?:-\s+)?uses:\s*(\S+)", text, re.MULTILINE):
             if action.startswith("./"):
                 continue
             if not re.fullmatch(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}", action):
                 problems.append(f"{name}: action {action} is not pinned to a commit SHA")
+        problems.extend(check_steps(name, text))
     return problems
 
 

@@ -84,7 +84,7 @@ class RetentionCLITest(ServerTestCase):
         self.assertEqual(count(database, current_complete), 2)
         retired_requests = "SELECT sum(artifact_requests) FROM app_versions WHERE version='1.0.0'"
         self.assertEqual(count(database, retired_requests), 1, "statistics of the retired version were lost")
-        receipt_sql = "SELECT result_json FROM cleanup_previews WHERE id=?"
+        receipt_sql = "SELECT result_json FROM previews WHERE id=?"
         receipt = count(database, receipt_sql, preview["id"])
         # Enable automatic retention; startup must not run an immediate cleanup.
         self.patch_retention(admin, enabled=True)
@@ -96,7 +96,7 @@ class RetentionCLITest(ServerTestCase):
         self.assertEqual(admin.request(f"{APP}/retention/{preview['id']}"), result)
         self.assertEqual(admin.request(APP + "/retention/status")["last_run"]["outcome"], "success")
         self.assertEqual(count(database, receipt_sql, preview["id"]), receipt)
-        self.assertEqual(count(database, "SELECT count(*) FROM cleanup_previews"), 1, "startup ran an immediate cleanup")
+        self.assertEqual(count(database, "SELECT count(*) FROM previews"), 1, "startup ran an immediate cleanup")
         self.assertEqual(count(database, current_complete), 2)
 
 

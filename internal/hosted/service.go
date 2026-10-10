@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/identity"
+	"github.com/PMExtra/RedApp/internal/logging"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -44,9 +46,17 @@ type Service struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
+	log       *slog.Logger
 }
 
-func New(dir string, db *store.Store, budget download.Budget) (*Service, error) {
+// Option configures a Service at construction.
+type Option func(*Service)
+
+// WithLogger sets the logger for startup recovery and file cleanup failures
+// (default: discard).
+func WithLogger(log *slog.Logger) Option { return func(s *Service) { s.log = log } }
+
+func New(dir string, db *store.Store, budget download.Budget, options ...Option) (*Service, error) {
 	if db == nil || budget == nil {
 		return nil, errors.New("persistent file storage unavailable")
 	}
@@ -57,6 +67,10 @@ func New(dir string, db *store.Store, budget download.Budget) (*Service, error) 
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Service{dir: filepath.Join(dir, "objects", "hosted"), db: db, budget: budget, ctx: ctx, cancel: cancel, transfers: map[string]*Progress{}}
+	for _, option := range options {
+		option(s)
+	}
+	s.log = logging.For(s.log, "hosted")
 	// Only incomplete/unreferenced commits are recovered. Saved resources never expire.
 	ids, err := db.HostedIDs()
 	if err != nil {
@@ -68,6 +82,7 @@ func New(dir string, db *store.Store, budget download.Budget) (*Service, error) 
 		cancel()
 		return nil, err
 	}
+	removed := 0
 	for _, f := range files {
 		if f.Type()&os.ModeSymlink != 0 || f.IsDir() {
 			cancel()
@@ -83,7 +98,11 @@ func New(dir string, db *store.Store, budget download.Budget) (*Service, error) 
 				cancel()
 				return nil, err
 			}
+			removed++
 		}
+	}
+	if removed > 0 {
+		s.log.Info("removed incomplete or unreferenced hosted files", slog.Int("files", removed))
 	}
 	return s, nil
 }
@@ -223,9 +242,17 @@ func (s *Service) Put(ctx context.Context, entry application.Entry, path, expect
 	p.State = "committing"
 	s.mu.Unlock()
 	committed := false
+	// Runs after mu is released. An uncommitted object left behind is removed
+	// by the next startup recovery.
+	var staleObject []any
 	defer func() {
 		if !committed {
-			fsutil.Remove(target)
+			if _, err := fsutil.Remove(target); err != nil {
+				s.log.Warn("uncommitted hosted file was not removed", slog.String("app", entry.Descriptor.ID), slog.String("transfer_id", id), logging.Error(err))
+			}
+		}
+		if staleObject != nil {
+			s.log.Warn("replaced hosted file was not removed", staleObject...)
 		}
 	}()
 	if err = file.Publish(target); err != nil {
@@ -251,7 +278,9 @@ func (s *Service) Put(ctx context.Context, entry application.Entry, path, expect
 	// after commit cannot claim that it stopped the completed publication.
 	p.State = "complete"
 	if old.ID != "" {
-		fsutil.Remove(filepath.Join(s.dir, old.ID))
+		if _, err := fsutil.Remove(filepath.Join(s.dir, old.ID)); err != nil {
+			staleObject = []any{slog.String("app", entry.Descriptor.ID), slog.String("transfer_id", id), slog.String("file_id", old.ID), logging.Error(err)}
+		}
 	}
 	return value, nil
 }

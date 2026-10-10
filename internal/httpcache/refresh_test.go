@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -185,16 +186,16 @@ func TestBatchRefreshPagesFrozenSelectionAndDurableReceipt(t *testing.T) {
 	if err != nil || preview.SelectedFiles != 26 {
 		t.Fatal(preview, err)
 	}
-	page, err := f.s.PreviewItems(f.entry.StorageID(), "refresh", preview.ID, "", 25)
-	if err != nil || len(page.Items) != 25 || page.NextCursor == "" || page.TotalFiles != 26 {
+	page, err := f.db.PreviewItems(context.Background(), preview.ID, 0, 25, false)
+	if err != nil || len(page) != 25 {
 		t.Fatal(page, err)
 	}
-	last, err := f.s.PreviewItems(f.entry.StorageID(), "refresh", preview.ID, page.NextCursor, 25)
-	if err != nil || len(last.Items) != 1 || last.NextCursor != "" {
+	last, err := f.db.PreviewItems(context.Background(), preview.ID, page[24].Ordinal, 25, false)
+	if err != nil || len(last) != 1 {
 		t.Fatal(last, err)
 	}
 	seed("batch/late")
-	old, err := f.s.lookup(context.Background(), f.entry.StorageID(), last.Items[0].Path)
+	old, err := f.s.lookup(context.Background(), f.entry.StorageID(), last[0].Label)
 	if err != nil || old == nil {
 		t.Fatal(old, err)
 	}
@@ -219,7 +220,7 @@ func TestBatchRefreshPagesFrozenSelectionAndDurableReceipt(t *testing.T) {
 		t.Fatal(finished, validations.Load())
 	}
 	var summary RefreshSummary
-	if err := json.Unmarshal(finished.result, &summary); err != nil {
+	if err := json.Unmarshal(finished.Result, &summary); err != nil {
 		t.Fatal(err)
 	}
 	if summary.SelectedFiles != 26 || summary.CompletedFiles != 26 || summary.NotModified != 25 || summary.Skipped != 1 || summary.Refreshed != 0 || summary.StaleFallback != 0 {
@@ -230,20 +231,13 @@ func TestBatchRefreshPagesFrozenSelectionAndDurableReceipt(t *testing.T) {
 	if err != nil || repeated.State != "done" || calls.Load() != before {
 		t.Fatal("receipt repeated upstream work", repeated, err)
 	}
-	var cursor string
 	statuses := map[string]int{}
-	for {
-		page, err = f.s.PreviewItems(f.entry.StorageID(), "refresh", preview.ID, cursor, 25)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, item := range page.Items {
-			statuses[item.ResultStatus]++
-		}
-		cursor = page.NextCursor
-		if cursor == "" {
-			break
-		}
+	items, err := f.db.AllPreviewItems(context.Background(), preview.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range items {
+		statuses[item.Status]++
 	}
 	if statuses["not_modified"] != 25 || statuses["skipped"] != 1 || statuses["pending"] != 0 {
 		t.Fatal(statuses)
@@ -281,7 +275,7 @@ func TestBatchRefreshRejectsStalePolicyAndStopsAfterSourceFence(t *testing.T) {
 	}
 	f.entry.Revision = updated.Revision
 	f.entry.RuntimeRevision = updated.RuntimeRevision
-	if _, err = f.s.ExecuteRefresh(context.Background(), f.entry, preview.ID); !errors.Is(err, store.ErrSourceInactive) {
+	if _, err = f.s.ExecuteRefresh(context.Background(), f.entry, preview.ID); !errors.Is(err, store.ErrPreviewStale) {
 		t.Fatal("old policy preview executed", err)
 	}
 	preview, err = f.s.PreviewRefresh(context.Background(), f.entry, pathmatch.Spec{Type: "glob", Pattern: "/"})
@@ -303,6 +297,9 @@ func TestBatchRefreshRejectsStalePolicyAndStopsAfterSourceFence(t *testing.T) {
 	}
 	if rows := f.rows(t); len(rows) != 1 {
 		t.Fatal("failed refresh removed original body", rows)
+	}
+	if logs := f.logs.String(); !strings.Contains(logs, `msg="HTTP cache refresh stopped" component=http_cache app=vendor/app preview_id=`+preview.ID+" reason=source_changed") || len(f.logs.Problems()) != 0 {
+		t.Fatal("source fence stop not logged as an expected outcome", logs)
 	}
 }
 

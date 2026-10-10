@@ -3,6 +3,7 @@ import { computed } from "vue";
 import { Trash2 } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
+import { leaveDiscardingDrafts } from "@/shared/forms";
 import { confirm, toast } from "@/shared/lib";
 import { Button, Card } from "@/shared/ui";
 import { useDeleteApp, useDeleteVendor, type App, type Vendor } from "./queries";
@@ -50,10 +51,10 @@ async function remove(): Promise<void> {
     return; // Reported by the global error handler or as a conflict notice.
   }
   toast({ tone: "success", title: t("directory.delete.done", { key: key.value }) });
-  await router.push({
-    name: "admin-vendors",
-    query: cleanupPending ? { cleanup: "pending" } : {},
-  });
+  // Drafts of the deleted entity can no longer be saved: leave without asking.
+  await leaveDiscardingDrafts(() =>
+    router.push({ name: "admin-vendors", query: cleanupPending ? { cleanup: "pending" } : {} }),
+  );
 }
 </script>
 

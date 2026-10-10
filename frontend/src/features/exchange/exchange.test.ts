@@ -6,6 +6,7 @@ import { recorder, renderAdminPage } from "@/test/directory";
 import {
   app,
   appConfiguration,
+  category,
   importItem,
   importPreview,
   notes,
@@ -13,7 +14,7 @@ import {
   vendor,
   vendorListItem,
 } from "@/test/factories/directory";
-import { mockApi, useHandlers } from "@/test/msw";
+import { apiError, mockApi, useHandlers } from "@/test/msw";
 
 const SCRIPT = '<script>fetch("https://must-not-load.invalid")</script>';
 
@@ -63,9 +64,10 @@ describe("configuration import", () => {
     const { user } = await renderAdminPage("/admin/vendors");
     await user.click(await screen.findByRole("button", { name: "Import configuration" }));
     const dialog = await screen.findByRole("dialog", { name: "Import configuration" });
-    const input = dialog.querySelector<HTMLInputElement>('input[type="file"]');
-    if (!input) throw new Error("no file input");
-    await user.upload(input, new File(["kind: app"], "package.yaml", { type: "application/yaml" }));
+    await user.upload(
+      within(dialog).getByLabelText("Package file", { selector: "input" }),
+      new File(["kind: app"], "package.yaml", { type: "application/yaml" }),
+    );
     await user.click(within(dialog).getByRole("button", { name: "Preview import" }));
 
     // Instructions are shown as inert text.
@@ -100,6 +102,51 @@ describe("configuration import", () => {
     );
     expect(executed.calls[0]?.body).toEqual({ trust_instructions: true });
   });
+
+  it.each(["PREVIEW_STALE", "PREVIEW_NOT_FOUND"] as const)(
+    "drops a preview the server rejects with %s and asks for a new one",
+    async (code) => {
+      let previews = 0;
+      let executions = 0;
+      useHandlers(
+        mockApi("get", "/admin/api/vendors", () => page([vendorListItem()], { limit: 12 })),
+        mockApi("post", "/admin/api/configuration/import/preview", () => {
+          previews++;
+          return HttpResponse.json(importPreview({ id: String(previews).repeat(32) }));
+        }),
+        mockApi("post", "/admin/api/configuration/import/{preview_id}/execute", () => {
+          executions++;
+          return executions === 1
+            ? apiError(code)
+            : {
+                applied: true,
+                items: [{ kind: "app" as const, key: "example/tools", revision: 10 }],
+              };
+        }),
+      );
+      const { user } = await renderAdminPage("/admin/vendors");
+      await user.click(await screen.findByRole("button", { name: "Import configuration" }));
+      const dialog = await screen.findByRole("dialog", { name: "Import configuration" });
+      await user.upload(
+        within(dialog).getByLabelText("Package file", { selector: "input" }),
+        new File(["kind: app"], "package.yaml", { type: "application/yaml" }),
+      );
+      await user.click(within(dialog).getByRole("button", { name: "Preview import" }));
+      await user.click(await within(dialog).findByRole("button", { name: "Execute import" }));
+
+      expect(await within(dialog).findByText("Preview no longer valid")).toBeInTheDocument();
+      expect(within(dialog).queryByRole("button", { name: "Execute import" })).toBeNull();
+      // Handled in the dialog: no error notification.
+      expect(
+        screen.queryByText(/This preview has expired|Things changed since the preview/),
+      ).toBeNull();
+
+      await user.click(within(dialog).getByRole("button", { name: "Preview import" }));
+      await user.click(await within(dialog).findByRole("button", { name: "Execute import" }));
+      expect(await within(dialog).findByText("1 item imported.")).toBeInTheDocument();
+      expect(previews).toBe(2);
+    },
+  );
 });
 
 function appServer() {
@@ -163,8 +210,18 @@ describe("application copy", () => {
         const body = await copies.record(request);
         return app({ id: body.target_id, enabled: false });
       }),
+      // The copy joins the category of its source.
+      mockApi("get", "/admin/api/categories", () =>
+        page([category({ applications: 2 + copies.calls.length })], { limit: 25 }),
+      ),
     );
-    const { router, user } = await renderAdminPage("/admin/vendors/example/apps/tools/admin-notes");
+    const { router, user } = await renderAdminPage("/admin/categories");
+    const categoryRow = async () =>
+      within(await screen.findByRole("table", { name: "Categories" })).findByRole("row", {
+        name: /Developer tools/,
+      });
+    expect(within(await categoryRow()).getByText("2")).toBeInTheDocument();
+    await router.push("/admin/vendors/example/apps/tools/admin-notes");
     await user.click(await screen.findByRole("button", { name: "Copy application" }));
     const dialog = await screen.findByRole("dialog", { name: "Copy example/tools" });
     // Without a template only an independent copy is possible.
@@ -193,5 +250,49 @@ describe("application copy", () => {
         notes_revision: 2,
       },
     });
+    await router.push("/admin/categories");
+    await waitFor(async () => {
+      expect(within(await categoryRow()).getByText("3")).toBeInTheDocument();
+    });
+  });
+});
+
+describe("application copy failures", () => {
+  it("shows a taken ID once at the field and reports a failed notes read", async () => {
+    appServer();
+    let copies = 0;
+    useHandlers(
+      mockApi("post", "/admin/api/apps/{vendor}/{app}/copy", () => {
+        copies++;
+        return apiError("ALREADY_EXISTS");
+      }),
+    );
+    const { user } = await renderAdminPage("/admin/vendors/example/apps/tools/admin-notes");
+    await user.click(await screen.findByRole("button", { name: "Copy application" }));
+    const dialog = await screen.findByRole("dialog", { name: "Copy example/tools" });
+    const id = within(dialog).getByLabelText(/^New application ID/);
+    await user.type(id, "tools-canary");
+    await user.click(within(dialog).getByRole("button", { name: "Copy application" }));
+    expect(
+      await within(dialog).findByText("An application with this ID already exists."),
+    ).toBeVisible();
+    expect(id).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getAllByText(/already exists|already taken/)).toHaveLength(1);
+    await user.type(id, "-2");
+    expect(within(dialog).queryByText("An application with this ID already exists.")).toBeNull();
+
+    // The notes are read again before copying them; a failure is reported and nothing is sent.
+    useHandlers(
+      mockApi("get", "/admin/api/apps/{vendor}/{app}/admin-notes", () =>
+        apiError("INTERNAL_ERROR"),
+      ),
+    );
+    await user.click(within(dialog).getByRole("checkbox", { name: "Copy admin notes" }));
+    await user.click(within(dialog).getByRole("button", { name: "Copy application" }));
+    // Shown by the notes tab behind the dialog and, as a notification, for the copy.
+    await waitFor(() => {
+      expect(screen.getAllByText("An unexpected server error occurred.").length).toBeGreaterThan(1);
+    });
+    expect(copies).toBe(1);
   });
 });

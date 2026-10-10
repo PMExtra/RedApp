@@ -36,6 +36,8 @@ RedApp 是单进程 Go 服务：一个二进制、一个 SQLite 数据库、一�
 5. 首次启动时生成随机管理员密码并输出到日志。
 6. 启动后台循环和 HTTP 服务；收到 SIGINT/SIGTERM 后 15 秒内优雅退出。
 
+`main` 创建唯一的 `log/slog` text logger（标准错误），交给 store、各领域服务、后台循环和 HTTP 层；日志字段和级别规则见 [conventions.md](conventions.md#日志)。
+
 ## 包与依赖方向
 
 依赖从上往下，下层不引用上层：
@@ -73,7 +75,8 @@ RedApp 是单进程 Go 服务：一个二进制、一个 SQLite 数据库、一�
 | | `internal/jsoncheck` | 拒绝重复键、过深嵌套和尾随数据 |
 | | `internal/yamlconfig` | 严格的单文档 YAML → JSON |
 | | `internal/instance` | 数据目录实例锁与只读的持锁检查 |
-| 测试 | `internal/testutil` | 基于 httptest 的上游客户端；在真实 store 中创建目录应用并构造其运行时条目（`App`、`Entry`）（仅测试使用） |
+| | `internal/logging` | 日志约定：`component` 字段、遮盖 URL 凭据的 `error` 字段、未传 logger 时的丢弃默认值 |
+| 测试 | `internal/testutil` | 基于 httptest 的上游客户端；在真实 store 中创建目录应用并构造其运行时条目（`App`、`Entry`）；收集结构化日志的 `Logs`（仅测试使用） |
 | | `internal/store/storetest` | 测试另开一个到数据目录数据库的连接，用于故障注入和没有 store API 的夹具（仅测试使用） |
 | 嵌入数据 | `presets/` | 内置厂商、应用、分类的 YAML 模板与图标 |
 | | `installers/` | 嵌入 generated 安装脚本、许可证和公钥（见 [installers.md](installers.md)） |
@@ -125,7 +128,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 
 - **资源身份**：`sha256(app \0 version \0 key)`，并与持久化的 `resources` 行（来源 URL、SHA-256、期望大小）和应用上游核对，其他应用不能借用缓存身份。
 - **代际（generation）**：每次下载是一个代际，状态包括 downloading、resuming、retry_wait、verifying、complete、failed、invalid、interrupted。每个资源最多一个当前代际（部分唯一索引）。
-- **读者与写者**：一个写者经 `spool.Fill` 填充 part，多个读者跟随同一个 `spool.Body` 边下载边读取；`Body` 有自己的锁，读者不争用 `Manager.mu`，失败只以错误结束读取，从不表现为成功的 EOF。默认上限 16 个写者、512 个读者，单制品 4 GiB；`httpcache` 和 `hosted` 共用这组额度。
+- **读者与写者**：一个写者经 `spool.Fill` 填充 part，多个读者跟随同一个 `spool.Body` 边下载边读取；`Body` 有自己的锁，读者不争用 `Manager.mu`，失败只以错误结束读取，从不表现为成功的 EOF。默认上限 16 个写者、512 个读者，单制品 4 GiB；`httpcache` 和 `hosted` 共用这组额度。HTTP 层另按客户端（IPv4 地址或 IPv6 /64，与登录限流相同）限制并发文件下载数（`max_downloads_per_client`，默认 16），使单个客户端无法占满全部读者额度。
 - **续传**：带 `Range: bytes=N-`，强 ETag 时加 `If-Range`。只接受精确的 206、`Content-Range` 和相同 ETag（`spool.CheckResume`）；其他情况放弃续传，新建一个完整重下的代际。每 1 MiB 记录进度。
 - **写入顺序**：进度在 `Manager.mu` 内取快照并分配该代际的下一个 `checkpoint` 序号，释放锁后写库；`SaveGeneration`、`CompleteGeneration` 只在序号比库中新时生效，迟到的旧快照不会覆盖新状态或撤销完成。`mu` 只在改变“当前代际”的写入（创建、退役、完成、删除）和 blob 发布时持有，保证内存与 `generations` 表一致。
 - **超时与重试**：由 `spool.Fill` 执行。下载流没有总时限，只有空闲读超时（单次读取 60 秒无数据即中断）；连接、TLS、响应头各有独立时限，元数据读取限时 5 分钟。连接错误、读取中断或截断、5xx、408、429 会重试，最多 6 次，退避从 1 秒翻倍、上限 30 秒并加随机抖动；其他 4xx、磁盘、编码和完整性错误不重试。重试耗尽时，如果已有数据且上游支持续传（ETag 或字节范围），保留 part 并标记 interrupted，下次请求从断点续传。
@@ -133,21 +136,45 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 - **校验与发布**：写入 `objects/parts/<gen>.part`，完成后校验完整 SHA-256 和大小，fsync 后 rename 到 `objects/blobs/<sha256(app)>/<hash>.blob`，fsync 目录，再在数据库标记完成。校验失败的代际为 invalid。
 - **校验不持锁**：整文件哈希不在 `Manager.mu` 内进行。同一资源的并发请求共享一次校验，校验由管理器自己的 goroutine 和 context 执行，请求方取消只是停止等待，不会让有效缓存被判为无效。校验结束后重新加锁，确认代际仍是当前代际、文件 inode/大小/修改时间未变，才应用结果；校验中的代际视为活跃，不会被清理或清除。
 - **恢复**：启动时不对已提交的完整 blob 做整文件哈希，只核对存在和大小，并标为待校验；首次被请求时复用惰性校验（与源失效后恢复的 dormant 代际相同），校验失败才退役重下。已改名为 blob 但尚未提交的代际在恢复时立即校验。清理孤立的 part 和 blob。
-- **清理与保留**：手动清理先生成冻结的预览，执行只作用于预览中的代际；保留策略按应用保留最新 N 个版本，有效渠道、正在读写的代际和无法比较的版本受保护。
-- 下游响应目前由服务端自行流式输出，不支持客户端 Range。
+- **清理与保留**：版本清理和保留都是[冻结预览](#冻结预览)，执行只作用于预览中的代际；保留策略按应用保留最新 N 个版本，有效渠道、正在读写的代际和无法比较的版本受保护。
+- 下游响应由服务端自行流式输出，不支持客户端 Range。
 
 ## HTTP 缓存引擎（`internal/httpcache`）
 
-服务 `http-cache` 应用：按 `(storage_id, path)` 缓存上游的可变 HTTP 响应。与下载引擎共享 `internal/spool` 的流式核心和 `internal/fsutil` 的发布原语；按路径的条目生命周期（当前/退役、读者 pin、清理与刷新预览）属于 HTTP 缓存自己，SQL 全部在 `internal/store`（`http_cache.go`）。
+服务 `http-cache` 应用：按 `(storage_id, path)` 缓存上游的可变 HTTP 响应。与下载引擎共享 `internal/spool` 的流式核心和 `internal/fsutil` 的发布原语；按路径的条目生命周期（当前/退役、读者 pin）属于 HTTP 缓存自己，SQL 全部在 `internal/store`（`http_cache.go`）；刷新与清理是[冻结预览](#冻结预览)。
 
 - **回源与合并**：同一路径、同一应用快照（运行时 revision）和同一被替换条目的并发请求合并为一个 flight。来源按策略顺序尝试，只在来源响应前失败（连接错误、超时、5xx）时换下一个来源；全部失败且允许时回退到旧条目。回源带 `If-None-Match`/`If-Modified-Since`，`304` 只更新验证时间和响应头。
-- **流**：可缓存的 `200` 响应成为一个流：一个 `spool.Fill` 写入 `objects/http/<id>.part`，flight 的等待者和之后加入的请求都作为读者跟随同一个 `spool.Body` 边下边读。没有总时限，只有单次读取 60 秒空闲超时。读取失败后只向同一来源续传：`Range` + `If-Range`（非弱 ETag，或比 `Date` 至少早 1 秒的 `Last-Modified`），续传响应必须是同一表示（验证器相同）的精确剩余区间且仍可缓存，否则流失败；没有强验证器的流不续传。重试上限与退避与下载引擎相同。最后一个读者离开时停止填充。
+- **流**：可缓存的 `200` 响应成为一个流：一个 `spool.Fill` 写入 `objects/http/<id>.part`，flight 的等待者和之后加入的请求都作为读者跟随同一个 `spool.Body` 边下边读。没有总时限，只有单次读取 60 秒空闲超时。读取失败后只向同一来源续传：`Range` + `If-Range`（非弱 ETag，或比 `Date` 至少早 1 秒的 `Last-Modified`），续传响应必须是同一表示（验证器相同）的精确剩余区间且仍可缓存，否则流失败；没有强验证器的流不续传。重试上限与退避与下载引擎相同。最后一个读者离开时停止填充，该流在同一次持锁中不再接受新读者，之后的请求重新回源；加入后才发现流已被停止的请求同样重新回源。
 - **发布**：写入时计算 SHA-256；完整且长度一致后读者即可读到 EOF，随后 fsync、rename 为 `<id>.body`，再在 store 的一个事务中检查来源 fence（替换时还确认旧条目仍为当前）并发布为当前条目。发布与停止接受新读者在同一次持锁中完成，之后清理退役该条目时不会再有读者加入这个流。失败、超限、被放弃或发布被拒绝（来源已变化、旧条目已被清理）的流删除 part，不留条目；已经开始接收的客户端连接被中断。读完整个文件的请求等到发布结束才返回，下一个请求一定能看到条目。
 - **服务**：已存储的条目由 `http.ServeContent` 处理条件请求和单段 Range，读取期间 pin 住条目，退役后最后一个持有者释放时删除文件和行。流上的请求先等待首字节，立即失败的流在发送任何内容之前报错；来源声明了长度时同样经 `http.ServeContent` 处理并等待所需字节，否则返回完整的 `200`。流的响应只带上游 ETag；存储后没有上游 ETag 时生成 `"sha256-<hex>"`。
-- **新鲜度**：上游 `s-maxage`/`max-age` 减去 `Age` 优先；只有完全没有 `Cache-Control` 时才用应用默认 TTL。路径规则（最多 32 条，首个匹配生效）可覆盖 TTL 和 `no-store`/`private`，但不缓存带 `Set-Cookie` 或不支持的 `Vary` 的响应。请求端缓存指令被忽略，只支持 `only-if-cached`。不可缓存的响应由每个读者各自直接传输，受写者额度约束。
+- **新鲜度**：首个匹配的路径规则决定 TTL（忽略上游头）；无规则时用上游 `s-maxage`/`max-age` 减去由 `Age`/`Date` 推算的年龄（有 `Cache-Control` 但没有这两个指令时立即过期）；完全没有 `Cache-Control` 时才用应用默认 TTL。路径规则最多 32 条，还可覆盖 `no-store`/`private`，但不缓存带 `Set-Cookie` 或不支持的 `Vary` 的响应。请求端缓存指令被忽略，只支持 `only-if-cached`。不可缓存的响应由每个读者各自直接传输，受写者额度约束。
 - **恢复**：启动时只删除 part、没有条目的 body 和已退役条目，不计算哈希。每个条目在本进程首次使用前校验一次：`spool.Checks` 合并同一条目的并发校验，校验在服务自己的 context 中运行，等待者取消不会中断它；不一致或缺失的条目被退役并重新回源。本进程写入的条目不再校验。
 - **额度与指标**：读者和写者占用 `download.Budget` 的共享额度，流在整个填充期间持有一个写者额度。`Files()` 以 `spool.FileStatus` 报告条目和正在填充的 part，与下载引擎的 `Files()` 一起用于容量和磁盘指标。
 - 这里的哈希只用于存储完整性，不用于授权。
+
+## 冻结预览
+
+版本清理、保留、HTTP 缓存刷新和 HTTP 缓存清理共用一套“预览 → 审阅 → 只执行冻结集合”的机制（`internal/store/previews.go`，表 `previews` 与 `preview_items`）。各类型只提供选择和执行逻辑。
+
+| 共享部分 | 规则 |
+| --- | --- |
+| 记录 | 类型、应用 UID、来源 epoch、来源 fence（应用与厂商的运行时 revision）、是否要求来源在服务、创建与过期时间、状态、计数（扫描、选中、字节、使用中、完成、失败）、类型自有的条件（`criteria_json`）与估算（`summary_json`）、回执 |
+| 条目 | 冻结的候选按序号（正整数，显示顺序）存储：对象引用、显示标签、大小、是否选中、类型自有的细节、结果状态与错误码；未选中的条目只供审阅，状态为 `kept` |
+| 状态 | `building`（分页冻结中）→ `ready` → `running` → `done`/`failed`；保留与版本清理在一个事务内从 `ready` 直接到 `done` |
+| 过期 | 未执行的预览创建后 10 分钟过期；回执在执行后保留 24 小时；执行中的不过期。过期是由时间推出的，`PrunePreviews` 分批删除（每批最多 1000 个条目） |
+| fence | 创建、冻结每一页、开始执行和执行每一批都在同一事务中核对来源 fence 与类型守卫（保留：策略哈希、渠道与当前 epoch）；不符为 `ErrPreviewStale`，什么都不改 |
+| 执行 | `ClaimPreview` 把 `ready` 原子地改为 `running`，并发的执行只有一个成功，其他得到 `ErrPreviewRunning`；已有回执的预览再次执行时返回同一回执。条目只记录第一次结果。重启时把遗留的 `building`/`running` 标为 `failed`，不续跑 |
+| 分页 | 条目按序号游标分页，执行时位置不变；保留的版本序号从 1 连续，因此页码分页也落在固定序号上 |
+| 删除 | 预览以应用 UID 外键级联，永久删除应用时一并删除 |
+
+| 类型 | 选择 | 执行 | 要求来源在服务 |
+| --- | --- | --- | --- |
+| `version_cleanup` | 低于最低版本的当前代际，按版本成条目 | 一个事务内退役仍为当前的冻结代际；正在读写的在传输结束后删除 | 否 |
+| `retention` | 全部评估过的版本，超出最新 N 个的被选中 | 一个事务内整版本退役；有代际已变化或正在读写的版本跳过，回执记录原因 | 是 |
+| `cache_refresh` | 匹配模式的当前条目，按缓存行号分页冻结到高水位 | 后台 worker 逐条重新验证并记录结果 | 是 |
+| `cache_cleanup` | 匹配模式且早于截止时间的当前条目，同上 | 每批最多 100 条，跳过已被替换或在预览后被访问的条目 | 自动清理是，手动清理否 |
+
+HTTP 层只有一处映射（`previews.go`）：未知、其他应用或其他类型、过期的预览为 `PREVIEW_NOT_FOUND`；fence 或守卫变化为 `PREVIEW_STALE`（创建时为 `SOURCE_CHANGED`）；构建或执行中为 `OPERATION_IN_PROGRESS`。`ENTITY_DELETED` 与 `APPLICATION_DISABLED` 由处理函数在构建或执行前按各操作的规范检查。
 
 ## 磁盘布局
 
@@ -163,14 +190,15 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
     icons/               # 上传的图标
 ```
 
-目录权限 `0700`，文件 `0600`。`/health/ready` 会在数据目录写入并删除一个临时文件来检查可写性。实例锁依赖 `flock`，只支持 Unix。
+目录权限 `0700`，文件 `0600`。`/health/ready` 会在数据目录写入并删除一个临时文件来检查可写性，结果复用 5 秒，并发探测共用一次检查。实例锁依赖 `flock`，只支持 Unix。
 
 ## SQLite schema
 
-- schema 内嵌在 `internal/store/schema.sql`，版本写入 `PRAGMA user_version`，常量为 `store.SchemaVersion`（当前为 14）。`PRAGMA application_id` 固定为 RedApp 的标识，用来拒绝版本号碰巧相同的其他 SQLite 文件。
+- schema 内嵌在 `internal/store/schema.sql`，版本写入 `PRAGMA user_version`，常量为 `store.SchemaVersion`（当前为 15）。`PRAGMA application_id` 固定为 RedApp 的标识，用来拒绝版本号碰巧相同的其他 SQLite 文件。
 - 新目录（为空或只含实例锁）创建全新 schema，并在首次启动前 checkpoint 到主文件。已有数据库以只读、immutable 方式检查 `application_id` 与 `user_version`，任一不符就拒绝启动，不改写、不删除，也不创建 WAL/SHM 文件。不比较表结构：1.0 前每次 schema 变化都提升版本。
+- 迁移框架（`migrate.go`）在 1.0 前处于休眠状态：`MinimumMigratableVersion` 为 0，任何其他版本都被拒绝。启用后先用 `VACUUM INTO` 在数据目录写备份，再在一个事务中执行迁移步骤、外键检查并与全新 schema 比对；流程和发布 1.0 的步骤见 [development.md](development.md#schema-迁移)。每个 schema 版本的 golden fixture 在 `internal/store/testdata/schema/`。
 - 属于厂商或应用的行以 UID 引用父行并 `ON DELETE CASCADE`；应用引用厂商不级联，因为必须先删除应用并登记其对象文件。发布、缓存和指标数据以存储命名空间或指标命名空间为键，永久删除应用时按前缀删除；同一版本的元数据、渠道、资源和下载代际随版本级联删除。
-- 1.0 前没有迁移，规则见 [ADR 0001](adr/0001-pre-1.0-no-migrations.md)。
+- 1.0 前不运行迁移，规则见 [ADR 0001](adr/0001-pre-1.0-no-migrations.md)。
 - 连接：WAL、`synchronous=FULL`、外键开启。写连接只有一个（`_txlock=immediate`），所有写入和读改写事务都在它上面串行；只读查询和只读快照事务走独立的 `query_only` 读连接池（8 个），WAL 下不等待正在进行的写事务，看到的是最近一次提交。持有写事务时（包括 `finalize`、`beforeCommit` 和删除包装回调）只能使用该事务，不能调用会写的 `Store` 方法，否则会等待调用者自己占用的写连接；只读方法可以调用，但看不到事务内未提交的修改。
 - 其他包不能拿到底层连接：读写都通过 `Store` 的类型化方法，找不到行时返回 `store.ErrNotFound`。跨包测试用 `storetest.Open` 另开连接做故障注入。
 - 流量与请求计数先在内存累加，每秒、每次传输结束、每次读取计数前以及关闭时批量写入一个事务；写入失败保留增量重试，不影响传输。异常退出最多丢失约 1 秒的计数。
@@ -240,7 +268,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 - **管理认证**：单个管理员密码（bcrypt），内存会话（8 小时，`Path=/admin`、HttpOnly、SameSite=Strict），所有非 GET 请求要求 `X-CSRF-Token`，并检查 Origin。登录按 IP 限速。
 - **输入校验**：JSON 拒绝重复键和未知字段，有大小上限；查询参数白名单；SVG 按白名单解析，位图重编码。
 - **响应头**：全部响应带 `nosniff`、`X-Frame-Options: DENY`、`Cache-Control: no-store`；SPA 有严格 CSP。
-- **使用说明文档**：管理员编写的 HTML/JS，将在无同源权限的沙箱 iframe 中运行（[ADR 0006](adr/0006-sandboxed-usage-instructions.md)）。
+- **使用说明文档**：管理员编写的 HTML/JS，在无同源权限的沙箱 iframe 中运行（[ADR 0006](adr/0006-sandboxed-usage-instructions.md)）。
 
 ## HTTP 层
 
@@ -316,6 +344,4 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 
 | 问题 | 现状 | 方向 |
 | --- | --- | --- |
-| 两类清理预览 | 发布制品的清理预览是一行冻结的代际列表，HTTP 缓存是分页冻结的条目；两者的 SQL 都在 store，但生命周期规则各自实现 | 有第三类预览或需要统一回执时再合并 |
 | 锁内数据库调用 | 下载 `Manager.mu` 覆盖改变当前代际的单行写入和 blob 发布，配置写入的 `Store.writeMu` 覆盖一次写事务与发布，两者都在锁声明处说明了原因和持锁范围。HTTP 缓存的条目查询、pin、发布与回收仍在 `Service.mu` 内调用 store，以保持条目行、pin 计数与回收一致（来源检查和访问记录已在锁外） | HTTP 缓存：锁外读取条目，加锁后复核仍为当前再 pin；回收同理 |
-| 后台日志 | HTTP 层用 `log/slog` 记录访问与错误日志；`cmd/redapp` 和后台循环的失败仍经标准库 `log` 进入同一个 slog handler，没有结构化字段 | 逐步改为 slog 字段 |

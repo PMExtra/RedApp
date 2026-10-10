@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestJSONBodiesAreDecodedStrictly(t *testing.T) {
@@ -86,20 +88,12 @@ func TestErrorResponsesNeverCarryInternalErrorText(t *testing.T) {
 	if w.Code != 500 || errorCodeOf(t, w.Body.Bytes()) != "INTERNAL_ERROR" {
 		t.Fatal("unknown code escaped the catalog", w.Code, w.Body.String())
 	}
-	if got := redactError(io.ErrUnexpectedEOF); got != "unexpected EOF" {
-		t.Fatal(got)
-	}
-	if got := redactError(errorString("proxyconnect tcp: http://ops:secret@proxy.internal:3128 refused")); strings.Contains(got, "secret") || !strings.Contains(got, "http://****@proxy.internal") {
-		t.Fatal(got)
-	}
 }
 
-type errorString string
-
-func (e errorString) Error() string { return string(e) }
-
 func TestHealthProbes(t *testing.T) {
-	h := newHarness(t)
+	var clock atomic.Int64
+	clock.Store(time.Now().UnixNano())
+	h := newHarness(t, withOptions(WithClock(func() time.Time { return time.Unix(0, clock.Load()) })))
 	for _, path := range []string{"/health/live", "/health/ready"} {
 		if body, _ := h.request("GET", path, nil, 200, nil); string(body) != "{\"ok\":true}\n" {
 			t.Fatal(path, string(body))
@@ -109,6 +103,11 @@ func TestHealthProbes(t *testing.T) {
 	if err := h.store.Close(); err != nil {
 		t.Fatal(err)
 	}
+	// A readiness result answers probes for 5 seconds, then the next probe
+	// checks again.
+	clock.Add(int64(4 * time.Second))
+	h.request("GET", "/health/ready", nil, 200, nil)
+	clock.Add(int64(time.Second))
 	h.expectError("GET", "/health/ready", nil, 503, codeNotReady, nil)
 	h.request("GET", "/health/live", nil, 200, nil)
 }

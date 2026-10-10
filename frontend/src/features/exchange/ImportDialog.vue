@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { describeError } from "@/shared/api";
+import { describeError, isApiError } from "@/shared/api";
 import { useFormat } from "@/shared/i18n";
 import {
   Alert,
@@ -9,6 +9,7 @@ import {
   Button,
   Checkbox,
   Dialog,
+  Field,
   FilePicker,
   ProgressBar,
   RelativeTime,
@@ -37,6 +38,8 @@ const uploading = ref(false);
 const progress = ref<number | null>(null);
 const failure = ref<{ message: string; requestId: string | null } | null>(null);
 const result = ref<ImportResult | null>(null);
+/** The last preview expired or went stale on execution; a new one is needed. */
+const stale = ref(false);
 let controller: AbortController | undefined;
 
 function reset(): void {
@@ -49,6 +52,7 @@ function reset(): void {
   uploading.value = false;
   failure.value = null;
   result.value = null;
+  stale.value = false;
 }
 
 watch(open, (value) => {
@@ -63,6 +67,7 @@ watch(files, () => {
   changed.value = false;
   trust.value = false;
   failure.value = null;
+  stale.value = false;
 });
 
 const appCount = computed(
@@ -103,6 +108,7 @@ async function requestPreview(): Promise<void> {
     });
     changed.value = false;
     trust.value = false;
+    stale.value = false;
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") return;
     const description = describeError(error);
@@ -123,8 +129,15 @@ async function run(): Promise<void> {
       id: current.id,
       trust: current.needs_instructions_trust && trust.value === true,
     });
-  } catch {
-    // Reported by the global error handler (e.g. PREVIEW_STALE: upload again).
+  } catch (error) {
+    // Other failures are reported by the global error handler.
+    if (isApiError(error, "PREVIEW_NOT_FOUND", "PREVIEW_STALE")) {
+      preview.value = null;
+      drafts.value = {};
+      changed.value = false;
+      trust.value = false;
+      stale.value = true;
+    }
   }
 }
 </script>
@@ -154,9 +167,17 @@ async function run(): Promise<void> {
     </div>
 
     <div v-else class="flex flex-col gap-5">
-      <FilePicker v-model="files" accept=".zip,.yaml,.yml" :disabled="busy" />
-      <p class="text-xs text-muted">{{ t("exchange.import.fileHint") }}</p>
+      <Field
+        v-slot="{ control }"
+        :label="t('exchange.import.file')"
+        :description="t('exchange.import.fileHint')"
+      >
+        <FilePicker v-bind="control" v-model="files" accept=".zip,.yaml,.yml" :disabled="busy" />
+      </Field>
       <ProgressBar v-if="uploading" :value="progress" :label="t('exchange.import.uploading')" />
+      <Alert v-if="stale" tone="warning" :title="t('exchange.import.staleTitle')">
+        {{ t("exchange.import.stale") }}
+      </Alert>
       <Alert v-if="failure" tone="danger">
         {{ failure.message }}
         <span v-if="failure.requestId" class="mt-1 block text-xs text-muted">

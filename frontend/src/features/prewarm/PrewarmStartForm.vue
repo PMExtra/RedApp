@@ -90,7 +90,11 @@ function lines(text: string): string[] {
     .filter(Boolean);
 }
 
+// Reading is asynchronous: a slow read of an earlier file must not replace a
+// later choice (or a cleared one).
+let manifestRead = 0;
 watch(manifestFiles, async (files) => {
+  const read = ++manifestRead;
   manifestError.value = undefined;
   manifest.value = null;
   const file = files[0];
@@ -101,9 +105,10 @@ watch(manifestFiles, async (files) => {
   }
   try {
     const text = new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer());
-    manifest.value = { name: file.name, text, lines: lines(text).length };
+    if (read === manifestRead)
+      manifest.value = { name: file.name, text, lines: lines(text).length };
   } catch {
-    manifestError.value = t("prewarm.start.manifestInvalid");
+    if (read === manifestRead) manifestError.value = t("prewarm.start.manifestInvalid");
   }
 });
 

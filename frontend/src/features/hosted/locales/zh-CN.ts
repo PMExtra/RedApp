@@ -33,6 +33,7 @@ export default {
       label: "传输进度",
       of: "{done} / {total}",
       bytes: "已传输 {done}",
+      started: "正在传输文件…",
       committing: "正在保存文件…",
       cancel: "取消传输",
       cancelled: "传输已取消，未保存任何内容。",

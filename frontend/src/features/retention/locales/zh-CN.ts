@@ -41,7 +41,6 @@ export default {
       hint: "使用已保存的策略。删除前先确认选中的内容；每次最多 100 个版本。",
       preview: "预览运行",
       saveFirst: "请先保存或放弃更改。",
-      changed: "加载后设置已被修改。请检查策略后重新预览。",
       review: "保留清理预览",
       versions: "将删除的版本",
       logical: "逻辑大小",

@@ -108,3 +108,31 @@ func TestStartWaitsForFinishedJobToReleaseSlot(t *testing.T) {
 		t.Fatal("start after slot release", next)
 	}
 }
+
+// When the download manager or HTTP cache closes under a running job, its
+// items are interrupted by the shutdown rather than failed.
+func TestJobInterruptedWhenItsServicesClose(t *testing.T) {
+	for _, closing := range []string{"download manager", "HTTP cache"} {
+		t.Run(closing, func(t *testing.T) {
+			worker, entry := newService(t)
+			if closing == "download manager" {
+				worker.Downloads.Close()
+			} else {
+				worker.HTTP.Close()
+			}
+			in := warmplan.Input{RequestID: strings.Repeat("d", 32), Manifest: "/one\n/two"}
+			job, created, err := worker.Start(context.Background(), entry.Descriptor.ID, in, false)
+			if err != nil || !created {
+				t.Fatal(job, created, err)
+			}
+			done, err := worker.Wait(context.Background(), entry.UID, job.ID)
+			if err != nil || done.State != "interrupted" || done.Reason != "interrupted_by_shutdown" {
+				t.Fatal(done, err)
+			}
+			items, total, err := worker.DB.PrewarmItems(entry.UID, job.ID, 1, 100)
+			if err != nil || total != 1 || items[0].Status != "skipped" || items[0].Reason != "interrupted_by_shutdown" {
+				t.Fatal("interrupted item", items, total, err)
+			}
+		})
+	}
+}

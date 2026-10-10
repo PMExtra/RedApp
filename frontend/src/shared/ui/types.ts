@@ -75,6 +75,8 @@ export interface DataTableSort {
 
 export interface FieldControlProps {
   id: string;
+  /** The field label; names controls that `<label for>` cannot (radio groups, file pickers). */
+  "aria-labelledby": string;
   "aria-describedby": string | undefined;
   "aria-invalid": "true" | undefined;
   "aria-required": "true" | undefined;

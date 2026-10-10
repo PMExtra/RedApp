@@ -1,10 +1,13 @@
 package httpserver
 
 import (
+	"log/slog"
+
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/apps/builtin"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/download"
+	"github.com/PMExtra/RedApp/internal/logging"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -13,6 +16,8 @@ type preparedDirectory struct {
 	registry  *application.PreparedRegistry
 	downloads *download.UpstreamPublication
 	proxy     *distributor.ProxyPublication
+	// Sizes of the published directory, for the publication log record.
+	applications, sources int
 }
 
 func (p *preparedDirectory) Abort() {
@@ -35,6 +40,9 @@ func (p *preparedDirectory) Publish() {
 	} else {
 		publish()
 	}
+	// Configuration writes are rare administrative actions, so every
+	// publication is logged.
+	logging.For(p.server.log, "configuration").Info("configuration published", slog.Int("applications", p.applications), slog.Int("sources", p.sources))
 }
 
 // configurePublication installs the prepare/CAS/publish coordinator used by
@@ -69,7 +77,7 @@ func (s *Server) configurePublication() {
 			}
 			clients[source.StorageID()] = client
 		}
-		result := &preparedDirectory{server: s, registry: registry, proxy: proxy}
+		result := &preparedDirectory{server: s, registry: registry, proxy: proxy, applications: len(entries), sources: len(candidate.Sources)}
 		result.downloads, err = s.downloads.PrepareUpstreams(clients)
 		if err != nil {
 			return nil, err

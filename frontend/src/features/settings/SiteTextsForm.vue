@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { watch } from "vue";
 import { useForm } from "vee-validate";
 import { useI18n } from "vue-i18n";
 import { z } from "zod";
-import { FormField, formError, useDirtyGuard, zodSchema } from "@/shared/forms";
+import { FormField, formError, zodSchema } from "@/shared/forms";
 import { toast } from "@/shared/lib";
 import { AsyncState, Button, Card, Input, RevisionConflictAlert, Textarea } from "@/shared/ui";
 import { useSaveSiteSettings, useSiteSettings, type SiteSettings } from "./queries";
+import { useServerDraft } from "./serverDraft";
 
 const LANGUAGES = ["en", "zh-CN"] as const;
 const LIMITS = { title: 80, subtitle: 160, disclaimer: 500 } as const;
@@ -45,21 +45,18 @@ function draftOf(state: SiteSettings): SiteSettings {
 }
 
 const { handleSubmit, resetForm, meta } = useForm({ validationSchema: zodSchema(schema) });
-useDirtyGuard(() => meta.value.dirty);
-
-// Adopt the server state unless the user has unsaved edits.
-watch(
-  () => settings.data.value,
-  (state) => {
-    if (state && !meta.value.dirty) resetForm({ values: draftOf(state) });
+const baseline = useServerDraft({
+  state: () => settings.data.value,
+  dirty: () => meta.value.dirty,
+  adopt: (state) => {
+    resetForm({ values: draftOf(state) });
   },
-  { immediate: true },
-);
+});
 
 const submit = handleSubmit((values) => {
   save.mutate(values, {
     onSuccess: (state) => {
-      resetForm({ values: draftOf(state) });
+      baseline.reset(state);
       toast({ tone: "success", title: t("settings.site.saved") });
     },
   });
@@ -67,11 +64,11 @@ const submit = handleSubmit((values) => {
 
 async function reload() {
   await save.reload();
-  if (settings.data.value) resetForm({ values: draftOf(settings.data.value) });
+  baseline.reset();
 }
 
 function discard() {
-  if (settings.data.value) resetForm({ values: draftOf(settings.data.value) });
+  baseline.reset();
 }
 </script>
 

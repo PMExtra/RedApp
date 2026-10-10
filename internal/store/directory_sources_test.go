@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestDirectoryMultiSourceSnapshotsAndLegacyEdits(t *testing.T) {
+func TestDirectoryMultiSourceSnapshotsAndEdits(t *testing.T) {
 	s := openTest(t)
 	v, err := s.CreateVendor(directoryVendor("vendor"))
 	if err != nil {
@@ -33,17 +33,16 @@ func TestDirectoryMultiSourceSnapshotsAndLegacyEdits(t *testing.T) {
 	}
 	releaseFixture(t, s, a.StorageID(), "1.0.0")
 
-	// The legacy update shape must not silently discard secondary sources. Even
-	// equivalent URL spelling preserves the source snapshot and selection policy.
-	change := applicationChanges(a)
-	change.BaseURL += "/"
+	// Equivalent URL spelling preserves the source snapshot and selection policy.
+	change := sourceChanges(a)
+	change.BaseURLs[0] += "/"
 	change.Name.En = "Updated label"
 	change.CacheTTLSeconds = 0
 	a, err = s.UpdateApplication(a.Key, a.Revision, change)
 	if err != nil || a.SourceEpoch != 1 || !slices.Equal(a.BaseURLs, expected) || a.SourceStrategy != "ordered" {
 		t.Fatal(a, err)
 	}
-	change = applicationChanges(a)
+	change = sourceChanges(a)
 	change.SourceStrategy = "round_robin"
 	a, err = s.UpdateApplication(a.Key, a.Revision, change)
 	if err != nil || a.SourceEpoch != 2 || !slices.Equal(a.BaseURLs, expected) || a.SourceStrategy != "round_robin" {
@@ -58,7 +57,7 @@ func TestDirectoryMultiSourceSnapshotsAndLegacyEdits(t *testing.T) {
 	}
 
 	// Order alone changes cache identity. BaseURL is always the canonical first
-	// element even if a direct store caller supplies an inconsistent legacy field.
+	// element even if a direct store caller supplies an inconsistent BaseURL.
 	change = applicationChanges(a)
 	change.BaseURLs = []string{expected[1], expected[0]}
 	a, err = s.UpdateApplication(a.Key, a.Revision, change)
@@ -75,17 +74,17 @@ func TestDirectoryMultiSourceSnapshotsAndLegacyEdits(t *testing.T) {
 	if err != nil || a.SourceEpoch != 4 {
 		t.Fatal(a, err)
 	}
-	change = applicationChanges(a)
+	change = sourceChanges(a)
 	change.Enabled = false
 	a, err = s.UpdateApplication(a.Key, a.Revision, change)
 	if err != nil || a.SourceEpoch != 4 || len(a.BaseURLs) != 2 || a.SourceStrategy != "round_robin" {
-		t.Fatal("disable or legacy metadata update lost sources", a, err)
+		t.Fatal("disable lost sources", a, err)
 	}
 	change = applicationChanges(a)
 	change.BaseURL = "https://replacement.example.test/files/"
 	a, err = s.UpdateApplication(a.Key, a.Revision, change)
 	if err != nil || a.SourceEpoch != 5 || !slices.Equal(a.BaseURLs, []string{"https://replacement.example.test/files"}) || a.SourceStrategy != "round_robin" {
-		t.Fatal("explicit legacy base replacement", a, err)
+		t.Fatal("single base replacement", a, err)
 	}
 	for _, snapshot := range []SourceRecord{first, second, third} {
 		loaded, err := s.Source(snapshot.StorageID())
@@ -111,8 +110,8 @@ func TestDirectoryMultiSourceSnapshotsAndLegacyEdits(t *testing.T) {
 }
 
 func TestDirectoryMultiSourceCASAndSnapshotRollback(t *testing.T) {
-	fault := &commitFault{}
-	s := openTest(t, fault.option())
+	fault := injectCommitFault(t)
+	s := openTest(t)
 	v, err := s.CreateVendor(directoryVendor("vendor"))
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +125,7 @@ func TestDirectoryMultiSourceCASAndSnapshotRollback(t *testing.T) {
 	start, results := make(chan struct{}), make(chan error, 2)
 	var wg sync.WaitGroup
 	for _, strategy := range []string{"random", "round_robin"} {
-		change := applicationChanges(a)
+		change := sourceChanges(a)
 		change.SourceStrategy = strategy
 		wg.Go(func() {
 			<-start
@@ -225,4 +224,11 @@ func TestDirectoryMultiSourceBoundaries(t *testing.T) {
 	if err != nil || snapshot.BaseURLs != nil || snapshot.SourceStrategy != "" || snapshot.BaseURL != release.BaseURL {
 		t.Fatal(snapshot, err)
 	}
+}
+
+// sourceChanges is applicationChanges keeping every source of a.
+func sourceChanges(a Application) ApplicationChanges {
+	change := applicationChanges(a)
+	change.BaseURLs = slices.Clone(a.BaseURLs)
+	return change
 }

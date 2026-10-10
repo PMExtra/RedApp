@@ -119,7 +119,7 @@ Set `REDAPP_PUBLIC_URL` (or the override in the console) so that install command
 | Endpoint | Checks | Success |
 | --- | --- | --- |
 | `GET /health/live` | The process answers HTTP | `200` |
-| `GET /health/ready` | The database responds and the data directory is writable | `200`; otherwise `503` |
+| `GET /health/ready` | The database responds and the data directory is writable, checked at most once every 5 seconds | `200`; otherwise `503` |
 
 Neither endpoint contacts upstream sources, so an internet outage does not mark RedApp unhealthy. Health requests are not counted in metrics.
 
@@ -171,20 +171,42 @@ These tasks run inside the server. Each runs every 15 minutes. None runs at star
 | HTTP cache cleanup | Applies automatic cleanup rules of HTTP cache applications |
 | Release retention | Keeps the latest N cached versions of Codex and Claude Code applications, if enabled |
 | Automatic prewarm | Downloads new releases for configured channels and platforms, if enabled |
-| Preview expiry | Removes expired cleanup previews |
+| Preview expiry | Removes expired cleanup, retention and refresh previews and old results |
 
 Metric sampling runs once at startup and then every minute.
 
 ## Logs and events
 
-RedApp writes structured log lines (`key=value` text) to standard error:
+RedApp writes structured log lines to standard error in `key=value` text format. Every line has `time`, `level` (`DEBUG` is not shown, then `INFO`, `WARN`, `ERROR`) and `msg`. Lines from background tasks also have `component`:
 
-- The initial admin password, once, on the first start
-- `RedApp started: listener ..., data directory ...`
-- One `http request` line per request with `request_id`, method, path (without the query string), status, bytes, duration, client address and the API operation
-- One `request failed` line for every server error and for client errors with a cause, with the error code and the underlying error; credentials in URLs are masked
-- Failures of metric sampling and automatic cache cleanup
-- The fatal error when startup fails
+```text
+time=2026-10-10T08:00:00.000Z level=INFO msg="RedApp started" version=1.0.0 listen=:8080 data_dir=/var/lib/redapp
+time=2026-10-10T08:15:00.000Z level=WARN msg="automatic HTTP cache cleanup failed" component=http_cache app=example/files error="database is locked"
+```
+
+| `component` | What is logged |
+| --- | --- |
+| (none) | Startup and shutdown, `http request` access lines, `request failed` lines, the fatal error when startup fails |
+| `auth` | The initial admin password, once, on the first start |
+| `configuration` | Every published configuration change, with the number of applications and sources |
+| `download` | Cache recovery at startup, failed release downloads and failed state writes |
+| `http_cache` | Failed automatic cleanup passes, failed or stopped cache refresh jobs, cleanup and refresh results that could not be saved |
+| `hosted` | Removal of incomplete uploads at startup, uploaded files that could not be removed |
+| `prewarm` | One line per finished prewarm job, failed automatic prewarm starts |
+| `retention` | Retention runs that retired versions, skipped runs and failures |
+| `history` | Failed metric sampling |
+| `counters` | The first failed counter flush and the recovery after it |
+
+Common fields:
+
+- `request_id`: the request; HTTP lines only
+- `app`: the application as `<vendor>/<app>`
+- `storage_id`: the internal cache namespace of an application (`app/<uid>-e<epoch>`), in `download` lines
+- `job_id`, `preview_id`, `generation_id`, `transfer_id`: the prewarm job, cleanup preview, download generation or upload
+- `state`, `reason`, `outcome`: the result of a job or run
+- `error`: the underlying error; credentials in URLs are masked
+
+Background tasks log failures and results, never one line per request or per file. A failure that repeats every second, such as a counter flush, is logged once until it recovers. Apart from the initial admin password, logs contain no passwords, session or CSRF tokens, or proxy credentials.
 
 Every response carries an `X-Request-Id` header, and error responses repeat it as `error.request_id`. Search the log for that value when a user reports an error.
 
@@ -214,7 +236,7 @@ A [configuration export](configuration.md#export) is a lightweight alternative f
 | Container is unhealthy after changing flags | The health check does not see your flags. Use environment variables, or pass the same flags in an exec-form health check. |
 | Install commands show `http://` or an internal host name | Set `REDAPP_PUBLIC_URL` or the public address override, and check `trusted_proxies`. |
 | Admin sign-in fails behind the proxy | The forwarded scheme or host does not match the browser address. Check the proxy headers and `trusted_proxies`. |
-| Downloads fail with `503` | Download capacity is full. Raise `max_writers` or `max_readers`, or retry later. |
+| Downloads fail with `503` | Download capacity is full, or the client already has `max_downloads_per_client` downloads in progress. Raise `max_writers`, `max_readers` or `max_downloads_per_client`, or retry later. Behind a reverse proxy, check `trusted_proxies`. |
 | Downloads fail with `502` | The upstream is unreachable or returned untrusted metadata. Check the outbound proxy and the Events page. |
 | An application returns `404` | The vendor or the application is disabled. Enable both. |
 | Everyone is signed out after a restart | Expected. Admin sessions are kept in memory only. |

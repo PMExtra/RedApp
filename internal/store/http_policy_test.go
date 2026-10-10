@@ -10,8 +10,8 @@ import (
 )
 
 func TestHTTPPolicyApplicationCASAndAtomicPersistence(t *testing.T) {
-	fault := &commitFault{}
-	s := openTest(t, fault.option())
+	fault := injectCommitFault(t)
+	s := openTest(t)
 	v, err := s.CreateVendor(directoryVendor("publisher"))
 	if err != nil {
 		t.Fatal(err)

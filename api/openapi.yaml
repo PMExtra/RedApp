@@ -189,7 +189,8 @@ paths:
       tags: [health]
       summary: Report that the database answers and the data directory is writable.
       description: |
-        Pings SQLite and creates then removes a temporary file in the data directory.
+        Pings SQLite and creates then removes a temporary file in the data directory. The result answers probes for
+        5 s; concurrent probes share one check.
         Never contacts upstreams. Not counted in metrics. Used by `redapp healthcheck`.
       x-error-codes: [NOT_READY]
       responses:
@@ -909,6 +910,9 @@ paths:
         readers follow one writer). Upstream reads have a 60 s idle timeout and no total limit; a failed transfer is
         aborted mid-body (the connection is reset), never truncated silently. File responses have no total write
         deadline; a write that makes no progress for 60 s ends the response. Reverse proxies must disable buffering.
+        Each client (IPv4 address or IPv6 /64) may have at most `max_downloads_per_client` file downloads (hosted,
+        http-cache and release artifact GETs, plus hosted and http-cache HEADs) in progress; another returns
+        `503 TRANSFER_CAPACITY`.
       x-error-codes:
         - APPLICATION_NOT_FOUND
         - FILE_NOT_FOUND
@@ -4967,7 +4971,7 @@ components:
     STORAGE_UNAVAILABLE: {status: 503, retryable: true, description: Database or data directory failed.}
     NOT_READY: {status: 503, retryable: true, description: Readiness check failed.}
     SESSION_LIMIT_EXCEEDED: {status: 503, retryable: true, description: 128 sessions are active.}
-    TRANSFER_CAPACITY: {status: 503, retryable: true, description: Reader or writer slots (`max_readers`/`max_writers`) are exhausted; no queue.}
+    TRANSFER_CAPACITY: {status: 503, retryable: true, description: Reader or writer slots (`max_readers`/`max_writers`) are exhausted, or the client already has `max_downloads_per_client` downloads in progress; no queue.}
     CACHE_CONTENDED: {status: 503, retryable: true, description: The cached copy kept changing during the request.}
     PREVIEW_BUSY: {status: 503, retryable: true, description: Eight maintenance previews are being built.}
     INSTALLER_UNAVAILABLE: {status: 503, retryable: false, description: The embedded installer failed its integrity check.}

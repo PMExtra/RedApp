@@ -81,6 +81,7 @@ describe("overview", () => {
 
   it("shows a metric's history with range switching, gaps and a keyboard readout", async () => {
     const ranges: string[] = [];
+    let first = 1024;
     useHandlers(
       mockApi("get", "/admin/api/status", () => globalStatus({ "disk.free_bytes": 4096 })),
       mockApi("get", "/admin/api/history", ({ request }) => {
@@ -88,14 +89,14 @@ describe("overview", () => {
         const range = url.searchParams.get("range") as "24h" | "7d" | "30d";
         ranges.push(`${url.searchParams.get("metric") ?? ""} ${range}`);
         return range === "24h"
-          ? historySeries("disk.free_bytes", [1024, null, 3072], {
+          ? historySeries("disk.free_bytes", [first, null, 3072], {
               range,
               resolution_seconds: 60,
             })
           : historySeries("disk.free_bytes", [1024, 2048, null, 4096], { range });
       }),
     );
-    await renderOverview();
+    const { queryClient } = await renderOverview();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: /^Free space:/ }));
 
@@ -130,9 +131,23 @@ describe("overview", () => {
     await user.keyboard("{Home}");
     expect(readout).toHaveTextContent("1.00 KiB");
 
+    // A background refetch keeps the selected bucket and shows its new value.
+    first = 1536;
+    await queryClient.invalidateQueries({ queryKey: ["getHistory"] });
+    await waitFor(() => {
+      expect(readout).toHaveTextContent("1.50 KiB");
+    });
+
     // Touch: a tap pins the readout to the bucket under the finger.
     await fireEvent.pointerDown(chart, { pointerType: "touch", clientX: 20, clientY: 10 });
     expect(readout).toHaveTextContent("3.00 KiB");
+    // A real mouse afterwards hovers again.
+    const plotArea = chart.firstElementChild as HTMLElement;
+    await fireEvent.mouseMove(plotArea, { clientX: 0, clientY: 10 });
+    expect(readout).toHaveTextContent("3.00 KiB");
+    await fireEvent.pointerMove(chart, { pointerType: "mouse", clientX: 0, clientY: 10 });
+    await fireEvent.mouseMove(plotArea, { clientX: 0, clientY: 10 });
+    expect(readout).toHaveTextContent("1.50 KiB");
 
     // Table fallback lists the buckets that have data.
     await user.click(within(dialog).getByText("Data table (2 buckets with data)"));

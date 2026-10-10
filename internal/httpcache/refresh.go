@@ -3,10 +3,12 @@ package httpcache
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/internal/logging"
 	"github.com/PMExtra/RedApp/internal/pathmatch"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -68,7 +70,7 @@ func (s *Service) ExecuteRefresh(ctx context.Context, entry application.Entry, i
 	if err != nil {
 		return preview, err
 	}
-	if preview.State == "done" || preview.State == "failed" {
+	if preview.State == store.PreviewDone || preview.State == store.PreviewFailed {
 		return preview, nil
 	}
 	if err := ctx.Err(); err != nil {
@@ -87,9 +89,9 @@ func (s *Service) ExecuteRefresh(ctx context.Context, entry application.Entry, i
 	s.wg.Add(1)
 	s.mu.Unlock()
 	preview, err = s.claimPreview(ctx, entry, "refresh", id)
-	if err != nil || preview.State != "running" {
+	if err != nil || preview.State != store.PreviewRunning {
 		s.releaseRefreshWorker()
-		if errors.Is(err, ErrPreviewRunning) {
+		if errors.Is(err, store.ErrPreviewRunning) {
 			err = ErrRefreshBusy
 		}
 		return preview, err
@@ -113,43 +115,52 @@ func (s *Service) releaseRefreshWorker() {
 func (s *Service) runRefresh(ctx context.Context, entry application.Entry, preview MaintenancePreview) {
 	defer s.releaseRefreshWorker()
 	summary := RefreshSummary{SelectedFiles: preview.SelectedFiles}
-	failed := false
+	// cause ends the run early and fails its receipt.
+	var cause error
 	defer func() {
 		// Persist a terminal receipt even during shutdown or after a source change.
 		// The store still belongs to the service until Close has drained this worker.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = s.finishPreview(ctx, entry, "refresh", preview.ID, summary, failed)
+		attrs := []any{slog.String("app", entry.Descriptor.ID), slog.String("preview_id", preview.ID)}
+		switch {
+		case cause == nil, errors.Is(cause, context.Canceled), errors.Is(cause, ErrClosed):
+		case errors.Is(cause, store.ErrSourceInactive), errors.Is(cause, store.ErrPreviewStale):
+			s.log.Info("HTTP cache refresh stopped", append(attrs, slog.String("reason", "source_changed"))...)
+		default:
+			s.log.Warn("HTTP cache refresh failed", append(attrs, logging.Error(cause))...)
+		}
+		if err := s.finishPreview(ctx, preview, summary, cause != nil); err != nil {
+			s.log.Error("HTTP cache refresh receipt was not saved", append(attrs, logging.Error(err))...)
+		}
 	}()
 	var after int64
 	for {
-		if err := ctx.Err(); err != nil {
-			failed = true
+		if cause = ctx.Err(); cause != nil {
 			return
 		}
-		if err := s.db.CheckSourceActive(entry.StorageID(), fence(entry)); err != nil {
-			failed = true
+		if cause = s.db.CheckSourceActive(entry.StorageID(), fence(entry)); cause != nil {
 			return
 		}
-		items, err := s.pendingPreviewItems(ctx, entry.StorageID(), "refresh", preview.ID, after, 25)
+		items, err := s.pendingPreviewItems(ctx, preview, after, 25)
 		if err != nil {
-			failed = true
+			cause = err
 			return
 		}
 		if len(items) == 0 {
 			return
 		}
 		for _, selected := range items {
-			item, err := s.refreshExisting(ctx, entry, "/"+strings.TrimPrefix(selected.Path, "/"), selected.GenerationID)
+			item, err := s.refreshExisting(ctx, entry, "/"+strings.TrimPrefix(selected.Label, "/"), selected.Ref)
 			if errors.Is(err, context.Canceled) || errors.Is(err, ErrClosed) || errors.Is(err, store.ErrSourceInactive) {
-				failed = true
+				cause = err
 				return
 			}
 			if err != nil && !errors.Is(err, ErrRefreshMissing) {
 				item.Status, item.Reason = "failed", "refresh_failed"
 			}
-			if err := s.recordPreviewItem(ctx, entry, "refresh", preview.ID, selected.Ordinal, item.Status, item.Reason); err != nil {
-				failed = true
+			if err := s.recordPreviewItem(ctx, preview, selected.Ordinal, item.Status, item.Reason); err != nil {
+				cause = err
 				return
 			}
 			after = selected.Ordinal

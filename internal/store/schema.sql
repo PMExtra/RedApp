@@ -161,6 +161,9 @@ CREATE TABLE category_state(
   id INTEGER PRIMARY KEY CHECK(id=1),
   public_revision INTEGER NOT NULL
 );
+-- Only unreferenced custom categories are deleted; deleting a category must
+-- never silently detach applications, so category_id deliberately does not
+-- cascade.
 CREATE TABLE application_categories(
   app_uid TEXT NOT NULL REFERENCES applications(uid) ON DELETE CASCADE,
   category_id TEXT NOT NULL REFERENCES categories(id),
@@ -175,6 +178,8 @@ CREATE TABLE application_tags(
   PRIMARY KEY(app_uid,folded),
   UNIQUE(app_uid,ordinal)
 );
+-- Like application_categories, a referenced category is never deleted, so
+-- category_id deliberately does not cascade.
 CREATE TABLE template_category_refs(
   template_key TEXT NOT NULL,
   category_id TEXT NOT NULL REFERENCES categories(id),
@@ -287,21 +292,6 @@ CREATE TABLE generations(
 );
 CREATE UNIQUE INDEX generations_current ON generations(app_id,version,resource_key) WHERE is_current=1;
 CREATE INDEX generations_blob ON generations(app_id,blob_sha256);
-CREATE TABLE cleanup_previews(
-  id TEXT PRIMARY KEY,
-  app_id TEXT NOT NULL,
-  app_revision INTEGER NOT NULL CHECK(app_revision>=0),
-  vendor_revision INTEGER NOT NULL CHECK(vendor_revision>=0),
-  created_at_s INTEGER NOT NULL,
-  expires_at_s INTEGER NOT NULL,
-  selection_json BLOB NOT NULL,
-  reclaimable_bytes INTEGER NOT NULL CHECK(reclaimable_bytes>=0),
-  active_generations INTEGER NOT NULL CHECK(active_generations>=0),
-  unknown_versions_json BLOB NOT NULL,
-  retention_json BLOB,
-  executed_at_s INTEGER,
-  result_json BLOB
-);
 CREATE TABLE retention_status(
   app_uid TEXT PRIMARY KEY REFERENCES applications(uid) ON DELETE CASCADE,
   payload BLOB NOT NULL
@@ -328,42 +318,49 @@ CREATE TABLE http_cache_generations(
 );
 CREATE UNIQUE INDEX http_cache_current ON http_cache_generations(storage_id,path) WHERE is_current=1;
 CREATE INDEX http_cache_scan ON http_cache_generations(storage_id,row_no) WHERE is_current=1;
-CREATE TABLE http_cleanup_previews(
-  id TEXT PRIMARY KEY,
-  storage_id TEXT NOT NULL,
-  kind TEXT NOT NULL DEFAULT 'cleanup' CHECK(kind IN ('cleanup','refresh')),
-  state TEXT NOT NULL DEFAULT 'ready' CHECK(state IN ('building','ready','running','done','failed')),
-  app_revision INTEGER NOT NULL,
-  vendor_revision INTEGER NOT NULL,
+-- Frozen previews ------------------------------------------------------------
+-- Every cleanup, retention and refresh is previewed first and executes only the
+-- frozen items. criteria_json and summary_json belong to the kind; the fence,
+-- lifetime, state, counters and receipt are shared.
+
+CREATE TABLE previews(
+  id TEXT PRIMARY KEY CHECK(length(id)=32 AND id NOT GLOB '*[^0-9a-f]*'),
+  app_uid TEXT NOT NULL REFERENCES applications(uid) ON DELETE CASCADE,
+  source_epoch INTEGER NOT NULL CHECK(source_epoch>=1),
+  kind TEXT NOT NULL CHECK(kind IN ('version_cleanup','retention','cache_refresh','cache_cleanup')),
+  state TEXT NOT NULL CHECK(state IN ('building','ready','running','done','failed')),
+  app_revision INTEGER NOT NULL CHECK(app_revision>=0),
+  vendor_revision INTEGER NOT NULL CHECK(vendor_revision>=0),
+  require_active INTEGER NOT NULL CHECK(require_active IN (0,1)),
   created_at_s INTEGER NOT NULL,
   expires_at_s INTEGER NOT NULL,
+  executed_at_s INTEGER,
+  criteria_json BLOB NOT NULL,
+  summary_json BLOB NOT NULL,
   high_water INTEGER NOT NULL DEFAULT 0 CHECK(high_water>=0),
   scanned_count INTEGER NOT NULL DEFAULT 0 CHECK(scanned_count>=0),
   selected_count INTEGER NOT NULL DEFAULT 0 CHECK(selected_count>=0),
+  selected_bytes INTEGER NOT NULL DEFAULT 0 CHECK(selected_bytes>=0),
+  active_count INTEGER NOT NULL DEFAULT 0 CHECK(active_count>=0),
   completed_count INTEGER NOT NULL DEFAULT 0 CHECK(completed_count>=0),
   failed_count INTEGER NOT NULL DEFAULT 0 CHECK(failed_count>=0),
-  selected_bytes INTEGER NOT NULL DEFAULT 0 CHECK(selected_bytes>=0),
-  selection_json BLOB NOT NULL,
-  retention_json BLOB,
-  executed_at_s INTEGER,
-  result_json BLOB
+  result_json BLOB,
+  CHECK((state IN ('done','failed'))=(executed_at_s IS NOT NULL))
 );
-CREATE TABLE http_cleanup_preview_items(
-  preview_id TEXT NOT NULL REFERENCES http_cleanup_previews(id) ON DELETE CASCADE,
-  ordinal INTEGER NOT NULL CHECK(ordinal>=0),
-  generation_id TEXT NOT NULL,
-  path TEXT NOT NULL,
+CREATE TABLE preview_items(
+  preview_id TEXT NOT NULL REFERENCES previews(id) ON DELETE CASCADE,
+  ordinal INTEGER NOT NULL CHECK(ordinal>=1),
+  ref TEXT NOT NULL,
+  label TEXT NOT NULL,
   size_bytes INTEGER NOT NULL CHECK(size_bytes>=0),
-  access_bucket_s INTEGER NOT NULL,
-  basis TEXT NOT NULL,
-  before_s INTEGER NOT NULL,
-  match_json BLOB NOT NULL,
-  rule_index INTEGER NOT NULL DEFAULT -1 CHECK(rule_index>=-1),
-  result_status TEXT NOT NULL DEFAULT 'pending',
+  selected INTEGER NOT NULL CHECK(selected IN (0,1)),
+  detail_json BLOB NOT NULL,
+  result_status TEXT NOT NULL,
   error_code TEXT NOT NULL DEFAULT '',
+  CHECK(selected=1 OR result_status='kept'),
   PRIMARY KEY(preview_id,ordinal)
 );
-CREATE INDEX http_cleanup_preview_pending ON http_cleanup_preview_items(preview_id,result_status,ordinal);
+CREATE INDEX preview_items_pending ON preview_items(preview_id,result_status,ordinal);
 
 -- Hosted files ---------------------------------------------------------------
 

@@ -9,7 +9,6 @@ import (
 	"errors"
 	"io"
 	"io/fs"
-	"log/slog"
 	"mime"
 	"net/http"
 	"net/http/cookiejar"
@@ -36,6 +35,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/releasemaintenance"
 	"github.com/PMExtra/RedApp/internal/store"
 	"github.com/PMExtra/RedApp/internal/store/storetest"
+	"github.com/PMExtra/RedApp/internal/testutil"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -52,7 +52,7 @@ type harness struct {
 	client   *http.Client
 	password string
 	csrf     string
-	logs     *logBuffer
+	logs     *testutil.Logs // structured logs of the server and its background services
 	close    func()
 	rawDB    *sql.DB
 }
@@ -70,6 +70,8 @@ type harnessConfig struct {
 	dir     string
 	options []Option
 	proxies TrustedProxies
+	// maxDownloadsPerClient is Deps.MaxDownloadsPerClient; 0 is the default.
+	maxDownloadsPerClient int
 	// embeddedFrontend serves the committed build instead of frontendFixture.
 	embeddedFrontend bool
 }
@@ -91,6 +93,11 @@ func withTrustedProxies(t *testing.T, cidrs ...string) harnessOption {
 		t.Fatal(err)
 	}
 	return func(c *harnessConfig) { c.proxies = p }
+}
+
+// withMaxDownloadsPerClient bounds the concurrent downloads of each client.
+func withMaxDownloadsPerClient(n int) harnessOption {
+	return func(c *harnessConfig) { c.maxDownloadsPerClient = n }
 }
 
 // withEmbeddedFrontend serves the committed frontend build from internal/httpserver/web.
@@ -148,7 +155,8 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 			}
 		}
 	}
-	h := &harness{t: t, store: db, dir: cfg.dir, logs: &logBuffer{}}
+	h := &harness{t: t, store: db, dir: cfg.dir, logs: &testutil.Logs{}}
+	logger := h.logs.Logger()
 	if _, err = db.AdminPassword(); errors.Is(err, store.ErrNotFound) {
 		hash, err := bcrypt.GenerateFromPassword([]byte(harnessPassword), bcrypt.MinCost)
 		must(err)
@@ -172,13 +180,13 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 		must(err)
 		clients[source.StorageID()] = client
 	}
-	manager, err := download.NewApplications(cfg.dir, db, clients)
+	manager, err := download.NewApplications(cfg.dir, db, clients, download.WithLogger(logger))
 	must(err)
 	icons, err := media.New(cfg.dir)
 	must(err)
-	httpCache, err := httpcache.New(cfg.dir, db, manager)
+	httpCache, err := httpcache.New(cfg.dir, db, manager, httpcache.WithLogger(logger))
 	must(err)
-	hostedFiles, err := hosted.New(cfg.dir, db, manager)
+	hostedFiles, err := hosted.New(cfg.dir, db, manager, hosted.WithLogger(logger))
 	must(err)
 	a, err := auth.New(db, func(password string) { h.password = password })
 	must(err)
@@ -187,9 +195,9 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 	public, err := config.LoadPublicSettings(db, "")
 	must(err)
 	catalogService := catalog.New(db, registry)
-	prewarmer, err := prewarm.New(db, registry, catalogService, manager, httpCache)
+	prewarmer, err := prewarm.New(db, registry, catalogService, manager, httpCache, prewarm.WithLogger(logger))
 	must(err)
-	maintenance := &releasemaintenance.Service{DB: db, Registry: registry, Catalog: catalogService, Downloads: manager, AutomaticPrewarm: prewarmer.Automatic}
+	maintenance := &releasemaintenance.Service{DB: db, Registry: registry, Catalog: catalogService, Downloads: manager, AutomaticPrewarm: prewarmer.Automatic, Log: logger}
 	var frontend fs.FS = frontendFixture
 	if cfg.embeddedFrontend {
 		frontend = nil
@@ -199,7 +207,7 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 		Version:  "test", Store: db, Registry: registry, Catalog: catalogService, Downloads: manager,
 		HTTPCache: httpCache, Hosted: hostedFiles, Auth: a, TrustedProxies: cfg.proxies, Pool: pool, Icons: icons,
 		History: metricHistory, PublicSettings: public, Prewarmer: prewarmer, Maintenance: maintenance,
-		DataDir: cfg.dir, Started: time.Now(), Logger: slog.New(slog.NewTextHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		DataDir: cfg.dir, Started: time.Now(), Logger: logger, MaxDownloadsPerClient: cfg.maxDownloadsPerClient,
 	}, cfg.options...)
 	must(err)
 	h.http = httptest.NewServer(h.server)
@@ -221,23 +229,6 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 	}
 	t.Cleanup(h.close)
 	return h
-}
-
-// logBuffer collects the server's structured logs for assertions.
-type logBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (b *logBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-func (b *logBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
 }
 
 // raw sends one request; the session CSRF token is added when signed in.

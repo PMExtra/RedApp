@@ -4,9 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/PMExtra/RedApp/internal/logging"
 )
 
 // CounterFlushInterval bounds how long accepted counter increments stay in memory.
@@ -23,7 +26,7 @@ type counterBuffer struct {
 	mu       sync.Mutex
 	counters map[counterEntry]int64
 	versions map[versionEntry]versionDelta
-	onError  func(error)
+	failures int        // consecutive failed settles; only the first is logged
 	flushMu  sync.Mutex // Serializes flushes so a returned flush covers all earlier adds.
 }
 
@@ -171,26 +174,32 @@ func (s *Store) writeCounters(counters map[counterEntry]int64, versions map[vers
 	return tx.Commit()
 }
 
-// SettleCounters flushes buffered counters without failing the caller; errors go
-// to the handler registered by StartCounterFlush and increments are retried later.
+// SettleCounters flushes buffered counters without failing the caller. A
+// failure keeps the increments for the next flush; it is logged once, and the
+// first successful flush afterwards logs the recovery, so a lasting database
+// problem does not log every second.
 func (s *Store) SettleCounters() {
-	if err := s.FlushCounters(); err != nil {
-		s.pending.mu.Lock()
-		onError := s.pending.onError
-		s.pending.mu.Unlock()
-		if onError != nil {
-			onError(err)
-		}
+	err := s.FlushCounters()
+	b := &s.pending
+	b.mu.Lock()
+	failures := b.failures
+	if err != nil {
+		b.failures++
+	} else {
+		b.failures = 0
+	}
+	b.mu.Unlock()
+	log := logging.For(s.log, "counters")
+	if err != nil && failures == 0 {
+		log.Warn("counter flush failed; increments kept for retry", logging.Error(err))
+	} else if err == nil && failures > 0 {
+		log.Info("counter flush recovered", slog.Int("failed_attempts", failures))
 	}
 }
 
-// StartCounterFlush registers onError for every settle failure and flushes
-// buffered counters every interval. The returned stop waits for the loop and
-// performs a final flush.
-func (s *Store) StartCounterFlush(interval time.Duration, onError func(error)) (stop func()) {
-	s.pending.mu.Lock()
-	s.pending.onError = onError
-	s.pending.mu.Unlock()
+// StartCounterFlush flushes buffered counters every interval. The returned
+// stop waits for the loop and performs a final flush.
+func (s *Store) StartCounterFlush(interval time.Duration) (stop func()) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {

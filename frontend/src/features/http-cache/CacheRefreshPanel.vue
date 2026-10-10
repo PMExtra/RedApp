@@ -11,6 +11,8 @@ import { useMaintenanceActions } from "./queries";
  * background run. Only the current, active source can be refreshed.
  */
 const props = defineProps<{ vendor: string; app: string; available: boolean }>();
+/** `busy`: a preview or job is open, so the page must keep the source epoch. */
+const emit = defineEmits<{ "update:busy": [busy: boolean] }>();
 const { t } = useI18n();
 const match = ref<PathMatch>({ type: "glob", pattern: "/" });
 const previewId = ref<string | null>(null);
@@ -28,6 +30,14 @@ watch(
     previewId.value = null;
   },
   { deep: true },
+);
+
+watch(
+  () => previewId.value !== null || jobActive.value || create.isPending.value,
+  (busy) => {
+    emit("update:busy", busy);
+  },
+  { immediate: true },
 );
 
 function close(expired: boolean) {

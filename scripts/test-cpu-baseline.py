@@ -60,7 +60,7 @@ def check(image, version, revision, qemu):
         env = os.environ.copy()
         # Do not inherit deployment overrides or read the host's optional config.
         env = {key: value for key, value in env.items() if not key.startswith('REDAPP_')}
-        config = root / 'empty.json'
+        config = root / 'empty.yaml'
         config.write_text('{}')
         env.update(REDAPP_CONFIG=str(config), REDAPP_DATA=str(root / 'data'),
                    REDAPP_LISTEN=f'127.0.0.1:{port}')
@@ -95,7 +95,7 @@ def check(image, version, revision, qemu):
                 if process.poll() is None:
                     process.kill()
                     process.wait()
-        require('RedApp started:' in (root / 'serve.log').read_text(), 'Serve log lacks startup line')
+        require('msg="RedApp started"' in (root / 'serve.log').read_text(), 'Serve log lacks startup line')
     print(
         'Exact amd64 image: ELF baseline, Nehalem/no-AVX version, '
         'default serve, health and clean shutdown passed'

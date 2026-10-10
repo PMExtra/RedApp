@@ -173,8 +173,9 @@ describe("retention", () => {
     });
   });
 
-  it("asks to review again when the settings changed before the preview", async () => {
+  it("reports changed settings before the preview and previews again after reloading", async () => {
     let revision = 7;
+    const previews: (string | null)[] = [];
     useHandlers(
       mockApi("get", "/admin/api/apps/{vendor}/{app}/configuration", () =>
         codexConfiguration({ revision }),
@@ -182,16 +183,36 @@ describe("retention", () => {
       mockApi("get", "/admin/api/apps/{vendor}/{app}/retention/status", () =>
         retentionStatus({ last_run: null, next_check_at: null }),
       ),
-      mockApi("post", "/admin/api/apps/{vendor}/{app}/retention/preview", () => {
-        revision = 9;
-        return apiError("REVISION_CONFLICT");
+      mockApi("post", "/admin/api/apps/{vendor}/{app}/retention/preview", ({ request }) => {
+        previews.push(request.headers.get("If-Match"));
+        if (revision === 7) {
+          revision = 9;
+          return apiError("REVISION_CONFLICT");
+        }
+        return retentionPreview();
       }),
+      mockApi("get", "/admin/api/apps/{vendor}/{app}/retention/{preview_id}", () =>
+        retentionPreview(),
+      ),
+      mockApi("get", "/admin/api/apps/{vendor}/{app}/retention/{preview_id}/items", () =>
+        retentionVersionPage([]),
+      ),
     );
     await renderAppPage(RetentionPanel, { props });
     const user = userEvent.setup();
     expect(await screen.findByText("No automatic run yet.")).toBeInTheDocument();
     expect(screen.getByText("Automatic checks are not scheduled.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Preview run" }));
-    expect(await screen.findByText(/The settings changed since you loaded them/)).toBeVisible();
+    expect(await screen.findByText("Changed by someone else")).toBeVisible();
+    // Handled in place, without an error notification.
+    expect(screen.queryByText(/fedcba9876543210/)).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Reload latest version" }));
+    await waitFor(() => {
+      expect(screen.queryByText("Changed by someone else")).toBeNull();
+    });
+    await user.click(screen.getByRole("button", { name: "Preview run" }));
+    expect(await screen.findByRole("region", { name: "Retention preview" })).toBeVisible();
+    expect(previews).toEqual(['"7"', '"9"']);
   });
 });

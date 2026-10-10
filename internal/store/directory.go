@@ -434,24 +434,14 @@ func (s *Store) CreateApplication(vendorID string, in ApplicationInput) (Applica
 
 // UpdateApplication replaces mutable presentation and configuration under CAS.
 // For GeneralHttp, a non-nil BaseURLs explicitly replaces the ordered list; an
-// empty list is invalid. Legacy BaseURL-only edits preserve the existing list
-// when the normalized first URL is unchanged, or replace it with a single source
-// when it changes. An omitted SourceStrategy preserves the existing strategy.
+// empty list is invalid; a nil BaseURLs means the single source BaseURL. An
+// omitted SourceStrategy preserves the existing strategy.
 func (s *Store) UpdateApplication(key string, revision int64, in ApplicationChanges) (Application, error) {
 	a, err := s.Application(key)
 	if err != nil {
 		return Application{}, err
 	}
 	validated := ApplicationInput{ID: a.ID, Name: in.Name, Description: in.Description, Icon: in.Icon, Provider: a.Provider, BaseURL: in.BaseURL, BaseURLs: in.BaseURLs, SourceStrategy: in.SourceStrategy, CacheTTLSeconds: in.CacheTTLSeconds, Enabled: in.Enabled}
-	if a.Provider == "http-cache" && validated.BaseURLs == nil {
-		base, err := normalizeDirectoryBase(in.BaseURL)
-		if err != nil {
-			return Application{}, err
-		}
-		if base == a.BaseURL {
-			validated.BaseURLs = a.BaseURLs
-		}
-	}
 	if a.Provider == "http-cache" && validated.SourceStrategy == "" {
 		validated.SourceStrategy = a.SourceStrategy
 	}

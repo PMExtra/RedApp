@@ -21,6 +21,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/pathmatch"
 	"github.com/PMExtra/RedApp/internal/spool"
 	"github.com/PMExtra/RedApp/internal/store"
+	"github.com/PMExtra/RedApp/internal/testutil"
 )
 
 type testBudget struct {
@@ -74,6 +75,7 @@ type fixture struct {
 	vendor store.Vendor
 	clock  atomic.Int64
 	budget *testBudget
+	logs   testutil.Logs
 }
 
 // allPaths matches every application-relative path.
@@ -110,12 +112,21 @@ func newFixture(t *testing.T, h http.Handler, ttl int) *fixture {
 	f := &fixture{dir: dir, db: db, app: app, vendor: vendor, budget: &testBudget{limit: 1024}}
 	f.entry = application.Entry{Descriptor: application.Descriptor{ID: app.Key, DefaultChannelTTLSeconds: ttl}, UID: app.UID, SourceEpoch: app.SourceEpoch, Revision: app.Revision, VendorRevision: vendor.Revision, RuntimeRevision: app.RuntimeRevision, VendorRuntimeRevision: vendor.RuntimeRevision, Provider: application.HttpCache, Enabled: true, Upstream: client}
 	f.clock.Store(time.Now().Unix())
-	f.s, err = New(dir, db, f.budget, WithClock(func() time.Time { return time.Unix(f.clock.Load(), 0).UTC() }), WithTransferPolicy(distributor.DefaultIdleTimeout, fastRetry))
+	f.s, err = New(dir, db, f.budget, WithClock(func() time.Time { return time.Unix(f.clock.Load(), 0).UTC() }), WithTransferPolicy(distributor.DefaultIdleTimeout, fastRetry), WithLogger(f.logs.Logger()))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { f.s.Close() })
 	return f
+}
+
+// cleanupPass runs one automatic cleanup pass; a logged failure fails the test.
+func (f *fixture) cleanupPass(t *testing.T, registry *application.Registry) {
+	t.Helper()
+	f.s.cleanupPass(context.Background(), registry)
+	if problems := f.logs.Problems(); len(problems) != 0 {
+		t.Error(problems)
+	}
 }
 func (f *fixture) serve(t *testing.T, method string, headers http.Header) (*httptest.ResponseRecorder, error) {
 	t.Helper()

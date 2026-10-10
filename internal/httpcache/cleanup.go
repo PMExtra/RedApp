@@ -3,9 +3,11 @@ package httpcache
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/internal/logging"
 	"github.com/PMExtra/RedApp/internal/pathmatch"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -41,9 +43,9 @@ func (s *Service) ExecuteCleanup(ctx context.Context, entry application.Entry, i
 	if err != nil {
 		return out, err
 	}
-	if preview.State == "done" || preview.State == "failed" {
-		err = json.Unmarshal(preview.result, &out)
-		if err == nil && preview.State == "failed" {
+	if preview.State == store.PreviewDone || preview.State == store.PreviewFailed {
+		err = json.Unmarshal(preview.Result, &out)
+		if err == nil && preview.State == store.PreviewFailed {
 			err = ErrInvalidPreview
 		}
 		return out, err
@@ -53,7 +55,9 @@ func (s *Service) ExecuteCleanup(ctx context.Context, entry application.Entry, i
 		if resultErr != nil {
 			finishCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			_ = s.finishPreview(finishCtx, entry, "cleanup", id, out, true)
+			if err := s.finishPreview(finishCtx, preview, out, true); err != nil {
+				s.log.Error("HTTP cache cleanup receipt was not saved", slog.String("app", entry.Descriptor.ID), slog.String("preview_id", id), logging.Error(err))
+			}
 		}
 	}()
 	after := int64(0)
@@ -61,14 +65,14 @@ func (s *Service) ExecuteCleanup(ctx context.Context, entry application.Entry, i
 		if err = ctx.Err(); err != nil {
 			return out, err
 		}
-		items, err := s.pendingPreviewItems(ctx, entry.StorageID(), "cleanup", id, after, 100)
+		items, err := s.pendingPreviewItems(ctx, preview, after, 100)
 		if err != nil {
 			return out, err
 		}
 		if len(items) == 0 {
 			break
 		}
-		result, err := s.retirePreviewBatch(ctx, entry, preview, items)
+		result, err := s.retirePreviewBatch(ctx, preview, items)
 		out.RetiredFiles += result.RetiredFiles
 		out.SkippedAccessed += result.SkippedAccessed
 		out.SkippedChanged += result.SkippedChanged
@@ -78,21 +82,16 @@ func (s *Service) ExecuteCleanup(ctx context.Context, entry application.Entry, i
 		}
 		after = items[len(items)-1].Ordinal
 	}
-	if err = s.finishPreview(ctx, entry, "cleanup", id, out, false); err != nil {
+	if err = s.finishPreview(ctx, preview, out, false); err != nil {
 		return out, err
 	}
 	return out, nil
 }
 
-func (s *Service) retirePreviewBatch(ctx context.Context, entry application.Entry, preview MaintenancePreview, items []PreviewItem) (CleanupResult, error) {
+func (s *Service) retirePreviewBatch(ctx context.Context, preview MaintenancePreview, items []store.PreviewItem) (CleanupResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows := make([]store.HTTPPreviewItem, 0, len(items))
-	for _, item := range items {
-		rows = append(rows, store.HTTPPreviewItem{Ordinal: item.Ordinal, GenerationID: item.GenerationID, Path: item.Path, AccessBucket: item.AccessBucket, Basis: item.Basis})
-	}
-	frozen := store.HTTPPreview{ID: preview.ID, StorageID: entry.StorageID(), Fence: preview.fence}
-	retired, err := s.db.RetireHTTPPreviewItems(ctx, frozen, fenceMode(preview.Kind, preview.criteria), rows, s.now())
+	retired, err := s.db.RetireHTTPCachePreviewItems(ctx, preview.row, items, s.now())
 	if err != nil {
 		return CleanupResult{}, err
 	}

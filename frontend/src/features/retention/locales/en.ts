@@ -43,7 +43,6 @@ export default {
       hint: "Uses the saved policy. Review the selection before anything is deleted; at most 100 versions per run.",
       preview: "Preview run",
       saveFirst: "Save or discard your changes first.",
-      changed: "The settings changed since you loaded them. Review the policy and preview again.",
       review: "Retention preview",
       versions: "Versions to delete",
       logical: "Logical size",

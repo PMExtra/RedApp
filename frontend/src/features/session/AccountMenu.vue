@@ -12,6 +12,12 @@ const { t } = useI18n();
 const session = useSessionStore();
 const passwordOpen = ref(false);
 
+// Both actions end on the sign-in page, so unsaved drafts are confirmed up
+// front; the shell then leaves without asking again.
+async function changePassword() {
+  if (await confirmDiscardDrafts()) passwordOpen.value = true;
+}
+
 async function signOut() {
   if (!(await confirmDiscardDrafts())) return;
   try {
@@ -31,7 +37,7 @@ async function signOut() {
         <span class="hidden sm:inline">{{ t("session.account.menu") }}</span>
       </Button>
     </template>
-    <DropdownMenuItem @select="passwordOpen = true">
+    <DropdownMenuItem @select="changePassword">
       <KeyRound aria-hidden="true" />
       {{ t("session.account.changePassword") }}
     </DropdownMenuItem>

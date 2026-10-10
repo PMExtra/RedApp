@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"log/slog"
 	"net"
 	"net/http"
@@ -28,6 +27,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/httpcache"
 	"github.com/PMExtra/RedApp/internal/httpserver"
 	"github.com/PMExtra/RedApp/internal/instance"
+	"github.com/PMExtra/RedApp/internal/logging"
 	"github.com/PMExtra/RedApp/internal/media"
 	"github.com/PMExtra/RedApp/internal/prewarm"
 	"github.com/PMExtra/RedApp/internal/releasemaintenance"
@@ -38,15 +38,17 @@ var version = "dev"
 var revision = "unknown"
 
 func main() {
-	// Structured logs on stderr; the standard log package is routed to the same handler.
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
-	if err := command(os.Args[1:]); err != nil {
-		log.Print(err)
+	// Structured logs on stderr. Every component receives this logger; the
+	// standard log package is routed to the same handler.
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	slog.SetDefault(logger)
+	if err := command(os.Args[1:], logger); err != nil {
+		logger.Error("RedApp failed", logging.Error(err))
 		os.Exit(1)
 	}
 }
 
-func command(args []string) error {
+func command(args []string, logger *slog.Logger) error {
 	if len(args) == 1 && args[0] == "version" {
 		fmt.Printf("RedApp %s (commit %s)\n", version, revision)
 		return nil
@@ -55,7 +57,7 @@ func command(args []string) error {
 		fmt.Println("Usage: redapp [serve] [options] | config validate [options] | healthcheck [options] | version")
 		fmt.Println("Config path: --config FILE > REDAPP_CONFIG > optional /etc/redapp/config.yaml (YAML)")
 		fmt.Println("Deployment fields: CLI > environment > selected file > defaults")
-		fmt.Println("Options: --data, --listen, --trusted-proxies, --max-writers, --max-readers, --max-artifact-bytes")
+		fmt.Println("Options: --data, --listen, --trusted-proxies, --max-writers, --max-readers, --max-artifact-bytes, --max-downloads-per-client")
 		return nil
 	}
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
@@ -74,7 +76,7 @@ func command(args []string) error {
 	flags := flag.NewFlagSet(mode, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	path := flags.String("config", "", "deployment YAML configuration file")
-	for _, name := range []string{"data", "listen", "trusted-proxies", "max-writers", "max-readers", "max-artifact-bytes"} {
+	for _, name := range []string{"data", "listen", "trusted-proxies", "max-writers", "max-readers", "max-artifact-bytes", "max-downloads-per-client"} {
 		flags.String(name, "", "override deployment setting")
 	}
 	if err := flags.Parse(rest); err != nil {
@@ -106,7 +108,7 @@ func command(args []string) error {
 	case "healthcheck":
 		return healthcheck(c)
 	default:
-		return serve(c)
+		return serve(c, logger)
 	}
 }
 
@@ -138,7 +140,7 @@ func healthcheck(c config.Deployment) error {
 	return nil
 }
 
-func serve(c config.Deployment) error {
+func serve(c config.Deployment, logger *slog.Logger) error {
 	// Validate a prior directory before Acquire creates an instance lock. No old
 	// schema is upgraded, copied, cleared, or otherwise modified by this command.
 	if err := store.Preflight(c.DataDir); err != nil {
@@ -153,12 +155,12 @@ func serve(c config.Deployment) error {
 		return err
 	}
 	defer guard.Close()
-	db, err := store.Open(guard.Directory)
+	db, err := store.Open(guard.Directory, store.WithLogger(logger))
 	if err != nil {
 		return err
 	}
 	defer db.Close() // Runs after all transfer services stop, flushing their final counters.
-	defer db.StartCounterFlush(store.CounterFlushInterval, func(err error) { log.Printf("Counter flush failed; increments retained for retry: %v", err) })()
+	defer db.StartCounterFlush(store.CounterFlushInterval)()
 	db.SetDistributionValidation(builtin.ValidateDescriptors)
 	// Add missing entity templates and revalidate every authoritative
 	// configuration before deletion recovery mutates data.
@@ -201,7 +203,7 @@ func serve(c config.Deployment) error {
 	if err != nil {
 		return err
 	}
-	manager, err := download.NewApplications(guard.Directory, db, clients)
+	manager, err := download.NewApplications(guard.Directory, db, clients, download.WithLogger(logger))
 	if err != nil {
 		return err
 	}
@@ -210,7 +212,9 @@ func serve(c config.Deployment) error {
 		return err
 	}
 	a, err := auth.New(db, func(password string) {
-		log.Printf("Initial admin password: %s; change it after signing in and protect these logs.", password)
+		// Deliberately logged once (operators read it from the first-start log);
+		// the message format is what deployment scripts search for.
+		logging.For(logger, "auth").Warn(fmt.Sprintf("Initial admin password: %s; change it after signing in and protect these logs.", password))
 	})
 	if err != nil {
 		return err
@@ -224,28 +228,28 @@ func serve(c config.Deployment) error {
 		return err
 	}
 	defer icons.Close()
-	httpCache, err := httpcache.New(guard.Directory, db, manager)
+	httpCache, err := httpcache.New(guard.Directory, db, manager, httpcache.WithLogger(logger))
 	if err != nil {
 		return err
 	}
 	defer httpCache.Close()
-	hostedFiles, err := hosted.New(guard.Directory, db, manager)
+	hostedFiles, err := hosted.New(guard.Directory, db, manager, hosted.WithLogger(logger))
 	if err != nil {
 		return err
 	}
 	defer hostedFiles.Close()
 	catalogService := catalog.New(db, registry)
-	prewarmer, err := prewarm.New(db, registry, catalogService, manager, httpCache)
+	prewarmer, err := prewarm.New(db, registry, catalogService, manager, httpCache, prewarm.WithLogger(logger))
 	if err != nil {
 		return err
 	}
 	defer prewarmer.Close()
-	maintenance := &releasemaintenance.Service{DB: db, Registry: registry, Catalog: catalogService, Downloads: manager, AutomaticPrewarm: prewarmer.Automatic}
+	maintenance := &releasemaintenance.Service{DB: db, Registry: registry, Catalog: catalogService, Downloads: manager, AutomaticPrewarm: prewarmer.Automatic, Log: logger}
 	handler, err := httpserver.New(httpserver.Deps{
 		Version: version, Store: db, Registry: registry, Catalog: catalogService, Downloads: manager,
 		HTTPCache: httpCache, Hosted: hostedFiles, Auth: a, TrustedProxies: proxies, Pool: upstream,
 		Icons: icons, History: metricHistory, PublicSettings: public, Prewarmer: prewarmer, Maintenance: maintenance,
-		DataDir: guard.Directory, Started: time.Now().UTC(), Logger: slog.Default(),
+		DataDir: guard.Directory, Started: time.Now().UTC(), Logger: logger, MaxDownloadsPerClient: c.DownloadLimits.MaxDownloadsPerClient,
 	})
 	if err != nil {
 		return err
@@ -257,7 +261,7 @@ func serve(c config.Deployment) error {
 	metricDone := make(chan struct{})
 	go func() {
 		defer close(metricDone)
-		handler.SampleHistory(metricCtx, func(err error) { log.Printf("Metric history sampling failed: %v", err) })
+		handler.SampleHistory(metricCtx)
 	}()
 	defer func() { cancelMetrics(); <-metricDone }()
 	retentionCtx, cancelRetention := context.WithCancel(ctx)
@@ -268,12 +272,12 @@ func serve(c config.Deployment) error {
 	cleanupDone := make(chan struct{})
 	go func() {
 		defer close(cleanupDone)
-		httpCache.RunCleanup(cleanupCtx, registry, func(err error) { log.Printf("Automatic HTTP cache cleanup failed: %v", err) })
+		httpCache.RunCleanup(cleanupCtx, registry)
 	}()
 	defer func() { cancelCleanup(); <-cleanupDone }()
 	result := make(chan error, 1)
 	go func() { result <- server.ListenAndServe() }()
-	log.Printf("RedApp started: listener %s, data directory %s", c.Listen, guard.Directory)
+	logger.Info("RedApp started", slog.String("version", version), slog.String("listen", c.Listen), slog.String("data_dir", guard.Directory))
 	select {
 	case err := <-result:
 		if err != http.ErrServerClosed {
@@ -285,10 +289,17 @@ func serve(c config.Deployment) error {
 		if err := server.Shutdown(shutdown); err != nil {
 			server.Close()
 		}
+		// The background loops run under ctx, which is done. Wait for them
+		// and stop the prewarm worker before closing the services they use,
+		// so their work ends as interrupted rather than failing on closed
+		// services.
+		<-cleanupDone
+		<-retentionDone
+		prewarmer.Close()
 		hostedFiles.Close()
 		httpCache.Close()
 		manager.Close()
 	}
-	fmt.Println("RedApp stopped")
+	logger.Info("RedApp stopped")
 	return nil
 }
