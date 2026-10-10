@@ -16,6 +16,7 @@ export {
   getLeaf,
   setLeaf,
   isEmptyPatch,
+  same,
   type OverlayConfiguration,
   type OverlayFormOptions,
   type OverlayPatch,

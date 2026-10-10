@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, watch } from "vue";
+import { computed } from "vue";
 import { useForm } from "vee-validate";
 import { useI18n } from "vue-i18n";
 import { z } from "zod";
-import { FormField, formError, useDirtyGuard, zodSchema } from "@/shared/forms";
+import { FormField, formError, zodSchema } from "@/shared/forms";
 import { toast } from "@/shared/lib";
 import {
   AsyncState,
@@ -15,6 +15,7 @@ import {
   RevisionConflictAlert,
 } from "@/shared/ui";
 import { usePublicUrlSettings, useSavePublicUrl, type PublicUrlState } from "./queries";
+import { useServerDraft } from "./serverDraft";
 import { isPublicOrigin } from "./validation";
 
 const schema = z.object({
@@ -42,20 +43,18 @@ function draftOf(value: PublicUrlState) {
 const { handleSubmit, resetForm, setFieldValue, meta, values } = useForm({
   validationSchema: zodSchema(schema),
 });
-useDirtyGuard(() => meta.value.dirty);
-
-watch(
-  state,
-  (value) => {
-    if (value && !meta.value.dirty) resetForm({ values: draftOf(value) });
+const baseline = useServerDraft({
+  state: () => state.value,
+  dirty: () => meta.value.dirty,
+  adopt: (value) => {
+    resetForm({ values: draftOf(value) });
   },
-  { immediate: true },
-);
+});
 
 const submit = handleSubmit(({ override }) => {
   save.mutate(override === "" ? null : override, {
     onSuccess: (value) => {
-      resetForm({ values: draftOf(value) });
+      baseline.reset(value);
       toast({ tone: "success", title: t("settings.publicUrl.saved") });
     },
   });
@@ -63,11 +62,11 @@ const submit = handleSubmit(({ override }) => {
 
 async function reload() {
   await save.reload();
-  if (state.value) resetForm({ values: draftOf(state.value) });
+  baseline.reset();
 }
 
 function discard() {
-  if (state.value) resetForm({ values: draftOf(state.value) });
+  baseline.reset();
 }
 </script>
 
