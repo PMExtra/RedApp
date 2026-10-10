@@ -80,8 +80,12 @@ frontend/
 | `search` | 头部搜索框（`searchCatalog`、`getHome`） | 公开 |
 | `instructions` | 沙箱使用说明 iframe | 公开（后台预览可复用） |
 | `session` | 会话 store、登录表单、会话过期对话框、修改密码、账户菜单、`safeReturnPath` | 后台 |
-| `configuration` | 应用/厂商配置覆盖的查询与 PATCH、`FieldReset` | 后台（B、C 两个包共用） |
+| `configuration` | 应用/厂商配置覆盖的查询与 PATCH、`useOverlayForm`、`FieldReset` | 后台（B、C 两个包共用） |
 | `proxy` | `ProxyFields`（全局、厂商、应用代理） | 后台（B、D 共用） |
+| `directory` | 厂商/应用查询与变更、列表参数（`useListQuery`）、标签页规则（`appTabs`）、厂商卡片、应用表格与各编辑表单 | 后台 |
+| `taxonomy` | 分类查询与重命名、`CategoryPicker`、`TagEditor`、应用分类与标签表单 | 后台 |
+| `notes` | 厂商/应用管理员备注（`NotesEditor`） | 后台 |
+| `exchange` | 配置导出、导入（预览—决定—信任—执行）与复制应用 | 后台 |
 
 ## 新增页面、路由和功能
 
@@ -144,6 +148,8 @@ const save = useRevisionedMutation({
 - 其他失败由全局处理：`MutationCache` 弹出错误通知，内容是本地化的错误码文本、服务端细节（如 `VALIDATION_FAILED` 指出的字段）和请求 ID。页面自行展示某些错误码时，在 `meta: { handledCodes: [...] }` 中声明；完全不弹用 `meta: { silent: true }`。
 - `ifMatch(revision)` / `ifMatchHeader(resource)` / `revisionFromEtag(etag)` 处理 `"7"` 格式。
 - 应用和厂商的配置覆盖是同一个 revision 资源，所有编辑区块必须通过 `@/features/configuration` 的 `useAppConfiguration` / `useAppConfigurationPatch` 读写，否则一个区块保存后其他区块会 409。
+- 配置覆盖表单用 `useOverlayForm({ configuration, paths, schema })`：草稿只含 `paths` 中的字段，未修改时跟随服务端，有修改时（含 409 重新加载后）保留；`patch(values)` 只包含改过的字段，`reset(path)` 恢复模板值并在原值为覆盖时发送 `unset`；保存成功后调用 `load(响应)`。`resetBinding(path)` 直接绑定到 `FieldReset`。
+- 应用设置页的 Provider 专属区块（缓存规则、渠道 TTL 等）登记在 `AppSettingsPage.vue` 的 `providerSections` 中，组件接收 `{ vendor, app, readOnly }`。
 - 上传需要进度时用 `uploadWithProgress()`（XHR，自动加 CSRF，错误同样是 `ApiError`）。
 
 ### 会话
