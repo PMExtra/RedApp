@@ -30,6 +30,7 @@ export default {
         refreshed: "{path} 已刷新。",
         not_modified: "{path} 未变化。",
         stale_fallback: "源站失败，保留了 {path} 的缓存副本。",
+        skipped: "{path} 未更新。",
         failed: "刷新 {path} 失败。",
       },
     },

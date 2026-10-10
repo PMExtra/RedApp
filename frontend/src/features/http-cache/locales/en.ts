@@ -31,6 +31,7 @@ export default {
         refreshed: "{path} refreshed.",
         not_modified: "{path} is unchanged.",
         stale_fallback: "The origin failed; the cached copy of {path} is kept.",
+        skipped: "{path} was not updated.",
         failed: "Refreshing {path} failed.",
       },
     },

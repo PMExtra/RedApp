@@ -60,7 +60,7 @@ function refreshFile(entry: CacheEntry) {
   refresh.mutate(entry.path, {
     onSuccess: (result) => {
       toast({
-        tone: result.status === "failed" ? "warning" : "success",
+        tone: result.status === "failed" || result.status === "skipped" ? "warning" : "success",
         title: t(`httpCache.entries.results.${result.status}`, { path: result.path }),
         description: result.reason,
       });
