@@ -2,12 +2,11 @@
 package history
 
 type Definition struct {
-	Retired bool   `json:"retired,omitempty"`
-	Key     string `json:"key"`
-	Label   string `json:"label"`
-	Kind    string `json:"kind"`
-	Unit    string `json:"unit"`
-	Group   string `json:"group"`
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Kind  string `json:"kind"`
+	Unit  string `json:"unit"`
+	Group string `json:"group"`
 }
 
 type Metric struct {
@@ -41,15 +40,8 @@ func Definitions() []Definition {
 	return out
 }
 
-// Catalog retains retired definitions solely for reading and aggregating their
-// existing observations until ordinary retention expires them.
-func Catalog() []Definition {
-	return append(Definitions(),
-		Definition{Key: "counters.reuse_requests", Label: "Reused requests", Kind: "counter", Unit: "count", Group: "Traffic and requests", Retired: true},
-		Definition{Key: "events.recent_total", Label: "Recent failures (up to 100)", Kind: "gauge", Unit: "count", Group: "Resources and tasks", Retired: true})
-}
 func Find(key string) (Definition, bool) {
-	for _, d := range Catalog() {
+	for _, d := range Definitions() {
 		if d.Key == key {
 			return d, true
 		}

@@ -16,13 +16,14 @@ import (
 
 var versionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(alpha|beta)(\.(0|[1-9][0-9]*)){0,2})?$`)
 var assetPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$`)
+var numberPattern = regexp.MustCompile(`[0-9]+`)
 
 func Normalize(v string) (string, error) {
 	v = strings.TrimPrefix(strings.TrimPrefix(v, "rust-v"), "v")
 	if !versionPattern.MatchString(v) {
 		return "", errors.New("Invalid version format")
 	}
-	for _, n := range regexp.MustCompile(`[0-9]+`).FindAllString(v, -1) {
+	for _, n := range numberPattern.FindAllString(v, -1) {
 		if _, e := strconv.ParseUint(n, 10, 64); e != nil {
 			return "", errors.New("Version number exceeds limit")
 		}

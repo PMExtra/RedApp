@@ -45,9 +45,9 @@ func Seeds() ([]store.VendorInput, []store.ApplicationSeed, error) {
 			vendors = append(vendors, store.VendorInput{ID: key.Vendor, Name: store.LocalizedText{En: descriptor.Publisher, ZhCN: descriptor.Publisher}, Enabled: true})
 			seen[key.Vendor] = true
 		}
-		provider := application.Codex
-		if descriptor.Protocol == "claude-manifest-v1" {
-			provider = application.ClaudeCode
+		provider, ok := providerForProtocol(descriptor.Protocol)
+		if !ok {
+			return nil, nil, fmt.Errorf("unregistered protocol %s", descriptor.Protocol)
 		}
 		icon := descriptor.Icon
 		apps = append(apps, store.ApplicationSeed{VendorID: key.Vendor, ApplicationInput: store.ApplicationInput{
@@ -58,15 +58,8 @@ func Seeds() ([]store.VendorInput, []store.ApplicationSeed, error) {
 	return vendors, apps, nil
 }
 
-// NewSourceClient is the static-fixture compatibility constructor. Production
-// current and historical dynamic sources use NewScopedSourceClient with owner UIDs.
-func NewSourceClient(provider, baseURL string, pool *distributor.Pool) (*distributor.Client, error) {
-	definition, _ := application.ProviderDefinition(provider)
-	return NewSourceClientWithDefault(provider, baseURL, definition.DefaultBaseURL, pool)
-}
-func NewSourceClientWithDefault(provider, baseURL, defaultBase string, pool *distributor.Pool) (*distributor.Client, error) {
-	return newSourceClient(provider, baseURL, defaultBase, "", "", pool)
-}
+// NewScopedSourceClient builds the upstream client of a current or historical
+// application source, bound to its owner's proxy scope.
 func NewScopedSourceClient(provider, baseURL, defaultBase, appUID, vendorUID string, pool *distributor.Pool) (*distributor.Client, error) {
 	if appUID == "" || vendorUID == "" {
 		return nil, errors.New("Application transport scope required")
@@ -133,6 +126,10 @@ func entriesFromConfiguration(snapshot store.DirectorySnapshot, pool *distributo
 	for _, d := range snapshot.ReviewedDescriptors {
 		templates[d.ID] = d
 	}
+	canonical, err := canonicalTemplates(snapshot.ReviewedDescriptors)
+	if err != nil {
+		return nil, err
+	}
 	byVendor := make(map[string]store.Vendor, len(vendors))
 	for _, vendor := range vendors {
 		if _, exists := byVendor[vendor.ID]; exists {
@@ -178,13 +175,11 @@ func entriesFromConfiguration(snapshot store.DirectorySnapshot, pool *distributo
 			}
 			entry.Upstream = entry.Upstreams[0]
 		} else {
+			// An independent instance has no template reference and uses the
+			// provider's single reviewed contract.
 			key := snapshot.TemplateBindings[app.UID]
 			if key == "" {
-				if app.Provider == application.Codex {
-					key = "openai/codex"
-				} else {
-					key = "anthropic/claude-code"
-				}
+				key = canonical[app.Provider]
 			}
 			template, ok := templates[key]
 			if !ok {
@@ -218,6 +213,38 @@ func entriesFromConfiguration(snapshot store.DirectorySnapshot, pool *distributo
 		entries = append(entries, entry)
 	}
 	return entries, nil
+}
+
+// releaseProtocols maps each release provider to its compiled protocol.
+var releaseProtocols = map[string]string{
+	application.Codex:      "codex-releases-v1",
+	application.ClaudeCode: "claude-manifest-v1",
+}
+
+func providerForProtocol(protocol string) (string, bool) {
+	for provider, p := range releaseProtocols {
+		if p == protocol {
+			return provider, true
+		}
+	}
+	return "", false
+}
+
+// canonicalTemplates maps each release provider to the ID of its reviewed
+// template. Each provider has at most one, so the choice is never ambiguous.
+func canonicalTemplates(descriptors []application.Descriptor) (map[string]string, error) {
+	out := map[string]string{}
+	for _, d := range descriptors {
+		provider, ok := providerForProtocol(d.Protocol)
+		if !ok {
+			return nil, fmt.Errorf("unregistered protocol %s", d.Protocol)
+		}
+		if existing, dup := out[provider]; dup {
+			return nil, fmt.Errorf("provider %s has two reviewed templates: %s and %s", provider, existing, d.ID)
+		}
+		out[provider] = d.ID
+	}
+	return out, nil
 }
 
 func localized(value store.LocalizedText) application.Localized {
