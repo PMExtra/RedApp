@@ -155,7 +155,7 @@ An HTTP cache application can list 1 to 16 source URLs.
 | `random` | Try sources in random order, each at most once |
 
 - RedApp moves to the next source only on a network error, a timeout or a `5xx` status.
-- Each attempt may take up to 5 minutes. One download may take up to 9 minutes across all sources.
+- An attempt is abandoned when no data arrives for 60 seconds. One download may take up to 9 minutes across all sources, so very large files on slow links can fail.
 - A file is always taken from a single source. Partial downloads are never combined across sources.
 - Validators (`ETag`, `Last-Modified`) are reused only with the source that issued them.
 - There are no health checks or weights. Fresh cache hits do not advance `round_robin`.

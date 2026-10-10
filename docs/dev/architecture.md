@@ -121,8 +121,11 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 - **资源身份**：`sha256(app \0 version \0 key)`，并与持久化的 `resources` 行（来源 URL、SHA-256、期望大小）和应用上游核对，其他应用不能借用缓存身份。
 - **代际（generation）**：每次下载是一个代际，状态包括 downloading、resuming、retry_wait、verifying、complete、failed、invalid、interrupted。每个资源最多一个当前代际（部分唯一索引）。
 - **读者与写者**：多个读者跟随同一个写者，边下载边读取。默认上限 16 个写者、512 个读者，单制品 4 GiB；`httpcache` 和 `hosted` 共用这组额度。
-- **续传**：带 `Range: bytes=N-`，强 ETag 时加 `If-Range`。只接受精确的 206、`Content-Range` 和相同 ETag；其他情况放弃续传，新建一个完整重下的代际。最多 3 次，每 1 MiB 记录进度。
+- **续传**：带 `Range: bytes=N-`，强 ETag 时加 `If-Range`。只接受精确的 206、`Content-Range` 和相同 ETag；其他情况放弃续传，新建一个完整重下的代际。每 1 MiB 记录进度。
+- **超时与重试**：下载流没有总时限，只有空闲读超时（单次读取 60 秒无数据即中断）；连接、TLS、响应头各有独立时限，元数据读取限时 5 分钟。连接错误、读取中断或截断、5xx、408、429 会重试，最多 6 次，退避从 1 秒翻倍、上限 30 秒并加随机抖动；其他 4xx、磁盘、编码和完整性错误不重试。重试耗尽时，如果已有数据且上游支持续传（ETag 或字节范围），保留 part 并标记 interrupted，下次请求从断点续传。
+- **错误分类**：上游错误为类型化的 `distributor.RequestError`（DNS、TLS、超时、重定向、网络），哈希不符为 sentinel 错误；失败类别按错误类型判断，不匹配错误文本。
 - **校验与发布**：写入 `objects/parts/<gen>.part`，完成后校验完整 SHA-256 和大小，fsync 后 rename 到 `objects/blobs/<sha256(app)>/<hash>.blob`，fsync 目录，再在数据库标记完成。校验失败的代际为 invalid。
+- **校验不持锁**：整文件哈希不在 `Manager.mu` 内进行。同一资源的并发请求共享一次校验，校验由管理器自己的 goroutine 和 context 执行，请求方取消只是停止等待，不会让有效缓存被判为无效。校验结束后重新加锁，确认代际仍是当前代际、文件 inode/大小/修改时间未变，才应用结果；校验中的代际视为活跃，不会被清理或清除。
 - **恢复**：启动时重新校验 blob，清理孤立的 part 和 blob。
 - **清理与保留**：手动清理先生成冻结的预览，执行只作用于预览中的代际；保留策略按应用保留最新 N 个版本，有效渠道、正在读写的代际和无法比较的版本受保护。
 - 下游响应目前由服务端自行流式输出，不支持客户端 Range。
@@ -221,6 +224,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 | store 暴露 DB | `Store.DB` 是公开字段，`auth`、`history`、`httpcache`、`httpserver` 直接写 SQL | 阶段 5：SQL 收回 `internal/store`，按实体封装 |
 | 配置快照 CAS | 每次配置写入在全局锁下读取、克隆整份配置状态，事务内再与重读结果整体比较；任一实体的并发变化都会让本次写入失败，成本随配置规模增长。实体 revision 只是额外检查 | 阶段 5：按实体 CAS |
 | 手写路由 | `Server.ServeHTTP` 按前缀和字符串切分分发；错误码由 HTTP 状态推导；`request_id` 不进日志 | 阶段 3：`http.ServeMux` + 中间件、显式错误码、request_id 日志、OpenAPI 与契约测试 |
-| 锁内 I/O | 下载完成路径、认证、媒体、预热和目录写入在持锁期间做 I/O 或 bcrypt | 阶段 2/5：按[约定](conventions.md#并发)调整 |
+| HTTP 缓存冷请求 | 冷请求必须先完整落盘才响应，单次下载在全部来源上合计最长 9 分钟；慢速链路上的超大文件会失败，前置反代也可能先超时 | 阶段 5：复用下载引擎边下边读后取消总时限 |
+| 锁内 I/O | 下载进度保存和数据库调用仍在 `Manager.mu` 内（整文件哈希和 bcrypt 已移出）；媒体、预热和目录写入在持锁期间做 I/O | 阶段 2/5：按[约定](conventions.md#并发)调整 |
 | 测试钩子与命名 | 生产结构体含测试钩子字段；部分测试文件以版本或评审轮次命名 | 阶段 2 |
 | 日志 | 只有入口使用标准库 `log`，无请求日志 | 阶段 3：`log/slog` |
