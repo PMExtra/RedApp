@@ -169,7 +169,7 @@ func TestGenerationCleanupScopeAndCurrentCannotBeResurrected(t *testing.T) {
 	if err := s.CreateGeneration(g2); err != nil {
 		t.Fatal(err)
 	}
-	g.Bytes = 10
+	g.Bytes, g.Checkpoint = 10, 1
 	if err := s.SaveGeneration(g); err != nil {
 		t.Fatal(err)
 	}
@@ -186,10 +186,10 @@ func TestGenerationCleanupScopeAndCurrentCannotBeResurrected(t *testing.T) {
 		}
 	}
 	b := Blob{AppID: r.AppID, SHA256: r.SHA256, VerifiedAt: now}
-	if err := s.CompleteGeneration(r.AppID, g.ID, b, now, 0); err == nil {
+	if err := s.CompleteGeneration(GenerationCompletion{AppID: r.AppID, ID: g.ID, Checkpoint: 2, Blob: b, Finished: now}); err == nil {
 		t.Fatal("retired writer published")
 	}
-	if err := s.CompleteGeneration(r.AppID, g2.ID, b, now, 0); err != nil {
+	if err := s.CompleteGeneration(GenerationCompletion{AppID: r.AppID, ID: g2.ID, Checkpoint: 1, Blob: b, Finished: now}); err != nil {
 		t.Fatal(err)
 	}
 	if deleted, err := s.DeleteUnreferencedBlob(r.AppID, r.SHA256); err != nil || deleted {
@@ -250,5 +250,54 @@ func TestWALDataSurvivesAbruptProcessExit(t *testing.T) {
 	counts, err := s.CountersFor(metricsOf(t, s, "openai/codex"))
 	if err != nil || counts["upstream_bytes"] != 13 {
 		t.Fatal("committed WAL counter lost", counts, err)
+	}
+}
+
+// Writes of one generation may reach the store out of order once they are
+// issued without the download manager's lock; the checkpoint keeps the newest.
+func TestGenerationCheckpointsApplyOnlyNewerWrites(t *testing.T) {
+	s := openTest(t)
+	r := releaseFixture(t, s, storageOf(t, s, "openai/codex"), "1.0.0")
+	now := time.Now().UTC().Truncate(time.Second)
+	g := Generation{ID: "writer", AppID: r.AppID, Version: r.Version, ResourceKey: r.Key, ExpectedSHA256: r.SHA256, Phase: "incomplete", IsCurrent: true, StartedAt: now, SourceFence: fenceOf(t, s, r.AppID)}
+	if err := s.CreateGeneration(g); err != nil {
+		t.Fatal(err)
+	}
+	newer, older := g, g
+	newer.Bytes, newer.Checkpoint = 20, 2
+	older.Bytes, older.Checkpoint = 10, 1
+	for _, write := range []Generation{newer, older} {
+		if err := s.SaveGeneration(write); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b := Blob{AppID: r.AppID, SHA256: r.SHA256, SizeBytes: 20, VerifiedAt: now}
+	if err := s.CompleteGeneration(GenerationCompletion{AppID: r.AppID, ID: g.ID, Checkpoint: 2, Blob: b, Finished: now}); err == nil {
+		t.Fatal("completion reused a stored checkpoint")
+	}
+	stored := func() Generation {
+		t.Helper()
+		all, err := s.Generations()
+		if err != nil || len(all) != 1 {
+			t.Fatal(all, err)
+		}
+		return all[0]
+	}
+	if got := stored(); got.Bytes != 20 || got.Checkpoint != 2 || got.Phase != "incomplete" {
+		t.Fatal("older checkpoint overwrote newer progress", got)
+	}
+	if err := s.CompleteGeneration(GenerationCompletion{AppID: r.AppID, ID: g.ID, Checkpoint: 3, Blob: b, Finished: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveGeneration(newer); err != nil {
+		t.Fatal(err)
+	}
+	if got := stored(); got.Phase != "complete" || got.Checkpoint != 3 {
+		t.Fatal("late progress write reverted completion", got)
+	}
+	missing := newer
+	missing.ID, missing.Checkpoint = "missing", 9
+	if err := s.SaveGeneration(missing); !errors.Is(err, ErrNotFound) {
+		t.Fatal("missing generation checkpoint", err)
 	}
 }

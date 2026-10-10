@@ -21,6 +21,8 @@ type Generation struct {
 	VerificationNS                                                     *int64
 	LastErrorCode                                                      string
 	FullRetry                                                          bool
+	// Checkpoint orders the writes of one generation; see SaveGeneration.
+	Checkpoint int64
 }
 type Blob struct {
 	AppID, SHA256 string
@@ -28,14 +30,14 @@ type Blob struct {
 	VerifiedAt    time.Time
 }
 
-const generationColumns = "id,app_id,version,resource_key,expected_sha256,blob_sha256,phase,is_current,retired_at_s,bytes,total_bytes,source_bytes,etag,resumes,started_at_s,finished_at_s,verification_ns,last_error_code,full_retry,download_ns,app_revision,vendor_revision"
+const generationColumns = "id,app_id,version,resource_key,expected_sha256,blob_sha256,phase,is_current,retired_at_s,bytes,total_bytes,source_bytes,etag,resumes,started_at_s,finished_at_s,verification_ns,last_error_code,full_retry,download_ns,app_revision,vendor_revision,checkpoint"
 
 func generationArgs(g Generation) []any {
 	var blob any
 	if g.BlobSHA256 != "" {
 		blob = g.BlobSHA256
 	}
-	return []any{g.ID, g.AppID, g.Version, g.ResourceKey, g.ExpectedSHA256, blob, g.Phase, g.IsCurrent, unixPointer(g.RetiredAt), g.Bytes, g.TotalBytes, g.SourceBytes, g.ETag, g.Resumes, g.StartedAt.Unix(), unixPointer(g.FinishedAt), g.VerificationNS, g.LastErrorCode, g.FullRetry, g.DownloadNS, g.AppRuntimeRevision, g.VendorRuntimeRevision}
+	return []any{g.ID, g.AppID, g.Version, g.ResourceKey, g.ExpectedSHA256, blob, g.Phase, g.IsCurrent, unixPointer(g.RetiredAt), g.Bytes, g.TotalBytes, g.SourceBytes, g.ETag, g.Resumes, g.StartedAt.Unix(), unixPointer(g.FinishedAt), g.VerificationNS, g.LastErrorCode, g.FullRetry, g.DownloadNS, g.AppRuntimeRevision, g.VendorRuntimeRevision, g.Checkpoint}
 }
 
 type scanner interface{ Scan(...any) error }
@@ -45,7 +47,7 @@ func scanGeneration(row scanner) (Generation, error) {
 	var blob, etag, last sql.NullString
 	var retired, finished sql.NullInt64
 	var started int64
-	err := row.Scan(&g.ID, &g.AppID, &g.Version, &g.ResourceKey, &g.ExpectedSHA256, &blob, &g.Phase, &g.IsCurrent, &retired, &g.Bytes, &g.TotalBytes, &g.SourceBytes, &etag, &g.Resumes, &started, &finished, &g.VerificationNS, &last, &g.FullRetry, &g.DownloadNS, &g.AppRuntimeRevision, &g.VendorRuntimeRevision)
+	err := row.Scan(&g.ID, &g.AppID, &g.Version, &g.ResourceKey, &g.ExpectedSHA256, &blob, &g.Phase, &g.IsCurrent, &retired, &g.Bytes, &g.TotalBytes, &g.SourceBytes, &etag, &g.Resumes, &started, &finished, &g.VerificationNS, &last, &g.FullRetry, &g.DownloadNS, &g.AppRuntimeRevision, &g.VendorRuntimeRevision, &g.Checkpoint)
 	g.BlobSHA256 = blob.String
 	g.ETag = etag.String
 	g.LastErrorCode = last.String
@@ -88,7 +90,7 @@ func (s *Store) CreateGeneration(g Generation) error {
 	if _, err = tx.Exec("UPDATE generations SET is_current=0,retired_at_s=? WHERE app_id=? AND version=? AND resource_key=? AND is_current=1", time.Now().Unix(), g.AppID, g.Version, g.ResourceKey); err != nil {
 		return err
 	}
-	if _, err = tx.Exec("INSERT INTO generations("+generationColumns+") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", generationArgs(g)...); err != nil {
+	if _, err = tx.Exec("INSERT INTO generations("+generationColumns+") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", generationArgs(g)...); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -96,16 +98,30 @@ func (s *Store) CreateGeneration(g Generation) error {
 
 // SaveGeneration checkpoints progress without changing ownership, current status
 // or retirement. A late writer therefore cannot restore a replaced head.
+//
+// g.Checkpoint orders the writes of one generation: the row is updated only
+// when its stored checkpoint is older, so a snapshot taken earlier but written
+// later is skipped (without error) instead of overwriting newer state. Callers
+// assign checkpoints in the order they take their in-memory snapshots.
 func (s *Store) SaveGeneration(g Generation) error {
 	if !validGeneration(g) {
-		return errors.New("Invalid generation checkpoint")
+		return errors.New("invalid generation checkpoint")
 	}
 	var blob any
 	if g.BlobSHA256 != "" {
 		blob = g.BlobSHA256
 	}
-	result, err := s.db.Exec(`UPDATE generations SET blob_sha256=?,phase=?,bytes=?,total_bytes=?,source_bytes=?,etag=?,resumes=?,finished_at_s=?,verification_ns=?,last_error_code=?,full_retry=?,download_ns=? WHERE id=? AND app_id=? AND version=? AND resource_key=? AND expected_sha256=?`, blob, g.Phase, g.Bytes, g.TotalBytes, g.SourceBytes, g.ETag, g.Resumes, unixPointer(g.FinishedAt), g.VerificationNS, g.LastErrorCode, g.FullRetry, g.DownloadNS, g.ID, g.AppID, g.Version, g.ResourceKey, g.ExpectedSHA256)
-	return affected(result, err)
+	result, err := s.db.Exec(`UPDATE generations SET blob_sha256=?,phase=?,bytes=?,total_bytes=?,source_bytes=?,etag=?,resumes=?,finished_at_s=?,verification_ns=?,last_error_code=?,full_retry=?,download_ns=?,checkpoint=? WHERE id=? AND app_id=? AND version=? AND resource_key=? AND expected_sha256=? AND checkpoint<?`, blob, g.Phase, g.Bytes, g.TotalBytes, g.SourceBytes, g.ETag, g.Resumes, unixPointer(g.FinishedAt), g.VerificationNS, g.LastErrorCode, g.FullRetry, g.DownloadNS, g.Checkpoint, g.ID, g.AppID, g.Version, g.ResourceKey, g.ExpectedSHA256, g.Checkpoint)
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil || n == 1 {
+		return err
+	}
+	// Nothing changed: the generation is gone (ErrNotFound) or a newer
+	// checkpoint is already stored.
+	var stored int64
+	return s.read.QueryRow(`SELECT checkpoint FROM generations WHERE id=? AND app_id=? AND version=? AND resource_key=? AND expected_sha256=? AND checkpoint>=?`, g.ID, g.AppID, g.Version, g.ResourceKey, g.ExpectedSHA256, g.Checkpoint).Scan(&stored)
 }
 func affected(result sql.Result, err error) error {
 	if err != nil {
@@ -205,11 +221,22 @@ func (s *Store) DeleteUnreferencedBlob(app, sha string) (bool, error) {
 	return n == 1, err
 }
 
+// GenerationCompletion publishes the verified blob of generation ID. Its
+// Checkpoint orders it after the generation's earlier progress writes.
+type GenerationCompletion struct {
+	AppID, ID      string
+	Checkpoint     int64
+	Blob           Blob
+	Finished       time.Time
+	VerificationNS int64
+}
+
 // CompleteGeneration publishes the database association only after the caller has
 // verified, fsynced and atomically placed the blob. Retired writers cannot publish.
-func (s *Store) CompleteGeneration(app, id string, b Blob, finished time.Time, verificationNS int64, expectedFence ...SourceFence) error {
+func (s *Store) CompleteGeneration(c GenerationCompletion, expectedFence ...SourceFence) error {
+	app, id, b, finished, verificationNS := c.AppID, c.ID, c.Blob, c.Finished, c.VerificationNS
 	if b.AppID != app || verificationNS < 0 {
-		return errors.New("Blob application mismatch")
+		return errors.New("blob application mismatch")
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -238,8 +265,11 @@ func (s *Store) CompleteGeneration(app, id string, b Blob, finished time.Time, v
 	if err = putBlob(tx, b); err != nil {
 		return err
 	}
-	_, err = tx.Exec("UPDATE generations SET phase='complete',blob_sha256=?,bytes=?,total_bytes=?,finished_at_s=?,verification_ns=? WHERE id=? AND app_id=? AND is_current=1", b.SHA256, b.SizeBytes, b.SizeBytes, finished.Unix(), verificationNS, id, app)
-	if err != nil {
+	result, err := tx.Exec("UPDATE generations SET phase='complete',blob_sha256=?,bytes=?,total_bytes=?,finished_at_s=?,verification_ns=?,checkpoint=? WHERE id=? AND app_id=? AND is_current=1 AND checkpoint<?", b.SHA256, b.SizeBytes, b.SizeBytes, finished.Unix(), verificationNS, c.Checkpoint, id, app, c.Checkpoint)
+	if err = affected(result, err); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errors.New("generation completion is older than a stored checkpoint")
+		}
 		return err
 	}
 	return tx.Commit()

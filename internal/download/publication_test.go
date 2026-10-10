@@ -41,10 +41,11 @@ func TestPublicationTransactionInterleavesAcquireWithoutDeadlock(t *testing.T) {
 		plan.Abort()
 		t.Fatal(err)
 	}
+	defer writer.Close()
 	entered := make(chan struct{})
 	continueAcquire := make(chan struct{})
 	hook.set(func(point string, _ *Generation) {
-		if point == "acquire_before_db_validation" {
+		if point == "acquire_holding_lock" {
 			close(entered)
 			<-continueAcquire
 		}

@@ -81,6 +81,9 @@ type Generation struct {
 	file           *os.File
 	changed        chan struct{}
 	dormant        bool
+	// unverified marks a complete head recovered at startup without hashing
+	// its blob; like a dormant head it is verified before it serves bytes.
+	unverified     bool
 	running        bool
 	ctx            context.Context
 	finishWork     func()
@@ -91,6 +94,7 @@ type Generation struct {
 	samples        []sample
 	upstreamStatus int
 	downloadNS     int64
+	checkpoint     int64 // last database write order assigned under mu; see checkpointLocked
 }
 
 // active generations own their files: a writer, readers or an in-flight hash.
@@ -129,12 +133,23 @@ type View struct {
 	SampledAt    time.Time
 }
 
-// Lock invariant: mu guards in-memory state and short database/file metadata
-// operations, but is never held while hashing a whole file. A complete-file
-// SHA256 runs in a manager-owned goroutine registered in verifying; callers
-// wait for it without mu and then re-run admission, which re-checks generation
-// identity and state. A generation being hashed is pinned (hashing) and is not
-// removed until that verification commits its result under mu.
+// Lock invariant: mu guards in-memory state. It is never held while hashing a
+// whole file, transferring bytes or writing a progress checkpoint:
+//
+//   - A complete-file SHA256 runs in a manager-owned goroutine registered in
+//     verifying; callers wait for it without mu and then re-run admission,
+//     which re-checks generation identity and state. A generation being hashed
+//     is pinned (hashing) and is not removed until that verification commits
+//     its result under mu.
+//   - Progress checkpoints are snapshotted under mu with the generation's next
+//     checkpoint number and written after mu is released; the store applies a
+//     write only if it is newer than the stored one (checkpointLocked).
+//
+// mu is still held across the database write that changes which generation
+// is current (create, retire, complete, delete) and the rename that publishes
+// a blob, so m.current and m.all never disagree with the generations table.
+// Each is one short transaction on the store's writer connection; the longest
+// is CompleteGeneration after the blob and its directory are fsynced.
 type Manager struct {
 	publicationMu sync.Mutex // Configuration publication and Close only; never acquired while holding mu.
 	mu            sync.Mutex
@@ -364,8 +379,9 @@ func (m *Manager) startVerificationLocked(r Resource, check func(context.Context
 	return nil
 }
 
-// verifyDormantLocked re-admits a dormant complete head only after its bytes
-// verify. Cancellation leaves it untouched; only proven-invalid content retires.
+// verifyDormantLocked re-admits a dormant or unverified complete head only
+// after its bytes verify. Cancellation leaves it untouched; only proven-invalid
+// content retires.
 func (m *Manager) verifyDormantLocked(g *Generation) error {
 	path, n, hash := g.Path, g.Bytes, g.Resource.Hash
 	err := m.startVerificationLocked(g.Resource, func(ctx context.Context) (*fileCheck, error) {
@@ -375,7 +391,7 @@ func (m *Manager) verifyDormantLocked(g *Generation) error {
 		if err != nil {
 			return err
 		}
-		if m.current[g.Resource.ID] != g || g.Retired || g.State != "complete" || !g.dormant || g.Path != path {
+		if m.current[g.Resource.ID] != g || g.Retired || g.State != "complete" || !g.dormant && !g.unverified || g.Path != path {
 			// Ownership changed while hashing; removal deferred by the pin happens now.
 			if g.Retired && !g.running && g.readers == 0 && g.State != "deleted" {
 				return m.removeLocked(g)
@@ -383,7 +399,7 @@ func (m *Manager) verifyDormantLocked(g *Generation) error {
 			return nil
 		}
 		if st, e := os.Lstat(path); e == nil && check.matches(st) && check.valid {
-			g.dormant = false
+			g.dormant, g.unverified = false, false
 			return nil
 		}
 		return m.discardCompleteLocked(g)
@@ -420,7 +436,8 @@ func (m *Manager) createLocked(r Resource, fullRetry bool, contexts ...context.C
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if e := m.validateResource(r); e != nil {
+	// Callers checked the immutable binding before taking mu.
+	if e := m.validateIdentityLocked(r); e != nil {
 		return nil, e
 	}
 	// Only complete, revalidated content may be reused across logical resources.
@@ -560,10 +577,18 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 // admit performs one admission pass under mu. A non-nil verification means the
 // caller must wait for it without mu and then re-run admission.
 func (m *Manager) admit(ctx context.Context, r Resource, finish func(), first bool) (*Reader, bool, *verification, error) {
+	// The authorization binding is immutable and every write transaction
+	// re-checks the source fence, so both reads run before taking mu.
+	if e := m.checkBinding(r); e != nil {
+		return nil, false, nil, e
+	}
+	if e := m.db.CheckSourceActive(r.Application, r.SourceFence); e != nil {
+		return nil, false, nil, e
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if first {
-		m.checkpoint("acquire_before_db_validation", nil)
+		m.checkpoint("acquire_holding_lock", nil)
 	}
 	reader, hit, err := m.admitLocked(ctx, r, finish)
 	if errors.Is(err, errVerificationPending) {
@@ -575,10 +600,7 @@ func (m *Manager) admit(ctx context.Context, r Resource, finish func(), first bo
 }
 
 func (m *Manager) admitLocked(ctx context.Context, r Resource, finish func()) (*Reader, bool, error) {
-	if e := m.validateResource(r); e != nil {
-		return nil, false, e
-	}
-	if e := m.db.CheckSourceActive(r.Application, r.SourceFence); e != nil {
+	if e := m.validateIdentityLocked(r); e != nil {
 		return nil, false, e
 	}
 	if m.closed {
@@ -622,9 +644,9 @@ func (m *Manager) admitLocked(ctx context.Context, r Resource, finish func()) (*
 	if g != nil && g.State == "complete" {
 		st, err := os.Stat(g.Path)
 		valid := err == nil && st.Size() == g.Bytes
-		if valid && g.dormant {
-			// Inactive recovery preserves files without changing their ownership.
-			// Re-admission must verify the bytes before trusting that dormant head.
+		if valid && (g.dormant || g.unverified) {
+			// Recovery preserves files without hashing them or changing their
+			// ownership. Admission verifies the bytes before trusting the head.
 			if e := m.verifyDormantLocked(g); e != nil {
 				return nil, false, e
 			}
@@ -861,9 +883,9 @@ func (m *Manager) attempt(g *Generation) error {
 		g.State = "resuming"
 		g.Resumes++
 	}
-	e := m.save(g)
+	snapshot := m.checkpointLocked(g)
 	m.mu.Unlock()
-	if e != nil {
+	if e := m.write(snapshot); e != nil {
 		return e
 	}
 	headers := http.Header{}
@@ -918,9 +940,9 @@ func (m *Manager) attempt(g *Generation) error {
 		g.rangeable = true
 	}
 	g.State = "downloading"
-	e = m.save(g)
+	snapshot = m.checkpointLocked(g)
 	m.mu.Unlock()
-	if e != nil {
+	if e = m.write(snapshot); e != nil {
 		return e
 	}
 	buf := make([]byte, 64<<10)
@@ -961,12 +983,13 @@ func (m *Manager) attempt(g *Generation) error {
 			m.mu.Lock()
 			g.Bytes = offset
 			signal(g)
+			progress := offset-checkpoint >= 1<<20
+			if progress {
+				snapshot = m.checkpointLocked(g)
+			}
 			m.mu.Unlock()
-			if offset-checkpoint >= 1<<20 {
-				m.mu.Lock()
-				e = m.save(g)
-				m.mu.Unlock()
-				if e != nil {
+			if progress {
+				if e = m.write(snapshot); e != nil {
 					return e
 				}
 				checkpoint = offset
@@ -1032,9 +1055,10 @@ func (m *Manager) run(g *Generation) {
 		m.mu.Lock()
 		g.State = "retry_wait"
 		g.Error = err.Error()
-		m.save(g)
+		snapshot := m.checkpointLocked(g)
 		signal(g)
 		m.mu.Unlock()
+		_ = m.write(snapshot)
 		wait := time.NewTimer(m.retryDelay(attempt))
 		select {
 		case <-g.ctx.Done():
@@ -1060,29 +1084,35 @@ func (m *Manager) run(g *Generation) {
 	// Hash any blob already published for this digest before taking mu;
 	// publishLocked trusts this result only for the same unchanged inode.
 	var existing *fileCheck
+	inactive := false
 	if err == nil {
 		existing, _ = checkFile(g.ctx, m.blobPath(g.Resource), g.Bytes, g.Resource.Hash)
+		// Checkpoint the verified transfer and pre-check the source without
+		// mu; CompleteGeneration re-checks the fence in its own transaction.
+		m.mu.Lock()
+		g.Finished = time.Now()
+		g.Error = ""
+		snapshot := m.checkpointLocked(g)
+		m.mu.Unlock()
+		if e := m.write(snapshot); e != nil {
+			err = &failure{message: "Cache state checkpoint failed", category: "database", cause: e}
+		} else if e = m.db.CheckSourceActive(g.Resource.Application, g.Resource.SourceFence); errors.Is(e, store.ErrSourceInactive) {
+			inactive = true
+		} else if e != nil {
+			err = e
+		}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	g.Finished = time.Now()
+	if err != nil {
+		g.Finished = time.Now()
+	}
 	g.running = false
 	m.jobs--
 	g.done = true
 	g.Error = ""
-	if err == nil {
-		if e := m.save(g); e != nil {
-			err = &failure{message: "Cache state checkpoint failed", category: "database", cause: e}
-		}
-	}
-	if err == nil {
-		if e := m.db.CheckSourceActive(g.Resource.Application, g.Resource.SourceFence); e != nil {
-			if errors.Is(e, store.ErrSourceInactive) {
-				err = m.retireLocked(g)
-			} else {
-				err = e
-			}
-		}
+	if err == nil && inactive {
+		err = m.retireLocked(g)
 	}
 	if err == nil {
 		if e := g.file.Sync(); e != nil {
@@ -1096,7 +1126,7 @@ func (m *Manager) run(g *Generation) {
 		g.State = "complete"
 		// A retired writer only finishes its existing readers; it never publishes a head.
 		if !g.Retired {
-			if e := m.db.CompleteGeneration(g.Resource.Application, g.ID, store.Blob{AppID: g.Resource.Application, SHA256: g.Resource.Hash, SizeBytes: g.Bytes, VerifiedAt: time.Now()}, g.Finished, g.VerificationNS, g.Resource.SourceFence); e != nil {
+			if e := m.completeLocked(g); e != nil {
 				if errors.Is(e, store.ErrSourceInactive) {
 					err = m.retireLocked(g)
 				} else {
