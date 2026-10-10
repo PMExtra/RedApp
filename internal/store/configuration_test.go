@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"reflect"
@@ -180,12 +181,11 @@ func TestConfigurationMissingTemplateFrozenAndReappearance(t *testing.T) {
 	bad := presets.Embedded()
 	bad.Apps[codex].Spec.Provider = "http-cache"
 	bad.Apps[codex].Distribution = nil
-	state, _ := s.configurationState()
+	state := configurationRows(t, s)
 	if err := s.ReconcileTemplates(bad); err == nil {
 		t.Fatal("Provider changed")
 	}
-	retained, _ := s.configurationState()
-	if !bytes.Equal(encode(state), encode(retained)) {
+	if retained := configurationRows(t, s); !reflect.DeepEqual(state, retained) {
 		t.Fatal("partial template transaction")
 	}
 	if err := s.ReconcileTemplates(set); err != nil {
@@ -264,18 +264,19 @@ func TestConfigurationPrepareCASAndDatabaseFailuresAreAtomic(t *testing.T) {
 		t.Fatal("partial save/publication", after, published, aborted)
 	}
 	fault.armed.Store(false)
+	// Another writer changing the same application between the read and the
+	// commit makes the conditional update fail.
 	s.SetConfigurationPrepare(func(DirectorySnapshot) (ConfigurationPublication, error) {
-		_, err := s.db.Exec(`UPDATE vendors SET revision=revision+1 WHERE id='anthropic'`)
-		if err != nil {
+		if _, err := s.db.Exec(`UPDATE applications SET revision=revision+1 WHERE uid=?`, a.UID); err != nil {
 			return nil, err
 		}
 		return publicationProbe{&published, &aborted}, nil
 	})
 	if _, err := s.PatchApplicationConfiguration(a.Key, ConfigurationPatch{Revision: a.Revision, Set: map[string]json.RawMessage{"description.en": encode("new")}}); !errors.Is(err, ErrConflict) {
-		t.Fatal("candidate baseline not rechecked", err)
+		t.Fatal("concurrent change of the application not detected", err)
 	}
 	after, _ = s.ApplicationConfiguration(a.Key)
-	if !reflect.DeepEqual(before, after) || published != 0 || aborted != 2 {
+	if after.Revision != before.Revision+1 || !reflect.DeepEqual(before.Effective, after.Effective) || published != 0 || aborted != 2 {
 		t.Fatal("CAS conflict published or saved")
 	}
 }
@@ -289,7 +290,7 @@ func TestRestartWithSameSchemaKeepsConfiguration(t *testing.T) {
 	if err = s.EnsureEntityTemplates(); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := s.configurationState()
+	before := configurationRows(t, s)
 	s.Close()
 	s, err = Open(dir)
 	if err != nil {
@@ -299,8 +300,7 @@ func TestRestartWithSameSchemaKeepsConfiguration(t *testing.T) {
 	if err = s.EnsureEntityTemplates(); err != nil {
 		t.Fatal(err)
 	}
-	after, _ := s.configurationState()
-	if !bytes.Equal(encode(before), encode(after)) {
+	if after := configurationRows(t, s); !reflect.DeepEqual(before, after) {
 		t.Fatal("same-schema restart changed configuration")
 	}
 }
@@ -412,41 +412,33 @@ func TestDistributionDigestRevisionSeparateFromSpec(t *testing.T) {
 	}
 }
 
-// Configuration writes only insert and update rows, so a change that drops a
-// persisted entry must fail instead of leaving the row behind.
-func TestConfigurationChangeCannotDropPersistedEntries(t *testing.T) {
-	s := openTest(t)
-	if err := s.EnsureEntityTemplates(); err != nil {
-		t.Fatal(err)
-	}
-	a, err := s.Application("openai/codex")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = s.SaveAdminNotes("app", a.Key, 1, "private"); err != nil {
-		t.Fatal(err)
-	}
-	for name, drop := range map[string]func(*configurationState){
-		"application": func(st *configurationState) {
-			for i := range st.Applications {
-				if st.Applications[i].UID == a.UID {
-					st.Applications = append(st.Applications[:i], st.Applications[i+1:]...)
-					return
-				}
+// configurationRows reads every row of the configuration tables, so tests can
+// check that a rejected write left the database unchanged.
+func configurationRows(t *testing.T, s *Store) map[string][]string {
+	t.Helper()
+	out := map[string][]string{}
+	for _, table := range []string{"vendors", "applications", "application_sources", "vendor_config", "application_config", "template_snapshots", "trusted_distribution_snapshots", "application_instructions", "application_http_policies", "vendor_admin_notes", "application_admin_notes", "pending_application_deletes", "settings", "categories", "category_state", "application_categories", "application_tags", "template_category_refs"} {
+		rows, err := s.db.Query(`SELECT * FROM ` + table)
+		if err != nil {
+			t.Fatal(err)
+		}
+		columns, _ := rows.Columns()
+		for rows.Next() {
+			values := make([]any, len(columns))
+			for i := range values {
+				values[i] = new(any)
 			}
-		},
-		"admin note": func(st *configurationState) { delete(st.Notes, configKey("App", a.UID)) },
-	} {
-		t.Run(name, func(t *testing.T) {
-			before, _ := s.configurationState()
-			err := s.changeConfiguration(func(st *configurationState) error { drop(st); return nil })
-			if err == nil {
-				t.Fatal("dropping a persisted entry was accepted")
+			if err = rows.Scan(values...); err != nil {
+				t.Fatal(err)
 			}
-			after, _ := s.configurationState()
-			if !bytes.Equal(encode(before), encode(after)) {
-				t.Fatal("rejected change modified the configuration")
+			line := ""
+			for _, v := range values {
+				line += fmt.Sprintf("%v|", *(v.(*any)))
 			}
-		})
+			out[table] = append(out[table], line)
+		}
+		rows.Close()
+		slices.Sort(out[table])
 	}
+	return out
 }

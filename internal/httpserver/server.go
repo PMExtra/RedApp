@@ -101,10 +101,6 @@ type Server struct {
 	configurationCheck func(store.DirectorySnapshot) error
 	deleteWait         time.Duration
 
-	// directoryMu serializes directory and configuration writes with registry
-	// publication. It is held across the store write, which also publishes the
-	// new snapshot (publication.go), so that writes cannot publish out of order.
-	directoryMu      sync.Mutex
 	exchangeMu       sync.Mutex
 	exchangePreviews map[string]exchangePreview
 }

@@ -325,7 +325,7 @@ func TestPrewarmManualIgnoresMetadataChangesAndDeletionDrains(t *testing.T) {
 	second := startWarm(t, h, map[string]any{"request_id": strings.Repeat("b", 32), "paths": []string{"/block"}}, 201)
 	<-deleted
 	app, _ := h.server.store.Application("warm/app")
-	if err := h.server.deleteApplication(context.Background(), app.Key, app.Revision); err != nil {
+	if err := h.server.deleteApplication(context.Background(), app.Key, app.UID, app.Revision); err != nil {
 		t.Fatal(err)
 	}
 	// The deleted application's jobs are gone with it.

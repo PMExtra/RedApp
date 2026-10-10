@@ -65,12 +65,15 @@ type Store struct {
 	rates                 rates
 	pending               counterBuffer
 	work                  applicationWork
-	configMu              sync.Mutex
+	writeMu               sync.Mutex // orders configuration writes with their publication; held across one write transaction plus the in-memory prepare and publish (see writeConfiguration)
 	validateDistributions func([]presets.Descriptor) error
 	prepareConfiguration  func(DirectorySnapshot) (ConfigurationPublication, error)
 	// beforeCommit runs inside every configuration transaction just before it
 	// commits. Only test options set it.
 	beforeCommit func(*sql.Tx) error
+	// view is the runtime view of the last committed configuration, loaded on
+	// first use. writeMu guards it.
+	view *directoryView
 }
 
 // Option configures a Store at construction; production uses none.

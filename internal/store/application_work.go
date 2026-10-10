@@ -84,37 +84,50 @@ func (s *Store) ApplicationWork(ctx context.Context, app string) (context.Contex
 // PrepareApplicationDeletion validates everything before interrupting any task.
 // The durable intent distinguishes force deletion from historical soft deletes.
 func (s *Store) PrepareApplicationDeletion(key string, revision int64) (string, <-chan struct{}, error) {
+	return s.PrepareGuardedApplicationDeletion(key, "", revision)
+}
+
+// PrepareGuardedApplicationDeletion is PrepareApplicationDeletion that also
+// fails with ErrConflict unless the application still has the UID expected
+// (when not empty), so a deletion never reaches an application recreated
+// under the same key.
+func (s *Store) PrepareGuardedApplicationDeletion(key, expected string, revision int64) (string, <-chan struct{}, error) {
 	if _, ok := BuiltinApplicationTemplate(key); ok {
 		return "", nil, ErrBuiltinTemplate
 	}
 	var uid string
-	err := s.changeConfiguration(func(st *configurationState) error {
-		if _, ok := st.Templates[templateKey("App", key)]; ok {
+	err := s.writeConfiguration(func(w *configSet) error {
+		if t, err := w.template("App", key); err != nil {
+			return err
+		} else if t != nil {
 			return ErrBuiltinTemplate
 		}
-		for i := range st.Applications {
-			app := &st.Applications[i]
-			if app.Key != key {
-				continue
-			}
-			// A retry of a pending deletion is not checked against a revision again:
-			// the application is already read-only and only its UID identifies it.
-			_, pending := st.Pending[app.UID]
-			if revision != app.Revision && !pending {
-				return ErrConflict
-			}
-			uid = app.UID
-			if !pending {
-				st.Pending[uid] = revision
-				now := time.Now().UTC()
-				app.DeletedAt = &now
-				app.Enabled = false
-				app.Revision++
-			}
-			return nil
+		app, err := w.appByKey(key)
+		if err != nil {
+			return err
 		}
-		return sql.ErrNoRows
-	})
+		if app == nil {
+			return sql.ErrNoRows
+		}
+		if expected != "" && app.UID != expected {
+			return ErrConflict
+		}
+		// A retry of a pending deletion is not checked against a revision again:
+		// the application is already read-only and only its UID identifies it.
+		if revision != app.Revision && !app.pendingBefore {
+			return ErrConflict
+		}
+		uid = app.UID
+		if !app.pendingBefore {
+			now := time.Now().UTC()
+			app.pending, app.pendingRevision = true, revision
+			app.DeletedAt = &now
+			app.Enabled = false
+			app.Revision++
+			app.changed = true
+		}
+		return nil
+	}, nil)
 	if err != nil {
 		return "", nil, err
 	}
@@ -133,10 +146,10 @@ func (s *Store) PrepareApplicationDeletion(key string, revision int64) (string, 
 
 // FinishApplicationDeletion purges a drained pending deletion. A non-nil purge
 // wraps the database removal (for example with the downloads mutex); it runs
-// with configMu held, keeping the lock order configMu before the downloads mutex.
+// with writeMu held, keeping the lock order writeMu before the downloads mutex.
 func (s *Store) FinishApplicationDeletion(uid string, purge func(remove func() error) error) error {
-	s.configMu.Lock()
-	defer s.configMu.Unlock()
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	remove := func() error {
 		var key string
 		var revision int64

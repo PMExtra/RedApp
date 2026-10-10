@@ -40,7 +40,6 @@ const categoryKind = "categories"
 const taxonomyColumns = `id,name_en,name_zh_cn,revision,builtin,present,default_en,default_zh_cn,override_en,override_zh_cn`
 
 func taxonomyKey(kind, id string) string { return kind + ":" + id }
-func categoryKey(id string) string       { return taxonomyKey(categoryKind, id) }
 func scanTaxonomy(row scanner) (item TaxonomyItem, err error) {
 	var en, zh, oe, oz sql.NullString
 	err = row.Scan(&item.ID, &item.Name.En, &item.Name.ZhCN, &item.Revision, &item.Builtin, &item.Present, &en, &zh, &oe, &oz)
@@ -91,23 +90,10 @@ func (item *TaxonomyItem) decorate() {
 		item.Fields[p] = FieldOrigin{Source: source, Differs: differs}
 	}
 }
-func readTaxonomy(tx *sql.Tx) (map[string]TaxonomyItem, error) {
-	rows, err := tx.Query(`SELECT ` + taxonomyColumns + ` FROM categories ORDER BY id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]TaxonomyItem{}
-	for rows.Next() {
-		item, err := scanTaxonomy(rows)
-		if err != nil {
-			return nil, err
-		}
-		out[categoryKey(item.ID)] = item
-	}
-	return out, rows.Err()
-}
-func writeTaxonomy(tx *sql.Tx, item TaxonomyItem) error {
+
+// writeCategory stores a category under CAS: stored is the revision the writer
+// read, 0 for a category it created.
+func writeCategory(tx *sql.Tx, item TaxonomyItem, stored int64) error {
 	var en, zh, oe, oz any
 	if item.Default != nil {
 		en, zh = item.Default.En, item.Default.ZhCN
@@ -118,33 +104,36 @@ func writeTaxonomy(tx *sql.Tx, item TaxonomyItem) error {
 	if v, ok := leaf(item.Override, "name.zh-CN"); ok {
 		oz = v
 	}
-	_, err := tx.Exec(`INSERT INTO categories(`+taxonomyColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name_en=excluded.name_en,name_zh_cn=excluded.name_zh_cn,revision=excluded.revision,builtin=excluded.builtin,present=excluded.present,default_en=excluded.default_en,default_zh_cn=excluded.default_zh_cn,override_en=excluded.override_en,override_zh_cn=excluded.override_zh_cn`, item.ID, item.Name.En, item.Name.ZhCN, item.Revision, item.Builtin, item.Present, en, zh, oe, oz)
-	return err
+	return casExec(tx, stored == 0,
+		`INSERT INTO categories(`+taxonomyColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`, []any{item.ID, item.Name.En, item.Name.ZhCN, item.Revision, item.Builtin, item.Present, en, zh, oe, oz},
+		`UPDATE categories SET name_en=?,name_zh_cn=?,revision=?,builtin=?,present=?,default_en=?,default_zh_cn=?,override_en=?,override_zh_cn=? WHERE id=? AND revision=?`, []any{item.Name.En, item.Name.ZhCN, item.Revision, item.Builtin, item.Present, en, zh, oe, oz, item.ID, stored})
 }
-func (st *configurationState) reconcileTaxonomy(spec presets.TaxonomySpec) error {
+func (w *configSet) reconcileTaxonomy(spec presets.TaxonomySpec) error {
 	if err := spec.Validate(); err != nil {
 		return err
 	}
-	previous := map[string]TaxonomyItem{}
-	for key, item := range st.Taxonomy {
-		previous[key] = item
+	if err := w.loadAllCategories(); err != nil {
+		return err
 	}
-	for key, item := range st.Taxonomy {
+	previous := map[string]TaxonomyItem{}
+	for _, id := range w.categoryIDs() {
+		item, _ := w.category(id)
+		previous[id] = *item
 		if item.Builtin {
 			if item.Present {
 				item.Revision++
 			}
 			item.Present = false
 			item.decorate()
-			st.Taxonomy[key] = item
+			w.putCategory(*item)
 		}
 	}
 	for _, entry := range spec.Categories {
-		key := categoryKey(entry.ID)
-		item, exists := st.Taxonomy[key]
-		before := previous[key]
+		item, _ := w.category(entry.ID)
+		exists := item != nil
+		before := previous[entry.ID]
 		if !exists {
-			item = TaxonomyItem{Kind: categoryKind, ID: entry.ID, Revision: 1, Override: Object{}}
+			item = &TaxonomyItem{Kind: categoryKind, ID: entry.ID, Revision: 1, Override: Object{}}
 		} else if !item.Builtin {
 			// Preset additions must not silently bind an administrator-owned identity.
 			continue
@@ -166,22 +155,17 @@ func (st *configurationState) reconcileTaxonomy(spec presets.TaxonomySpec) error
 			item.Revision++
 		}
 		item.decorate()
-		st.Taxonomy[key] = item
-	}
-	return nil
-}
-func (st *configurationState) validateCategories(ids []string) error {
-	for _, id := range ids {
-		if _, ok := st.Taxonomy[categoryKey(id)]; !ok {
-			return invalidf("unknown category %s", id)
-		}
+		w.putCategory(*item)
 	}
 	return nil
 }
 
 // resolveNewCategories maps typed names to existing categories by either language,
 // or creates administrator-owned categories in the same configuration change.
-func (st *configurationState) resolveNewCategories(names []string) ([]string, error) {
+func (w *configSet) resolveNewCategories(names []string) ([]string, error) {
+	if err := w.loadAllCategories(); err != nil {
+		return nil, err
+	}
 	var out []string
 	for _, raw := range names {
 		name := strings.TrimSpace(norm.NFC.String(raw))
@@ -189,36 +173,36 @@ func (st *configurationState) resolveNewCategories(names []string) ([]string, er
 			return nil, invalidf("invalid category name")
 		}
 		folded := presets.FoldText(name)
-		matches := map[string]bool{}
-		for _, item := range st.Taxonomy {
+		var matches []string
+		for _, id := range w.categoryIDs() {
+			item := w.categories[id]
 			if presets.FoldText(item.Name.En) == folded || presets.FoldText(item.Name.ZhCN) == folded {
-				matches[item.ID] = true
+				matches = append(matches, id)
 			}
 		}
 		if len(matches) > 1 {
 			return nil, ErrCategoryAmbiguous
 		}
-		for id := range matches {
-			out = append(out, id)
-		}
 		if len(matches) == 1 {
+			out = append(out, matches[0])
 			continue
 		}
-		id, err := st.newCategoryID(name)
+		id, err := w.newCategoryID(name)
 		if err != nil {
 			return nil, err
 		}
 		item := TaxonomyItem{Kind: categoryKind, ID: id, Name: LocalizedText{En: name, ZhCN: name}, Revision: 1, Present: true, Override: Object{}}
 		item.decorate()
-		st.Taxonomy[categoryKey(id)] = item
+		w.putCategory(item)
 		out = append(out, id)
 	}
 	return out, nil
 }
 
-// New category IDs are stable after creation: a readable ASCII slug when possible, otherwise random.
-func (st *configurationState) newCategoryID(name string) (string, error) {
-	taken := func(id string) bool { _, ok := st.Taxonomy[categoryKey(id)]; return ok }
+// New category IDs are stable after creation: a readable ASCII slug when possible,
+// otherwise random. Requires every category to be loaded.
+func (w *configSet) newCategoryID(name string) (string, error) {
+	taken := func(id string) bool { return w.categories[id] != nil }
 	var b strings.Builder
 	for _, r := range strings.ToLower(name) {
 		switch {
@@ -255,45 +239,6 @@ func (st *configurationState) newCategoryID(name string) (string, error) {
 			return id, nil
 		}
 	}
-}
-
-// referencedCategories mirrors cleanupCategories for an in-memory candidate state.
-func (st *configurationState) referencedCategories() (map[string]bool, error) {
-	out := map[string]bool{}
-	for _, a := range st.Applications {
-		if a.DeletedAt != nil {
-			continue
-		}
-		effective, err := st.effective("App", a.UID)
-		if err != nil {
-			return nil, err
-		}
-		var spec presets.AppSpec
-		if err = strict(effective, &spec); err != nil {
-			return nil, err
-		}
-		for _, id := range spec.Categories {
-			out[id] = true
-		}
-	}
-	for _, t := range st.Templates {
-		if t.Kind != "App" || !t.Present {
-			continue
-		}
-		var spec presets.AppSpec
-		if err := strict(t.Spec, &spec); err != nil {
-			return nil, err
-		}
-		for _, id := range spec.Categories {
-			out[id] = true
-		}
-	}
-	for key, item := range st.Taxonomy {
-		if item.Builtin {
-			out[strings.TrimPrefix(key, categoryKind+":")] = true
-		}
-	}
-	return out, nil
 }
 func projectAppTaxonomy(tx *sql.Tx, a Application) error {
 	if _, err := tx.Exec(`DELETE FROM application_categories WHERE app_uid=?`, a.UID); err != nil {
@@ -399,8 +344,10 @@ func (s *Store) PatchTaxonomy(id string, patch ConfigurationPatch) (TaxonomyItem
 	if !identity.ValidSlug(id) || len(patch.NewCategories) > 0 {
 		return TaxonomyItem{}, ErrInvalidDirectory
 	}
-	s.configMu.Lock()
-	defer s.configMu.Unlock()
+	// Names stay unique only if no configuration write creates a category
+	// between the uniqueness check and the commit.
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	tx, err := s.db.Begin()
 	if err != nil {
 		return TaxonomyItem{}, err
@@ -458,7 +405,7 @@ func (s *Store) PatchTaxonomy(id string, patch ConfigurationPatch) (TaxonomyItem
 	}
 	item.Revision++
 	item.decorate()
-	if err = writeTaxonomy(tx, item); err == nil {
+	if err = writeCategory(tx, item, patch.Revision); err == nil {
 		err = bumpCategoryRevision(tx)
 	}
 	if err != nil {

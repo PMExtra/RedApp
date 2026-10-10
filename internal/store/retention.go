@@ -63,11 +63,15 @@ func checkRetention(tx *sql.Tx, app string, guard *RetentionGuard, at time.Time)
 	if !ok {
 		return ErrInvalidDirectory
 	}
-	st, err := readConfigurationState(tx)
+	w := newConfigSet(tx)
+	entry, err := w.app(uid)
 	if err != nil {
 		return err
 	}
-	effective, err := st.effective("App", uid)
+	if entry == nil {
+		return ErrSourceInactive
+	}
+	effective, err := w.effective("App", entry.config)
 	if err != nil {
 		return err
 	}
