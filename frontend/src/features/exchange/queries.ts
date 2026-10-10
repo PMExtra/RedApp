@@ -115,7 +115,12 @@ export function useCopyApp(
       );
     },
     onSuccess: () => {
-      for (const key of [queryKey("listApps"), queryKey("listVendors")]) {
+      // The copy joins the source's categories, so their counts change too.
+      for (const key of [
+        queryKey("listApps"),
+        queryKey("listVendors"),
+        queryKey("listCategories"),
+      ]) {
         void client.invalidateQueries({ queryKey: key });
       }
     },

@@ -36,9 +36,14 @@ export function shouldRetry(failureCount: number, error: unknown): boolean {
   return isApiError(error) && error.retryable && failureCount < 2;
 }
 
-// Errors meaning the vendor or application changed state meanwhile (deleted or
-// disabled elsewhere): the cached records are refetched so pages show it.
-const entityStateCodes: readonly AnyErrorCode[] = ["ENTITY_DELETED", "APPLICATION_DISABLED"];
+// Errors meaning the vendor or application changed state meanwhile (deleted,
+// being deleted or disabled elsewhere): the cached records are refetched so
+// pages show it.
+const entityStateCodes: readonly AnyErrorCode[] = [
+  "ENTITY_DELETED",
+  "APPLICATION_DELETE_PENDING",
+  "APPLICATION_DISABLED",
+];
 
 export function createQueryClient(options: QueryClientOptions = {}): QueryClient {
   const client: QueryClient = new QueryClient({

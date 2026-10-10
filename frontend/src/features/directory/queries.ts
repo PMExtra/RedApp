@@ -178,8 +178,14 @@ export function useApp(vendor: MaybeRefOrGetter<string>, app: MaybeRefOrGetter<s
   });
 }
 
+/** Lists whose contents or counts follow the set of vendors and applications. */
 function refreshDirectory(client: QueryClient): void {
-  for (const key of [queryKey("listVendors"), queryKey("listApps"), queryKey("getBootstrap")]) {
+  for (const key of [
+    queryKey("listVendors"),
+    queryKey("listApps"),
+    queryKey("listCategories"),
+    queryKey("getBootstrap"),
+  ]) {
     void client.invalidateQueries({ queryKey: key });
   }
 }

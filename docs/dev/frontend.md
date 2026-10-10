@@ -155,7 +155,7 @@ const save = useRevisionedMutation({
 ```
 
 - 409 `REVISION_CONFLICT` 不弹通知，而是设置 `save.conflict`；页面保留草稿并显示 `<RevisionConflictAlert @reload="save.reload()" />`。`reload()` 重新读取基线，页面自己决定是否重置草稿。
-- 其他失败由全局处理：`MutationCache` 弹出错误通知，内容是本地化的错误码文本、服务端细节（如 `VALIDATION_FAILED` 指出的字段）和请求 ID。`ENTITY_DELETED` 与 `APPLICATION_DISABLED` 另外让 `getApp`、`getVendor` 重新读取，页面随之显示只读或“请先启用应用”提示。页面自行展示某些错误码时，在 `meta: { handledCodes: [...] }`（`useRevisionedMutation` 用 `handledCodes` 选项）中声明；完全不弹用 `meta: { silent: true }`。
+- 其他失败由全局处理：`MutationCache` 弹出错误通知，内容是本地化的错误码文本、服务端细节（如 `VALIDATION_FAILED` 指出的字段）和请求 ID。`ENTITY_DELETED`、`APPLICATION_DELETE_PENDING` 与 `APPLICATION_DISABLED` 另外让 `getApp`、`getVendor` 重新读取，页面随之显示只读或“请先启用应用”提示。页面自行展示某些错误码时，在 `meta: { handledCodes: [...] }`（`useRevisionedMutation` 用 `handledCodes` 选项）中声明；完全不弹用 `meta: { silent: true }`。
 - `ifMatch(revision)` / `ifMatchHeader(resource)` / `revisionFromEtag(etag)` 处理 `"7"` 格式。
 - 应用和厂商的配置覆盖是同一个 revision 资源，所有编辑区块必须通过 `@/features/configuration` 的 `useAppConfiguration` / `useAppConfigurationPatch` 读写，否则一个区块保存后其他区块会 409。
 - 配置覆盖表单用 `useOverlayForm({ configuration, paths, schema })`：草稿只含 `paths` 中的字段，未修改时跟随服务端，有修改时（含 409 重新加载后）保留；`patch(values)` 只包含改过的字段，`reset(path)` 恢复模板值并在原值为覆盖时发送 `unset`；保存成功后调用 `load(响应)`。`resetBinding(path)` 直接绑定到 `FieldReset`。
