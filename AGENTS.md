@@ -1,6 +1,6 @@
 # 项目协作规则
 
-细则见 [docs/dev/conventions.md](docs/dev/conventions.md)，架构见 [docs/dev/architecture.md](docs/dev/architecture.md)，构建与发布见 [docs/dev/development.md](docs/dev/development.md)。
+细则见 [docs/dev/conventions.md](docs/dev/conventions.md)，架构见 [docs/dev/architecture.md](docs/dev/architecture.md)，HTTP 契约见 [docs/dev/api.md](docs/dev/api.md)，构建与发布见 [docs/dev/development.md](docs/dev/development.md)。
 
 ## 协作原则
 
@@ -30,6 +30,7 @@
 | --- | --- |
 | `cmd/redapp` | 服务入口：配置、依赖组装、后台循环 |
 | `cmd/preset-inventory` | 导出预置清单 JSON 给安装器维护脚本 |
+| `api/` | HTTP 契约 `openapi.yaml`（OpenAPI 3.1），服务端与前端的唯一接口来源 |
 | `internal/httpserver` | HTTP 路由、鉴权、错误响应、SPA 与分发路径；`web/` 是前端构建产物 |
 | `internal/apps/builtin` | 编译期发布协议与数据库应用组合成运行时注册表 |
 | `internal/apps/codex`、`internal/apps/claude` | Codex / Claude Code 发布协议、平台与签名规则 |
@@ -68,9 +69,10 @@
 - **Schema**：1.0 前不写数据迁移。任何 schema 变化都提升 `store.SchemaVersion`，旧数据目录被拒绝。1.0 起每次 schema 变化必须附带迁移和 golden fixture 测试（[ADR 0001](docs/dev/adr/0001-pre-1.0-no-migrations.md)）。
 - **安装器**：禁止编辑 `installers/*/*/upstream/`。只改 `patches/`，用 `scripts/update-installers.py` 重新生成 `generated/`；patch 不允许 fuzz（[installers.md](docs/dev/installers.md)）。
 - **前端产物**：`internal/httpserver/web` 是提交的构建产物。前端源码或依赖变化必须重新构建并提交，且必须能由锁定的工具链逐字节复现。
-- **SPA 路由**：新增前端路由必须同时加入 `internal/httpserver/server.go` 中 `validUI` 的深链白名单，否则直接访问会 404。
+- **SPA 路由**：新增前端路由必须同时加入 `internal/httpserver/server.go` 中 `validUI` 的深链白名单和规范的 `x-spa-routes`，否则直接访问会 404。
 - **依赖**：新增或升级 Go/npm 依赖必须同步更新 `third_party/README.md` 和对应许可证原文。
-- **并发写**：后台写操作使用 revision（`If-Match` 或请求体 `revision`）做 CAS，冲突返回 409，不允许静默覆盖。
+- **HTTP 契约**：路由、字段和错误码以 `api/openapi.yaml` 为准，改接口先改规范并在同一 PR 中改实现（[ADR 0009](docs/dev/adr/0009-openapi-contract.md)）。
+- **并发写**：后台写操作使用 revision（`If-Match`）做 CAS，冲突返回 409，不允许静默覆盖。
 - **格式**：`gofmt` 覆盖 `cmd internal installers presets`，由 `make check` 强制。
 - **Provider**：Provider 在编译期定义，不引入插件或可执行配置（[ADR 0002](docs/dev/adr/0002-compile-time-providers.md)）。
 

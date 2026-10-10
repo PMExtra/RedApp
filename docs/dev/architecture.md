@@ -95,6 +95,8 @@ RedApp 是单进程 Go 服务：一个二进制、一个 SQLite 数据库、一�
 | `/api/...`、`/admin/api/...` | 公开 API 与管理 API |
 | `/admin/...` | 后台 SPA；只有 `validUI` 白名单中的路径返回页面，其余 404 |
 
+每条路由的请求、响应和错误码定义在 [`api/openapi.yaml`](../../api/openapi.yaml)，说明见 [api.md](api.md)。
+
 ## 提供者（Provider）
 
 Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](adr/0002-compile-time-providers.md)），同一列表也写进 schema 的 CHECK 约束：
@@ -223,7 +225,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 | 两套缓存引擎 | `download` 与 `httpcache` 各自实现代际、临时文件发布、清理预览、恢复和指标 | 阶段 5：HTTP 缓存复用下载引擎的存储与发布机制 |
 | store 暴露 DB | `Store.DB` 是公开字段，`auth`、`history`、`httpcache`、`httpserver` 直接写 SQL | 阶段 5：SQL 收回 `internal/store`，按实体封装 |
 | 配置快照 CAS | 每次配置写入在全局锁下读取、克隆整份配置状态，事务内再与重读结果整体比较；任一实体的并发变化都会让本次写入失败，成本随配置规模增长。实体 revision 只是额外检查 | 阶段 5：按实体 CAS |
-| 手写路由 | `Server.ServeHTTP` 按前缀和字符串切分分发；错误码由 HTTP 状态推导；`request_id` 不进日志 | 阶段 3：`http.ServeMux` + 中间件、显式错误码、request_id 日志、OpenAPI 与契约测试 |
+| 手写路由 | `Server.ServeHTTP` 按前缀和字符串切分分发；错误码由 HTTP 状态推导；`request_id` 不进日志 | 阶段 3：按 [OpenAPI 契约](api.md) 改用 `http.ServeMux` + 中间件、显式错误码、request_id 日志与契约测试 |
 | HTTP 缓存冷请求 | 冷请求必须先完整落盘才响应，单次下载在全部来源上合计最长 9 分钟；慢速链路上的超大文件会失败，前置反代也可能先超时 | 阶段 5：复用下载引擎边下边读后取消总时限 |
 | 锁内 I/O | 下载进度保存和数据库调用仍在 `Manager.mu` 内（整文件哈希和 bcrypt 已移出）；媒体、预热和目录写入在持锁期间做 I/O | 阶段 2/5：按[约定](conventions.md#并发)调整 |
 | 测试钩子与命名 | 生产结构体含测试钩子字段；部分测试文件以版本或评审轮次命名 | 阶段 2 |
