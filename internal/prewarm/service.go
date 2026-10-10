@@ -4,7 +4,6 @@ package prewarm
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -429,7 +428,7 @@ func (s *Service) Wait(ctx context.Context, uid, id string) (store.PrewarmJob, e
 func (s *Service) Status(uid, id string) (store.PrewarmJob, error) {
 	job, err := s.DB.PrewarmJob(uid, id)
 	if err == nil && job.State != "running" && time.Now().After(job.Updated.Add(24*time.Hour)) {
-		return store.PrewarmJob{}, sql.ErrNoRows
+		return store.PrewarmJob{}, store.ErrNotFound
 	}
 	if current := s.active.Load(); current != nil && current.UID == uid && current.ID == id && err == nil {
 		job.Bytes = current.Budget.Used()
@@ -449,7 +448,7 @@ func (s *Service) Cancel(uid, id string) error {
 }
 
 // Retry starts a job for the unsuccessful items of a finished job, with the
-// idempotency rules of Start. A missing or expired job returns sql.ErrNoRows.
+// idempotency rules of Start. A missing or expired job returns store.ErrNotFound.
 func (s *Service) Retry(ctx context.Context, key, id, requestID string) (store.PrewarmJob, bool, error) {
 	e, ok := s.Registry.Lookup(key)
 	if !ok {

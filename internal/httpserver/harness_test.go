@@ -3,8 +3,10 @@ package httpserver
 import (
 	"bytes"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -33,6 +35,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/prewarm"
 	"github.com/PMExtra/RedApp/internal/releasemaintenance"
 	"github.com/PMExtra/RedApp/internal/store"
+	"github.com/PMExtra/RedApp/internal/store/storetest"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -51,6 +54,16 @@ type harness struct {
 	csrf     string
 	logs     *logBuffer
 	close    func()
+	rawDB    *sql.DB
+}
+
+// sql returns a separate connection to the harness database for fixtures and
+// fault injection that have no store API (see storetest.Open).
+func (h *harness) sql() *sql.DB {
+	if h.rawDB == nil {
+		h.rawDB = storetest.Open(h.t, h.dir)
+	}
+	return h.rawDB
 }
 
 type harnessConfig struct {
@@ -136,14 +149,14 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 		}
 	}
 	h := &harness{t: t, store: db, dir: cfg.dir, logs: &logBuffer{}}
-	var admins int
-	must(db.DB.QueryRow("SELECT COUNT(*) FROM admin").Scan(&admins))
-	if admins == 0 {
+	if _, err = db.AdminPassword(); errors.Is(err, store.ErrNotFound) {
 		hash, err := bcrypt.GenerateFromPassword([]byte(harnessPassword), bcrypt.MinCost)
 		must(err)
-		_, err = db.DB.Exec("INSERT INTO admin(id,hash,revision) VALUES(1,?,1)", hash)
+		_, err = db.CreateAdminPassword(hash)
 		must(err)
 		h.password = harnessPassword
+	} else {
+		must(err)
 	}
 	pool := distributor.NewPool()
 	must(pool.LoadProxy(db))
@@ -203,7 +216,7 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 			manager.Close()
 			icons.Close()
 			pool.CloseIdleConnections()
-			db.DB.Close()
+			db.Close()
 		})
 	}
 	t.Cleanup(h.close)

@@ -23,7 +23,7 @@ func (s *Store) RecordDownload(uid, client string, now time.Time) error {
 	if ip == nil || uid == "" {
 		return nil
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -89,7 +89,7 @@ type RankedApplication struct {
 
 func (s *Store) DownloadRanking(now time.Time, limit int) ([]RankedApplication, error) {
 	hour := now.UTC().Unix() / 3600 * 3600
-	rows, err := s.DB.Query(`SELECT d.app_uid,d.registers FROM download_sketches d JOIN applications a ON a.uid=d.app_uid JOIN vendors v ON v.uid=a.vendor_uid WHERE d.hour_s BETWEEN ? AND ? AND a.enabled=1 AND v.enabled=1 AND a.deleted_at_s IS NULL AND v.deleted_at_s IS NULL ORDER BY d.app_uid`, hour-(rankingHours-1)*3600, hour)
+	rows, err := s.read.Query(`SELECT d.app_uid,d.registers FROM download_sketches d JOIN applications a ON a.uid=d.app_uid JOIN vendors v ON v.uid=a.vendor_uid WHERE d.hour_s BETWEEN ? AND ? AND a.enabled=1 AND v.enabled=1 AND a.deleted_at_s IS NULL AND v.deleted_at_s IS NULL ORDER BY d.app_uid`, hour-(rankingHours-1)*3600, hour)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ type HomepagePins struct {
 
 func (s *Store) HomepagePins() (HomepagePins, error) {
 	out := HomepagePins{Keys: []string{}}
-	tx, err := s.DB.Begin()
+	tx, err := s.read.Begin()
 	if err != nil {
 		return out, err
 	}
@@ -172,7 +172,7 @@ func (s *Store) SaveHomepagePins(value HomepagePins) (HomepagePins, error) {
 	if len(value.Keys) > 100 {
 		return value, ErrInvalidDirectory
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return value, err
 	}

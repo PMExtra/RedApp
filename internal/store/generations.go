@@ -55,7 +55,7 @@ func scanGeneration(row scanner) (Generation, error) {
 	return g, err
 }
 func (s *Store) Generations() ([]Generation, error) {
-	rows, err := s.DB.Query("SELECT " + generationColumns + " FROM generations ORDER BY id")
+	rows, err := s.read.Query("SELECT " + generationColumns + " FROM generations ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +77,7 @@ func (s *Store) CreateGeneration(g Generation) error {
 	if !validGeneration(g) || !g.IsCurrent || g.RetiredAt != nil {
 		return errors.New("Invalid new generation")
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -104,7 +104,7 @@ func (s *Store) SaveGeneration(g Generation) error {
 	if g.BlobSHA256 != "" {
 		blob = g.BlobSHA256
 	}
-	result, err := s.DB.Exec(`UPDATE generations SET blob_sha256=?,phase=?,bytes=?,total_bytes=?,source_bytes=?,etag=?,resumes=?,finished_at_s=?,verification_ns=?,last_error_code=?,full_retry=?,download_ns=? WHERE id=? AND app_id=? AND version=? AND resource_key=? AND expected_sha256=?`, blob, g.Phase, g.Bytes, g.TotalBytes, g.SourceBytes, g.ETag, g.Resumes, unixPointer(g.FinishedAt), g.VerificationNS, g.LastErrorCode, g.FullRetry, g.DownloadNS, g.ID, g.AppID, g.Version, g.ResourceKey, g.ExpectedSHA256)
+	result, err := s.db.Exec(`UPDATE generations SET blob_sha256=?,phase=?,bytes=?,total_bytes=?,source_bytes=?,etag=?,resumes=?,finished_at_s=?,verification_ns=?,last_error_code=?,full_retry=?,download_ns=? WHERE id=? AND app_id=? AND version=? AND resource_key=? AND expected_sha256=?`, blob, g.Phase, g.Bytes, g.TotalBytes, g.SourceBytes, g.ETag, g.Resumes, unixPointer(g.FinishedAt), g.VerificationNS, g.LastErrorCode, g.FullRetry, g.DownloadNS, g.ID, g.AppID, g.Version, g.ResourceKey, g.ExpectedSHA256)
 	return affected(result, err)
 }
 func affected(result sql.Result, err error) error {
@@ -121,14 +121,14 @@ func (s *Store) RetireGeneration(app, id string, at time.Time) error {
 	if err := requireApp(app); err != nil {
 		return err
 	}
-	result, err := s.DB.Exec("UPDATE generations SET is_current=0,retired_at_s=COALESCE(retired_at_s,?) WHERE id=? AND app_id=?", at.Unix(), id, app)
+	result, err := s.db.Exec("UPDATE generations SET is_current=0,retired_at_s=COALESCE(retired_at_s,?) WHERE id=? AND app_id=?", at.Unix(), id, app)
 	return affected(result, err)
 }
 func (s *Store) DeleteGeneration(app, id string) error {
 	if err := requireApp(app); err != nil {
 		return err
 	}
-	_, err := s.DB.Exec("DELETE FROM generations WHERE id=? AND app_id=? AND is_current=0", id, app)
+	_, err := s.db.Exec("DELETE FROM generations WHERE id=? AND app_id=? AND is_current=0", id, app)
 	return err
 }
 func putBlob(tx *sql.Tx, b Blob) error {
@@ -147,7 +147,7 @@ func putBlob(tx *sql.Tx, b Blob) error {
 	return err
 }
 func (s *Store) PutBlob(b Blob) error {
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -163,12 +163,12 @@ func (s *Store) Blob(app, sha string) (Blob, error) {
 		return b, err
 	}
 	var at int64
-	err := s.DB.QueryRow("SELECT size_bytes,verified_at_s FROM blobs WHERE app_id=? AND sha256=?", app, sha).Scan(&b.SizeBytes, &at)
+	err := s.read.QueryRow("SELECT size_bytes,verified_at_s FROM blobs WHERE app_id=? AND sha256=?", app, sha).Scan(&b.SizeBytes, &at)
 	b.VerifiedAt = time.Unix(at, 0).UTC()
 	return b, err
 }
 func (s *Store) Blobs() ([]Blob, error) {
-	rows, err := s.DB.Query("SELECT app_id,sha256,size_bytes,verified_at_s FROM blobs ORDER BY app_id,sha256")
+	rows, err := s.read.Query("SELECT app_id,sha256,size_bytes,verified_at_s FROM blobs ORDER BY app_id,sha256")
 	if err != nil {
 		return nil, err
 	}
@@ -190,14 +190,14 @@ func (s *Store) BlobReferences(app, sha string) (int, error) {
 		return 0, err
 	}
 	var n int
-	err := s.DB.QueryRow("SELECT COUNT(*) FROM generations WHERE app_id=? AND blob_sha256=?", app, sha).Scan(&n)
+	err := s.read.QueryRow("SELECT COUNT(*) FROM generations WHERE app_id=? AND blob_sha256=?", app, sha).Scan(&n)
 	return n, err
 }
 func (s *Store) DeleteUnreferencedBlob(app, sha string) (bool, error) {
 	if err := requireApp(app); err != nil {
 		return false, err
 	}
-	r, err := s.DB.Exec("DELETE FROM blobs WHERE app_id=? AND sha256=? AND NOT EXISTS(SELECT 1 FROM generations WHERE app_id=? AND blob_sha256=?)", app, sha, app, sha)
+	r, err := s.db.Exec("DELETE FROM blobs WHERE app_id=? AND sha256=? AND NOT EXISTS(SELECT 1 FROM generations WHERE app_id=? AND blob_sha256=?)", app, sha, app, sha)
 	if err != nil {
 		return false, err
 	}
@@ -211,7 +211,7 @@ func (s *Store) CompleteGeneration(app, id string, b Blob, finished time.Time, v
 	if b.AppID != app || verificationNS < 0 {
 		return errors.New("Blob application mismatch")
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}

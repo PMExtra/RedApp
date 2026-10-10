@@ -33,7 +33,7 @@ func proxyFixture(t *testing.T) (*Client, *store.Store, *httptest.Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.DB.Close() })
+	t.Cleanup(func() { db.Close() })
 	c, err := New("https://example.com/codex")
 	if err != nil {
 		t.Fatal(err)
@@ -236,7 +236,7 @@ func TestProxySwapDoesNotCancelActiveResponse(t *testing.T) {
 	}))
 	defer upstream.Close()
 	db, _ := store.Open(t.TempDir())
-	defer db.DB.Close()
+	defer db.Close()
 	c, _ := New("https://example.com/codex")
 	c.pool.LoadProxy(db)
 	first := connectProxy(t, upstream, nil, nil)

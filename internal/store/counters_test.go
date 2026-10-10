@@ -9,7 +9,7 @@ import (
 func persistedCounter(t *testing.T, s *Store, scope, app, name string) int64 {
 	t.Helper()
 	var n int64
-	s.DB.QueryRow(`SELECT coalesce(sum(value),0) FROM metric_counters WHERE scope=? AND app_id=? AND metric=?`, scope, app, "counters."+name).Scan(&n)
+	s.db.QueryRow(`SELECT coalesce(sum(value),0) FROM metric_counters WHERE scope=? AND app_id=? AND metric=?`, scope, app, "counters."+name).Scan(&n)
 	return n
 }
 
@@ -94,7 +94,7 @@ func TestCountersForMissingApplicationsOrVersionsAreDiscarded(t *testing.T) {
 func TestFailedCounterFlushRetainsVersionIncrements(t *testing.T) {
 	s := openTest(t)
 	releaseFixture(t, s, "openai/codex", "1.0.0")
-	if _, err := s.DB.Exec(`CREATE TRIGGER fail_version_counter BEFORE UPDATE ON app_versions BEGIN SELECT RAISE(FAIL,'version fault'); END`); err != nil {
+	if _, err := s.db.Exec(`CREATE TRIGGER fail_version_counter BEFORE UPDATE ON app_versions BEGIN SELECT RAISE(FAIL,'version fault'); END`); err != nil {
 		t.Fatal(err)
 	}
 	var reported []error
@@ -106,7 +106,7 @@ func TestFailedCounterFlushRetainsVersionIncrements(t *testing.T) {
 		t.Fatal("failed flush not reported or partially committed", reported)
 	}
 	s.AddVersion("openai/codex", "1.0.0", 0, 6)
-	s.DB.Exec("DROP TRIGGER fail_version_counter")
+	s.db.Exec("DROP TRIGGER fail_version_counter")
 	stop()
 	stats, _ := s.VersionStats("openai/codex")
 	if stats["1.0.0"].DownstreamBytes != 10 || persistedCounter(t, s, "app", "openai/codex", "downstream_bytes") != 4 {

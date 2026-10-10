@@ -25,7 +25,7 @@ func TestConfigurationWholeLeavesSurviveTemplateUpdateAndReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { s.DB.Close() }()
+	defer func() { s.Close() }()
 	set := presets.Embedded()
 	for i := range set.Apps {
 		if set.Apps[i].Metadata.Vendor == "openai" && set.Apps[i].Metadata.ID == "codex" {
@@ -57,7 +57,7 @@ func TestConfigurationWholeLeavesSurviveTemplateUpdateAndReopen(t *testing.T) {
 		t.Fatal(err)
 	}
 	check()
-	s.DB.Close()
+	s.Close()
 	s, err = Open(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -265,7 +265,7 @@ func TestConfigurationPrepareCASAndDatabaseFailuresAreAtomic(t *testing.T) {
 	}
 	fault.armed.Store(false)
 	s.SetConfigurationPrepare(func(DirectorySnapshot) (ConfigurationPublication, error) {
-		_, err := s.DB.Exec(`UPDATE vendors SET revision=revision+1 WHERE id='anthropic'`)
+		_, err := s.db.Exec(`UPDATE vendors SET revision=revision+1 WHERE id='anthropic'`)
 		if err != nil {
 			return nil, err
 		}
@@ -290,12 +290,12 @@ func TestRestartWithSameSchemaKeepsConfiguration(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := s.configurationState()
-	s.DB.Close()
+	s.Close()
 	s, err = Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.DB.Close()
+	defer s.Close()
 	if err = s.EnsureEntityTemplates(); err != nil {
 		t.Fatal(err)
 	}

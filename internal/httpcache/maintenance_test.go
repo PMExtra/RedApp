@@ -19,7 +19,7 @@ import (
 
 func seedMaintenanceRows(t *testing.T, f *fixture, count int) {
 	t.Helper()
-	tx, err := f.db.DB.Begin()
+	tx, err := f.db.HTTPCacheDB().Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestMaintenancePaginationFrozenBoundaryAndWholeCleanup(t *testing.T) {
 	seedMaintenanceRows(t, f, 1205)
 	// An insert immediately after capturing the high-water mark must not join
 	// the selection, even though subsequent selection pages can see it.
-	_, err := f.db.DB.Exec(`CREATE TEMP TRIGGER add_after_highwater AFTER INSERT ON http_cleanup_previews BEGIN
+	_, err := f.db.HTTPCacheDB().Exec(`CREATE TEMP TRIGGER add_after_highwater AFTER INSERT ON http_cleanup_previews BEGIN
 		INSERT INTO http_cache_generations(id,storage_id,path,sha256,size_bytes,fetched_at_s,validated_at_s,last_access_bucket_s,fresh_until_s,headers_json,is_current)
 		SELECT lower(hex(randomblob(16))),NEW.storage_id,'late/file',sha256,7,fetched_at_s,validated_at_s,0,fresh_until_s,'{}',1 FROM http_cache_generations LIMIT 1;
 	END`)
@@ -53,7 +53,7 @@ func TestMaintenancePaginationFrozenBoundaryAndWholeCleanup(t *testing.T) {
 		t.Fatal(preview, err)
 	}
 	var criteria []byte
-	if err = f.db.DB.QueryRow(`SELECT selection_json FROM http_cleanup_previews WHERE id=?`, preview.ID).Scan(&criteria); err != nil {
+	if err = f.db.HTTPCacheDB().QueryRow(`SELECT selection_json FROM http_cleanup_previews WHERE id=?`, preview.ID).Scan(&criteria); err != nil {
 		t.Fatal(err)
 	}
 	if len(criteria) > 512 || strings.Contains(string(criteria), "generation_id") {
@@ -146,15 +146,15 @@ func TestMaintenanceReceiptsExpiryPruningAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	var items, headers int
-	f.db.DB.QueryRow(`SELECT COUNT(*) FROM http_cleanup_preview_items WHERE preview_id=?`, preview.ID).Scan(&items)
-	f.db.DB.QueryRow(`SELECT COUNT(*) FROM http_cleanup_previews WHERE id=?`, preview.ID).Scan(&headers)
+	f.db.HTTPCacheDB().QueryRow(`SELECT COUNT(*) FROM http_cleanup_preview_items WHERE preview_id=?`, preview.ID).Scan(&items)
+	f.db.HTTPCacheDB().QueryRow(`SELECT COUNT(*) FROM http_cleanup_previews WHERE id=?`, preview.ID).Scan(&headers)
 	if items != 205 || headers != 1 {
 		t.Fatal("unbounded cascade or early header deletion", items, headers)
 	}
 	if err = f.s.prunePreviews(context.Background(), 1); err != nil {
 		t.Fatal(err)
 	}
-	f.db.DB.QueryRow(`SELECT COUNT(*) FROM http_cleanup_previews WHERE id=?`, preview.ID).Scan(&headers)
+	f.db.HTTPCacheDB().QueryRow(`SELECT COUNT(*) FROM http_cleanup_previews WHERE id=?`, preview.ID).Scan(&headers)
 	if headers != 0 {
 		t.Fatal("empty expired header retained")
 	}

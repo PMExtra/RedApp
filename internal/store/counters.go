@@ -123,7 +123,7 @@ func (s *Store) FlushCounters() error {
 	return err
 }
 func (s *Store) writeCounters(counters map[counterEntry]int64, versions map[versionEntry]versionDelta) error {
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -133,7 +133,7 @@ func (s *Store) writeCounters(counters map[counterEntry]int64, versions map[vers
 		if ok, seen := existing[app]; seen {
 			return ok, nil
 		}
-		ok, e := PrivateApplicationExists(tx, app)
+		ok, e := applicationNamespaceExists(tx, app)
 		if errors.Is(e, ErrInvalidDirectory) {
 			ok, e = false, nil // A malformed owner can never be recorded; drop it rather than block other counters.
 		}
@@ -213,13 +213,13 @@ func (s *Store) StartCounterFlush(interval time.Duration, onError func(error)) (
 // Close flushes buffered counters and closes the database.
 func (s *Store) Close() error {
 	s.SettleCounters()
-	return s.DB.Close()
+	return s.closeDatabases()
 }
 
 // Counter reads settle buffered increments first so they observe every accepted add.
 func (s *Store) counters(scope, app string) (map[string]int64, error) {
 	s.SettleCounters()
-	rows, err := s.DB.Query("SELECT metric,value FROM metric_counters WHERE scope=? AND app_id=?", scope, app)
+	rows, err := s.read.Query("SELECT metric,value FROM metric_counters WHERE scope=? AND app_id=?", scope, app)
 	if err != nil {
 		return nil, err
 	}

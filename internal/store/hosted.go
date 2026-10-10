@@ -34,13 +34,13 @@ func ValidHostedPath(path string) bool {
 	return len(path) > 0 && len(path) <= 4096 && path[0] != '/' && path[len(path)-1] != '/' && pathmatch.ValidatePath("/"+path) == nil
 }
 func (s *Store) HostedFile(uid, path string) (HostedFile, error) {
-	return scanHosted(s.DB.QueryRow(`SELECT `+hostedColumns+` FROM hosted_files WHERE app_uid=? AND path=?`, uid, path))
+	return scanHosted(s.read.QueryRow(`SELECT `+hostedColumns+` FROM hosted_files WHERE app_uid=? AND path=?`, uid, path))
 }
 func (s *Store) HostedPage(uid string, page, limit int) (Page[HostedFile], error) {
 	if !identity.ValidUID(uid) || page < 1 || page > 1000000000 || limit < 1 || limit > 100 {
 		return Page[HostedFile]{}, ErrInvalidDirectory
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.read.Begin()
 	if err != nil {
 		return Page[HostedFile]{}, err
 	}
@@ -73,7 +73,7 @@ func (s *Store) CommitHosted(key string, appRevision, vendorRevision int64, expe
 	if !identity.ValidUID(file.AppUID) || !identity.ValidUID(file.ID) || !ValidHostedPath(file.Path) || len(file.SHA256) != 64 || file.SizeBytes < 0 {
 		return HostedFile{}, ErrInvalidDirectory
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return HostedFile{}, err
 	}
@@ -103,7 +103,7 @@ func (s *Store) CommitHosted(key string, appRevision, vendorRevision int64, expe
 	return old, tx.Commit()
 }
 func (s *Store) DeleteHosted(uid, id string) (HostedFile, error) {
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return HostedFile{}, err
 	}
@@ -119,7 +119,7 @@ func (s *Store) DeleteHosted(uid, id string) (HostedFile, error) {
 	return f, tx.Commit()
 }
 func (s *Store) HostedIDs() (map[string]bool, error) {
-	rows, err := s.DB.Query(`SELECT id FROM hosted_files`)
+	rows, err := s.read.Query(`SELECT id FROM hosted_files`)
 	if err != nil {
 		return nil, err
 	}

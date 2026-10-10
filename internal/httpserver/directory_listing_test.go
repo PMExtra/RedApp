@@ -18,7 +18,7 @@ func TestApplicationListSortsAllMatchesBeforePaging(t *testing.T) {
 			t.Fatal(err)
 		}
 		for v, at := range map[string]int64{"1.9.0": 300, "1.10.0": int64(100 + i), "invalid": 900} {
-			if _, err = h.store.DB.Exec("INSERT INTO app_versions(app_id,version,first_seen_s) VALUES(?,?,?)", a.StorageID(), v, at); err != nil {
+			if _, err = h.sql().Exec("INSERT INTO app_versions(app_id,version,first_seen_s) VALUES(?,?,?)", a.StorageID(), v, at); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -65,7 +65,7 @@ func TestApplicationListSortsAllMatchesBeforePaging(t *testing.T) {
 		t.Fatal(p.Total)
 	}
 	a, _ := h.store.Application("openai/tool-22")
-	if _, err := h.store.DB.Exec("INSERT INTO app_versions(app_id,version,first_seen_s) VALUES(?,?,0)", a.StorageID(), "10.0.0"); err != nil {
+	if _, err := h.sql().Exec("INSERT INTO app_versions(app_id,version,first_seen_s) VALUES(?,?,0)", a.StorageID(), "10.0.0"); err != nil {
 		t.Fatal(err)
 	}
 	if p = get("q=tool&sort=version&order=desc&limit=1"); p.Items[0].ID != "tool-22" || p.Items[0].VersionDiscoveredAt != nil {
@@ -75,7 +75,7 @@ func TestApplicationListSortsAllMatchesBeforePaging(t *testing.T) {
 		t.Fatal("missing time must sort last", p)
 	}
 	// Version metadata belongs to the current source epoch; counters to the application.
-	if _, err := h.store.DB.Exec("UPDATE applications SET source_epoch=source_epoch+1 WHERE uid=?", a.UID); err != nil {
+	if _, err := h.sql().Exec("UPDATE applications SET source_epoch=source_epoch+1 WHERE uid=?", a.UID); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.server.ReloadDirectory(); err != nil {

@@ -77,7 +77,7 @@ func TestOpenRefusesIncompatibleDirectoriesWithoutModification(t *testing.T) {
 			}
 			s, err := Open(dir)
 			if s != nil {
-				s.DB.Close()
+				s.Close()
 			}
 			if !errors.Is(err, ErrIncompatibleDirectory) {
 				t.Fatalf("Open = %v; want ErrIncompatibleDirectory", err)
@@ -114,10 +114,10 @@ func TestOpenCreatesVersionedSchemaInEmptyDirectory(t *testing.T) {
 	}
 	defer s.Close()
 	var version, app int
-	if err := s.DB.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != SchemaVersion {
+	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != SchemaVersion {
 		t.Fatalf("user_version = %d, %v; want %d", version, err, SchemaVersion)
 	}
-	if err := s.DB.QueryRow(`PRAGMA application_id`).Scan(&app); err != nil || app != applicationID {
+	if err := s.db.QueryRow(`PRAGMA application_id`).Scan(&app); err != nil || app != applicationID {
 		t.Fatalf("application_id = %d, %v; want %d", app, err, applicationID)
 	}
 	if err := Preflight(filepath.Join(dir, "missing")); err != nil {
@@ -133,7 +133,7 @@ func TestPreflightAcceptsValidDatabaseWithPendingWAL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.DB.Close()
+	defer s.Close()
 	if _, err = s.SaveSiteSettings(1, map[string]string{"title": "pending"}); err != nil {
 		t.Fatal(err)
 	}
@@ -174,12 +174,12 @@ func TestReleaseRowsCascadeFromVersion(t *testing.T) {
 	if err := s.CreateGeneration(g); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.DB.Exec(`DELETE FROM app_versions WHERE app_id=?`, r.AppID); err != nil {
+	if _, err := s.db.Exec(`DELETE FROM app_versions WHERE app_id=?`, r.AppID); err != nil {
 		t.Fatal(err)
 	}
 	for _, table := range []string{"release_metadata", "channels", "resources", "generations"} {
 		var count int
-		if err := s.DB.QueryRow(`SELECT count(*) FROM `+table+` WHERE app_id=?`, r.AppID).Scan(&count); err != nil || count != 0 {
+		if err := s.db.QueryRow(`SELECT count(*) FROM `+table+` WHERE app_id=?`, r.AppID).Scan(&count); err != nil || count != 0 {
 			t.Fatalf("%s kept %d rows after its version was deleted: %v", table, count, err)
 		}
 	}

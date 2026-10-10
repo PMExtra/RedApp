@@ -33,7 +33,7 @@ func (s *Store) SaveCleanupPreview(p CleanupPreview) error {
 	if requireApp(p.AppID) != nil || p.ID == "" || p.CreatedAt.IsZero() || !p.ExpiresAt.After(p.CreatedAt) || p.ExpiresAt.Sub(p.CreatedAt) > 10*time.Minute || p.ExecutedAt != nil || p.Result != nil {
 		return errors.New("Invalid cleanup preview")
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -112,13 +112,13 @@ func (s *Store) CleanupPreview(app, id string) (CleanupPreview, error) {
 	if err := requireApp(app); err != nil {
 		return CleanupPreview{}, err
 	}
-	return scanCleanup(s.DB.QueryRow("SELECT "+cleanupColumns+" FROM cleanup_previews WHERE id=? AND app_id=?", id, app))
+	return scanCleanup(s.read.QueryRow("SELECT "+cleanupColumns+" FROM cleanup_previews WHERE id=? AND app_id=?", id, app))
 }
 
 // ApplicationCleanupPreview reads a preview of any source epoch of the
 // application uid; previews of other applications are sql.ErrNoRows.
 func (s *Store) ApplicationCleanupPreview(uid, id string) (CleanupPreview, error) {
-	p, err := scanCleanup(s.DB.QueryRow("SELECT "+cleanupColumns+" FROM cleanup_previews WHERE id=?", id))
+	p, err := scanCleanup(s.read.QueryRow("SELECT "+cleanupColumns+" FROM cleanup_previews WHERE id=?", id))
 	if err != nil {
 		return CleanupPreview{}, err
 	}
@@ -145,7 +145,7 @@ func (s *Store) retireCleanupPreview(app, id string, at time.Time, blocked map[s
 	if err := requireApp(app); err != nil {
 		return zero, err
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return zero, err
 	}
@@ -227,11 +227,11 @@ func (s *Store) CompleteCleanupPreview(app, id string, result json.RawMessage) e
 	if requireApp(app) != nil || !json.Valid(result) {
 		return errors.New("Invalid cleanup result")
 	}
-	r, err := s.DB.Exec("UPDATE cleanup_previews SET result_json=? WHERE id=? AND app_id=? AND executed_at_s IS NOT NULL", []byte(result), id, app)
+	r, err := s.db.Exec("UPDATE cleanup_previews SET result_json=? WHERE id=? AND app_id=? AND executed_at_s IS NOT NULL", []byte(result), id, app)
 	return affected(r, err)
 }
 func (s *Store) DeleteExpiredCleanupPreviews(at time.Time) error {
-	_, err := s.DB.Exec("DELETE FROM cleanup_previews WHERE (executed_at_s IS NULL AND expires_at_s<=?) OR (executed_at_s IS NOT NULL AND executed_at_s<=?)", at.Unix(), at.Add(-24*time.Hour).Unix())
+	_, err := s.db.Exec("DELETE FROM cleanup_previews WHERE (executed_at_s IS NULL AND expires_at_s<=?) OR (executed_at_s IS NOT NULL AND executed_at_s<=?)", at.Unix(), at.Add(-24*time.Hour).Unix())
 	return err
 }
 

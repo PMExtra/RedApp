@@ -97,7 +97,7 @@ func TestPublicDirectoryPinsTemplatesAndInstructionDocuments(t *testing.T) {
 func TestDownloadRankingCountsOnlySuccessfulPublicTransfers(t *testing.T) {
 	h := newHarness(t, withTrustedProxies(t, "192.0.2.0/24"))
 	h.login(h.password)
-	if _, err := h.server.store.DB.Exec(`UPDATE catalog_state SET ranking_salt=zeroblob(32)`); err != nil {
+	if _, err := h.sql().Exec(`UPDATE catalog_state SET ranking_salt=zeroblob(32)`); err != nil {
 		t.Fatal(err)
 	}
 	h.createVendor("content")

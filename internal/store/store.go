@@ -2,6 +2,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	_ "embed"
 	"errors"
@@ -30,6 +31,11 @@ const applicationID = 0x52644170
 const databaseName = "state.sqlite"
 
 var ErrIncompatibleDirectory = errors.New("This data directory belongs to another RedApp schema version or is not a RedApp data directory; use a new empty data directory. Data is never migrated and the old directory is left unchanged")
+
+// ErrNotFound reports that a requested row does not exist. It is
+// sql.ErrNoRows, so callers outside this package match it without importing
+// database/sql.
+var ErrNotFound = sql.ErrNoRows
 var ErrConflict = errors.New("Setting revision changed; reload before saving")
 var ErrImmutableRelease = errors.New("Trusted release resource bindings changed")
 var ErrExpired = errors.New("Cleanup preview expired")
@@ -37,8 +43,25 @@ var ErrExpired = errors.New("Cleanup preview expired")
 //go:embed schema.sql
 var schema string
 
+// Store owns the SQLite database. It keeps two pools over the same WAL file:
+//
+//   - db is the only writer: one connection (SetMaxOpenConns(1)) opened with
+//     _txlock=immediate, so every write and every read-modify-write transaction
+//     is serialized in the process and takes the database write lock up front.
+//   - read is a pool of query_only connections for statements and snapshot
+//     transactions that never write. WAL lets them run while a write
+//     transaction is open; each sees the last committed state.
+//
+// While a transaction on db is open the writer connection is held, so code
+// running inside it (including callbacks such as finalize, beforeCommit or a
+// purge wrapper) must use only that transaction and must not call Store
+// methods that write: they would wait for the connection the caller holds.
+// Store methods that only read use the read pool and are safe there, but they
+// do not observe the transaction's uncommitted changes.
 type Store struct {
-	DB                    *sql.DB
+	db                    *sql.DB
+	read                  *sql.DB
+	busyTimeout           time.Duration
 	rates                 rates
 	pending               counterBuffer
 	work                  applicationWork
@@ -46,12 +69,22 @@ type Store struct {
 	validateDistributions func([]presets.Descriptor) error
 	prepareConfiguration  func(DirectorySnapshot) (ConfigurationPublication, error)
 	// beforeCommit runs inside every configuration transaction just before it
-	// commits. Only openStore options set it.
+	// commits. Only test options set it.
 	beforeCommit func(*sql.Tx) error
 }
 
-// option configures a Store at construction; production uses none.
-type option func(*Store)
+// Option configures a Store at construction; production uses none.
+type Option func(*Store)
+
+// WithBusyTimeout bounds how long a statement waits for a database lock held
+// by another connection before failing (default 5 seconds).
+func WithBusyTimeout(d time.Duration) Option {
+	return func(s *Store) { s.busyTimeout = d }
+}
+
+// readPoolSize bounds concurrent read connections; each holds a WAL snapshot
+// only for the duration of one statement or read transaction.
+const readPoolSize = 8
 
 func ValidAppID(app string) bool {
 	return identity.ValidKey(app)
@@ -63,9 +96,7 @@ func sqliteURL(path string, query string) string {
 // Open creates the schema in a new empty directory or opens a directory whose
 // database has exactly SchemaVersion. Any other directory is refused without
 // modification. The caller must hold the directory's instance lock.
-func Open(dir string) (*Store, error) { return openStore(dir) }
-
-func openStore(dir string, options ...option) (*Store, error) {
+func Open(dir string, options ...Option) (*Store, error) {
 	path, err := filepath.Abs(filepath.Join(dir, databaseName))
 	if err != nil {
 		return nil, err
@@ -83,30 +114,47 @@ func openStore(dir string, options ...option) (*Store, error) {
 			return nil, err
 		}
 	}
-	db, err := sql.Open("sqlite3", sqliteURL(path, "mode=rw&_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on&_synchronous=FULL"))
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	if fresh {
-		err = createSchema(db)
-	} else {
-		// The read-only probe saw the main file; confirm the WAL view agrees.
-		err = checkVersion(db)
-	}
-	if err != nil {
-		db.Close()
-		return nil, err
-	}
-	s := &Store{DB: db, rates: rates{started: time.Now()}}
+	s := &Store{busyTimeout: 5 * time.Second, rates: rates{started: time.Now()}}
 	for _, apply := range options {
 		apply(s)
 	}
+	busy := fmt.Sprintf("_busy_timeout=%d", s.busyTimeout.Milliseconds())
+	if s.db, err = sql.Open("sqlite3", sqliteURL(path, "mode=rw&_journal_mode=WAL&_txlock=immediate&_foreign_keys=on&_synchronous=FULL&"+busy)); err != nil {
+		return nil, err
+	}
+	s.db.SetMaxOpenConns(1)
+	if fresh {
+		err = createSchema(s.db)
+	} else {
+		// The read-only probe saw the main file; confirm the WAL view agrees.
+		err = checkVersion(s.db)
+	}
+	if err != nil {
+		s.db.Close()
+		return nil, err
+	}
+	// The writer has created the WAL and shared-memory files, which read-only
+	// connections need but cannot create.
+	if s.read, err = sql.Open("sqlite3", sqliteURL(path, "mode=ro&_query_only=on&"+busy)); err != nil {
+		s.db.Close()
+		return nil, err
+	}
+	s.read.SetMaxOpenConns(readPoolSize)
+	s.read.SetMaxIdleConns(readPoolSize)
 	if err = s.loadApplicationDeletionGates(); err != nil {
-		db.Close()
+		s.closeDatabases()
 		return nil, err
 	}
 	return s, nil
+}
+
+func (s *Store) closeDatabases() error {
+	return errors.Join(s.read.Close(), s.db.Close())
+}
+
+// Ping checks that both the writer and a reader connection are usable.
+func (s *Store) Ping(ctx context.Context) error {
+	return errors.Join(s.db.PingContext(ctx), s.read.PingContext(ctx))
 }
 
 // createSchema writes the schema and version in one transaction and then
@@ -240,3 +288,10 @@ func timePointer(t sql.NullInt64) *time.Time {
 	v := time.Unix(t.Int64, 0).UTC()
 	return &v
 }
+
+// HTTPCacheDB returns the writer connection pool for internal/httpcache only.
+//
+// Transitional: it is removed once the HTTP cache SQL lives in this package.
+// No other package may call it. The pool has a single connection, so code
+// holding a transaction from it must not call Store methods that write.
+func (s *Store) HTTPCacheDB() *sql.DB { return s.db }

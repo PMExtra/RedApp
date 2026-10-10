@@ -29,7 +29,7 @@ func policyApplication(q directoryQuerier, key string, allowDeleted bool) (Appli
 // revision always belongs to the application, including unrelated directory edits.
 func (s *Store) ReadHTTPPolicy(key string) (cachepolicy.Config, int64, error) {
 	config := cachepolicy.Empty()
-	tx, err := s.DB.Begin()
+	tx, err := s.read.Begin()
 	if err != nil {
 		return config, 0, err
 	}

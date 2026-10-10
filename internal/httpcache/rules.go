@@ -143,7 +143,7 @@ func (s *Service) List(storageID string) ([]Row, error) {
 	var entry application.Entry
 	entry.UID = uid
 	entry.SourceEpoch = epoch
-	err := s.db.DB.QueryRow(`SELECT v.id||'/'||a.id,a.cache_ttl_seconds,a.revision FROM applications a JOIN vendors v ON v.uid=a.vendor_uid WHERE a.uid=?`, uid).Scan(&entry.Descriptor.ID, &entry.Descriptor.DefaultChannelTTLSeconds, &entry.Revision)
+	err := s.db.HTTPCacheDB().QueryRow(`SELECT v.id||'/'||a.id,a.cache_ttl_seconds,a.revision FROM applications a JOIN vendors v ON v.uid=a.vendor_uid WHERE a.uid=?`, uid).Scan(&entry.Descriptor.ID, &entry.Descriptor.DefaultChannelTTLSeconds, &entry.Revision)
 	if err != nil {
 		return nil, err
 	}

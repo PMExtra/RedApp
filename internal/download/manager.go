@@ -5,7 +5,6 @@ package download
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -438,7 +437,7 @@ func (m *Manager) createLocked(r Resource, fullRetry bool, contexts ...context.C
 			}
 			return nil, errVerificationPending
 		}
-	} else if !errors.Is(e, sql.ErrNoRows) {
+	} else if !errors.Is(e, store.ErrNotFound) {
 		return nil, e
 	}
 	return m.createPartLocked(ctx, r, fullRetry)
@@ -468,7 +467,7 @@ func (m *Manager) verifyBlobLocked(r Resource, fullRetry bool, path string, size
 		}
 		if statErr == nil && check != nil && check.valid {
 			blob, e := m.db.Blob(r.Application, r.Hash)
-			if e != nil && !errors.Is(e, sql.ErrNoRows) {
+			if e != nil && !errors.Is(e, store.ErrNotFound) {
 				return e
 			}
 			if e == nil && blob.SizeBytes == size {

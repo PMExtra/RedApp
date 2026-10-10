@@ -29,7 +29,7 @@ func TestTwoApplicationsShareLimitsAndKeepCleanupSeparate(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer db.DB.Close()
+	defer db.Close()
 	m, e := NewApplications(dir, db, clients)
 	if e != nil {
 		t.Fatal(e)
@@ -145,7 +145,7 @@ func TestLogicalBindingsReuseWithinApplicationAndSurviveMove(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer func() { m.Close(); db.DB.Close() }()
+	defer func() { m.Close(); db.Close() }()
 	first := resource(c, payload)
 	authorize(t, m, first)
 	collect(t, m, first)
@@ -233,7 +233,7 @@ func TestLogicalBindingsReuseWithinApplicationAndSurviveMove(t *testing.T) {
 	if e = m.Close(); e != nil {
 		t.Fatal(e)
 	}
-	if e = db.DB.Close(); e != nil {
+	if e = db.Close(); e != nil {
 		t.Fatal(e)
 	}
 	moved := filepath.Join(t.TempDir(), "relocated")

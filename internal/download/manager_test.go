@@ -33,7 +33,7 @@ func setup(t *testing.T, c *distributor.Client, options ...Option) (*Manager, *s
 	if e != nil {
 		t.Fatal(e)
 	}
-	t.Cleanup(func() { m.Close(); db.DB.Close() })
+	t.Cleanup(func() { m.Close(); db.Close() })
 	return m, db, dir
 }
 func resource(c *distributor.Client, b []byte) Resource {
@@ -419,7 +419,7 @@ func TestCrashRecoveryPartRenameAndTombstone(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			defer db.DB.Close()
+			defer db.Close()
 			m, e := newTestManager(dir, db, c)
 			if e != nil {
 				t.Fatal(e)

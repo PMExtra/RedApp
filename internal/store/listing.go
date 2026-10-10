@@ -11,7 +11,7 @@ func (s *Store) VersionCount(app string) (int64, error) {
 		return 0, err
 	}
 	var n int64
-	err := s.DB.QueryRow("SELECT COUNT(*) FROM app_versions WHERE app_id=?", app).Scan(&n)
+	err := s.read.QueryRow("SELECT COUNT(*) FROM app_versions WHERE app_id=?", app).Scan(&n)
 	return n, err
 }
 
@@ -48,7 +48,7 @@ func (s *Store) EventPage(app string, beforeID int64, limit int) ([]ListedEvent,
 	}
 	query += " ORDER BY id DESC LIMIT ?"
 	args = append(args, limit)
-	rows, err := s.DB.Query(query, args...)
+	rows, err := s.read.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

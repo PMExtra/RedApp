@@ -21,6 +21,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/catalog"
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/store"
+	"github.com/PMExtra/RedApp/internal/store/storetest"
 	"github.com/PMExtra/RedApp/internal/testutil"
 )
 
@@ -29,11 +30,15 @@ func descriptor(id string, channels ...string) application.Descriptor {
 }
 func openStore(t *testing.T) *store.Store {
 	t.Helper()
-	db, err := store.Open(t.TempDir())
+	return openStoreDir(t, t.TempDir())
+}
+func openStoreDir(t *testing.T, dir string) *store.Store {
+	t.Helper()
+	db, err := store.Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.DB.Close() })
+	t.Cleanup(func() { db.Close() })
 	return db
 }
 func registry(t *testing.T, entries ...application.Entry) *application.Registry {
@@ -190,7 +195,8 @@ func TestSignedEnvelopePersistenceAndFailureBoundary(t *testing.T) {
 		}
 	}))
 	reg := registry(t, application.Entry{Descriptor: descriptor("anthropic/claude-code", "latest", "stable"), Protocol: claude.NewProtocol(client), Upstream: client})
-	db := openStore(t)
+	dir := t.TempDir()
+	db := openStoreDir(t, dir)
 	service := catalog.New(db, reg)
 	release, err := service.Release(context.Background(), "anthropic/claude-code", "latest")
 	if err != nil {
@@ -220,7 +226,7 @@ func TestSignedEnvelopePersistenceAndFailureBoundary(t *testing.T) {
 		t.Fatal("missing release mapped to upstream failure", err)
 	}
 	// Corrupt signed bytes on disk: cached parsing cannot bypass signature checks.
-	if _, err = db.DB.Exec("UPDATE release_metadata SET raw=? WHERE app_id=?", append(append([]byte(nil), raw...), '\n'), "anthropic/claude-code"); err != nil {
+	if _, err = storetest.Open(t, dir).Exec("UPDATE release_metadata SET raw=? WHERE app_id=?", append(append([]byte(nil), raw...), '\n'), "anthropic/claude-code"); err != nil {
 		t.Fatal(err)
 	}
 	tamper.Store(true)

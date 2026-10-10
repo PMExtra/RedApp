@@ -325,14 +325,14 @@ func readApplication(q directoryQuerier, key string) (Application, error) {
 	return scanApplication(q.QueryRow(`SELECT `+applicationColumns+` FROM applications a JOIN vendors v ON v.uid=a.vendor_uid WHERE v.id=? AND a.id=?`, vendor, app))
 }
 
-func (s *Store) Vendor(id string) (Vendor, error)            { return readVendor(s.DB, id) }
-func (s *Store) Application(key string) (Application, error) { return readApplication(s.DB, key) }
+func (s *Store) Vendor(id string) (Vendor, error)            { return readVendor(s.read, id) }
+func (s *Store) Application(key string) (Application, error) { return readApplication(s.read, key) }
 func (s *Store) Vendors(includeDeleted bool) ([]Vendor, error) {
 	query := `SELECT ` + vendorColumns + ` FROM vendors`
 	if !includeDeleted {
 		query += ` WHERE deleted_at_s IS NULL`
 	}
-	rows, err := s.DB.Query(query + ` ORDER BY id`)
+	rows, err := s.read.Query(query + ` ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -352,7 +352,7 @@ func (s *Store) Applications(includeDeleted bool) ([]Application, error) {
 	if !includeDeleted {
 		query += ` WHERE a.deleted_at_s IS NULL AND v.deleted_at_s IS NULL`
 	}
-	rows, err := s.DB.Query(query + ` ORDER BY v.id,a.id`)
+	rows, err := s.read.Query(query + ` ORDER BY v.id,a.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -493,10 +493,10 @@ func (s *Store) Source(storageID string) (SourceRecord, error) {
 	if !ok {
 		return SourceRecord{}, ErrInvalidDirectory
 	}
-	return scanSource(s.DB.QueryRow(`SELECT `+sourceColumns+sourceJoin+` WHERE src.app_uid=? AND src.epoch=?`, uid, epoch))
+	return scanSource(s.read.QueryRow(`SELECT `+sourceColumns+sourceJoin+` WHERE src.app_uid=? AND src.epoch=?`, uid, epoch))
 }
 func (s *Store) Sources() ([]SourceRecord, error) {
-	rows, err := s.DB.Query(`SELECT ` + sourceColumns + sourceJoin + ` ORDER BY src.app_uid,src.epoch`)
+	rows, err := s.read.Query(`SELECT ` + sourceColumns + sourceJoin + ` ORDER BY src.app_uid,src.epoch`)
 	if err != nil {
 		return nil, err
 	}
@@ -544,7 +544,7 @@ func (s *Store) RequireSourceActive(tx *sql.Tx, storageID string, expected ...So
 	return checkSourceActive(tx, storageID, expected)
 }
 func (s *Store) CheckSourceActive(storageID string, expected ...SourceFence) error {
-	return checkSourceActive(s.DB, storageID, expected)
+	return checkSourceActive(s.read, storageID, expected)
 }
 func (s *Store) SourceActive(storageID string) (bool, error) {
 	err := s.CheckSourceActive(storageID)

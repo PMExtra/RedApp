@@ -16,7 +16,7 @@ func TestDynamicProviderInstancesAndDirectoryLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.DB.Close() })
+	t.Cleanup(func() { db.Close() })
 	if err := db.EnsureEntityTemplates(); err != nil {
 		t.Fatal(err)
 	}

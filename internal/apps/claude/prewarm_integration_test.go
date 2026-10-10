@@ -94,7 +94,7 @@ func TestSignedClaudePrewarmRealComponentPipeline(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer db.DB.Close()
+			defer db.Close()
 			vendor, err := db.CreateVendor(store.VendorInput{ID: "signed", Name: store.LocalizedText{En: "Signed", ZhCN: "签名"}, Enabled: true})
 			if err != nil {
 				t.Fatal(err)

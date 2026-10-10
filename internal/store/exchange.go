@@ -650,7 +650,7 @@ func (s *Store) ImportReceipt(id string) (ImportResult, bool, error) {
 	var result ImportResult
 	var raw []byte
 	var created int64
-	e := s.DB.QueryRow(`SELECT result_json,created_s FROM configuration_import_receipts WHERE id=?`, id).Scan(&raw, &created)
+	e := s.read.QueryRow(`SELECT result_json,created_s FROM configuration_import_receipts WHERE id=?`, id).Scan(&raw, &created)
 	if errors.Is(e, sql.ErrNoRows) {
 		return result, false, nil
 	}
@@ -808,7 +808,7 @@ func (s *Store) CopyApplication(source string, input CopyApplicationInput) (Appl
 }
 func (s *Store) IconReferenced(path string) bool {
 	var count int
-	e := s.DB.QueryRow(`SELECT (SELECT count(*) FROM applications WHERE icon=?)+(SELECT count(*) FROM vendors WHERE icon=? OR icon_en=? OR icon_zh_cn=?)`, path, path, path, path).Scan(&count)
+	e := s.read.QueryRow(`SELECT (SELECT count(*) FROM applications WHERE icon=?)+(SELECT count(*) FROM vendors WHERE icon=? OR icon_en=? OR icon_zh_cn=?)`, path, path, path, path).Scan(&count)
 	return e != nil || count > 0
 }
 

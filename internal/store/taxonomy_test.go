@@ -20,7 +20,7 @@ func mapRaw(path string, value any) map[string]json.RawMessage {
 }
 func categoryItem(t *testing.T, s *Store, id string) (TaxonomyItem, bool) {
 	t.Helper()
-	item, err := scanTaxonomy(s.DB.QueryRow(`SELECT `+taxonomyColumns+` FROM categories WHERE id=?`, id))
+	item, err := scanTaxonomy(s.db.QueryRow(`SELECT `+taxonomyColumns+` FROM categories WHERE id=?`, id))
 	if err != nil {
 		return item, false
 	}
@@ -160,7 +160,7 @@ func TestCategoriesCreateReuseRollbackAndCleanupInOneTransaction(t *testing.T) {
 	if _, err = s.PatchTaxonomy(chinese, ConfigurationPatch{Revision: second.Revision, Set: mapRaw("name.en", "SHARED")}); !errors.Is(err, ErrInvalidDirectory) {
 		t.Fatal("duplicate category name accepted", err)
 	}
-	if _, err = s.DB.Exec(`UPDATE categories SET name_en='shared' WHERE id=?`, chinese); err != nil {
+	if _, err = s.db.Exec(`UPDATE categories SET name_en='shared' WHERE id=?`, chinese); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = patchCategories(s, bound, []string{}, "SHARED"); !errors.Is(err, ErrCategoryAmbiguous) {

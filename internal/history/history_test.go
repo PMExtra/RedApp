@@ -1,24 +1,30 @@
 package history
 
 import (
+	"database/sql"
 	"errors"
-	"github.com/PMExtra/RedApp/internal/store"
 	"testing"
 	"time"
+
+	"github.com/PMExtra/RedApp/internal/store"
+	"github.com/PMExtra/RedApp/internal/store/storetest"
 )
 
-func setup(t *testing.T) (*History, *store.Store) {
+// setup returns a history over a new store and a separate SQL connection to
+// the same database for fixtures and fault injection.
+func setup(t *testing.T) (*History, *store.Store, *sql.DB) {
 	t.Helper()
-	db, err := store.Open(t.TempDir())
+	dir := t.TempDir()
+	db, err := store.Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.DB.Close() })
+	t.Cleanup(func() { db.Close() })
 	h, err := Open(db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return h, db
+	return h, db, storetest.Open(t, dir)
 }
 func observation(key string, value float64) Metric {
 	d, _ := Find(key)
@@ -49,7 +55,7 @@ func value(t *testing.T, actual *float64, expected float64) {
 	}
 }
 func TestUTCAndGaugeAggregationPartialResolution(t *testing.T) {
-	h, _ := setup(t)
+	h, _, _ := setup(t)
 	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	for i := 0; i <= 60; i++ {
 		if err := h.Record(base.Add(time.Duration(i)*time.Minute), []Metric{observation("disk.cache_bytes", float64(i))}); err != nil {
@@ -100,7 +106,7 @@ func TestUTCAndGaugeAggregationPartialResolution(t *testing.T) {
 	value(t, p.Last, 77)
 }
 func TestCountersRestartResetGapAndNoAveraging(t *testing.T) {
-	h, db := setup(t)
+	h, db, _ := setup(t)
 	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	key := "counters.upstream_bytes"
 	for i := 0; i <= 60; i++ {
@@ -148,18 +154,18 @@ func TestCountersRestartResetGapAndNoAveraging(t *testing.T) {
 	}
 }
 func TestRetentionAggregatesBeforeDeletionAndIsIdempotent(t *testing.T) {
-	h, db := setup(t)
+	h, _, sqlDB := setup(t)
 	now := time.Date(2026, 9, 30, 12, 35, 0, 0, time.UTC)
 	old := now.Add(-48 * time.Hour).Truncate(time.Hour)
 	// A stopped process may leave unaggregated raw observations beyond 24h.
-	if _, err := db.DB.Exec("INSERT INTO metric_samples VALUES(?,?,?,?,?,?,?,?,?)", "global", "", "disk.cache_bytes", old.Unix(), old.Unix(), "old", 123, nil, 0); err != nil {
+	if _, err := sqlDB.Exec("INSERT INTO metric_samples VALUES(?,?,?,?,?,?,?,?,?)", "global", "", "disk.cache_bytes", old.Unix(), old.Unix(), "old", 123, nil, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.Maintain(now); err != nil {
 		t.Fatal(err)
 	}
 	var raw int
-	db.DB.QueryRow("SELECT COUNT(*) FROM metric_samples").Scan(&raw)
+	sqlDB.QueryRow("SELECT COUNT(*) FROM metric_samples").Scan(&raw)
 	if raw != 0 {
 		t.Fatal("raw retention failed")
 	}
@@ -174,36 +180,36 @@ func TestRetentionAggregatesBeforeDeletionAndIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	var hours int
-	db.DB.QueryRow("SELECT COUNT(*) FROM metric_hours").Scan(&hours)
+	sqlDB.QueryRow("SELECT COUNT(*) FROM metric_hours").Scan(&hours)
 	if hours != 0 {
 		t.Fatal("hour retention failed")
 	}
 }
 func TestAtomicFailureCannotLoseUnaggregatedRaw(t *testing.T) {
-	h, db := setup(t)
+	h, _, sqlDB := setup(t)
 	now := time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
 	old := now.Add(-48 * time.Hour)
-	db.DB.Exec("INSERT INTO metric_samples VALUES(?,?,?,?,?,?,?,?,?)", "global", "", "disk.cache_bytes", old.Unix(), old.Unix(), "old", 42, nil, 0)
-	db.DB.Exec(`CREATE TRIGGER fail_cleanup BEFORE DELETE ON metric_samples BEGIN SELECT RAISE(ABORT,'test failure'); END`)
+	sqlDB.Exec("INSERT INTO metric_samples VALUES(?,?,?,?,?,?,?,?,?)", "global", "", "disk.cache_bytes", old.Unix(), old.Unix(), "old", 42, nil, 0)
+	sqlDB.Exec(`CREATE TRIGGER fail_cleanup BEFORE DELETE ON metric_samples BEGIN SELECT RAISE(ABORT,'test failure'); END`)
 	if err := h.Maintain(now); err == nil {
 		t.Fatal("injected transaction failure ignored")
 	}
 	var raw, hours int
 	var watermark int64
-	db.DB.QueryRow("SELECT COUNT(*) FROM metric_samples").Scan(&raw)
-	db.DB.QueryRow("SELECT COUNT(*) FROM metric_hours").Scan(&hours)
-	db.DB.QueryRow("SELECT aggregated_before_s FROM metric_history_state").Scan(&watermark)
+	sqlDB.QueryRow("SELECT COUNT(*) FROM metric_samples").Scan(&raw)
+	sqlDB.QueryRow("SELECT COUNT(*) FROM metric_hours").Scan(&hours)
+	sqlDB.QueryRow("SELECT aggregated_before_s FROM metric_history_state").Scan(&watermark)
 	if raw != 1 || hours != 0 || watermark != 0 {
 		t.Fatalf("failed transaction changed state raw=%d hours=%d watermark=%d", raw, hours, watermark)
 	}
-	db.DB.Exec("DROP TRIGGER fail_cleanup")
+	sqlDB.Exec("DROP TRIGGER fail_cleanup")
 	if err := h.Maintain(now); err != nil {
 		t.Fatal(err)
 	}
 	value(t, point(t, h, "disk.cache_bytes", "7d", now, old).Last, 42)
 }
 func TestRatesAndCatalogValidation(t *testing.T) {
-	h, _ := setup(t)
+	h, _, _ := setup(t)
 	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	key := "rates.upstream_bytes_per_second"
 	h.Record(base, []Metric{observation(key, 2)})
@@ -256,16 +262,16 @@ func TestDuplicateMinuteIsIdempotentAndPersistenceSurvivesReopen(t *testing.T) {
 		}
 	}
 	var n int
-	db.DB.QueryRow("SELECT COUNT(*) FROM metric_samples").Scan(&n)
+	storetest.Open(t, dir).QueryRow("SELECT COUNT(*) FROM metric_samples").Scan(&n)
 	if n != 1 {
 		t.Fatal("duplicate sampling")
 	}
-	db.DB.Close()
+	db.Close()
 	db, err = store.Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.DB.Close()
+	defer db.Close()
 	h, err = Open(db)
 	if err != nil {
 		t.Fatal(err)
@@ -280,7 +286,7 @@ func TestDuplicateMinuteIsIdempotentAndPersistenceSurvivesReopen(t *testing.T) {
 }
 
 func TestQueryIncludesJustClosedUncommittedHourWithoutWriting(t *testing.T) {
-	h, db := setup(t)
+	h, _, sqlDB := setup(t)
 	base := time.Date(2026, 9, 1, 20, 0, 0, 0, time.UTC)
 	for i := 0; i < 60; i++ {
 		if err := h.Record(base.Add(time.Duration(i)*time.Minute), []Metric{observation("disk.cache_bytes", float64(i))}); err != nil {
@@ -295,14 +301,14 @@ func TestQueryIncludesJustClosedUncommittedHourWithoutWriting(t *testing.T) {
 		t.Fatal("just-closed hour lost")
 	}
 	var count int
-	db.DB.QueryRow("SELECT COUNT(*) FROM metric_hours").Scan(&count)
+	sqlDB.QueryRow("SELECT COUNT(*) FROM metric_hours").Scan(&count)
 	if count != 0 {
 		t.Fatal("read query mutated aggregates")
 	}
 }
 
 func TestCounterDoesNotBridgeMissingUTCMinute(t *testing.T) {
-	h, _ := setup(t)
+	h, _, _ := setup(t)
 	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	key := "counters.upstream_bytes"
 	h.Record(base.Add(59*time.Second), []Metric{observation(key, 100)})
@@ -316,7 +322,7 @@ func TestCounterDoesNotBridgeMissingUTCMinute(t *testing.T) {
 }
 
 func TestScopedHistoryAggregationAndUnknownRetention(t *testing.T) {
-	h, db := setup(t)
+	h, _, sqlDB := setup(t)
 	base := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	key := "counters.upstream_bytes"
 	for i := 0; i < 2; i++ {
@@ -332,7 +338,7 @@ func TestScopedHistoryAggregationAndUnknownRetention(t *testing.T) {
 	// History keys deliberately have no foreign key to the active definitions.
 	unknown := []string{"retired.unknown", "counters.reuse_requests"}
 	for _, metric := range unknown {
-		if _, err := db.DB.Exec("INSERT INTO metric_samples VALUES(?,?,?,?,?,?,?,?,?)", "global", "", metric, base.Unix(), base.Unix(), "old", 4, nil, 0); err != nil {
+		if _, err := sqlDB.Exec("INSERT INTO metric_samples VALUES(?,?,?,?,?,?,?,?,?)", "global", "", metric, base.Unix(), base.Unix(), "old", 4, nil, 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -367,7 +373,7 @@ func TestScopedHistoryAggregationAndUnknownRetention(t *testing.T) {
 	}
 
 	var n int
-	if err := db.DB.QueryRow("SELECT COUNT(*) FROM metric_samples WHERE metric IN ('retired.unknown','counters.reuse_requests')").Scan(&n); err != nil || n != 2 {
+	if err := sqlDB.QueryRow("SELECT COUNT(*) FROM metric_samples WHERE metric IN ('retired.unknown','counters.reuse_requests')").Scan(&n); err != nil || n != 2 {
 		t.Fatal("unknown history eagerly removed", n, err)
 	}
 	if _, err := h.QueryFor("openai/codex", "runtime.memory_bytes", "24h", now); err == nil {
@@ -376,11 +382,11 @@ func TestScopedHistoryAggregationAndUnknownRetention(t *testing.T) {
 	if err := h.Maintain(base.Add(25 * time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	db.DB.QueryRow("SELECT COUNT(*) FROM metric_samples WHERE metric IN ('retired.unknown','counters.reuse_requests')").Scan(&n)
+	sqlDB.QueryRow("SELECT COUNT(*) FROM metric_samples WHERE metric IN ('retired.unknown','counters.reuse_requests')").Scan(&n)
 	if n != 0 {
 		t.Fatal("unknown history did not naturally expire")
 	}
-	if err := db.DB.QueryRow("SELECT COUNT(*) FROM metric_hours WHERE metric IN ('retired.unknown','counters.reuse_requests')").Scan(&n); err != nil || n != 0 {
+	if err := sqlDB.QueryRow("SELECT COUNT(*) FROM metric_hours WHERE metric IN ('retired.unknown','counters.reuse_requests')").Scan(&n); err != nil || n != 0 {
 		t.Fatal("unknown history was aggregated", n, err)
 	}
 }

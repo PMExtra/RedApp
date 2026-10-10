@@ -106,7 +106,7 @@ func TestHealthProbes(t *testing.T) {
 		}
 		h.expectError("GET", path+"?verbose=1", nil, 400, codeInvalidQuery, nil)
 	}
-	if err := h.store.DB.Close(); err != nil {
+	if err := h.store.Close(); err != nil {
 		t.Fatal(err)
 	}
 	h.expectError("GET", "/health/ready", nil, 503, codeNotReady, nil)

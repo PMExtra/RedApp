@@ -15,6 +15,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/instance"
 	"github.com/PMExtra/RedApp/internal/store"
+	"github.com/PMExtra/RedApp/internal/store/storetest"
 	"github.com/PMExtra/RedApp/internal/testutil"
 )
 
@@ -63,7 +64,7 @@ func TestCleanupCrashHelper(t *testing.T) {
 			return
 		}
 		if ev.Job == "" {
-			db.DB.QueryRow("SELECT id FROM cleanup_previews LIMIT 1").Scan(&ev.Job)
+			storetest.Open(t, guard.Directory).QueryRow("SELECT id FROM cleanup_previews LIMIT 1").Scan(&ev.Job)
 		}
 		json.NewEncoder(os.Stdout).Encode(ev)
 		os.Exit(91)
@@ -173,7 +174,7 @@ func TestCleanupProcessCrashWindows(t *testing.T) {
 					t.Fatal("old cleanup job deleted the new generation")
 				}
 				m.Close()
-				db.DB.Close()
+				db.Close()
 				guard.Close()
 			}
 		})
@@ -201,14 +202,15 @@ func TestPublishedPrefixShortReadFails(t *testing.T) {
 func TestCleanupTombstoneFailureDoesNotRetireCurrent(t *testing.T) {
 	data := []byte("tombstone rejection")
 	c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(data) }))
-	m, db, _ := setup(t, c)
+	m, _, dir := setup(t, c)
+	raw := storetest.Open(t, dir)
 	r := authorizedResource(t, m, c, data)
 	collect(t, m, r)
 	job, e := m.Preview(testApp, map[string]bool{r.ID: true}, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
-	_, e = db.DB.Exec(`CREATE TRIGGER reject_retire BEFORE UPDATE ON generations BEGIN SELECT RAISE(ABORT,'injected'); END`)
+	_, e = raw.Exec(`CREATE TRIGGER reject_retire BEFORE UPDATE ON generations BEGIN SELECT RAISE(ABORT,'injected'); END`)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -218,7 +220,7 @@ func TestCleanupTombstoneFailureDoesNotRetireCurrent(t *testing.T) {
 	if m.current[r.ID].Retired {
 		t.Fatal("failed tombstone changed in-memory state")
 	}
-	db.DB.Exec("DROP TRIGGER reject_retire")
+	raw.Exec("DROP TRIGGER reject_retire")
 	if !bytes.Equal(collect(t, m, r), data) {
 		t.Fatal("existing cache was affected")
 	}
@@ -230,7 +232,8 @@ func TestCleanupTombstoneFailureDoesNotRetireCurrent(t *testing.T) {
 func TestCleanupDatabaseDeleteFailureRetainsRetryableGeneration(t *testing.T) {
 	data := []byte("delete rejection")
 	c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(data) }))
-	m, db, _ := setup(t, c)
+	m, _, dir := setup(t, c)
+	raw := storetest.Open(t, dir)
 	r := authorizedResource(t, m, c, data)
 	collect(t, m, r)
 	old := m.current[r.ID]
@@ -238,7 +241,7 @@ func TestCleanupDatabaseDeleteFailureRetainsRetryableGeneration(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	_, e = db.DB.Exec(`CREATE TRIGGER reject_delete BEFORE DELETE ON generations BEGIN SELECT RAISE(ABORT,'injected'); END`)
+	_, e = raw.Exec(`CREATE TRIGGER reject_delete BEFORE DELETE ON generations BEGIN SELECT RAISE(ABORT,'injected'); END`)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -248,7 +251,7 @@ func TestCleanupDatabaseDeleteFailureRetainsRetryableGeneration(t *testing.T) {
 	if m.all[old.ID] != old || !old.Retired {
 		t.Fatal("delete failure lost the retryable old generation")
 	}
-	db.DB.Exec("DROP TRIGGER reject_delete")
+	raw.Exec("DROP TRIGGER reject_delete")
 	if e = m.Cleanup(testApp, job.ID); e != nil {
 		t.Fatal(e)
 	}

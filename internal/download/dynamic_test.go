@@ -57,7 +57,7 @@ func TestDynamicEpochRecoveryPreservesHistoricalDataAndMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.DB.Close()
+	defer db.Close()
 	// An empty installation starts before its first dynamic source is registered.
 	m, err := NewApplications(dir, db, nil)
 	if err != nil {
@@ -206,7 +206,7 @@ func TestFencedWriterDrainsAdmittedReaderWithoutPublishing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.DB.Close()
+	defer db.Close()
 	app := dynamicApplication(t, db, client)
 	m, err := NewApplications(dir, db, map[string]*distributor.Client{app.StorageID(): client})
 	if err != nil {
@@ -263,7 +263,7 @@ func TestDormantCacheIsReverifiedWhenApplicationIsReenabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.DB.Close()
+	defer db.Close()
 	app := dynamicApplication(t, db, client)
 	clients := map[string]*distributor.Client{app.StorageID(): client}
 	m, err := NewApplications(dir, db, clients)
@@ -328,7 +328,7 @@ func TestPermanentDeletionCancelsReleaseAcrossOldEpochAndVerification(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer db.DB.Close()
+			defer db.Close()
 			app := dynamicApplication(t, db, client)
 			hook := &faultHook{}
 			m, err := NewApplications(dir, db, map[string]*distributor.Client{app.StorageID(): client}, withTrace(hook.trace))

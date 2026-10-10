@@ -20,7 +20,7 @@ import (
 func (s *Service) Snapshot() ([]download.View, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.DB.Query(`SELECT ` + columns + ` FROM http_cache_generations`)
+	rows, err := s.db.HTTPCacheDB().Query(`SELECT ` + columns + ` FROM http_cache_generations`)
 	if err != nil {
 		return nil, err
 	}

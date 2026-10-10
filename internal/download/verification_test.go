@@ -51,7 +51,7 @@ func dormantFixture(t *testing.T, payload []byte, requests *atomic.Int32, fault 
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.DB.Close() })
+	t.Cleanup(func() { db.Close() })
 	app := dynamicApplication(t, db, client)
 	clients := map[string]*distributor.Client{app.StorageID(): client}
 	m, err := NewApplications(dir, db, clients)

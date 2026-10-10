@@ -104,7 +104,7 @@ func TestPatternPreviewFreezesMatchAndPolicyRevision(t *testing.T) {
 		t.Fatal(preview, err)
 	}
 	var raw []byte
-	if err = f.db.DB.QueryRow(`SELECT selection_json FROM http_cleanup_previews WHERE id=?`, preview.ID).Scan(&raw); err != nil {
+	if err = f.db.HTTPCacheDB().QueryRow(`SELECT selection_json FROM http_cleanup_previews WHERE id=?`, preview.ID).Scan(&raw); err != nil {
 		t.Fatal(err)
 	}
 	var frozen PreviewCriteria
@@ -191,7 +191,7 @@ func TestAutomaticFirstMatchAndAccessRecheck(t *testing.T) {
 
 func TestAutomaticBoundsCursorAndEmptyDefault(t *testing.T) {
 	f := newFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "unused") }), 300)
-	tx, err := f.db.DB.Begin()
+	tx, err := f.db.HTTPCacheDB().Begin()
 	if err != nil {
 		t.Fatal(err)
 	}

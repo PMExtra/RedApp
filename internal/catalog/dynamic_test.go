@@ -2,7 +2,6 @@ package catalog_test
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"net/http"
 	"strings"
@@ -73,10 +72,10 @@ func TestDynamicMetadataFlightFencesVendorDisableEnable(t *testing.T) {
 	if err = <-result; !errors.Is(err, store.ErrSourceInactive) {
 		t.Fatalf("old metadata admission published: %v", err)
 	}
-	if _, err = db.Release(app.StorageID(), "1.2.3"); !errors.Is(err, sql.ErrNoRows) {
+	if _, err = db.Release(app.StorageID(), "1.2.3"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("old release persisted: %v", err)
 	}
-	if _, err = db.Channel(app.StorageID(), "latest"); !errors.Is(err, sql.ErrNoRows) {
+	if _, err = db.Channel(app.StorageID(), "latest"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("old channel persisted: %v", err)
 	}
 }

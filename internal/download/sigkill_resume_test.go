@@ -30,7 +30,7 @@ func TestManagerProcessHelper(t *testing.T) {
 	if e != nil {
 		os.Exit(3)
 	}
-	defer db.DB.Close()
+	defer db.Close()
 	u, _ := url.Parse(os.Getenv("REDAPP_DOWNLOAD_SOURCE"))
 	c := &distributor.Client{Base: u, HTTP: &http.Client{}}
 	m, e := newTestManager(guard.Directory, db, c)
@@ -101,7 +101,7 @@ func TestSIGKILLReleasesLockAndResumesDiskPrefix(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer db.DB.Close()
+	defer db.Close()
 	m, e := newTestManager(dir, db, c)
 	if e != nil {
 		t.Fatal(e)

@@ -16,7 +16,7 @@ func TestHTTPMaintenancePagesUseSourceRowRangeIndex(t *testing.T) {
 		{"high water", `SELECT COALESCE(MAX(row_no),0) FROM http_cache_generations WHERE storage_id=? AND is_current=1`, []any{"app/test-e1"}},
 	} {
 		t.Run(query.name, func(t *testing.T) {
-			rows, err := s.DB.Query("EXPLAIN QUERY PLAN "+query.sql, query.args...)
+			rows, err := s.db.Query("EXPLAIN QUERY PLAN "+query.sql, query.args...)
 			if err != nil {
 				t.Fatal(err)
 			}

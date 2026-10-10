@@ -52,7 +52,7 @@ func (s *Store) permanentlyDeleteApplicationLocked(key string, revision int64, a
 			return st.softDeleteApplication(key, revision)
 		}, func(tx *sql.Tx) error { return purgeApplication(tx, key, revision+1) })
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -186,7 +186,7 @@ func (s *Store) PermanentlyDeleteVendor(id string, revision int64) error {
 			return st.softDeleteVendor(id, revision)
 		}, func(tx *sql.Tx) error { return purgeVendor(tx, id, revision+1) })
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -218,7 +218,7 @@ func purgeVendor(tx *sql.Tx, id string, revision int64) error {
 var deleteObjectPath = regexp.MustCompile(`^objects/(parts/[0-9a-f]{32}\.part|http/[0-9a-f]{32}\.body|hosted/[0-9a-f]{32}|blobs/[0-9a-f]{64})$`)
 
 func (s *Store) ProcessPendingDeletes(dir string) error {
-	rows, err := s.DB.Query(`SELECT path FROM pending_object_deletes`)
+	rows, err := s.read.Query(`SELECT path FROM pending_object_deletes`)
 	if err != nil {
 		return err
 	}
@@ -266,7 +266,7 @@ func (s *Store) ProcessPendingDeletes(dir string) error {
 		if e != nil && !errors.Is(e, os.ErrNotExist) {
 			return e
 		}
-		if _, err = s.DB.Exec(`DELETE FROM pending_object_deletes WHERE path=?`, path); err != nil {
+		if _, err = s.db.Exec(`DELETE FROM pending_object_deletes WHERE path=?`, path); err != nil {
 			return err
 		}
 	}
@@ -275,7 +275,7 @@ func (s *Store) ProcessPendingDeletes(dir string) error {
 
 // Late background observations must not recreate the private history of a deleted
 // UID. Legacy static fixtures do not use this private namespace.
-func PrivateApplicationExists(q directoryQuerier, app string) (bool, error) {
+func applicationNamespaceExists(q directoryQuerier, app string) (bool, error) {
 	if !strings.HasPrefix(app, "app/") {
 		return true, nil
 	}

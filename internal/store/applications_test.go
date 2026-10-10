@@ -12,13 +12,13 @@ import (
 	"time"
 )
 
-func openTest(t *testing.T, options ...option) *Store {
+func openTest(t *testing.T, options ...Option) *Store {
 	t.Helper()
-	s, e := openStore(t.TempDir(), options...)
+	s, e := Open(t.TempDir(), options...)
 	if e != nil {
 		t.Fatal(e)
 	}
-	t.Cleanup(func() { s.DB.Close() })
+	t.Cleanup(func() { s.Close() })
 	return s
 }
 func snapshotFiles(t *testing.T, dir string) map[string][]byte {
@@ -50,7 +50,7 @@ func releaseFixture(t *testing.T, s *Store, app, version string) Resource {
 }
 func TestMetadataAtomicityImmutabilityAndApplicationIsolation(t *testing.T) {
 	s := openTest(t)
-	if _, err := s.DB.Exec(`CREATE TRIGGER reject_resources BEFORE INSERT ON resources BEGIN SELECT RAISE(FAIL,'injected failure'); END`); err != nil {
+	if _, err := s.db.Exec(`CREATE TRIGGER reject_resources BEFORE INSERT ON resources BEGIN SELECT RAISE(FAIL,'injected failure'); END`); err != nil {
 		t.Fatal(err)
 	}
 	m := ReleaseMetadata{AppID: "openai/codex", Version: "1.0.0", Raw: []byte(`{}`), TrustRevision: 1, FetchedAt: time.Now()}
@@ -65,7 +65,7 @@ func TestMetadataAtomicityImmutabilityAndApplicationIsolation(t *testing.T) {
 	if len(versions) != 0 {
 		t.Fatal("partial version history")
 	}
-	s.DB.Exec("DROP TRIGGER reject_resources")
+	s.db.Exec("DROP TRIGGER reject_resources")
 	r = releaseFixture(t, s, m.AppID, m.Version)
 	releaseFixture(t, s, "anthropic/claude-code", m.Version)
 	r.SHA256 = strings.Repeat("b", 64)
@@ -202,7 +202,7 @@ func TestWALDataSurvivesAbruptProcessExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.DB.Close()
+	defer s.Close()
 	var site map[string]string
 	if rev, err := s.ReadSiteSettings(&site); err != nil || rev != 2 || site["title"] != "kept" {
 		t.Fatal("committed WAL setting lost", site, rev, err)

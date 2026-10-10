@@ -92,7 +92,7 @@ func TestCategoriesTagsPublicPrivacyAndSearch(t *testing.T) {
 		t.Fatal("tag search or site-wide counts", string(raw))
 	}
 	// Names that older data made ambiguous must be chosen explicitly.
-	if _, err := h.store.DB.Exec(`UPDATE categories SET name_zh_cn='Tools renamed' WHERE id='private-only'`); err != nil {
+	if _, err := h.sql().Exec(`UPDATE categories SET name_zh_cn='Tools renamed' WHERE id='private-only'`); err != nil {
 		t.Fatal(err)
 	}
 	expectCode(t, h.patchConfiguration("apps/taxonomy/peer", map[string]any{"set": map[string]any{"categories": []string{}}, "new_categories": []string{"tools RENAMED"}}, 409), codeCategoryAmbiguous)

@@ -16,7 +16,7 @@ func TestContentProvidersInstructionsAndBackendCapabilityGates(t *testing.T) {
 	hosted := h.createApp("content", "files", "hosted", nil)
 	for _, a := range []store.Application{info, hosted} {
 		var count int
-		if err := h.server.store.DB.QueryRow(`SELECT COUNT(*) FROM application_sources WHERE app_uid=?`, a.UID).Scan(&count); err != nil || count != 0 {
+		if err := h.sql().QueryRow(`SELECT COUNT(*) FROM application_sources WHERE app_uid=?`, a.UID).Scan(&count); err != nil || count != 0 {
 			t.Fatal("content source created", count, err)
 		}
 		e, _ := h.server.registry.Lookup(a.Key)

@@ -207,10 +207,10 @@ func TestAppMetricsFollowTheApplicationAcrossSourceEpochs(t *testing.T) {
 	cancel()
 	h.server.SampleHistory(ctx, func(e error) { t.Fatal(e) })
 	var value int64
-	if err := h.store.DB.QueryRow("SELECT CAST(value AS INTEGER) FROM metric_samples WHERE scope='app' AND app_id=? AND metric='counters.artifact_requests'", current.MetricsID()).Scan(&value); err != nil || value != 2 {
+	if err := h.sql().QueryRow("SELECT CAST(value AS INTEGER) FROM metric_samples WHERE scope='app' AND app_id=? AND metric='counters.artifact_requests'", current.MetricsID()).Scan(&value); err != nil || value != 2 {
 		t.Fatal("history sampler did not use the stable identity", value, err)
 	}
-	if err := h.store.DB.QueryRow("SELECT count(*) FROM metric_samples WHERE scope='app' AND (app_id=? OR (app_id=? AND metric='versions.total'))", key, files.MetricsID()).Scan(&value); err != nil || value != 0 {
+	if err := h.sql().QueryRow("SELECT count(*) FROM metric_samples WHERE scope='app' AND (app_id=? OR (app_id=? AND metric='versions.total'))", key, files.MetricsID()).Scan(&value); err != nil || value != 0 {
 		t.Fatal("history sampled a public key or an inapplicable metric", value, err)
 	}
 }

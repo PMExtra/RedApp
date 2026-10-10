@@ -4,7 +4,6 @@ package catalog
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"sort"
@@ -71,7 +70,7 @@ func (s *Service) release(ctx context.Context, e application.Entry, target strin
 	// completed flight cannot accidentally issue another upstream fetch.
 	if channel {
 		cached, err := s.db.Channel(app, target)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
 			s.mu.Unlock()
 			return application.Release{}, err
 		}
@@ -89,7 +88,7 @@ func (s *Service) release(ctx context.Context, e application.Entry, target strin
 		}
 	} else {
 		m, err := s.db.Release(app, target)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
 			s.mu.Unlock()
 			return application.Release{}, err
 		}
@@ -281,7 +280,7 @@ func (s *Service) CandidatesForSource(app, storageID, minimum string, views []do
 			return nil, nil, application.ErrNotFound
 		}
 		if _, err := s.db.Source(storageID); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
+			if errors.Is(err, store.ErrNotFound) {
 				err = application.ErrNotFound
 			}
 			return nil, nil, err

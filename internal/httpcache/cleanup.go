@@ -88,7 +88,7 @@ func (s *Service) ExecuteCleanup(ctx context.Context, entry application.Entry, i
 func (s *Service) retirePreviewBatch(ctx context.Context, entry application.Entry, preview MaintenancePreview, items []PreviewItem) (out CleanupResult, resultErr error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tx, err := s.db.DB.BeginTx(ctx, nil)
+	tx, err := s.db.HTTPCacheDB().BeginTx(ctx, nil)
 	if err != nil {
 		return out, err
 	}

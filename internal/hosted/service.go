@@ -5,7 +5,6 @@ package hosted
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -144,7 +143,7 @@ func (s *Service) Put(ctx context.Context, entry application.Entry, path, expect
 	s.mu.Unlock()
 	defer func() { s.mu.Lock(); delete(s.transfers, id); s.mu.Unlock(); s.wg.Done() }()
 	existing, err := s.db.HostedFile(entry.UID, path)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return store.HostedFile{}, err
 	}
 	if existing.ID != expected {
