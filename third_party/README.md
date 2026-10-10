@@ -8,9 +8,6 @@
 | github.com/mattn/go-sqlite3 | 1.14.32 | [go-sqlite3.LICENSE](go-sqlite3.LICENSE) |
 | github.com/dustin/go-humanize | 1.1.0 | [go-humanize.LICENSE](go-humanize.LICENSE) |
 | github.com/yuin/goldmark | 1.7.13 | [goldmark.LICENSE](goldmark.LICENSE) |
-| Vue 前端运行时 | 3.5.43 | [vue.LICENSE](vue.LICENSE) |
-| Lucide Vue UI 图标 | 1.52.0 | [lucide.LICENSE](lucide.LICENSE) |
-| uPlot 图表运行时 | 1.6.32 | [uplot.LICENSE](uplot.LICENSE) |
 | go.yaml.in/yaml/v3 | 3.0.5 | [go-yaml.LICENSE](go-yaml.LICENSE)、[go-yaml.NOTICE](go-yaml.NOTICE) |
 | golang.org/x/net（HTML 目录解析） | 0.44.0 | [x-net.LICENSE](x-net.LICENSE)、[x-net.PATENTS](x-net.PATENTS) |
 | github.com/bmatcuk/doublestar/v4 | 4.10.2 | [doublestar.LICENSE](doublestar.LICENSE) |
@@ -28,3 +25,27 @@ OpenAI 品牌标志由用户提供，来源指向 Wikimedia Commons；原文、�
 Claude Code 官方安装器、公钥与官方仓库许可说明独立保存在 `installers/anthropic/claude-code/upstream/`，来源与摘要见该模块 `provenance.json`。其 [LICENSE.md](../installers/anthropic/claude-code/upstream/LICENSE.md) 声明 Anthropic 保留权利并适用商业条款，不属于 RedApp 原创代码的 MIT 授权。服务提供 `/anthropic/claude-code/LICENSE.md`。尚未取得/验证真实二进制；技术分发能力不等于公开再分发授权，额外再分发授权尚未核实，使用或继续分发第三方材料时须自行核对适用条款。
 
 用户指定的 Anthropic 厂商与 Claude Code 应用 SVG 来自 Dashboard Icons，来源、摘要及使用边界见[素材说明](../internal/apps/builtin/assets/README.md)，上游仓库许可原文见 [dashboard-icons.LICENSE](dashboard-icons.LICENSE)。通过编译内置固定资源提供，不依赖运行时 CDN。
+
+## 前端产物中的 npm 包
+
+以下包被打进 `internal/httpserver/web` 并随二进制分发，版本固定在 `frontend/package-lock.json`。`vite build` 会对照本表（按反引号中的包名）检查实际打包的每个 npm 包，缺失即构建失败；只在构建和测试时使用的工具（Vite、TypeScript、ESLint、Vitest、Playwright 等）不随产物分发，不在此列。
+
+| 组件 | 包 | 版本 | 许可 | 文件 |
+| --- | --- | --- | --- | --- |
+| Vue 运行时 | `vue`、`@vue/runtime-dom`、`@vue/runtime-core`、`@vue/reactivity`、`@vue/shared` | 3.5.43 | MIT | [vue.LICENSE](vue.LICENSE) |
+| Vue Router | `vue-router` | 5.4.0 | MIT | [vue-router.LICENSE](vue-router.LICENSE) |
+| Pinia 客户端状态 | `pinia` | 4.0.3 | MIT | [pinia.LICENSE](pinia.LICENSE) |
+| TanStack Query 服务端状态 | `@tanstack/vue-query`、`@tanstack/query-core` | 5.104.1 | MIT | [tanstack-query.LICENSE](tanstack-query.LICENSE) |
+| vue-i18n 国际化 | `vue-i18n`、`@intlify/core-base`、`@intlify/message-compiler`、`@intlify/shared` | 11.4.13 | MIT | [vue-i18n.LICENSE](vue-i18n.LICENSE) |
+| Reka UI 无样式组件 | `reka-ui` | 2.11.0 | MIT | [reka-ui.LICENSE](reka-ui.LICENSE) |
+| Floating UI（Reka UI 浮层定位） | `@floating-ui/vue` | 2.0.1 | MIT | [floating-ui-vue.LICENSE](floating-ui-vue.LICENSE) |
+| | `@floating-ui/dom`、`@floating-ui/core`、`@floating-ui/utils` | 1.8.0 / 1.8.0 / 0.2.12 | MIT | [floating-ui.LICENSE](floating-ui.LICENSE) |
+| VueUse（Reka UI 依赖） | `@vueuse/core`、`@vueuse/shared` | 14.4.0 | MIT | [vueuse.LICENSE](vueuse.LICENSE) |
+| aria-hidden（Reka UI 依赖） | `aria-hidden` | 1.2.6 | MIT | [aria-hidden.LICENSE](aria-hidden.LICENSE) |
+| defu、ohash（Reka UI 依赖） | `defu`、`ohash` | 6.1.7 / 2.0.12 | MIT | [unjs-defu-ohash.LICENSE](unjs-defu-ohash.LICENSE) |
+| Internationalized Number（Reka UI 数字输入依赖） | `@internationalized/number` | 3.6.9 | Apache-2.0 | [internationalized-number.LICENSE](internationalized-number.LICENSE) |
+| openapi-fetch 类型化 API 客户端 | `openapi-fetch` | 0.17.0 | MIT | [openapi-fetch.LICENSE](openapi-fetch.LICENSE) |
+| vee-validate 表单 | `vee-validate` | 4.15.1 | MIT | [vee-validate.LICENSE](vee-validate.LICENSE) |
+| zod 校验 | `zod` | 4.6.5 | MIT | [zod.LICENSE](zod.LICENSE) |
+| Lucide Vue UI 图标 | `@lucide/vue` | 1.55.0 | ISC | [lucide.LICENSE](lucide.LICENSE) |
+| uPlot 图表运行时（指标历史图表） | `uplot` | 1.6.32 | MIT | [uplot.LICENSE](uplot.LICENSE) |

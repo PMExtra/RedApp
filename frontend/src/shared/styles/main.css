@@ -1,0 +1,142 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+/* Dark utilities follow the resolved theme set on <html data-theme>. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme inline {
+  --color-*: initial;
+  --color-transparent: transparent;
+  --color-current: currentColor;
+  --color-bg: var(--rd-bg);
+  --color-surface: var(--rd-surface);
+  --color-surface-raised: var(--rd-surface-raised);
+  --color-surface-sunken: var(--rd-surface-sunken);
+  --color-surface-hover: var(--rd-surface-hover);
+  --color-border: var(--rd-border);
+  --color-border-strong: var(--rd-border-strong);
+  --color-fg: var(--rd-text);
+  --color-muted: var(--rd-text-muted);
+  --color-subtle: var(--rd-text-subtle);
+  --color-inverse: var(--rd-text-inverse);
+  --color-primary: var(--rd-primary);
+  --color-primary-hover: var(--rd-primary-hover);
+  --color-primary-soft: var(--rd-primary-soft);
+  --color-primary-fg: var(--rd-primary-fg);
+  --color-danger: var(--rd-danger);
+  --color-danger-hover: var(--rd-danger-hover);
+  --color-danger-soft: var(--rd-danger-soft);
+  --color-danger-fg: var(--rd-danger-fg);
+  --color-warning: var(--rd-warning);
+  --color-warning-soft: var(--rd-warning-soft);
+  --color-success: var(--rd-success);
+  --color-success-soft: var(--rd-success-soft);
+  --color-info: var(--rd-info);
+  --color-info-soft: var(--rd-info-soft);
+  --color-focus: var(--rd-focus);
+  --color-overlay: var(--rd-overlay);
+
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+  --font-mono: "RedApp Code", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 1rem;
+  --text-base--line-height: 1.5rem;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.75rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 2rem;
+  --text-3xl: 1.875rem;
+  --text-3xl--line-height: 2.25rem;
+
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+
+  --shadow-sm: var(--rd-shadow-sm);
+  --shadow-md: var(--rd-shadow-md);
+  --shadow-overlay: var(--rd-shadow-overlay);
+}
+
+/* Stacking order: z-sticky < z-dropdown < z-overlay < z-modal < z-popover < z-toast < z-tooltip */
+@utility z-sticky {
+  z-index: 10;
+}
+@utility z-dropdown {
+  z-index: 20;
+}
+@utility z-overlay {
+  z-index: 40;
+}
+@utility z-modal {
+  z-index: 50;
+}
+@utility z-popover {
+  z-index: 60;
+}
+@utility z-toast {
+  z-index: 70;
+}
+@utility z-tooltip {
+  z-index: 80;
+}
+
+/* Shared focus ring for interactive elements. */
+@utility focus-ring {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  &:focus-visible {
+    outline-color: var(--rd-focus);
+  }
+}
+
+@font-face {
+  font-family: "RedApp Code";
+  src: url("/assets/JetBrainsMono-Regular-v2.304.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@layer base {
+  html {
+    @apply bg-bg font-sans text-fg antialiased;
+    text-size-adjust: 100%;
+  }
+  body {
+    @apply min-h-dvh text-sm;
+  }
+  :focus-visible {
+    outline: 2px solid var(--rd-focus);
+    outline-offset: 2px;
+  }
+  code,
+  kbd,
+  pre,
+  samp {
+    @apply font-mono;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* Without JavaScript or before the preference loads, follow the system theme. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    color-scheme: dark;
+  }
+}

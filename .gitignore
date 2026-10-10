@@ -10,3 +10,5 @@ __pycache__/
 .installer-prepared/
 installer-update.zip
 /.generated/
+/frontend/playwright-report/
+/frontend/test-results/

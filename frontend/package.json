@@ -1,27 +1,66 @@
 {
-  "name": "redapp-admin",
+  "name": "redapp-frontend",
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=24.19.0"
+  },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "typecheck": "vue-tsc --noEmit",
+    "codegen": "node scripts/codegen.mjs",
+    "codegen:check": "node scripts/codegen.mjs --check",
+    "lint": "eslint --max-warnings=0 .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "build": "npm run typecheck && vite build"
+    "test:watch": "vitest",
+    "e2e": "playwright test",
+    "build": "vite build"
   },
   "dependencies": {
-    "@lucide/vue": "1.52.0",
+    "@lucide/vue": "1.55.0",
+    "@tanstack/vue-query": "5.104.1",
+    "openapi-fetch": "0.17.0",
+    "pinia": "4.0.3",
+    "reka-ui": "2.11.0",
     "uplot": "1.6.32",
+    "vee-validate": "4.15.1",
     "vue": "3.5.43",
-    "vue-router": "4.6.4"
+    "vue-i18n": "11.4.13",
+    "vue-router": "5.4.0",
+    "zod": "4.6.5"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.64.0",
+    "@tailwindcss/vite": "4.3.3",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/user-event": "14.6.7",
+    "@testing-library/vue": "8.1.0",
+    "@types/node": "24.19.2",
     "@vitejs/plugin-vue": "6.0.9",
-    "@vue/test-utils": "2.5.1",
-    "happy-dom": "20.14.5",
+    "@vue/eslint-config-typescript": "14.9.0",
+    "eslint": "10.12.0",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-vue": "10.11.1",
+    "globals": "17.13.0",
+    "happy-dom": "20.14.6",
+    "msw": "3.0.3",
+    "openapi-typescript": "7.13.0",
+    "prettier": "3.9.9",
+    "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
-    "vite": "8.3.2",
+    "typescript-eslint": "8.71.1",
+    "vite": "8.3.4",
     "vitest": "5.0.3",
-    "vue-tsc": "3.3.11"
+    "vue-tsc": "3.3.12",
+    "yaml": "2.9.1"
+  },
+  "overrides": {
+    "openapi-typescript": {
+      "typescript": "$typescript"
+    }
   }
 }

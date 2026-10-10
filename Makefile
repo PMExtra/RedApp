@@ -36,7 +36,7 @@ $(NODE_MODULES): frontend/package.json frontend/package-lock.json
 frontend: $(NODE_MODULES)
 	cd frontend && npm run build
 frontend-test: $(NODE_MODULES)
-	cd frontend && npm run typecheck && npm test
+	cd frontend && npm run codegen:check && npm run lint && npm run format:check && npm run typecheck && npm test
 
 # Real processes on loopback ports; the instructions test needs frontend/node_modules (Happy DOM).
 runtime-test: $(NODE_MODULES)
