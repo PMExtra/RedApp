@@ -276,3 +276,70 @@ func TestCanceledWaiterDoesNotCancelSharedFetch(t *testing.T) {
 		t.Fatal("one canceled request poisoned shared fetch", err)
 	}
 }
+
+// gatedProtocol pauses VerifyRelease while a gate is installed.
+type gatedProtocol struct {
+	application.Protocol
+	gate    atomic.Pointer[chan struct{}]
+	entered chan struct{}
+}
+
+func (p *gatedProtocol) VerifyRelease(version string, envelope application.Envelope) (application.Release, error) {
+	if gate := p.gate.Load(); gate != nil {
+		p.entered <- struct{}{}
+		<-*gate
+	}
+	return p.Protocol.VerifyRelease(version, envelope)
+}
+
+// Verifying a cached release of one application does not hold up metadata
+// requests of another.
+func TestCachedVerificationDoesNotBlockOtherApplications(t *testing.T) {
+	var base string
+	var requests atomic.Int32
+	client, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.Write(releaseJSON(base, strings.Repeat("a", 64)))
+	}))
+	base = client.Base.String()
+	db := openStore(t)
+	slow := &gatedProtocol{Protocol: codex.NewProtocol(client), entered: make(chan struct{}, 1)}
+	reg := registry(t,
+		directoryEntry(t, db, "example/slow", application.Codex, application.Entry{Descriptor: descriptor("example/slow", "latest"), Protocol: slow, Upstream: client}),
+		directoryEntry(t, db, "example/fast", application.Codex, application.Entry{Descriptor: descriptor("example/fast", "latest"), Protocol: codex.NewProtocol(client), Upstream: client}))
+	service := catalog.New(db, reg)
+	if _, err := service.Release(context.Background(), "example/slow", "latest"); err != nil {
+		t.Fatal(err)
+	}
+	gate := make(chan struct{})
+	slow.gate.Store(&gate)
+	var once sync.Once
+	open := func() { once.Do(func() { close(gate) }) }
+	t.Cleanup(open)
+	slowDone := make(chan error, 1)
+	go func() {
+		_, err := service.Release(context.Background(), "example/slow", "1.2.3")
+		slowDone <- err
+	}()
+	<-slow.entered
+	fastDone := make(chan error, 1)
+	go func() {
+		_, err := service.Release(context.Background(), "example/fast", "latest")
+		fastDone <- err
+	}()
+	select {
+	case err := <-fastDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a cached verification blocked another application")
+	}
+	open()
+	if err := <-slowDone; err != nil {
+		t.Fatal(err)
+	}
+	if got := requests.Load(); got != 2 {
+		t.Fatal("upstream requests", got)
+	}
+}
