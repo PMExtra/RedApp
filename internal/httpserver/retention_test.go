@@ -19,6 +19,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/apps/codex"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/releasemaintenance"
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
 type retentionFixtureControl struct {
@@ -170,8 +171,8 @@ func TestRetentionAPIProtectsReadersAndPersistsReceipt(t *testing.T) {
 	restarted := newHarness(t, withDir(dir))
 	defer restarted.close()
 	entry, _ := restarted.server.registry.Lookup("retention/binary")
-	job, err := restarted.server.store.CleanupPreview(entry.StorageID(), p.ID)
-	if err != nil || job.ExecutedAt == nil || len(job.Result) == 0 {
+	job, err := restarted.server.store.Preview(entry.UID, store.PreviewRetention, p.ID, time.Now())
+	if err != nil || job.ExecutedAt == nil || job.State != store.PreviewDone {
 		t.Fatal(job, err)
 	}
 	repeat, err := restarted.server.maintenance.Execute(context.Background(), entry.Descriptor.ID, p.ID)
@@ -207,7 +208,7 @@ func TestRetentionRejectsChangedPolicySourceAndChannels(t *testing.T) {
 			case "expired_channel":
 				h.sql().Exec(`UPDATE channels SET expires_at_s=? WHERE app_id=?`, time.Now().Add(-time.Hour).Unix(), entry.StorageID())
 			case "expired_preview":
-				h.sql().Exec(`UPDATE cleanup_previews SET expires_at_s=0 WHERE id=?`, p.ID)
+				h.sql().Exec(`UPDATE previews SET expires_at_s=1 WHERE id=?`, p.ID)
 			case "ttl":
 				h.patchApp(a.Key, map[string]any{"cache_ttl_seconds": 1})
 			}
@@ -231,7 +232,7 @@ func TestRetentionUnverifiedChannelDeletesNothingAndDisabledScheduleDoesNothing(
 	setRetention(t, h, 1, false)
 	h.server.maintenance.Pass(context.Background())
 	var count int
-	h.sql().QueryRow(`SELECT count(*) FROM cleanup_previews`).Scan(&count)
+	h.sql().QueryRow(`SELECT count(*) FROM previews`).Scan(&count)
 	if count != 0 {
 		t.Fatal("disabled schedule ran")
 	}
@@ -328,14 +329,14 @@ func TestRetentionReceiptExpiresAndEmptySelectionSucceeds(t *testing.T) {
 	if err != nil || receipt.RetiredVersions != 0 || len(receipt.Selection) != 0 {
 		t.Fatal(receipt, err)
 	}
-	if _, err = h.sql().Exec(`UPDATE cleanup_previews SET executed_at_s=? WHERE id=?`, time.Now().Add(-25*time.Hour).Unix(), p.ID); err != nil {
+	if _, err = h.sql().Exec(`UPDATE previews SET executed_at_s=? WHERE id=?`, time.Now().Add(-25*time.Hour).Unix(), p.ID); err != nil {
 		t.Fatal(err)
 	}
 	h.expectError("POST", retentionPath+"/"+p.ID+"/execute", nil, 404, codePreviewNotFound, nil)
 	h.expectError("GET", retentionPath+"/"+p.ID, nil, 404, codePreviewNotFound, nil)
 	h.server.maintenance.Pass(context.Background())
 	var count int
-	h.sql().QueryRow(`SELECT count(*) FROM cleanup_previews WHERE id=?`, p.ID).Scan(&count)
+	h.sql().QueryRow(`SELECT count(*) FROM previews WHERE id=?`, p.ID).Scan(&count)
 	if count != 0 {
 		t.Fatal("expired receipt not pruned while schedule disabled")
 	}
@@ -401,7 +402,7 @@ func TestRetentionClaudeUsesVerifiedChannelsAndNeverWarmsMetadataOnlyRelease(t *
 				if code := errorCodeOf(t, data); code != string(codeChannelsUnverified) {
 					t.Fatal(code)
 				}
-				h.sql().QueryRow(`SELECT count(*) FROM cleanup_previews WHERE app_id=?`, entry.StorageID()).Scan(&count)
+				h.sql().QueryRow(`SELECT count(*) FROM previews WHERE app_uid=?`, entry.UID).Scan(&count)
 				if count != 0 {
 					t.Fatal("created preview with unverified channel")
 				}

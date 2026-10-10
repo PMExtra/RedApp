@@ -1,6 +1,7 @@
 package download
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -321,7 +322,7 @@ func (m *Manager) recover() error {
 	if e = m.removeOrphans(); e != nil {
 		return e
 	}
-	return m.db.DeleteExpiredCleanupPreviews(time.Now())
+	return m.db.PrunePreviews(context.Background(), time.Now(), pruneBatches)
 }
 
 // publishLocked reuses existing (hashed without mu) when it describes the same

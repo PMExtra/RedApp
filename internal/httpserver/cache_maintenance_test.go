@@ -195,7 +195,7 @@ func TestCachePreviewErrors(t *testing.T) {
 	}
 	h.expectError("GET", api+"/cache/refresh/"+twoFiles.ID+"/items?limit=101", nil, 400, codeInvalidQuery, nil)
 	// Expired previews are gone.
-	if _, err := h.sql().Exec(`UPDATE http_cleanup_previews SET expires_at_s=? WHERE id=?`, time.Now().Add(-time.Second).Unix(), cleanup.ID); err != nil {
+	if _, err := h.sql().Exec(`UPDATE previews SET expires_at_s=? WHERE id=?`, time.Now().Add(-time.Second).Unix(), cleanup.ID); err != nil {
 		t.Fatal(err)
 	}
 	h.expectError("GET", api+"/cache/cleanup/"+cleanup.ID, nil, 404, codePreviewNotFound, nil)

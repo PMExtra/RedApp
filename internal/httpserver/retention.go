@@ -1,7 +1,6 @@
 package httpserver
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -65,30 +64,23 @@ type retentionPreviewDTO struct {
 	Result           *retentionReceiptDTO `json:"result"`
 }
 
-func retentionPreview(p store.CleanupPreview) (retentionPreviewDTO, error) {
-	_, logical := cleanupSelection(p.Selection)
-	out := retentionPreviewDTO{ID: p.ID, CreatedAt: p.CreatedAt.UTC(), ExpiresAt: p.ExpiresAt.UTC(), ExecutedAt: utcPointer(p.ExecutedAt), LogicalBytes: logical, ReclaimableBytes: p.ReclaimableBytes}
-	for _, v := range p.Retention.Versions {
-		if v.Selected {
-			out.SelectedVersions++
-		}
+func retentionPreview(p store.Preview) (retentionPreviewDTO, error) {
+	summary, err := store.ReleaseSummary(p)
+	if err != nil {
+		return retentionPreviewDTO{}, err
 	}
-	if p.ExecutedAt != nil && len(p.Result) > 0 {
-		var receipt store.RetentionReceipt
-		if err := json.Unmarshal(p.Result, &receipt); err != nil {
+	out := retentionPreviewDTO{ID: p.ID, CreatedAt: p.CreatedAt.UTC(), ExpiresAt: p.ExpiresAt.UTC(), ExecutedAt: utcPointer(p.ExecutedAt), SelectedVersions: p.SelectedItems, LogicalBytes: p.SelectedBytes, ReclaimableBytes: summary.ReclaimableBytes}
+	if p.State == store.PreviewDone {
+		receipt, err := store.ReleaseResult(p)
+		if err != nil {
 			return out, err
 		}
-		selection, _ := cleanupSelection(receipt.Selection)
-		skipped := receipt.Skipped
-		if skipped == nil {
-			skipped = map[string]string{}
-		}
-		out.Result = &retentionReceiptDTO{RetiredVersions: receipt.RetiredVersions, LogicalBytes: receipt.LogicalBytes, Skipped: skipped, Selection: selection}
+		out.Result = &retentionReceiptDTO{RetiredVersions: receipt.RetiredVersions, LogicalBytes: receipt.LogicalBytes, Skipped: receipt.Skipped, Selection: cleanupSelection(receipt.Selection)}
 	}
 	return out, nil
 }
 
-func (s *Server) writeRetentionPreview(w http.ResponseWriter, r *http.Request, status int, e application.Entry, p store.CleanupPreview) {
+func (s *Server) writeRetentionPreview(w http.ResponseWriter, r *http.Request, status int, e application.Entry, p store.Preview) {
 	dto, err := retentionPreview(p)
 	if err != nil {
 		s.writeError(w, r, storageError(err))
@@ -99,22 +91,6 @@ func (s *Server) writeRetentionPreview(w http.ResponseWriter, r *http.Request, s
 		return
 	}
 	writeOK(w, dto)
-}
-
-// retentionRecord reads a retention preview of the application while it is
-// readable: until it expires, and for 24 hours after execution.
-func (s *Server) retentionRecord(w http.ResponseWriter, r *http.Request, e application.Entry, id string) (store.CleanupPreview, bool) {
-	p, err := s.store.ApplicationCleanupPreview(e.UID, id)
-	if err != nil && !isNotFound(err) {
-		s.writeError(w, r, storageError(err))
-		return p, false
-	}
-	now := time.Now()
-	if err != nil || p.Retention == nil || p.ExecutedAt == nil && !now.Before(p.ExpiresAt) || p.ExecutedAt != nil && !now.Before(p.ExecutedAt.Add(24*time.Hour)) {
-		s.fail(w, r, codePreviewNotFound, err, "The retention preview is unknown or expired; build a new preview")
-		return p, false
-	}
-	return p, true
 }
 
 func (s *Server) previewRetention(w http.ResponseWriter, r *http.Request) {
@@ -136,25 +112,19 @@ func (s *Server) previewRetention(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	preview, err := s.maintenance.Preview(r.Context(), e.Descriptor.ID)
-	var row store.CleanupPreview
-	if err == nil {
-		row, err = s.store.ApplicationCleanupPreview(e.UID, preview.ID)
-	}
 	switch {
 	case err == nil:
 		if current, found := s.registry.LookupAny(e.Descriptor.ID); !found || current.Revision != revision {
 			s.writeError(w, r, revisionConflict(nil))
 			return
 		}
-		s.writeRetentionPreview(w, r, http.StatusCreated, e, row)
+		s.writeRetentionPreview(w, r, http.StatusCreated, e, preview)
 	case errors.Is(err, releasemaintenance.ErrChannels):
 		s.fail(w, r, codeChannelsUnverified, err, "Release channels could not be verified; nothing was selected")
 	case errors.Is(err, download.ErrReaderLimit):
 		s.fail(w, r, codeTransferCapacity, err, "Transfer capacity is currently full; retry later")
-	case errors.Is(err, store.ErrSourceInactive), errors.Is(err, store.ErrConflict):
-		s.fail(w, r, codeSourceChanged, err, "The application source changed during the preview; retry")
 	default:
-		s.writeError(w, r, storageError(err))
+		s.writeError(w, r, previewBuildFailure(err))
 	}
 }
 
@@ -163,11 +133,7 @@ func (s *Server) getRetentionPreview(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, ok := s.pathUID(w, r, "preview_id")
-	if !ok {
-		return
-	}
-	if p, ok := s.retentionRecord(w, r, e, id); ok {
+	if p, ok := s.previewRecord(w, r, e, store.PreviewRetention); ok {
 		s.writeRetentionPreview(w, r, http.StatusOK, e, p)
 	}
 }
@@ -184,8 +150,7 @@ func (s *Server) listRetentionPreviewItems(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	id, ok := s.pathUID(w, r, "preview_id")
-	if !ok {
+	if _, ok = s.pathUID(w, r, "preview_id"); !ok {
 		return
 	}
 	page, limit, apiErr := pageQuery(r, 25)
@@ -193,20 +158,30 @@ func (s *Server) listRetentionPreviewItems(w http.ResponseWriter, r *http.Reques
 		s.writeError(w, r, apiErr)
 		return
 	}
-	p, ok := s.retentionRecord(w, r, e, id)
+	p, ok := s.previewRecord(w, r, e, store.PreviewRetention)
 	if !ok {
 		return
 	}
-	versions := p.Retention.Versions
-	meta := store.NewPage[retentionVersionDTO](page, limit, int64(len(versions)))
+	// Retention items are numbered from 1 in display order, so a page starts
+	// after a fixed ordinal.
+	meta := store.NewPage[retentionVersionDTO](page, limit, int64(p.ScannedItems))
 	out := pageDTO[retentionVersionDTO]{Items: []retentionVersionDTO{}, Page: meta.Page, Limit: meta.Limit, Total: meta.Total, TotalPages: meta.TotalPages}
-	start := min((page-1)*limit, len(versions))
-	for _, v := range versions[start:min(start+limit, len(versions))] {
-		reasons := v.Reasons
+	items, err := s.store.PreviewItems(r.Context(), p.ID, int64(page-1)*int64(limit), limit, false)
+	if err != nil {
+		s.writeError(w, r, storageError(err))
+		return
+	}
+	for _, item := range items {
+		detail, err := store.ReleaseDetail(item)
+		if err != nil {
+			s.writeError(w, r, storageError(err))
+			return
+		}
+		reasons := detail.Reasons
 		if reasons == nil {
 			reasons = []string{}
 		}
-		out.Items = append(out.Items, retentionVersionDTO{Version: v.Version, Reasons: reasons, Bytes: v.Bytes, Selected: v.Selected})
+		out.Items = append(out.Items, retentionVersionDTO{Version: item.Label, Reasons: reasons, Bytes: item.SizeBytes, Selected: item.Selected})
 	}
 	writeOK(w, out)
 }
@@ -216,15 +191,14 @@ func (s *Server) executeRetention(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, ok := s.pathUID(w, r, "preview_id")
-	if !ok || s.refuseDeleted(w, r, e) {
+	if _, ok = s.pathUID(w, r, "preview_id"); !ok || s.refuseDeleted(w, r, e) {
 		return
 	}
-	p, ok := s.retentionRecord(w, r, e, id)
+	p, ok := s.previewRecord(w, r, e, store.PreviewRetention)
 	if !ok {
 		return
 	}
-	if p.ExecutedAt != nil {
+	if p.Finished() {
 		// The preview ID is the idempotency key: repeat the stored receipt.
 		s.writeRetentionPreview(w, r, http.StatusOK, e, p)
 		return
@@ -232,22 +206,11 @@ func (s *Server) executeRetention(w http.ResponseWriter, r *http.Request) {
 	if s.refuseDisabled(w, r, e) {
 		return
 	}
-	if p.AppID != e.StorageID() {
-		s.fail(w, r, codePreviewStale, nil, "The application source changed since the preview; nothing was removed")
+	if _, err := s.maintenance.Execute(r.Context(), e.Descriptor.ID, p.ID); err != nil {
+		s.writeError(w, r, previewError(err))
 		return
 	}
-	_, err := s.maintenance.Execute(r.Context(), e.Descriptor.ID, id)
-	if err == nil {
-		p, err = s.store.ApplicationCleanupPreview(e.UID, id)
-	}
-	switch {
-	case err == nil:
+	if p, ok = s.previewRecord(w, r, e, store.PreviewRetention); ok {
 		s.writeRetentionPreview(w, r, http.StatusOK, e, p)
-	case isNotFound(err), errors.Is(err, store.ErrExpired):
-		s.fail(w, r, codePreviewNotFound, err, "The retention preview is unknown or expired; build a new preview")
-	case errors.Is(err, store.ErrConflict), errors.Is(err, store.ErrSourceInactive):
-		s.fail(w, r, codePreviewStale, err, "Policy, source or channels changed since the preview; nothing was removed")
-	default:
-		s.writeError(w, r, storageError(err))
 	}
 }

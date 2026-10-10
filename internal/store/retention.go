@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"time"
+
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/presets"
-	"time"
 )
 
 type RetentionChannel struct {
@@ -21,18 +23,13 @@ type RetentionVersion struct {
 	Bytes    int64    `json:"bytes"`
 	Selected bool     `json:"selected"`
 }
+
+// RetentionGuard is the frozen criteria of a retention preview: execution
+// requires the same policy and the same verified channels.
 type RetentionGuard struct {
-	SourceFence
 	Automatic bool                        `json:"automatic"`
 	Hash      string                      `json:"hash"`
 	Channels  map[string]RetentionChannel `json:"channels"`
-	Versions  []RetentionVersion          `json:"versions"`
-}
-type RetentionReceipt struct {
-	Selection       []CleanupSelection `json:"selection"`
-	Skipped         map[string]string  `json:"skipped"`
-	RetiredVersions int                `json:"retired_versions"`
-	LogicalBytes    int64              `json:"logical_bytes"`
 }
 
 func RetentionHash(r presets.Retention) string {
@@ -55,21 +52,21 @@ func (s *Store) Retention(key string) (presets.Retention, string, error) {
 	}
 	return r, RetentionHash(r), r.Validate()
 }
-func checkRetention(tx *sql.Tx, app string, guard *RetentionGuard, at time.Time) error {
-	if guard == nil {
-		return ErrConflict
-	}
-	uid, _, ok := identity.ParseStorageID(app)
-	if !ok {
-		return ErrInvalidDirectory
+
+// guardRetention requires the saved policy, the active current source epoch
+// and the verified channels a retention preview was built with.
+func guardRetention(tx *sql.Tx, p Preview, at time.Time) error {
+	var guard RetentionGuard
+	if err := json.Unmarshal(p.Criteria, &guard); err != nil {
+		return err
 	}
 	w := newConfigSet(tx)
-	entry, err := w.app(uid)
+	entry, err := w.app(p.AppUID)
 	if err != nil {
 		return err
 	}
 	if entry == nil {
-		return ErrSourceInactive
+		return ErrPreviewStale
 	}
 	effective, err := w.effective("App", entry.config)
 	if err != nil {
@@ -79,20 +76,18 @@ func checkRetention(tx *sql.Tx, app string, guard *RetentionGuard, at time.Time)
 	if err = strict(object(effective["retention"]), &r); err != nil {
 		return err
 	}
-	if guard.Automatic && !r.Enabled {
-		return ErrConflict
+	if guard.Automatic && !r.Enabled || RetentionHash(r) != guard.Hash {
+		return ErrPreviewStale
 	}
-	if RetentionHash(r) != guard.Hash {
-		return ErrConflict
+	source, err := scanSource(tx.QueryRow(`SELECT `+sourceColumns+sourceJoin+` WHERE src.app_uid=? AND src.epoch=(SELECT source_epoch FROM applications WHERE uid=?)`, p.AppUID, p.AppUID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrPreviewStale
 	}
-	// Active current epoch is required in addition to the preview's runtime fence.
-	var source SourceRecord
-	source, err = scanSource(tx.QueryRow(`SELECT `+sourceColumns+sourceJoin+` WHERE src.app_uid=? AND src.epoch=(SELECT source_epoch FROM applications WHERE uid=?)`, uid, uid))
 	if err != nil {
 		return err
 	}
-	if source.StorageID() != app || !source.Active {
-		return ErrSourceInactive
+	if source.StorageID() != p.StorageID() || !source.Active {
+		return ErrPreviewStale
 	}
 	var spec presets.AppSpec
 	if err = strict(effective, &spec); err != nil {
@@ -101,7 +96,11 @@ func checkRetention(tx *sql.Tx, app string, guard *RetentionGuard, at time.Time)
 	for name, frozen := range guard.Channels {
 		var version string
 		var fetched, expires int64
-		if err = tx.QueryRow(`SELECT version,fetched_at_s,expires_at_s FROM channels WHERE app_id=? AND channel=?`, app, name).Scan(&version, &fetched, &expires); err != nil {
+		err = tx.QueryRow(`SELECT version,fetched_at_s,expires_at_s FROM channels WHERE app_id=? AND channel=?`, p.StorageID(), name).Scan(&version, &fetched, &expires)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrPreviewStale
+		}
+		if err != nil {
 			return err
 		}
 		expiry := time.Unix(expires, 0)
@@ -110,7 +109,7 @@ func checkRetention(tx *sql.Tx, app string, guard *RetentionGuard, at time.Time)
 			expiry = ttlExpiry
 		}
 		if version != frozen.Version || fetched != frozen.FetchedAt.Unix() || expires != frozen.ExpiresAt.Unix() || time.Unix(fetched, 0).After(at) || !at.Before(expiry) {
-			return ErrConflict
+			return ErrPreviewStale
 		}
 	}
 	return nil

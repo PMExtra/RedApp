@@ -2,6 +2,8 @@ package httpcache
 
 import (
 	"context"
+
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
 // Register before exposing work so Close cancels and waits for admitted builds
@@ -38,7 +40,7 @@ func (s *Service) beginMaintenance(ctx context.Context, builder bool) (context.C
 // recoverPreviews fails executions a previous process left behind; they are
 // receipts, never restartable queues.
 func (s *Service) recoverPreviews(ctx context.Context) error {
-	if err := s.db.InterruptHTTPPreviews(ctx, s.now()); err != nil {
+	if err := s.db.InterruptPreviews(ctx, s.now(), store.PreviewCacheRefresh, store.PreviewCacheCleanup); err != nil {
 		return err
 	}
 	return s.prunePreviews(ctx, 4)
@@ -46,5 +48,5 @@ func (s *Service) recoverPreviews(ctx context.Context) error {
 
 // prunePreviews removes expired previews and old receipts in bounded batches.
 func (s *Service) prunePreviews(ctx context.Context, batches int) error {
-	return s.db.PruneHTTPPreviews(ctx, s.now(), batches)
+	return s.db.PrunePreviews(ctx, s.now(), batches)
 }

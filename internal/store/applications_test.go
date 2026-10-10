@@ -160,10 +160,7 @@ func TestGenerationCleanupScopeAndCurrentCannotBeResurrected(t *testing.T) {
 	if err := s.CreateGeneration(g); err != nil {
 		t.Fatal(err)
 	}
-	p := CleanupPreview{ID: "preview", AppID: r.AppID, CreatedAt: now, ExpiresAt: now.Add(10 * time.Minute), Selection: []CleanupSelection{{GenerationID: g.ID, Version: r.Version, ResourceKey: r.Key}}, SourceFence: g.SourceFence}
-	if err := s.SaveCleanupPreview(p); err != nil {
-		t.Fatal(err)
-	}
+	p := releasePreview(t, s, r.AppID, PreviewVersionCleanup, now, CleanupSelection{GenerationID: g.ID, Version: r.Version, ResourceKey: r.Key})
 	g2 := g
 	g2.ID = "second"
 	if err := s.CreateGeneration(g2); err != nil {
@@ -173,11 +170,11 @@ func TestGenerationCleanupScopeAndCurrentCannotBeResurrected(t *testing.T) {
 	if err := s.SaveGeneration(g); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RetireCleanupPreview(storageOf(t, s, "anthropic/claude-code"), p.ID, now); !errors.Is(err, sql.ErrNoRows) {
+	if _, _, err := s.ExecuteReleasePreview(t.Context(), storageOf(t, s, "anthropic/claude-code"), PreviewVersionCleanup, p.ID, nil, now); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatal("cross app cleanup accepted", err)
 	}
-	if _, err := s.RetireCleanupPreview(r.AppID, p.ID, now); err != nil {
-		t.Fatal(err)
+	if _, receipt, err := s.ExecuteReleasePreview(t.Context(), r.AppID, PreviewVersionCleanup, p.ID, nil, now); err != nil || receipt.Skipped[r.Version] != "generation_changed" || len(receipt.Selection) != 0 {
+		t.Fatal("a replaced generation was retired by an older preview", receipt, err)
 	}
 	all, _ := s.Generations()
 	for _, v := range all {

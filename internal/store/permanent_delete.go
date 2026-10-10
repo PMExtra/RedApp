@@ -151,8 +151,6 @@ func purgeApplication(tx *sql.Tx, key string, revision int64) error {
 	for _, statement := range []string{
 		`DELETE FROM app_versions WHERE app_id LIKE ?`,
 		`DELETE FROM blobs WHERE app_id LIKE ?`,
-		`DELETE FROM cleanup_previews WHERE app_id LIKE ?`,
-		`DELETE FROM http_cleanup_previews WHERE storage_id LIKE ?`,
 		`DELETE FROM http_cache_generations WHERE storage_id LIKE ?`,
 	} {
 		if _, err = tx.Exec(statement, pattern); err != nil {
@@ -165,7 +163,7 @@ func purgeApplication(tx *sql.Tx, key string, revision int64) error {
 		}
 	}
 	// Every UID-keyed row (sources, configuration, notes, taxonomy, hosted files,
-	// ranking, prewarm, retention) cascades from the application.
+	// ranking, prewarm, retention, previews) cascades from the application.
 	if _, err = tx.Exec(`DELETE FROM applications WHERE uid=?`, a.UID); err != nil {
 		return err
 	}

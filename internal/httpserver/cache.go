@@ -14,7 +14,6 @@ import (
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/httpcache"
-	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/pathmatch"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -336,7 +335,7 @@ type maintenancePreviewDTO struct {
 }
 
 func maintenanceDocument(p httpcache.MaintenancePreview) maintenancePreviewDTO {
-	out := maintenancePreviewDTO{ID: p.ID, Kind: p.Kind, State: p.State, SourceEpoch: p.SourceEpoch(), Match: p.Match, CreatedAt: p.CreatedAt.UTC(), ExpiresAt: p.ExpiresAt.UTC(), ScannedFiles: p.ScannedFiles, SelectedFiles: p.SelectedFiles, SelectedBytes: p.SelectedBytes, ActiveFiles: p.ActiveFiles, CompletedFiles: p.CompletedFiles, FailedFiles: p.FailedFiles}
+	out := maintenancePreviewDTO{ID: p.ID, Kind: p.Kind, State: string(p.State), SourceEpoch: p.SourceEpoch, Match: p.Match, CreatedAt: p.CreatedAt.UTC(), ExpiresAt: p.ExpiresAt.UTC(), ScannedFiles: p.ScannedFiles, SelectedFiles: p.SelectedFiles, SelectedBytes: p.SelectedBytes, ActiveFiles: p.ActiveFiles, CompletedFiles: p.CompletedFiles, FailedFiles: p.FailedFiles}
 	if p.Kind == "cleanup" {
 		basis := p.Basis
 		before := p.Before.UTC()
@@ -372,10 +371,8 @@ func previewBuildError(err error) *apiError {
 		return newError(codePreviewBusy, nil, "Eight maintenance previews are being built; retry shortly")
 	case errors.Is(err, httpcache.ErrInvalidCleanup), errors.Is(err, pathmatch.ErrInvalidPattern):
 		return newError(codeValidationFailed, err, "Invalid pattern, basis or cutoff")
-	case errors.Is(err, store.ErrSourceInactive):
-		return newError(codeSourceChanged, err, "The application source is not active or changed during the request; retry")
 	default:
-		return storageError(err)
+		return previewBuildFailure(err)
 	}
 }
 
@@ -470,41 +467,32 @@ func (s *Server) previewCacheCleanup(w http.ResponseWriter, r *http.Request) {
 // cachePreview resolves {preview_id} of kind to the preview and the entry bound
 // to the preview's source epoch, or writes PREVIEW_NOT_FOUND. A preview is
 // found by ID within the application, whatever epoch it was built for.
-func (s *Server) cachePreview(w http.ResponseWriter, r *http.Request, kind string) (application.Entry, httpcache.MaintenancePreview, bool) {
+func (s *Server) cachePreview(w http.ResponseWriter, r *http.Request, kind store.PreviewKind) (application.Entry, httpcache.MaintenancePreview, bool) {
 	entry, ok := s.managedAppWith(w, r, application.HttpCache)
 	if !ok {
 		return entry, httpcache.MaintenancePreview{}, false
 	}
-	id := r.PathValue("preview_id")
-	if !identity.ValidUID(id) {
-		s.fail(w, r, codeInvalidPath, nil, "Invalid preview ID")
+	row, ok := s.previewRecord(w, r, entry, kind)
+	if !ok {
 		return entry, httpcache.MaintenancePreview{}, false
 	}
-	preview, err := s.httpCache.LookupAppPreview(entry.UID, kind, id)
+	preview, err := httpcache.Maintenance(row)
 	if err != nil {
-		s.writeError(w, r, previewLookupError(err))
+		s.writeError(w, r, storageError(err))
 		return entry, preview, false
 	}
-	entry.SourceEpoch = preview.SourceEpoch()
+	entry.SourceEpoch = preview.SourceEpoch
 	return entry, preview, true
 }
 
-// previewLookupError maps unknown, expired and other-kind previews.
-func previewLookupError(err error) *apiError {
-	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrExpired) || errors.Is(err, httpcache.ErrInvalidPreview) {
-		return newError(codePreviewNotFound, nil, "Preview is unknown or expired; build a new preview")
-	}
-	return storageError(err)
-}
-
 func (s *Server) getCacheRefresh(w http.ResponseWriter, r *http.Request) {
-	if _, preview, ok := s.cachePreview(w, r, "refresh"); ok {
+	if _, preview, ok := s.cachePreview(w, r, store.PreviewCacheRefresh); ok {
 		writeOK(w, maintenanceDocument(preview))
 	}
 }
 
 func (s *Server) getCacheCleanup(w http.ResponseWriter, r *http.Request) {
-	if _, preview, ok := s.cachePreview(w, r, "cleanup"); ok {
+	if _, preview, ok := s.cachePreview(w, r, store.PreviewCacheCleanup); ok {
 		writeOK(w, maintenanceDocument(preview))
 	}
 }
@@ -527,46 +515,25 @@ type maintenanceItemPageDTO struct {
 }
 
 func (s *Server) listCacheRefreshItems(w http.ResponseWriter, r *http.Request) {
-	s.listPreviewItems(w, r, "refresh", "listCacheRefreshItems")
+	s.listPreviewItems(w, r, store.PreviewCacheRefresh, "listCacheRefreshItems")
 }
 
 func (s *Server) listCacheCleanupItems(w http.ResponseWriter, r *http.Request) {
-	s.listPreviewItems(w, r, "cleanup", "listCacheCleanupItems")
+	s.listPreviewItems(w, r, store.PreviewCacheCleanup, "listCacheCleanupItems")
 }
 
-func (s *Server) listPreviewItems(w http.ResponseWriter, r *http.Request, kind, operation string) {
-	entry, preview, ok := s.cachePreview(w, r, kind)
+func (s *Server) listPreviewItems(w http.ResponseWriter, r *http.Request, kind store.PreviewKind, operation string) {
+	_, preview, ok := s.cachePreview(w, r, kind)
 	if !ok {
 		return
 	}
-	limit, e := queryInt(r, "limit", 25, 1, 100)
-	if e != nil {
-		s.writeError(w, r, e)
+	items, next, ok := s.previewItemCursorPage(w, r, preview.Row(), operation)
+	if !ok {
 		return
 	}
-	scope := cursorScope(preview.ID)
-	after, e := decodeAfterCursor(r, operation, scope)
-	if e != nil {
-		s.writeError(w, r, e)
-		return
-	}
-	if after != "" {
-		if n, err := strconv.ParseInt(after, 10, 64); err != nil || n < 0 || strconv.FormatInt(n, 10) != after {
-			s.writeError(w, r, invalidCursor())
-			return
-		}
-	}
-	page, err := s.httpCache.PreviewItems(entry.StorageID(), kind, preview.ID, after, limit)
-	if err != nil {
-		s.writeError(w, r, previewLookupError(err))
-		return
-	}
-	out := maintenanceItemPageDTO{Items: []maintenanceItemDTO{}, TotalFiles: page.TotalFiles, TotalBytes: page.TotalBytes, State: page.State}
-	for _, item := range page.Items {
-		out.Items = append(out.Items, maintenanceItemDTO{Ordinal: item.Ordinal, GenerationID: item.GenerationID, Path: "/" + strings.TrimPrefix(item.Path, "/"), SizeBytes: item.SizeBytes, ResultStatus: item.ResultStatus, ErrorCode: optionalText(item.ErrorCode)})
-	}
-	if page.NextCursor != "" {
-		out.NextCursor = afterCursor(operation, scope, page.NextCursor)
+	out := maintenanceItemPageDTO{Items: []maintenanceItemDTO{}, NextCursor: next, TotalFiles: preview.SelectedFiles, TotalBytes: preview.SelectedBytes, State: string(preview.State)}
+	for _, item := range items {
+		out.Items = append(out.Items, maintenanceItemDTO{Ordinal: item.Ordinal, GenerationID: item.Ref, Path: "/" + strings.TrimPrefix(item.Label, "/"), SizeBytes: item.SizeBytes, ResultStatus: item.Status, ErrorCode: optionalText(item.ErrorCode)})
 	}
 	writeOK(w, out)
 }
@@ -574,28 +541,26 @@ func (s *Server) listPreviewItems(w http.ResponseWriter, r *http.Request, kind, 
 // previewExecutionError maps a failed execution of a found preview.
 func previewExecutionError(err error) *apiError {
 	switch {
-	case errors.Is(err, httpcache.ErrPreviewRunning), errors.Is(err, httpcache.ErrRefreshBusy):
-		return newError(codeOperationInProgress, nil, "The preview is running; wait for it to finish")
-	case errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrExpired):
-		return newError(codePreviewNotFound, nil, "Preview is unknown or expired; build a new preview")
-	case errors.Is(err, store.ErrSourceInactive), errors.Is(err, httpcache.ErrInvalidPreview):
-		return newError(codePreviewStale, err, "The source or policy changed since the preview; nothing was changed, build a new preview")
+	case errors.Is(err, httpcache.ErrRefreshBusy):
+		return previewError(store.ErrPreviewRunning)
+	case errors.Is(err, httpcache.ErrInvalidPreview):
+		return previewError(store.ErrPreviewStale)
 	default:
-		return storageError(err)
+		return previewError(err)
 	}
 }
 
 func (s *Server) executeCacheRefresh(w http.ResponseWriter, r *http.Request) {
-	entry, preview, ok := s.cachePreview(w, r, "refresh")
+	entry, preview, ok := s.cachePreview(w, r, store.PreviewCacheRefresh)
 	if !ok {
 		return
 	}
 	switch preview.State {
-	case "done", "failed":
+	case store.PreviewDone, store.PreviewFailed:
 		writeJSON(w, http.StatusAccepted, maintenanceDocument(preview))
 		return
-	case "running":
-		s.writeError(w, r, previewExecutionError(httpcache.ErrPreviewRunning))
+	case store.PreviewBuilding, store.PreviewRunning:
+		s.writeError(w, r, previewError(store.ErrPreviewRunning))
 		return
 	}
 	current, _ := s.registry.LookupAny(entry.Descriptor.ID)
@@ -615,28 +580,25 @@ func (s *Server) executeCacheRefresh(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) executeCacheCleanup(w http.ResponseWriter, r *http.Request) {
-	entry, preview, ok := s.cachePreview(w, r, "cleanup")
+	entry, preview, ok := s.cachePreview(w, r, store.PreviewCacheCleanup)
 	if !ok {
 		return
 	}
 	switch preview.State {
-	case "done", "failed":
+	case store.PreviewDone, store.PreviewFailed:
 		writeOK(w, maintenanceDocument(preview))
 		return
-	case "running":
-		s.writeError(w, r, previewExecutionError(httpcache.ErrPreviewRunning))
+	case store.PreviewBuilding, store.PreviewRunning:
+		s.writeError(w, r, previewError(store.ErrPreviewRunning))
 		return
 	}
 	if _, err := s.httpCache.ExecuteCleanup(r.Context(), entry, preview.ID); err != nil {
 		s.writeError(w, r, previewExecutionError(err))
 		return
 	}
-	executed, err := s.httpCache.LookupPreview(entry.StorageID(), "cleanup", preview.ID)
-	if err != nil {
-		s.writeError(w, r, previewLookupError(err))
-		return
+	if _, executed, ok := s.cachePreview(w, r, store.PreviewCacheCleanup); ok {
+		writeOK(w, maintenanceDocument(executed))
 	}
-	writeOK(w, maintenanceDocument(executed))
 }
 
 // ---------------------------------------------------------------- automatic cleanup and path match

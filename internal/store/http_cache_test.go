@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/PMExtra/RedApp/internal/identity"
 )
 
 func httpCacheFixture(t *testing.T) (*Store, string, SourceFence) {
@@ -92,7 +94,8 @@ func TestHTTPPreviewBatchRetiresOnlyUnchangedEntries(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	preview, err := s.CreateHTTPPreview(t.Context(), HTTPPreview{ID: strings.Repeat("f", 32), StorageID: storage, Kind: "cleanup", Fence: fence, CreatedAt: at, ExpiresAt: at.Add(time.Minute), Criteria: []byte(`{}`)}, CleanupPreviewFence)
+	uid, epoch, _ := identity.ParseStorageID(storage)
+	preview, err := s.CreatePreview(t.Context(), Preview{ID: strings.Repeat("f", 32), Kind: PreviewCacheCleanup, AppUID: uid, SourceEpoch: epoch, Fence: fence, State: PreviewBuilding, CreatedAt: at, ExpiresAt: at.Add(time.Minute)}, nil)
 	if err != nil || preview.HighWater != 3 {
 		t.Fatal(preview, err)
 	}
@@ -100,19 +103,17 @@ func TestHTTPPreviewBatchRetiresOnlyUnchangedEntries(t *testing.T) {
 	if err = s.PublishHTTPCacheEntry(httpEntry(storage, "4", "d", at), fence, "", at); err != nil {
 		t.Fatal(err)
 	}
-	page, err := s.FreezeHTTPPreviewPage(t.Context(), preview, CleanupPreviewFence, 0, 10, func(e HTTPCacheEntry) (HTTPPreviewItem, bool, bool) {
-		return HTTPPreviewItem{GenerationID: e.ID, Path: e.Path, SizeBytes: e.SizeBytes, AccessBucket: e.AccessBucket, Basis: "last_access", Match: []byte(`{}`), RuleIndex: -1}, true, false
+	page, err := s.FreezeHTTPCachePreviewPage(t.Context(), preview, 0, 10, func(e HTTPCacheEntry) HTTPCacheChoice {
+		return HTTPCacheChoice{Selected: true, Detail: HTTPCachePreviewDetail{AccessBucket: e.AccessBucket, Basis: "last_access", RuleIndex: -1}}
 	})
 	if err != nil || page.Scanned != 3 || page.Selected != 3 || page.Last != 3 {
 		t.Fatal(page, err)
 	}
-	if err = s.FinishHTTPPreviewBuild(t.Context(), preview, CleanupPreviewFence); err != nil {
+	if err = s.FinishPreviewBuild(t.Context(), preview); err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := s.ClaimHTTPPreview(t.Context(), storage, preview.ID, func(p HTTPPreview) (HTTPPreviewDecision, error) {
-		return HTTPPreviewDecision{Apply: p.State == "ready", Fence: CleanupPreviewFence}, nil
-	})
-	if err != nil || claimed.State != "running" || claimed.SelectedFiles != 3 || claimed.SelectedBytes != 9 {
+	claimed, started, err := s.ClaimPreview(t.Context(), storage, PreviewCacheCleanup, preview.ID, at)
+	if err != nil || !started || claimed.State != PreviewRunning || claimed.SelectedItems != 3 || claimed.SelectedBytes != 9 {
 		t.Fatal(claimed, err)
 	}
 	// Between preview and execution "a" is accessed and "b" is replaced.
@@ -122,18 +123,18 @@ func TestHTTPPreviewBatchRetiresOnlyUnchangedEntries(t *testing.T) {
 	if err = s.PublishHTTPCacheEntry(httpEntry(storage, "5", "b", at), fence, strings.Repeat("2", 32), at); err != nil {
 		t.Fatal(err)
 	}
-	items, err := s.HTTPPreviewItems(t.Context(), preview.ID, 0, 10, true)
+	items, err := s.PreviewItems(t.Context(), preview.ID, 0, 10, true)
 	if err != nil || len(items) != 3 {
 		t.Fatal(items, err)
 	}
-	result, err := s.RetireHTTPPreviewItems(t.Context(), claimed, CleanupPreviewFence, items, at)
+	result, err := s.RetireHTTPCachePreviewItems(t.Context(), claimed, items, at)
 	if err != nil || len(result.Retired) != 1 || result.Retired[0] != strings.Repeat("3", 32) || result.RetiredBytes != 3 || result.SkippedAccessed != 1 || result.SkippedChanged != 1 {
 		t.Fatal(result, err)
 	}
-	if pending, err := s.HTTPPreviewItems(t.Context(), preview.ID, 0, 10, true); err != nil || len(pending) != 0 {
+	if pending, err := s.PreviewItems(t.Context(), preview.ID, 0, 10, true); err != nil || len(pending) != 0 {
 		t.Fatal("outcomes not recorded", pending, err)
 	}
-	if p, err := s.HTTPPreview(preview.ID); err != nil || p.CompletedFiles != 3 {
+	if p, err := s.Preview(uid, PreviewCacheCleanup, preview.ID, at); err != nil || p.CompletedItems != 3 {
 		t.Fatal(p, err)
 	}
 	if current, err := s.HTTPCacheEntries(storage); err != nil || len(current) != 3 {

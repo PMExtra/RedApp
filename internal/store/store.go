@@ -22,7 +22,7 @@ import (
 
 // SchemaVersion is stored in PRAGMA user_version. Before 1.0 every schema
 // change increments it and older directories are refused (ADR 0001).
-const SchemaVersion = 14
+const SchemaVersion = 15
 
 // applicationID ("RdAp") is stored in PRAGMA application_id so that a foreign
 // SQLite file whose user_version happens to match is still refused.
@@ -38,7 +38,7 @@ var ErrIncompatibleDirectory = errors.New("this data directory belongs to anothe
 var ErrNotFound = sql.ErrNoRows
 var ErrConflict = errors.New("setting revision changed; reload before saving")
 var ErrImmutableRelease = errors.New("trusted release resource bindings changed")
-var ErrExpired = errors.New("cleanup preview expired")
+var ErrExpired = errors.New("preview expired")
 
 //go:embed schema.sql
 var schema string
