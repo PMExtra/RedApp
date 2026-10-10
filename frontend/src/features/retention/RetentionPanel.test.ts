@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { RetentionPanel } from "@/features/retention";
 import type { Schema } from "@/shared/api";
 import {
-  appConfiguration,
+  codexConfiguration,
   retentionPreview,
   retentionStatus,
   retentionVersionPage,
@@ -14,7 +14,7 @@ import { renderAppPage } from "@/test/appPage";
 
 const props = { vendor: "openai", app: "codex" };
 
-function baseHandlers(configuration = appConfiguration()) {
+function baseHandlers(configuration = codexConfiguration()) {
   return [
     mockApi("get", "/admin/api/apps/{vendor}/{app}/configuration", () => configuration),
     mockApi("get", "/admin/api/apps/{vendor}/{app}/retention/status", () => retentionStatus()),
@@ -29,7 +29,7 @@ describe("retention", () => {
       mockApi("patch", "/admin/api/apps/{vendor}/{app}/configuration", async ({ request }) => {
         const body = (await request.json()) as Schema<"AppConfigurationPatch">;
         patch = { ifMatch: request.headers.get("If-Match"), body };
-        const saved = appConfiguration({ revision: 8 });
+        const saved = codexConfiguration({ revision: 8 });
         saved.effective.retention = body.set?.retention ?? saved.effective.retention;
         return saved;
       }),
@@ -177,7 +177,7 @@ describe("retention", () => {
     let revision = 7;
     useHandlers(
       mockApi("get", "/admin/api/apps/{vendor}/{app}/configuration", () =>
-        appConfiguration({ revision }),
+        codexConfiguration({ revision }),
       ),
       mockApi("get", "/admin/api/apps/{vendor}/{app}/retention/status", () =>
         retentionStatus({ last_run: null, next_check_at: null }),

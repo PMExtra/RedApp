@@ -7,7 +7,7 @@ import type { Schema } from "@/shared/api";
 import { renderAppPage } from "@/test/appPage";
 import {
   codexApp,
-  appConfiguration,
+  codexConfiguration,
   autoCleanupStatus,
   cacheEntry,
   httpCacheApp,
@@ -332,7 +332,7 @@ describe("cache tab of a release application", () => {
       mockApi("get", "/admin/api/apps/{vendor}/{app}", () => codexApp()),
       mockApi("get", "/admin/api/apps/{vendor}/{app}/sources", () => ({ items: [sourceEpoch()] })),
       mockApi("get", "/admin/api/apps/{vendor}/{app}/prewarm/options", () => prewarmOptions()),
-      mockApi("get", "/admin/api/apps/{vendor}/{app}/configuration", () => appConfiguration()),
+      mockApi("get", "/admin/api/apps/{vendor}/{app}/configuration", () => codexConfiguration()),
       mockApi("get", "/admin/api/apps/{vendor}/{app}/retention/status", () => retentionStatus()),
     );
     await renderAppPage(AppCachePage);
@@ -349,7 +349,7 @@ describe("cache tab of a release application", () => {
       ),
       mockApi("get", "/admin/api/apps/{vendor}/{app}/sources", () => ({ items: [sourceEpoch()] })),
       mockApi("get", "/admin/api/apps/{vendor}/{app}/prewarm/options", () => prewarmOptions()),
-      mockApi("get", "/admin/api/apps/{vendor}/{app}/configuration", () => appConfiguration()),
+      mockApi("get", "/admin/api/apps/{vendor}/{app}/configuration", () => codexConfiguration()),
       mockApi("get", "/admin/api/apps/{vendor}/{app}/retention/status", () => retentionStatus()),
     );
     await renderAppPage(AppCachePage);

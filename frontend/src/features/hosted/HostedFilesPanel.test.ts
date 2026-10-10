@@ -4,14 +4,16 @@ import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HostedFilesPanel, TRANSFER_FIRST_POLL_MS, TRANSFER_POLL_MS } from "@/features/hosted";
 import { renderAppPage } from "@/test/appPage";
-import { hostedFile, hostedFilePage } from "@/test/factories/runtime";
+import { hostedFile, hostedFilePage } from "@/test/factories/catalog";
 import { apiError, mockApi, noContent, useHandlers } from "@/test/msw";
 
 const props = { vendor: "acme", app: "tools" };
-const existing = hostedFile();
+const existing = hostedFile("tools/setup.exe", { size_bytes: 4096 });
 
 function list(files = [existing]) {
-  return mockApi("get", "/admin/api/apps/{vendor}/{app}/files", () => hostedFilePage(files));
+  return mockApi("get", "/admin/api/apps/{vendor}/{app}/files", () =>
+    hostedFilePage({ items: files }),
+  );
 }
 
 /** Resolves the pending upload/import when `release()` is called. */
@@ -57,12 +59,9 @@ describe("hosted files", () => {
         const form = await request.formData();
         fields = [...form.keys()];
         await upload.opened;
-        return HttpResponse.json(
-          hostedFile({ id: "f".repeat(32), path: form.get("path") as string }),
-          {
-            status: 201,
-          },
-        );
+        return HttpResponse.json(hostedFile(form.get("path") as string, { id: "f".repeat(32) }), {
+          status: 201,
+        });
       }),
       mockApi(
         "get",

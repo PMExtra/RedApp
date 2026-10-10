@@ -1,20 +1,11 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { collectConsoleErrors } from "./console";
 
 /**
  * Public site smoke: home → catalog search → application page on a real
  * server with the embedded frontend. Needs at least one published
  * application (a fresh install has the built-in presets).
  */
-
-/** CSP violations or uncaught errors fail the test. */
-function collectConsoleErrors(page: Page): string[] {
-  const errors: string[] = [];
-  page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
-  });
-  page.on("pageerror", (error) => errors.push(error.message));
-  return errors;
-}
 
 test("browses from the home page through the catalog search to an application", async ({
   page,

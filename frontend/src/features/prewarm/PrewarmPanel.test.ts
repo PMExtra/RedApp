@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PREWARM_POLL_MS, PrewarmPanel } from "@/features/prewarm";
 import type { Schema } from "@/shared/api";
 import {
-  appConfiguration,
+  codexConfiguration,
   hexId,
   prewarmItemPage,
   prewarmJob,
@@ -48,7 +48,7 @@ function jobServer(polls: number) {
 function common(options = prewarmOptions()) {
   return [
     mockApi("get", "/admin/api/apps/{vendor}/{app}/prewarm/options", () => options),
-    mockApi("get", "/admin/api/apps/{vendor}/{app}/configuration", () => appConfiguration()),
+    mockApi("get", "/admin/api/apps/{vendor}/{app}/configuration", () => codexConfiguration()),
   ];
 }
 
@@ -240,7 +240,7 @@ describe("prewarm", () => {
       ...common(),
       mockApi("patch", "/admin/api/apps/{vendor}/{app}/configuration", async ({ request }) => {
         patch = await request.json();
-        const saved = appConfiguration({ revision: 8 });
+        const saved = codexConfiguration({ revision: 8 });
         saved.effective.prewarm = {
           enabled: true,
           channels: ["stable"],

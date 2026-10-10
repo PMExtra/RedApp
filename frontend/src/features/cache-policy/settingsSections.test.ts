@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { CachePolicySection, ChannelTtlSection } from "@/features/cache-policy";
 import type { Schema } from "@/shared/api";
 import { renderAppPage } from "@/test/appPage";
-import { appConfiguration, httpCacheConfiguration } from "@/test/factories/runtime";
+import { codexConfiguration, httpCacheConfiguration } from "@/test/factories/runtime";
 import { apiError, mockApi, useHandlers } from "@/test/msw";
 
 type Patch = Schema<"AppConfigurationPatch">;
@@ -114,11 +114,11 @@ describe("channel TTL section", () => {
   it("saves a new TTL and restores the template value", async () => {
     const bodies: Patch[] = [];
     useHandlers(
-      mockApi("get", "/admin/api/apps/{vendor}/{app}/configuration", () => appConfiguration()),
+      mockApi("get", "/admin/api/apps/{vendor}/{app}/configuration", () => codexConfiguration()),
       mockApi("patch", "/admin/api/apps/{vendor}/{app}/configuration", async ({ request }) => {
         const body = (await request.json()) as Patch;
         bodies.push(body);
-        const saved = appConfiguration({ revision: 7 + bodies.length });
+        const saved = codexConfiguration({ revision: 7 + bodies.length });
         if (body.set?.cache_ttl_seconds !== undefined) {
           saved.effective.cache_ttl_seconds = body.set.cache_ttl_seconds;
           saved.fields.cache_ttl_seconds = { source: "custom", differs_from_template: true };

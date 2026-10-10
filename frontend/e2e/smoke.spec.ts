@@ -1,16 +1,7 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { collectConsoleErrors } from "./console";
 
 const password = process.env.REDAPP_E2E_PASSWORD ?? "";
-
-/** CSP violations or uncaught errors fail the smoke test. */
-function collectConsoleErrors(page: Page): string[] {
-  const errors: string[] = [];
-  page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
-  });
-  page.on("pageerror", (error) => errors.push(error.message));
-  return errors;
-}
 
 test("public home page renders the shell", async ({ page }) => {
   const errors = collectConsoleErrors(page);

@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 import { RouterView } from "vue-router";
 import type { Schema } from "@/shared/api";
 import { bootstrap, localized, session, siteSettingsState } from "@/test/factories";
-import { appListItem, appPage, homepageState, publicUrlState } from "@/test/factories/settings";
+import { appListItem, page } from "@/test/factories/directory";
+import { homepageState, publicUrlState } from "@/test/factories/settings";
 import { apiError, mockApi, useHandlers } from "@/test/msw";
 import { renderEntry, renderWithApp } from "@/test/render";
 import SiteSettingsPage from "./SiteSettingsPage.vue";
@@ -62,14 +63,13 @@ function settingsServer() {
     mockApi("get", "/admin/api/apps", ({ request }) => {
       const q = new URL(request.url).searchParams.get("q") ?? "";
       const apps = [
-        appListItem(),
-        appListItem({
-          key: "anthropic/claude-code",
-          id: "claude-code",
-          name: localized("Claude Code"),
-        }),
+        appListItem({ id: "gemini-cli", vendor_id: "google", name: localized("Gemini CLI") }),
+        appListItem({ id: "claude-code", vendor_id: "anthropic", name: localized("Claude Code") }),
       ];
-      return appPage(apps.filter((app) => !q || app.key.includes(q)));
+      return page(
+        apps.filter((app) => !q || app.key.includes(q)),
+        { limit: 8 },
+      );
     }),
   );
   return {

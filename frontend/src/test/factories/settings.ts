@@ -1,5 +1,4 @@
 import type { Schema } from "@/shared/api";
-import { localized } from "./index";
 
 type Overrides<T> = Partial<T>;
 
@@ -32,37 +31,6 @@ export function globalProxyState(
     revision: 4,
     ...overrides,
   };
-}
-
-export function appListItem(
-  overrides: Overrides<Schema<"AppListItem">> = {},
-): Schema<"AppListItem"> {
-  return {
-    uid: "0".repeat(32),
-    id: "gemini-cli",
-    key: "google/gemini-cli",
-    vendor_uid: "1".repeat(32),
-    vendor_id: "google",
-    name: localized("Gemini CLI"),
-    description: localized("Google's terminal agent.", "Google 的终端助手。"),
-    icon: "",
-    provider: "http-cache",
-    categories: [],
-    tags: [],
-    enabled: true,
-    builtin_template: false,
-    source_epoch: 1,
-    revision: 1,
-    deleted_at: null,
-    latest_version: null,
-    version_discovered_at: null,
-    successful_downloads: 0,
-    ...overrides,
-  };
-}
-
-export function appPage(items: Schema<"AppListItem">[]): Schema<"AppPage"> {
-  return { items, page: 1, limit: 8, total: items.length, total_pages: 1 };
 }
 
 export function operationalEvent(

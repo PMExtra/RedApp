@@ -1,5 +1,5 @@
 /*
- * Fixtures for the application runtime pages (package C): releases,
+ * Fixtures for the application runtime pages: releases,
  * retention, prewarm, HTTP cache and hosted files.
  */
 import type { Schema } from "@/shared/api";
@@ -128,7 +128,7 @@ export function versionCleanupPreview(
 }
 
 /** A template-linked release application configuration. */
-export function appConfiguration(
+export function codexConfiguration(
   overrides: Overrides<Schema<"AppConfiguration">> = {},
 ): Schema<"AppConfiguration"> {
   const spec: Schema<"AppSpec"> = {
@@ -182,7 +182,7 @@ export function httpCacheConfiguration(
     instructions: { en: "", "zh-CN": "" },
     http_policy: { stale_fallback: true, rules: [], auto_cleanup: [], ...policy },
   };
-  return appConfiguration({
+  return codexConfiguration({
     template_ref: null,
     template_hash: null,
     defaults: null,
@@ -369,22 +369,4 @@ export function autoCleanupStatus(
     retired_bytes: 8192,
     ...overrides,
   };
-}
-
-export function hostedFile(overrides: Overrides<Schema<"HostedFile">> = {}): Schema<"HostedFile"> {
-  return {
-    id: hexId(500),
-    path: "tools/setup.exe",
-    sha256: SHA,
-    size_bytes: 4096,
-    created_at: CREATED,
-    ...overrides,
-  };
-}
-
-export function hostedFilePage(
-  items: Schema<"HostedFile">[],
-  overrides: Overrides<Schema<"HostedFilePage">> = {},
-): Schema<"HostedFilePage"> {
-  return { items, page: 1, limit: 25, total: items.length, total_pages: 1, ...overrides };
 }
