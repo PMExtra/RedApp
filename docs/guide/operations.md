@@ -173,12 +173,16 @@ Metric sampling runs once at startup and then every minute.
 
 ## Logs and events
 
-RedApp writes few log lines to standard error:
+RedApp writes structured log lines (`key=value` text) to standard error:
 
 - The initial admin password, once, on the first start
 - `RedApp started: listener ..., data directory ...`
+- One `http request` line per request with `request_id`, method, path (without the query string), status, bytes, duration, client address and the API operation
+- One `request failed` line for every server error and for client errors with a cause, with the error code and the underlying error; credentials in URLs are masked
 - Failures of metric sampling and automatic cache cleanup
 - The fatal error when startup fails
+
+Every response carries an `X-Request-Id` header, and error responses repeat it as `error.request_id`. Search the log for that value when a user reports an error.
 
 Operational warnings go to the **Events** page instead of the log. Examples are stale cache fallback, cache rules that override upstream `no-store`, upstream errors, failed downloads and failed automatic cleanup. RedApp keeps the newest 1,000 events for up to 30 days.
 

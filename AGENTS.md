@@ -70,7 +70,7 @@
 - **Schema**：1.0 前不写数据迁移。任何 schema 变化都提升 `store.SchemaVersion`，旧数据目录被拒绝。1.0 起每次 schema 变化必须附带迁移和 golden fixture 测试（[ADR 0001](docs/dev/adr/0001-pre-1.0-no-migrations.md)）。
 - **安装器**：禁止编辑 `installers/*/*/upstream/`。只改 `patches/`，用 `scripts/update-installers.py` 重新生成 `generated/`；patch 不允许 fuzz（[installers.md](docs/dev/installers.md)）。
 - **前端产物**：`internal/httpserver/web` 是提交的构建产物。前端源码或依赖变化必须重新构建并提交，且必须能由锁定的工具链逐字节复现。
-- **SPA 路由**：新增前端路由必须同时加入 `internal/httpserver/server.go` 中 `validUI` 的深链白名单和规范的 `x-spa-routes`，否则直接访问会 404。
+- **SPA 路由**：新增前端路由必须同时加入规范的 `x-spa-routes` 和 `internal/httpserver/spa.go` 的 `adminSPARoutes`（后台）或对应的公开页面操作，否则直接访问会 404。
 - **依赖**：新增或升级 Go/npm 依赖必须同步更新 `third_party/README.md` 和对应许可证原文。
 - **HTTP 契约**：路由、字段和错误码以 `api/openapi.yaml` 为准，改接口先改规范并在同一 PR 中改实现（[ADR 0009](docs/dev/adr/0009-openapi-contract.md)）。
 - **并发写**：后台写操作使用 revision（`If-Match`）做 CAS，冲突返回 409，不允许静默覆盖。

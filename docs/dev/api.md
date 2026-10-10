@@ -8,7 +8,7 @@
 | --- | --- |
 | `info.description` | 全局规则：方法语义、路径与查询校验、JSON 严格解析、`X-Request-Id`、安全响应头、错误、revision、分页、认证 |
 | `tags` | 按领域分组：health、public、pages、assets、distribution、auth、overview、settings、directory、configuration、exchange、releases、cache、prewarm、hosted |
-| `x-spa-routes` | 返回 SPA 文档的深链白名单（对应 `validUI`） |
+| `x-spa-routes` | 返回 SPA 文档的深链白名单（服务端为 `spa.go` 的 `adminSPARoutes`） |
 | `paths` | 103 个操作；分发、页面、静态资源也在其中 |
 | `components.schemas` | 全部请求/响应模型，响应对象均为 `additionalProperties: false` |
 | `components.x-error-codes` | 错误码目录：HTTP 状态、`retryable`、含义 |
@@ -51,14 +51,31 @@
 
 路由层（尚未选中操作）只会返回 `x-router-error-codes`：`NOT_FOUND`、`METHOD_NOT_ALLOWED`（带 `Allow`）、`INVALID_PATH`、`REQUEST_ORIGIN_INVALID`。
 
-## 阶段 3b：服务端
+## 服务端实现
 
-- 用 `http.ServeMux` 的方法 + 路径模式注册 `paths` 中的每个操作；`x-greedy` 参数用 `{name...}` 通配，`/` 用 `/{$}`。`/{vendor}/{app}/{file_path...}` 等宽泛模式与 `/api/...`、`/assets/...` 等具体模式并存时依赖 ServeMux 的“更具体者优先”。GET 模式自动响应 HEAD。
-- `/admin/{ui_path}` 与 `/{vendor}/{app}` 系列在 ServeMux 中互不包含，直接注册会冲突。做法：按 `x-spa-routes` 逐条注册后台页面（它们比 `/{vendor}/...` 更具体）；其余 `/admin/...` 落到 `/{vendor}/...` 处理器，由它识别保留厂商名后返回 SPA 404。保留厂商名（`admin`、`api`、`assets`、`health`、`all`）的其他请求同样不得进入应用查找。
-- 中间件依次处理：`request_id`（生成并写 `X-Request-Id`、注入日志）、安全响应头、请求来源解析（`REQUEST_ORIGIN_INVALID`）、路径规范化、`/admin/api/` 的 Origin 检查、会话、CSRF、panic 恢复（`INTERNAL_ERROR`）、访问日志。404/405 也必须输出 `Error`。
-- 查询参数白名单、JSON 严格解码、`If-Match` 解析做成共享辅助函数，参数和上限取自规范。
-- 每个错误分支调用显式错误码，删除按 HTTP 状态推导错误码的 `fail()`。
-- **契约测试**：加载 `api/openapi.yaml`，对现有 HTTP 测试的每个响应校验状态码已声明、响应体符合 schema（JSON Schema 2020-12，需支持 `unevaluatedProperties`/`oneOf`/`if`）、错误码属于该操作的错误码集合且状态与目录一致；另有一个测试检查规范中每个操作都有服务端路由、每个服务端路由都在规范中。规范自身的结构检查（`$ref`、operationId、路径参数、错误码目录）也作为测试保留。
+实现结构（构造、路由表、中间件顺序、错误与请求辅助、测试工厂、契约校验）见 [architecture.md](architecture.md#http-层)。
+
+- 每个操作在 `internal/httpserver/routes.go` 的路由表中占一行，用 `http.ServeMux` 的方法 + 路径模式注册；`x-greedy` 参数用 `{name...}`，`/` 用 `/{$}`。GET 模式同时应答 HEAD，所以规范中的 HEAD 操作和 `install.sh`/`install.ps1` 不单独注册（路由表用 `servedBy` 标明由哪个操作的注册应答）；安装脚本若单独注册，会与 `/api/vendors/{vendor}`、`/admin/vendors/{vendor}` 等三段路径互相冲突。
+- `/admin/{ui_path}` 与 `/{vendor}/{app}` 系列在 ServeMux 中互不包含，不能直接注册：按 `x-spa-routes` 逐条注册后台页面；其余 `/admin/...` 落到 `/{vendor}/...` 处理器，由它识别保留厂商名后返回后台文档并带 404（`/admin/api/...` 返回 `404 NOT_FOUND`）。其他保留厂商名（`api`、`assets`、`health`、`all`）返回 `404 NOT_FOUND`，不进入应用查找。
+- 页面文档按 `x-spa-routes.documents`：公开页面（`/`、`/all`、`/{vendor}`、`/{vendor}/{app}`）返回 `index.html`；`/admin/...` 全部返回 `admin.html`，从不回退到 `index.html`。前端构建缺少某个入口时该类页面返回 `500 INTERNAL_ERROR`（当前提交的旧前端只有 `index.html`，后台页面因此不可用，直到重写的前端产物提交）。文件都在构建目录根部（`index.html`、`admin.html`、`assets/`），布局只在 `spa.go` 的常量中定义。
+- 厂商或应用不存在、未发布或标识无效时，`/{vendor}` 和 `/{vendor}/{app}` 返回 `index.html` 并带 404，由 SPA 显示“页面不存在”；其下的分发路径仍返回规范中的 JSON 错误。首段为 `api`、`assets`、`health` 的未知路径返回 `404 NOT_FOUND`。
+- 查询参数、请求体上限和鉴权按路由声明，由中间件执行；`TestRouteTableMatchesSpec` 保证与规范一致。JSON 严格解码（`jsoncheck.Strict`）、`If-Match` 解析和错误码都是共享辅助函数。
+- 错误码常量在 `error_codes.go`，与 `components.x-error-codes` 由测试保持一致；状态和 `retryable` 只来自这张表。
+- 契约测试：`newHarness` 的每个响应都按规范校验（状态、`X-Request-Id`、安全头、声明的响应头、媒体类型、JSON Schema 2020-12 响应体、错误码归属与目录一致）；`spec_test.go` 检查路由表、`x-spa-routes`、错误码目录和规范自身的结构。
+
+### 迁移状态
+
+已按规范实现：health、public、pages、assets、distribution、auth 六个标签下的全部 29 个操作。以下差异已落地：错误码与 `request_id`、`Error` 文档（含 404/405）、HEAD（发布制品不触发下载）、认证与会话、公开 API、分发与静态资源、页码超出时返回空页、`PREWARM_BUSY` 改为标准 `Error`。
+
+其余 74 个管理操作在路由表中标记为 `legacy`，仍由旧处理器以旧路径和旧响应形状服务（`legacy.go` 的分发骨架与 `legacy_directory.go`、`legacy_releases.go`、`legacy_overview.go` 三个分派函数）；规范已删除的旧路径经 `/admin/api/` 兜底注册到达。它们按三个互不重叠的工作包迁移：
+
+| 工作包 | 操作 | 主要文件 |
+| --- | --- | --- |
+| 1 目录、配置、导入导出、分类、管理备注（27） | `listProviders`、`listVendors`、`createVendor`、`getVendor`、`updateVendor`、`deleteVendor`、`listApps`、`createApp`、`getApp`、`updateApp`、`deleteApp`、`uploadIcon`、`getVendorConfiguration`、`patchVendorConfiguration`、`getAppConfiguration`、`patchAppConfiguration`、`getVendorNotes`、`replaceVendorNotes`、`getAppNotes`、`replaceAppNotes`、`listCategories`、`getCategory`、`patchCategory`、`exportConfiguration`、`previewImport`、`executeImport`、`copyApp` | `directory.go`、`directory_listing.go`、`directory_table.go`、`configuration.go`、`admin_notes.go`、`taxonomy.go`、`exchange.go`、`proxy_redaction.go`、`application_work.go`、`legacy_directory.go`；测试 `directory_test.go`、`directory_table_test.go`、`configuration_test.go`、`admin_notes_test.go`、`taxonomy_test.go`、`exchange_test.go`、`vendor_icons_test.go`、`proxy_redaction_test.go`、`force_delete_test.go`、`scoped_proxy_test.go`、`v072_test.go` |
+| 2 发布版本、资源、版本清理、保留、预热、托管文件管理（21） | `listVersions`、`listResources`、`previewVersionCleanup`、`executeVersionCleanup`、`getRetentionStatus`、`previewRetention`、`getRetentionPreview`、`listRetentionPreviewItems`、`executeRetention`、`getPrewarmOptions`、`startPrewarm`、`getPrewarmJob`、`listPrewarmItems`、`cancelPrewarmJob`、`retryPrewarmJob`、`listHostedFiles`、`uploadHostedFile`、`importHostedFile`、`deleteHostedFile`、`getHostedTransfer`、`cancelHostedTransfer` | `listing.go`、`numbered_listing.go`、`retention.go`、`prewarm.go`、`hosted.go`、`legacy_releases.go`；测试 `listing_test.go`、`retention_test.go`、`prewarm_test.go`、`content_providers_test.go` |
+| 3 HTTP 缓存管理、概览、事件、历史、站点设置（26） | `listSources`、`listCacheEntries`、`refreshCacheEntry`、`previewCacheRefresh`、`getCacheRefresh`、`listCacheRefreshItems`、`executeCacheRefresh`、`previewCacheCleanup`、`getCacheCleanup`、`listCacheCleanupItems`、`executeCacheCleanup`、`getAutoCleanupStatus`、`testPathMatch`、`getStatus`、`getHistory`、`listEvents`、`getAppStatus`、`getAppHistory`、`getSiteSettings`、`replaceSiteSettings`、`getPublicUrlSettings`、`replacePublicUrlSettings`、`getGlobalProxySettings`、`replaceGlobalProxySettings`、`getHomepageSettings`、`replaceHomepageSettings` | `cache.go`、`status.go`、`history.go`、`homepage_settings.go`、`legacy_overview.go`；`listing.go` 中的 `eventList`；测试 `cache_policy_test.go`、`cache_capacity_test.go`、`general_routes_test.go`（管理部分）、`dynamic_metrics_test.go`、`site_test.go` |
+
+每个工作包的做法：把本包在 `routeTable()` 中的行从 `serve: s.legacyAdmin, …, legacy: true` 改为新处理函数（契约测试随之生效），按规范重写处理器与测试；完成后让本包的 `legacy_*.go` 分派函数直接返回 `false` 并删除不再引用的旧处理器。不要修改 `legacy.go`；三个包都完成后，在一次清理中删除 `legacy.go`、三个 `legacy_*.go`、`legacyCatchAll` 和路由字段 `legacy`。
 
 ## 阶段 4：前端
 
@@ -69,7 +86,7 @@
 
 ## 与现有实现的差异
 
-以下改动是有意的，3b 和 4 以此为准。未列出的接口保持原有语义。
+以下改动是有意的，3b 和 4 以此为准。未列出的接口保持原有语义。已落地的部分见[迁移状态](#迁移状态)。
 
 ### 全局
 
@@ -216,6 +233,8 @@
 | 旧图标路由 `/assets/builtin/*`、`/{vendor}/{app}/icon.svg` | 删除；预置图片只在 `/assets/presets/...` |
 | 只读缓存 `only-if-cached` 未命中时由缓存模块写出非 JSON 的 504 | `504 CACHE_MISS`（`Error`） |
 | 上游失败和元数据校验失败都是 `METADATA_UNTRUSTED` | 网络/超时/5xx 为可重试的 `UPSTREAM_UNAVAILABLE`，校验失败为 `METADATA_UNTRUSTED` |
+| 未知或未发布的 `/{vendor}`、`/{vendor}/{app}` 页面返回 `404` JSON | `index.html` 并带 404 |
+| 后台页面与公开页面共用 `index.html` | `admin.html`（含 404 文档），不回退到 `index.html` |
 
 ## 校验规范
 
@@ -223,4 +242,4 @@
 uv run --no-project --with openapi-spec-validator python -m openapi_spec_validator api/openapi.yaml
 ```
 
-3b 会把结构检查（`$ref` 可解析、operationId 唯一且为 camelCase、标签已定义、路径参数一致、错误码在目录中且对应状态已声明、属性为 snake_case）落成 Go 测试。
+同样的结构检查（`$ref` 可解析、operationId 唯一且为 camelCase、标签已定义、路径参数一致、错误码在目录中且对应状态已声明、属性为 snake_case、schema 可编译）由 `go test ./internal/httpserver -run TestSpecStructure` 执行，属于门禁。
