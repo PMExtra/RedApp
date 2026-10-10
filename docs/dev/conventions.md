@@ -54,8 +54,14 @@
 
 ### 日志
 
-- HTTP 层使用 `log/slog` 结构化日志：每个请求一行访问日志，错误日志带错误码和底层错误，都带 `request_id`，与 `X-Request-Id` 和错误响应中的 `request_id` 一致。`internal/` 其他包通过回调上报错误，由调用方记录。
-- 不记录密码、会话 token、CSRF token、代理凭据或完整的带凭据 URL。
+- 只用 `log/slog`，不用标准库 `log`。`cmd/redapp` 创建唯一的 logger，经构造函数选项（`WithLogger`）、`httpserver.Deps.Logger` 或 `releasemaintenance.Service.Log` 交给每个组件；没有传入时组件丢弃日志，测试默认不输出。不用回调上报后台错误。
+- 后台组件用 `logging.For(log, "<component>")` 加 `component` 字段，错误一律用 `logging.Error(err)`（`error` 字段，遮盖 URL 凭据）。用户运维文档的“日志”一节列出各组件，新增组件时同步更新。
+- 字段名统一：`app`（`<vendor>/<app>`）、`storage_id`、`job_id`、`preview_id`、`generation_id`、`transfer_id`、`version`、`state`、`reason`、`outcome`、`error`。
+- 级别：`ERROR` 表示需要运维处理的失败（如状态写不进数据库）；`WARN` 表示会自动重试或恢复的失败；`INFO` 表示启动、停止和低频的后台结果；每轮都会重复的“无变化”结果用 `DEBUG`。
+- 后台循环不按请求或按文件逐条记录。可能每秒重复的失败只记第一次和恢复（如计数器写入）。
+- 持有 mutex 时不写日志：先记下字段，解锁后再记（例如在 `defer mu.Unlock()` 之前登记一个记录日志的 `defer`）。
+- HTTP 层每个请求一行访问日志，错误日志带错误码和底层错误，都带 `request_id`，与 `X-Request-Id` 和错误响应中的 `request_id` 一致。
+- 不记录密码、会话 token、CSRF token、代理凭据或完整的带凭据 URL。唯一的例外是首次启动时的初始管理员密码，它只输出一次，并且部署脚本依赖它的消息格式。
 
 ### 注释与格式
 

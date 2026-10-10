@@ -6,13 +6,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/PMExtra/RedApp/internal/application"
-	"github.com/PMExtra/RedApp/internal/catalog"
-	"github.com/PMExtra/RedApp/internal/download"
-	"github.com/PMExtra/RedApp/internal/store"
+	"log/slog"
 	"sort"
 	"sync/atomic"
 	"time"
+
+	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/internal/catalog"
+	"github.com/PMExtra/RedApp/internal/download"
+	"github.com/PMExtra/RedApp/internal/logging"
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
 const Interval = 15 * time.Minute
@@ -26,8 +29,10 @@ type Service struct {
 	Catalog          *catalog.Service
 	Downloads        *download.Manager
 	AutomaticPrewarm func(context.Context)
-	running          atomic.Bool
-	next             atomic.Int64
+	// Log receives retention outcomes and failures; nil discards them.
+	Log     *slog.Logger
+	running atomic.Bool
+	next    atomic.Int64
 }
 type Preview struct {
 	ID               string                   `json:"id"`
@@ -228,10 +233,15 @@ func (s *Service) Execute(ctx context.Context, key, id string) (store.RetentionR
 		return store.RetentionReceipt{}, store.ErrSourceInactive
 	}
 	receipt, err := s.Downloads.CleanupRetention(ctx, e.StorageID(), id)
-	s.record(e, receipt, err)
+	s.record(e, id, receipt, err)
 	return receipt, err
 }
-func (s *Service) record(e application.Entry, receipt store.RetentionReceipt, err error) {
+
+func (s *Service) log() *slog.Logger { return logging.For(s.Log, "retention") }
+
+// record persists the outcome of one run and logs it: failures as warnings,
+// skips and runs that retired versions as information.
+func (s *Service) record(e application.Entry, previewID string, receipt store.RetentionReceipt, err error) {
 	now := time.Now().UTC()
 	status := Status{Attempt: now, Outcome: "success", RetiredVersions: receipt.RetiredVersions, LogicalBytes: receipt.LogicalBytes}
 	old, _ := s.DB.RetentionStatus(e.UID)
@@ -254,7 +264,21 @@ func (s *Service) record(e application.Entry, receipt store.RetentionReceipt, er
 		}
 	}
 	raw, _ := json.Marshal(status)
-	_ = s.DB.SaveRetentionStatus(e.UID, raw)
+	attrs := []any{slog.String("app", e.Descriptor.ID), slog.String("outcome", status.Outcome)}
+	if previewID != "" {
+		attrs = append(attrs, slog.String("preview_id", previewID))
+	}
+	if saveErr := s.DB.SaveRetentionStatus(e.UID, raw); saveErr != nil {
+		s.log().Error("retention status was not saved", append(attrs, logging.Error(saveErr))...)
+	}
+	switch {
+	case status.Outcome == "failure":
+		s.log().Warn("retention failed", append(attrs, slog.String("reason", status.Reason), logging.Error(err))...)
+	case status.Outcome == "skip":
+		s.log().Info("retention skipped", append(attrs, slog.String("reason", status.Reason))...)
+	case receipt.RetiredVersions > 0:
+		s.log().Info("retention retired versions", append(attrs, slog.Int("versions", receipt.RetiredVersions), slog.Int64("bytes", receipt.LogicalBytes))...)
+	}
 }
 
 // NextCheck is the time of the next scheduled pass, nil while Run is not active.
@@ -308,7 +332,8 @@ func (s *Service) Pass(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
-	if s.DB.DeleteExpiredCleanupPreviews(time.Now()) != nil {
+	if err := s.DB.DeleteExpiredCleanupPreviews(time.Now()); err != nil {
+		s.log().Error("expired cleanup previews were not removed; retention pass skipped", logging.Error(err))
 		return
 	}
 	for _, e := range s.Registry.Entries() {
@@ -320,7 +345,7 @@ func (s *Service) Pass(ctx context.Context) {
 		}
 		r, _, err := s.DB.Retention(e.Descriptor.ID)
 		if err != nil {
-			s.record(e, store.RetentionReceipt{}, err)
+			s.record(e, "", store.RetentionReceipt{}, err)
 			continue
 		}
 		if !r.Enabled {
@@ -328,7 +353,7 @@ func (s *Service) Pass(ctx context.Context) {
 		}
 		preview, err := s.preview(ctx, e.Descriptor.ID, true)
 		if err != nil {
-			s.record(e, store.RetentionReceipt{}, err)
+			s.record(e, "", store.RetentionReceipt{}, err)
 			continue
 		}
 		_, _ = s.Execute(ctx, e.Descriptor.ID, preview.ID)

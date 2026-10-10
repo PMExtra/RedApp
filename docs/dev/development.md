@@ -165,7 +165,7 @@ go test ./internal/store -run TestSchemaFixtureOfCurrentVersion -update-schema-f
 
 1. 确认 `testdata/schema/v<SchemaVersion>.sql` 存在且测试通过；从此不再删除任何 fixture。
 2. 把 `MinimumMigratableVersion` 设为当前的 `SchemaVersion`。
-3. 改写 `store.ErrIncompatibleDirectory` 的文本（去掉“Data is never migrated”），在用户运维文档（中英）中说明升级时的自动备份文件、所需空间和被拒绝的情形（降级、过旧版本）。
+3. 改写 `store.ErrIncompatibleDirectory` 的文本（去掉“Data is never migrated”），在用户运维文档（中英）中说明升级时的自动备份文件、所需空间、被拒绝的情形（降级、过旧版本）和 `component=migration` 日志。
 4. 在 ADR 0001 顶部注明 1.0 已发布、迁移已启用。
 
 ### 1.0 后新增迁移

@@ -1,6 +1,8 @@
 package store
 
 import (
+	"bytes"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -92,22 +94,26 @@ func TestCountersForMissingApplicationsOrVersionsAreDiscarded(t *testing.T) {
 }
 
 func TestFailedCounterFlushRetainsVersionIncrements(t *testing.T) {
-	s := openTest(t)
+	var logs bytes.Buffer
+	s := openTest(t, WithLogger(slog.New(slog.NewTextHandler(&logs, nil))))
 	releaseFixture(t, s, storageOf(t, s, "openai/codex"), "1.0.0")
 	if _, err := s.db.Exec(`CREATE TRIGGER fail_version_counter BEFORE UPDATE ON app_versions BEGIN SELECT RAISE(FAIL,'version fault'); END`); err != nil {
 		t.Fatal(err)
 	}
-	var reported []error
-	stop := s.StartCounterFlush(1<<62, func(err error) { reported = append(reported, err) })
+	stop := s.StartCounterFlush(1 << 62)
 	s.AddFor(metricsOf(t, s, "openai/codex"), "downstream_bytes", 4)
 	s.AddVersion(storageOf(t, s, "openai/codex"), "1.0.0", 0, 4)
 	s.SettleCounters()
-	if len(reported) != 1 || persistedCounter(t, s, "global", "", "downstream_bytes") != 0 {
-		t.Fatal("failed flush not reported or partially committed", reported)
+	s.SettleCounters()
+	if strings.Count(logs.String(), "counter flush failed") != 1 || persistedCounter(t, s, "global", "", "downstream_bytes") != 0 {
+		t.Fatal("failed flush not logged once or partially committed", logs.String())
 	}
 	s.AddVersion(storageOf(t, s, "openai/codex"), "1.0.0", 0, 6)
 	s.db.Exec("DROP TRIGGER fail_version_counter")
 	stop()
+	if !strings.Contains(logs.String(), "counter flush recovered") || !strings.Contains(logs.String(), "component=counters") {
+		t.Fatal("recovery not logged", logs.String())
+	}
 	stats, _ := s.VersionStats(storageOf(t, s, "openai/codex"))
 	if stats["1.0.0"].DownstreamBytes != 10 || persistedCounter(t, s, "app", metricsOf(t, s, "openai/codex"), "downstream_bytes") != 4 {
 		t.Fatal("retained increments not retried", stats)

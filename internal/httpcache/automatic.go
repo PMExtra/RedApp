@@ -3,11 +3,12 @@ package httpcache
 import (
 	"context"
 	"errors"
-	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/cachepolicy"
+	"github.com/PMExtra/RedApp/internal/logging"
 	"github.com/PMExtra/RedApp/internal/pathmatch"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -65,7 +66,8 @@ func (s *Service) CleanupStatus() AutomaticCleanupStatus {
 
 // RunCleanup runs one serial scheduler. It intentionally waits for the first
 // interval, and an empty policy never selects cached files for deletion.
-func (s *Service) RunCleanup(ctx context.Context, registry *application.Registry, onError func(error)) {
+// Failures are logged and recorded as events; the next pass retries.
+func (s *Service) RunCleanup(ctx context.Context, registry *application.Registry) {
 	s.mu.Lock()
 	if s.closed || s.cleanupStatus.Running || ctx.Err() != nil {
 		s.mu.Unlock()
@@ -86,12 +88,12 @@ func (s *Service) RunCleanup(ctx context.Context, registry *application.Registry
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			s.cleanupPass(ctx, registry, onError)
+			s.cleanupPass(ctx, registry)
 		}
 	}
 }
 
-func (s *Service) cleanupPass(ctx context.Context, registry *application.Registry, onError func(error)) {
+func (s *Service) cleanupPass(ctx context.Context, registry *application.Registry) {
 	s.cleanupMu.Lock()
 	defer s.cleanupMu.Unlock()
 	if ctx.Err() != nil {
@@ -116,9 +118,7 @@ func (s *Service) cleanupPass(ctx context.Context, registry *application.Registr
 		at := s.now().UTC()
 		status.LastErrorAt = &at
 		status.LastError = "HTTP cache preview metadata cleanup failed"
-		if onError != nil {
-			onError(err)
-		}
+		s.log.Error("HTTP cache preview cleanup failed", logging.Error(err))
 	}
 	alive := map[string]bool{}
 	for _, entry := range registry.Entries() {
@@ -138,6 +138,7 @@ func (s *Service) cleanupPass(ctx context.Context, registry *application.Registr
 			continue
 		}
 		var policy *cachepolicy.Policy
+		var jobID string
 		if err == nil {
 			policy, err = cachepolicy.Compile(config)
 		}
@@ -149,7 +150,6 @@ func (s *Service) cleanupPass(ctx context.Context, registry *application.Registr
 			}
 			var scanned int
 			var next int64
-			var jobID string
 			jobID, scanned, next, err = s.previewAutomatic(ctx, entry, policy, cursor.After)
 			status.ScannedFiles += scanned
 			if err == nil && jobID != "" {
@@ -170,10 +170,14 @@ func (s *Service) cleanupPass(ctx context.Context, registry *application.Registr
 			at := s.now().UTC()
 			status.LastErrorAt = &at
 			status.LastError = "Automatic HTTP cache cleanup failed"
-			_ = s.db.RecordEvent(store.Event{AppID: entry.MetricsID(), Category: "cleanup", Code: "automatic_cleanup_failed", Message: "Automatic HTTP cache cleanup failed; it will retry on the next scheduled pass"})
-			if onError != nil {
-				onError(fmt.Errorf("automatic cleanup for %s: %w", entry.Descriptor.ID, err))
+			attrs := []any{slog.String("app", entry.Descriptor.ID), logging.Error(err)}
+			if jobID != "" {
+				attrs = append(attrs, slog.String("preview_id", jobID))
 			}
+			if e := s.db.RecordEvent(store.Event{AppID: entry.MetricsID(), Category: "cleanup", Code: "automatic_cleanup_failed", Message: "Automatic HTTP cache cleanup failed; it will retry on the next scheduled pass"}); e != nil {
+				attrs = append(attrs, slog.String("event_error", logging.Redact(e.Error())))
+			}
+			s.log.Warn("automatic HTTP cache cleanup failed", attrs...)
 		}
 	}
 	for id := range s.cleanupCursors {

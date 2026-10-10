@@ -13,11 +13,13 @@ import (
 	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/httpcache"
 	"github.com/PMExtra/RedApp/internal/identity"
+	"github.com/PMExtra/RedApp/internal/logging"
 	"github.com/PMExtra/RedApp/internal/pathmatch"
 	"github.com/PMExtra/RedApp/internal/store"
 	"github.com/PMExtra/RedApp/internal/warmplan"
 	"github.com/PMExtra/RedApp/presets"
 	"io"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -56,15 +58,28 @@ type Service struct {
 	wg        sync.WaitGroup
 	// mu orders Start's closed check and wg.Add against Close; it is never
 	// held during I/O.
-	mu sync.Mutex
+	mu  sync.Mutex
+	log *slog.Logger
 }
 
-func New(db *store.Store, registry *application.Registry, catalog *catalog.Service, downloads *download.Manager, http *httpcache.Service) (*Service, error) {
+// Option configures a Service at construction.
+type Option func(*Service)
+
+// WithLogger sets the logger for job outcomes and automatic prewarm failures
+// (default: discard).
+func WithLogger(log *slog.Logger) Option { return func(s *Service) { s.log = log } }
+
+func New(db *store.Store, registry *application.Registry, catalog *catalog.Service, downloads *download.Manager, http *httpcache.Service, options ...Option) (*Service, error) {
 	if err := db.RecoverPrewarm(); err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Service{DB: db, Registry: registry, Catalog: catalog, Downloads: downloads, HTTP: http, ctx: ctx, cancel: cancel}, nil
+	s := &Service{DB: db, Registry: registry, Catalog: catalog, Downloads: downloads, HTTP: http, ctx: ctx, cancel: cancel}
+	for _, option := range options {
+		option(s)
+	}
+	s.log = logging.For(s.log, "prewarm")
+	return s, nil
 }
 func (s *Service) Close() { s.mu.Lock(); s.closed.Store(true); s.cancel(); s.mu.Unlock(); s.wg.Wait() }
 func fingerprint(value any) string {
@@ -278,7 +293,10 @@ func (s *Service) run(ctx context.Context, entry application.Entry, job store.Pr
 	if job.Input.Match != nil {
 		matcher, _ = pathmatch.Compile(*job.Input.Match)
 	}
-	update := func() { job.Bytes = budget.Used(); job.Updated = time.Now().UTC(); _ = s.DB.UpdatePrewarm(job) }
+	// A failed progress write is retried by the next one; only the last
+	// failure is reported, with the job outcome.
+	var updateErr error
+	update := func() { job.Bytes = budget.Used(); job.Updated = time.Now().UTC(); updateErr = s.DB.UpdatePrewarm(job) }
 	emit := func(key string) error {
 		if seen[key] {
 			return nil
@@ -350,6 +368,7 @@ func (s *Service) run(ctx context.Context, entry application.Entry, job store.Pr
 						job.State = "completed"
 						job.Reason = "unchanged_target"
 						update()
+						s.logOutcome(entry, job, nil, updateErr)
 						return
 					}
 				}
@@ -404,10 +423,39 @@ func (s *Service) run(ctx context.Context, entry application.Entry, job store.Pr
 		job.State = "interrupted"
 		job.Reason = "interrupted_by_shutdown"
 	}
+	var successErr error
 	if job.Automatic && job.State == "completed" {
-		_ = s.DB.SavePrewarmSuccess(job.AppUID, channel, job.SuccessFingerprint)
+		successErr = s.DB.SavePrewarmSuccess(job.AppUID, channel, job.SuccessFingerprint)
 	}
 	update()
+	s.logOutcome(entry, job, err, errors.Join(successErr, updateErr))
+}
+
+// logOutcome logs one record per finished job. An automatic job that found
+// its target unchanged logs only at debug level: it repeats every pass.
+func (s *Service) logOutcome(entry application.Entry, job store.PrewarmJob, err, stateErr error) {
+	attrs := []any{slog.String("app", entry.Descriptor.ID), slog.String("job_id", job.ID), slog.Bool("automatic", job.Automatic), slog.String("state", job.State), slog.Int("completed", job.Completed), slog.Int("succeeded", job.Succeeded), slog.Int64("bytes", job.Bytes)}
+	if job.Reason != "" {
+		attrs = append(attrs, slog.String("reason", job.Reason))
+	}
+	if job.ResolvedVersion != "" {
+		attrs = append(attrs, slog.String("version", job.ResolvedVersion))
+	}
+	level := slog.LevelInfo
+	switch {
+	case job.Reason == "unchanged_target":
+		level = slog.LevelDebug
+	case job.State == "completed_with_errors":
+		level = slog.LevelWarn
+	}
+	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, warmplan.ErrLimited) {
+		attrs = append(attrs, logging.Error(err))
+	}
+	if stateErr != nil {
+		level = slog.LevelError
+		attrs = append(attrs, slog.String("state_error", logging.Redact(stateErr.Error())))
+	}
+	s.log.Log(context.Background(), level, "prewarm job finished", attrs...)
 }
 func (s *Service) warmRelease(ctx context.Context, entry application.Entry, version, key string, budget *warmplan.Budget) warmplan.Item {
 	item := warmplan.Item{Key: key, Status: "failed", Reason: "release_failed"}
@@ -512,7 +560,9 @@ func (s *Service) Retry(ctx context.Context, key, id, requestID string) (store.P
 	return s.Start(ctx, key, in, false)
 }
 func (s *Service) Automatic(ctx context.Context) {
-	_ = s.DB.PrunePrewarm()
+	if err := s.DB.PrunePrewarm(); err != nil {
+		s.log.Warn("pruning finished prewarm jobs failed", logging.Error(err))
+	}
 	for _, e := range s.Registry.Entries() {
 		if ctx.Err() != nil {
 			return
@@ -522,6 +572,7 @@ func (s *Service) Automatic(ctx context.Context) {
 		}
 		cfg, err := s.DB.ApplicationConfiguration(e.Descriptor.ID)
 		if err != nil {
+			s.log.Warn("automatic prewarm skipped: configuration unreadable", slog.String("app", e.Descriptor.ID), logging.Error(err))
 			continue
 		}
 		raw, _ := json.Marshal(cfg.Effective["prewarm"])
@@ -537,6 +588,9 @@ func (s *Service) Automatic(ctx context.Context) {
 			job, _, startErr := s.Start(ctx, e.Descriptor.ID, warmplan.Input{RequestID: requestID, Target: channel, Platforms: policy.Platforms, Limits: warmplan.DefaultLimits()}, true)
 			if errors.Is(startErr, ErrBusy) {
 				return
+			}
+			if startErr != nil && !errors.Is(startErr, context.Canceled) {
+				s.log.Warn("automatic prewarm did not start", slog.String("app", e.Descriptor.ID), slog.String("channel", channel), logging.Error(startErr))
 			}
 			if startErr == nil {
 				if current := s.active.Load(); current != nil && current.ID == job.ID {

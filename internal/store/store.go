@@ -18,6 +18,7 @@ import (
 
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/instance"
+	"github.com/PMExtra/RedApp/internal/logging"
 	"github.com/PMExtra/RedApp/presets"
 )
 
@@ -89,7 +90,8 @@ func WithBusyTimeout(d time.Duration) Option {
 	return func(s *Store) { s.busyTimeout = d }
 }
 
-// WithLogger sets the logger for schema migrations (default: discard).
+// WithLogger sets the logger for schema migrations and counter flush failures
+// (default: discard).
 func WithLogger(log *slog.Logger) Option {
 	return func(s *Store) { s.log = log }
 }
@@ -115,7 +117,7 @@ func Open(dir string, options ...Option) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{busyTimeout: 5 * time.Second, rates: rates{started: time.Now()}, log: slog.New(slog.DiscardHandler), migrations: productionPlan()}
+	s := &Store{busyTimeout: 5 * time.Second, rates: rates{started: time.Now()}, migrations: productionPlan()}
 	for _, apply := range options {
 		apply(s)
 	}
@@ -125,7 +127,7 @@ func Open(dir string, options ...Option) (*Store, error) {
 	}
 	fresh := state == directoryFresh
 	if state == directoryMigrate {
-		if err = s.migrations.migrate(dir, path, s.log); err != nil {
+		if err = s.migrations.migrate(dir, path, logging.For(s.log, "migration")); err != nil {
 			return nil, err
 		}
 	}

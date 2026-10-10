@@ -36,6 +36,8 @@ RedApp 是单进程 Go 服务：一个二进制、一个 SQLite 数据库、一�
 5. 首次启动时生成随机管理员密码并输出到日志。
 6. 启动后台循环和 HTTP 服务；收到 SIGINT/SIGTERM 后 15 秒内优雅退出。
 
+`main` 创建唯一的 `log/slog` text logger（标准错误），交给 store、各领域服务、后台循环和 HTTP 层；日志字段和级别规则见 [conventions.md](conventions.md#日志)。
+
 ## 包与依赖方向
 
 依赖从上往下，下层不引用上层：
@@ -73,7 +75,8 @@ RedApp 是单进程 Go 服务：一个二进制、一个 SQLite 数据库、一�
 | | `internal/jsoncheck` | 拒绝重复键、过深嵌套和尾随数据 |
 | | `internal/yamlconfig` | 严格的单文档 YAML → JSON |
 | | `internal/instance` | 数据目录实例锁与只读的持锁检查 |
-| 测试 | `internal/testutil` | 基于 httptest 的上游客户端；在真实 store 中创建目录应用并构造其运行时条目（`App`、`Entry`）（仅测试使用） |
+| | `internal/logging` | 日志约定：`component` 字段、遮盖 URL 凭据的 `error` 字段、未传 logger 时的丢弃默认值 |
+| 测试 | `internal/testutil` | 基于 httptest 的上游客户端；在真实 store 中创建目录应用并构造其运行时条目（`App`、`Entry`）；收集结构化日志的 `Logs`（仅测试使用） |
 | | `internal/store/storetest` | 测试另开一个到数据目录数据库的连接，用于故障注入和没有 store API 的夹具（仅测试使用） |
 | 嵌入数据 | `presets/` | 内置厂商、应用、分类的 YAML 模板与图标 |
 | | `installers/` | 嵌入 generated 安装脚本、许可证和公钥（见 [installers.md](installers.md)） |
@@ -319,4 +322,3 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 | --- | --- | --- |
 | 两类清理预览 | 发布制品的清理预览是一行冻结的代际列表，HTTP 缓存是分页冻结的条目；两者的 SQL 都在 store，但生命周期规则各自实现 | 有第三类预览或需要统一回执时再合并 |
 | 锁内数据库调用 | 下载 `Manager.mu` 覆盖改变当前代际的单行写入和 blob 发布，配置写入的 `Store.writeMu` 覆盖一次写事务与发布，两者都在锁声明处说明了原因和持锁范围。HTTP 缓存的条目查询、pin、发布与回收仍在 `Service.mu` 内调用 store，以保持条目行、pin 计数与回收一致（来源检查和访问记录已在锁外） | HTTP 缓存：锁外读取条目，加锁后复核仍为当前再 pin；回收同理 |
-| 后台日志 | HTTP 层用 `log/slog` 记录访问与错误日志；`cmd/redapp` 和后台循环的失败仍经标准库 `log` 进入同一个 slog handler，没有结构化字段 | 逐步改为 slog 字段 |
