@@ -50,7 +50,7 @@ type Deps struct {
 	Maintenance    *releasemaintenance.Service
 	DataDir        string
 	Started        time.Time    // process start; zero means now
-	Logger         *slog.Logger // nil means slog.Default()
+	Logger         *slog.Logger // nil discards the logs
 	// Frontend is the frontend build (index.html, admin.html, assets/); nil
 	// means the build embedded from internal/httpserver/web.
 	Frontend fs.FS
@@ -139,7 +139,7 @@ func New(deps Deps, options ...Option) (*Server, error) {
 		s.started = time.Now().UTC()
 	}
 	if s.log == nil {
-		s.log = slog.Default()
+		s.log = slog.New(slog.DiscardHandler)
 	}
 	s.frontend = deps.Frontend
 	if s.frontend == nil {

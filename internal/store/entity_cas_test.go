@@ -279,8 +279,8 @@ func TestImportWithOneStaleEntityRollsBackEntirely(t *testing.T) {
 }
 
 func TestPublicationNeverObservesAHalfAppliedWrite(t *testing.T) {
-	fault := &commitFault{}
-	s := openTest(t, fault.option())
+	fault := injectCommitFault(t)
+	s := openTest(t)
 	a := infoApps(t, s, "acme", "one")[0]
 	p := (&publications{}).install(s)
 	if err := describe(s, a.Key, a.Revision, "committed"); err != nil {
