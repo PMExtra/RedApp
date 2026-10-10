@@ -89,7 +89,7 @@ frontend/
 | `exchange` | 配置导出、导入（预览—决定—信任—执行）与复制应用 | 后台 |
 | `metrics` | 全局/应用指标查询、`MetricCards`、`HistoryChart`、`MetricHistoryDialog`，见下文 | 后台概览、应用版本页 |
 | `events` | `listEvents` 游标分页查询、`EventsTable` | 后台事件页 |
-| `settings` | 站点文本、公开地址、首页置顶、全局代理的查询与保存，各区块表单、`AppPicker`（`listApps` 搜索） | 后台设置页 |
+| `settings` | 站点文本、公开地址、首页置顶、全局代理的查询与保存，各区块表单（草稿由 `useServerDraft` 维护：未修改时跟随服务端，保存、冲突重新加载与放弃时重置）、`AppPicker`（`listApps` 搜索） | 后台设置页 |
 | `releases` | 版本与制品清单（`ReleaseInventory`，游标分页、按版本筛选）、缓存来源选择（`SourceEpochSelect`、`useSources`）、版本清理（预览—执行）、预览过期（`useExpired`） | 应用版本页、缓存页 |
 | `retention` | 版本保留策略（配置覆盖）、状态与预览—执行（`RetentionPanel`） | 发布类应用缓存页 |
 | `prewarm` | 自动预热策略、手动预热任务的创建、轮询、重试与取消（`PrewarmPanel`；任务 ID 存在 `localStorage`，刷新后继续跟踪） | 应用缓存页 |
