@@ -179,7 +179,7 @@ func (s *Service) Start(ctx context.Context, key string, in warmplan.Input, auto
 	}
 	work, cancel := context.WithTimeout(ctxWork, time.Duration(in.Limits.MaxDurationSeconds)*time.Second)
 	current.Cancel = cancel
-	job := store.PrewarmJob{SourceFence: store.SourceFence{AppRevision: e.RuntimeRevision, VendorRevision: e.VendorRuntimeRevision}, ID: current.ID, AppUID: e.UID, StorageID: e.StorageID(), RequestID: in.RequestID, Fingerprint: hash, State: "running", Created: time.Now().UTC(), Updated: time.Now().UTC(), Input: in, Target: in.Target, Platforms: in.Platforms, Limits: in.Limits, Ignored: map[string]int{}, Automatic: automatic}
+	job := store.PrewarmJob{SourceFence: store.SourceFence{AppRuntimeRevision: e.RuntimeRevision, VendorRuntimeRevision: e.VendorRuntimeRevision}, ID: current.ID, AppUID: e.UID, StorageID: e.StorageID(), RequestID: in.RequestID, Fingerprint: hash, State: "running", Created: time.Now().UTC(), Updated: time.Now().UTC(), Input: in, Target: in.Target, Platforms: in.Platforms, Limits: in.Limits, Ignored: map[string]int{}, Automatic: automatic}
 	if automatic {
 		cfg, err := s.DB.ApplicationConfiguration(key)
 		if err != nil {
@@ -214,7 +214,7 @@ func (s *Service) Start(ctx context.Context, key string, in warmplan.Input, auto
 func (s *Service) entry(job store.PrewarmJob) (application.Entry, error) {
 	for _, e := range s.Registry.Entries() {
 		if e.UID == job.AppUID {
-			if e.StorageID() != job.StorageID || e.RuntimeRevision != job.AppRevision || e.VendorRuntimeRevision != job.VendorRevision || !e.Active() {
+			if e.StorageID() != job.StorageID || e.RuntimeRevision != job.AppRuntimeRevision || e.VendorRuntimeRevision != job.VendorRuntimeRevision || !e.Active() {
 				return e, store.ErrSourceInactive
 			}
 			if job.Automatic {

@@ -84,7 +84,7 @@ func scanMaintenance(row scanner) (MaintenancePreview, error) {
 	var created, expires int64
 	var executed sql.NullInt64
 	var criteria, result []byte
-	err := row.Scan(&p.ID, &p.storageID, &p.Kind, &p.State, &p.fence.AppRevision, &p.fence.VendorRevision, &created, &expires, &criteria, &executed, &result, &p.ScannedFiles, &p.SelectedFiles, &p.SelectedBytes, &p.CompletedFiles, &p.FailedFiles)
+	err := row.Scan(&p.ID, &p.storageID, &p.Kind, &p.State, &p.fence.AppRuntimeRevision, &p.fence.VendorRuntimeRevision, &created, &expires, &criteria, &executed, &result, &p.ScannedFiles, &p.SelectedFiles, &p.SelectedBytes, &p.CompletedFiles, &p.FailedFiles)
 	if err != nil {
 		return p, err
 	}

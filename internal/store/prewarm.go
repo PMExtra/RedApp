@@ -38,7 +38,7 @@ const prewarmColumns = `id,app_uid,storage_id,request_id,fingerprint,policy_hash
 func scanPrewarm(row scanner) (j PrewarmJob, err error) {
 	var created, updated int64
 	var input, ignored []byte
-	err = row.Scan(&j.ID, &j.AppUID, &j.StorageID, &j.RequestID, &j.Fingerprint, &j.PolicyHash, &j.ResolvedVersion, &j.SuccessFingerprint, &j.State, &created, &updated, &input, &j.Completed, &j.Succeeded, &j.Bytes, &j.Reason, &ignored, &j.Automatic, &j.AppRevision, &j.VendorRevision)
+	err = row.Scan(&j.ID, &j.AppUID, &j.StorageID, &j.RequestID, &j.Fingerprint, &j.PolicyHash, &j.ResolvedVersion, &j.SuccessFingerprint, &j.State, &created, &updated, &input, &j.Completed, &j.Succeeded, &j.Bytes, &j.Reason, &ignored, &j.Automatic, &j.AppRuntimeRevision, &j.VendorRuntimeRevision)
 	if err != nil {
 		return
 	}
@@ -64,7 +64,7 @@ func (s *Store) PrewarmRequest(uid, id string) (PrewarmJob, error) {
 func (s *Store) CreatePrewarm(j PrewarmJob) error {
 	input, _ := json.Marshal(j.Input)
 	ignored, _ := json.Marshal(j.Ignored)
-	_, err := s.DB.Exec(`INSERT INTO prewarm_jobs(`+prewarmColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, j.ID, j.AppUID, j.StorageID, j.RequestID, j.Fingerprint, j.PolicyHash, j.ResolvedVersion, j.SuccessFingerprint, j.State, j.Created.Unix(), j.Updated.Unix(), input, j.Completed, j.Succeeded, j.Bytes, j.Reason, ignored, j.Automatic, j.AppRevision, j.VendorRevision)
+	_, err := s.DB.Exec(`INSERT INTO prewarm_jobs(`+prewarmColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, j.ID, j.AppUID, j.StorageID, j.RequestID, j.Fingerprint, j.PolicyHash, j.ResolvedVersion, j.SuccessFingerprint, j.State, j.Created.Unix(), j.Updated.Unix(), input, j.Completed, j.Succeeded, j.Bytes, j.Reason, ignored, j.Automatic, j.AppRuntimeRevision, j.VendorRuntimeRevision)
 	return err
 }
 func (s *Store) UpdatePrewarm(j PrewarmJob) error {

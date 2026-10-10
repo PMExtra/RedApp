@@ -61,7 +61,7 @@ func (s *Store) SaveCleanupPreview(p CleanupPreview) error {
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec("INSERT INTO cleanup_previews(id,app_id,created_at_s,expires_at_s,selection_json,app_revision,vendor_revision,retention_json) VALUES(?,?,?,?,?,?,?,?)", p.ID, p.AppID, p.CreatedAt.Unix(), p.ExpiresAt.Unix(), raw, p.AppRevision, p.VendorRevision, optionalRetention(p.Retention))
+	_, err = tx.Exec("INSERT INTO cleanup_previews(id,app_id,created_at_s,expires_at_s,selection_json,app_revision,vendor_revision,retention_json) VALUES(?,?,?,?,?,?,?,?)", p.ID, p.AppID, p.CreatedAt.Unix(), p.ExpiresAt.Unix(), raw, p.AppRuntimeRevision, p.VendorRuntimeRevision, optionalRetention(p.Retention))
 	if err != nil {
 		return err
 	}
@@ -72,7 +72,7 @@ func scanCleanup(row scanner) (CleanupPreview, error) {
 	var created, expires int64
 	var executed sql.NullInt64
 	var raw, result, retention []byte
-	err := row.Scan(&p.ID, &p.AppID, &created, &expires, &raw, &executed, &result, &p.AppRevision, &p.VendorRevision, &retention)
+	err := row.Scan(&p.ID, &p.AppID, &created, &expires, &raw, &executed, &result, &p.AppRuntimeRevision, &p.VendorRuntimeRevision, &retention)
 	if err != nil {
 		return p, err
 	}

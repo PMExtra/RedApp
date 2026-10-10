@@ -116,31 +116,33 @@ type Application struct {
 func (a Application) StorageID() string { return identity.StorageID(a.UID, a.SourceEpoch) }
 func (a Application) MetricsID() string { return identity.MetricsID(a.UID) }
 
-// SourceFence captures admission eligibility, including a vendor's enable/disable
-// runtime revision. The legacy AppRevision/VendorRevision field names now
-// contain runtime_revision values, never administrative configuration revisions.
-// A source epoch alone cannot fence work admitted before disable/enable.
-type SourceFence struct{ AppRevision, VendorRevision int64 }
+// SourceFence captures the runtime revisions of an application and its vendor
+// when work was admitted. A source epoch alone cannot fence work admitted
+// before a disable and re-enable, and configuration revisions change on edits
+// that do not affect admission.
+type SourceFence struct{ AppRuntimeRevision, VendorRuntimeRevision int64 }
 
 // Provider/BaseURL/BaseURLs/SourceStrategy/CreatedAt are the immutable source
 // snapshot. The revision and
 // Active fields describe its current eligibility, not its historical eligibility.
 type SourceRecord struct {
-	AppUID         string    `json:"app_uid"`
-	Epoch          int64     `json:"epoch"`
-	Provider       string    `json:"provider"`
-	BaseURL        string    `json:"base_url"`
-	BaseURLs       []string  `json:"base_urls"`
-	SourceStrategy string    `json:"source_strategy"`
-	CreatedAt      time.Time `json:"created_at"`
-	AppRevision    int64     `json:"app_revision"`
-	VendorRevision int64     `json:"vendor_revision"`
-	Active         bool      `json:"active"`
+	AppUID                string    `json:"app_uid"`
+	Epoch                 int64     `json:"epoch"`
+	Provider              string    `json:"provider"`
+	BaseURL               string    `json:"base_url"`
+	BaseURLs              []string  `json:"base_urls"`
+	SourceStrategy        string    `json:"source_strategy"`
+	CreatedAt             time.Time `json:"created_at"`
+	AppRuntimeRevision    int64     `json:"app_runtime_revision"`
+	VendorRuntimeRevision int64     `json:"vendor_runtime_revision"`
+	Active                bool      `json:"active"`
 }
 
-func (r SourceRecord) StorageID() string  { return identity.StorageID(r.AppUID, r.Epoch) }
-func (r SourceRecord) MetricsID() string  { return identity.MetricsID(r.AppUID) }
-func (r SourceRecord) Fence() SourceFence { return SourceFence{r.AppRevision, r.VendorRevision} }
+func (r SourceRecord) StorageID() string { return identity.StorageID(r.AppUID, r.Epoch) }
+func (r SourceRecord) MetricsID() string { return identity.MetricsID(r.AppUID) }
+func (r SourceRecord) Fence() SourceFence {
+	return SourceFence{r.AppRuntimeRevision, r.VendorRuntimeRevision}
+}
 
 var iconPath = regexp.MustCompile(`^/assets/icons/[0-9a-f]{64}\.(?:png|jpg|svg)$`)
 
@@ -463,7 +465,7 @@ func scanSource(row directoryScanner) (SourceRecord, error) {
 	var r SourceRecord
 	var created int64
 	var bases []byte
-	err := row.Scan(&r.AppUID, &r.Epoch, &r.Provider, &r.BaseURL, &bases, &r.SourceStrategy, &created, &r.AppRevision, &r.VendorRevision, &r.Active)
+	err := row.Scan(&r.AppUID, &r.Epoch, &r.Provider, &r.BaseURL, &bases, &r.SourceStrategy, &created, &r.AppRuntimeRevision, &r.VendorRuntimeRevision, &r.Active)
 	if err == nil {
 		err = json.Unmarshal(bases, &r.BaseURLs)
 	}

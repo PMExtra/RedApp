@@ -135,7 +135,7 @@ func (s *Service) Close() error {
 }
 
 func fence(entry application.Entry) store.SourceFence {
-	return store.SourceFence{AppRevision: entry.RuntimeRevision, VendorRevision: entry.VendorRuntimeRevision}
+	return store.SourceFence{AppRuntimeRevision: entry.RuntimeRevision, VendorRuntimeRevision: entry.VendorRuntimeRevision}
 }
 func (s *Service) begin(entry application.Entry) error {
 	s.mu.Lock()
