@@ -8,6 +8,7 @@ import { renderWithApp } from "@/test/render";
 
 const routes = [
   { path: "/edit", component: DraftPage },
+  { path: "/sections", component: { render: () => [h(DraftPage), h(DraftPage)] } },
   { path: "/other", component: { render: () => h("p", "Other page") } },
 ];
 
@@ -40,6 +41,20 @@ describe("forms", () => {
     void router.push("/other");
     await user.click(await screen.findByRole("button", { name: "Discard" }));
     expect(await screen.findByText("Other page")).toBeInTheDocument();
+  });
+
+  it("asks once when several sections of the page are unsaved", async () => {
+    const { router } = await renderWithApp(
+      { render: () => h(RouterView) },
+      { path: "/sections", routes },
+    );
+    const user = userEvent.setup();
+    for (const input of await screen.findAllByLabelText("Title")) await user.type(input, "!");
+    void router.push("/other");
+    await user.click(await screen.findByRole("button", { name: "Discard" }));
+    // A second prompt would hold the navigation.
+    expect(await screen.findByText("Other page")).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 
   it("leaves without asking when nothing changed", async () => {

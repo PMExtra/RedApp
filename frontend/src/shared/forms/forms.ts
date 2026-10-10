@@ -1,5 +1,5 @@
 import { onBeforeUnmount, onMounted, toValue, type MaybeRefOrGetter } from "vue";
-import { onBeforeRouteLeave, onBeforeRouteUpdate } from "vue-router";
+import { onBeforeRouteLeave, onBeforeRouteUpdate, type RouteLocationNormalized } from "vue-router";
 import type { TypedSchema, TypedSchemaError } from "vee-validate";
 import { z } from "zod";
 import { en, zhCN } from "zod/locales";
@@ -104,14 +104,27 @@ export async function confirmDiscardDrafts(): Promise<boolean> {
 }
 
 /**
+ * The answer per navigation. Every dirty form on the page guards the same
+ * navigation (vue-router passes the same `to` object to each guard), so a
+ * page with several unsaved sections asks only once.
+ */
+const answers = new WeakMap<RouteLocationNormalized, Promise<boolean>>();
+
+/**
  * Asks before leaving a page or closing the tab while `dirty` is true.
- * Route changes use ConfirmDialog; tab close uses the browser prompt.
+ * Route changes use ConfirmDialog (once per navigation, however many forms
+ * are dirty); tab close uses the browser prompt.
  */
 export function useDirtyGuard(dirty: MaybeRefOrGetter<boolean>): void {
   const isDirty = () => toValue(dirty);
-  const guard = async () => {
+  const guard = (to: RouteLocationNormalized) => {
     if (discardConfirmed || !isDirty()) return true;
-    return askDiscard();
+    let answer = answers.get(to);
+    if (!answer) {
+      answer = askDiscard();
+      answers.set(to, answer);
+    }
+    return answer;
   };
   onBeforeRouteLeave(guard);
   onBeforeRouteUpdate(guard);
