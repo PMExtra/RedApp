@@ -167,7 +167,7 @@ const save = useRevisionedMutation({
 - CSRF：后台入口启动时 `configureApi({ csrfToken, onUnauthorized })`；客户端只给 `/admin/api/` 的 POST/PUT/PATCH/DELETE 加 `X-CSRF-Token`。令牌只存在内存（Pinia）。
 - 首次导航读取 `GET /admin/api/session`；未登录跳转 `/admin/login?returnTo=...`，`safeReturnPath` 只接受同源 `/admin/...`。
 - 任何后台请求返回 401 `AUTH_REQUIRED`（或到达 `expires_at`）时会话变为 `expired`：页面不跳转，弹出登录对话框，草稿保留，登录后所有查询失效重取。标签页重新可见时重新读取会话。
-- 退出登录先通过 `confirmDiscardDrafts()` 询问未保存的草稿。修改密码成功后所有会话失效，回到登录页并提示。
+- 退出登录和修改密码（打开对话框前）先通过 `confirmDiscardDrafts()` 询问未保存的草稿；修改密码成功后所有会话失效。会话结束后壳层用 `leaveDiscardingDrafts()` 跳到登录页并提示，离开保护不再询问。退出失败时什么都不记住，之后的导航照常询问。
 
 ## 扩展点
 
@@ -227,6 +227,7 @@ const save = useRevisionedMutation({
 - `<FormField v-slot="{ field }" name="title" :label="t('...')"><Input v-bind="field" /></FormField>`：生成 label、描述、错误，并设置 `aria-invalid`、`aria-describedby`；字段被触碰或提交后才显示错误。无表单状态的场景用 `Field`。
 - 服务端的字段错误用 `setFieldError(name, formError("errors.codes.X"))` 放到对应字段。
 - `useDirtyGuard(() => meta.value.dirty)`：离开路由时用 ConfirmDialog 询问，关闭标签页时用浏览器提示。一个页面有多个未保存区块时，同一次导航只询问一次。
+- 草稿已确认或已无意义的跳转（退出登录、修改密码后到登录页，删除厂商或应用后回到列表）写成 `await leaveDiscardingDrafts(() => router.push(...))`：只有回调中的导航跳过离开保护，导航结束（成功或失败）后恢复。不要用全局标志记住“已确认”。
 - 不用 `window.confirm`；需要确认时 `await confirm({ title, description, tone: "danger" })`。
 
 ## 设计令牌

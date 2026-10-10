@@ -5,6 +5,7 @@ import { useI18n } from "vue-i18n";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 import { SiteFooter, useSiteTexts } from "@/features/bootstrap";
 import { AccountMenu, SessionExpiredDialog, useSessionStore } from "@/features/session";
+import { leaveDiscardingDrafts } from "@/shared/forms";
 import { useSiteTitle } from "@/shared/lib";
 import {
   Badge,
@@ -34,12 +35,17 @@ watch(
   },
 );
 
-// Signed out from another flow (password change, sign-out elsewhere): go to sign-in.
+// Signed out (sign-out or password change): go to sign-in. The account menu
+// confirmed the drafts before the action, and without a session they could
+// not be saved anyway, so the leave guards must not hold the user here.
 watch(
   () => session.status,
   async (status) => {
     if (status === "signedOut" && !route.meta.public) {
-      await router.replace({ name: "admin-login", query: { returnTo: route.fullPath } });
+      const returnTo = route.fullPath;
+      await leaveDiscardingDrafts(() =>
+        router.replace({ name: "admin-login", query: { returnTo } }),
+      );
     }
   },
 );

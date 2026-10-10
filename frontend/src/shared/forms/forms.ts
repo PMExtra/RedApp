@@ -79,8 +79,12 @@ export function utf8Length(value: string): number {
 }
 
 const dirtyForms = new Set<() => boolean>();
-/** Set after the user agreed to discard all drafts (sign-out); skips the next guards. */
-let discardConfirmed = false;
+/**
+ * Navigations currently let past the guards (see `leaveDiscardingDrafts`).
+ * A counter rather than a flag: it only covers navigations awaited inside the
+ * callback and drops back when they settle, whether they succeed or fail.
+ */
+let bypassing = 0;
 
 function askDiscard(): Promise<boolean> {
   return confirm({
@@ -93,14 +97,31 @@ function askDiscard(): Promise<boolean> {
 }
 
 /**
- * Asks once whether to discard every unsaved draft on the page; for actions
- * that leave the page, such as signing out. Resolves `true` when nothing is
- * dirty or the user agreed.
+ * Asks once whether to discard every unsaved draft on the page, before an
+ * action that ends up leaving it (signing out, changing the password).
+ * Resolves `true` when nothing is dirty or the user agreed. The answer is not
+ * remembered: the navigation that follows the action uses
+ * `leaveDiscardingDrafts`, so a failed action leaves the guards in place.
  */
 export async function confirmDiscardDrafts(): Promise<boolean> {
   if (![...dirtyForms].some((isDirty) => isDirty())) return true;
-  discardConfirmed = await askDiscard();
-  return discardConfirmed;
+  return askDiscard();
+}
+
+/**
+ * Runs `navigate` (a `router.push`/`replace`) with the leave guards bypassed,
+ * for navigations whose drafts were already confirmed or no longer mean
+ * anything: the sign-in page after signing out or changing the password, the
+ * list after deleting the edited vendor or application. The bypass ends when
+ * the navigation settles, so later navigations ask again.
+ */
+export async function leaveDiscardingDrafts<T>(navigate: () => Promise<T>): Promise<T> {
+  bypassing++;
+  try {
+    return await navigate();
+  } finally {
+    bypassing--;
+  }
 }
 
 /**
@@ -118,7 +139,7 @@ const answers = new WeakMap<RouteLocationNormalized, Promise<boolean>>();
 export function useDirtyGuard(dirty: MaybeRefOrGetter<boolean>): void {
   const isDirty = () => toValue(dirty);
   const guard = (to: RouteLocationNormalized) => {
-    if (discardConfirmed || !isDirty()) return true;
+    if (bypassing > 0 || !isDirty()) return true;
     let answer = answers.get(to);
     if (!answer) {
       answer = askDiscard();
@@ -137,7 +158,6 @@ export function useDirtyGuard(dirty: MaybeRefOrGetter<boolean>): void {
   });
   onBeforeUnmount(() => {
     dirtyForms.delete(isDirty);
-    discardConfirmed = false;
     window.removeEventListener("beforeunload", beforeUnload);
   });
 }
