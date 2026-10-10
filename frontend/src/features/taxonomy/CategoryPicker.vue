@@ -78,16 +78,6 @@ function addTyped(text: string): void {
   search.value = "";
 }
 
-/**
- * Enter in the picker never submits the surrounding form. With no matching
- * suggestion it adds the typed name (the list may still report a stale
- * highlight, so the combobox itself would not).
- */
-function onEnter(event: KeyboardEvent): void {
-  event.preventDefault();
-  if (!event.isComposing && options.value.length === 0) addTyped(search.value);
-}
-
 function categoryLabel(categoryId: string): string {
   const item = byId.value.get(categoryId);
   return item ? localized(item.name) || item.id : categoryId;
@@ -118,6 +108,7 @@ function categoryLabel(categoryId: string): string {
         />
       </li>
     </ul>
+    <!-- Enter picks or adds a category; it never submits the surrounding form. -->
     <Combobox
       :id="id"
       v-model="chosen"
@@ -130,7 +121,7 @@ function categoryLabel(categoryId: string): string {
       maxlength="128"
       @select="select"
       @submit="addTyped"
-      @keydown.enter="onEnter"
+      @keydown.enter.prevent
     />
     <p :id="`${id}-hint`" class="text-xs text-muted">{{ t("taxonomy.categories.hint") }}</p>
     <p v-if="message" class="text-xs text-danger" role="alert">{{ message }}</p>

@@ -133,6 +133,20 @@ describe("Combobox", () => {
     await user.keyboard("{Escape}{Enter}");
     expect(screen.getByText("Submitted: cox")).toBeInTheDocument();
   });
+
+  it("submits when the highlighted suggestion is no longer listed", async () => {
+    await renderWithApp(Harness, { props: { part: "combobox" } });
+    const user = userEvent.setup();
+    const input = screen.getByRole("combobox", { name: "Search" });
+    await user.type(input, "co");
+    expect(await screen.findByRole("option", { name: "Codex CLI" })).toBeInTheDocument();
+    // The list empties while open; the old highlight must not swallow Enter.
+    await user.type(input, "dz");
+    expect(screen.queryByRole("option")).toBeNull();
+    await user.keyboard("{Enter}");
+    expect(screen.getByText("Submitted: codz")).toBeInTheDocument();
+    expect(screen.getByText("Chosen:")).toBeInTheDocument();
+  });
 });
 
 describe("Tabs", () => {

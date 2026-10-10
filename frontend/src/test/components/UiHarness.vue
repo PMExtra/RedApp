@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Test fixture: shared UI components wired to local state, so tests can
 // assert behaviour through roles and visible text.
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { confirm } from "@/shared/lib";
 import {
   Combobox,
@@ -28,6 +28,15 @@ const items = ref([
   { id: "c", name: "Gamma" },
 ]);
 const search = ref("");
+// Server-style suggestions: nothing until something is typed, then matches.
+const suggestions = computed(() =>
+  search.value
+    ? [
+        { value: "openai/codex", label: "Codex CLI" },
+        { value: "anthropic/claude-code", label: "Claude Code" },
+      ].filter((option) => option.label.toLowerCase().includes(search.value.toLowerCase()))
+    : [],
+);
 const selected = ref<string>();
 const chosen = ref("");
 const submitted = ref("");
@@ -84,14 +93,7 @@ async function ask() {
         v-model="selected"
         v-model:search="search"
         aria-label="Search"
-        :options="
-          search
-            ? [
-                { value: 'openai/codex', label: 'Codex CLI' },
-                { value: 'anthropic/claude-code', label: 'Claude Code' },
-              ]
-            : []
-        "
+        :options="suggestions"
         keep-search
         @select="chosen = $event.value"
         @submit="submitted = $event"

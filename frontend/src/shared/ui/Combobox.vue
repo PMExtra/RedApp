@@ -1,5 +1,5 @@
 <script setup lang="ts" generic="T extends ComboboxOption">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import {
   ComboboxAnchor,
   ComboboxContent,
@@ -38,7 +38,14 @@ defineSlots<{ option?: (props: { option: T }) => unknown }>();
 
 const { t } = useI18n();
 const open = ref(false);
+// Reka keeps reporting the last highlighted value after the options change
+// (for example when the list empties), so only a listed option counts.
 const highlighted = ref<string | undefined>();
+const hasHighlight = computed(
+  () =>
+    highlighted.value !== undefined &&
+    props.options.some((option) => option.value === highlighted.value && !option.disabled),
+);
 
 function onSelect(value: unknown) {
   const option = props.options.find((item) => item.value === value);
@@ -48,7 +55,7 @@ function onSelect(value: unknown) {
 function onEnter(event: KeyboardEvent) {
   // Enter that confirms an IME composition must not submit.
   if (event.isComposing) return;
-  if (!open.value || highlighted.value === undefined) emit("submit", search.value);
+  if (!open.value || !hasHighlight.value) emit("submit", search.value);
 }
 </script>
 
