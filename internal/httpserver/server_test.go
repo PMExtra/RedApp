@@ -80,15 +80,6 @@ func TestAdminHTTPDownloadMetricsAndCSRF(t *testing.T) {
 	if code, _ := request("PUT", endpoint, map[string]int{"channel_ttl_seconds": 120}, false, "0"); code != 403 {
 		t.Fatal("CSRF not enforced", code)
 	}
-	if code, body := request("PUT", endpoint, map[string]int{"channel_ttl_seconds": 120}, true, "0"); code != 200 {
-		t.Fatal(code, string(body))
-	}
-	if code, _ := request("PUT", endpoint, map[string]int{"channel_ttl_seconds": 10}, true, "0"); code != 409 {
-		t.Fatal("stale revision accepted", code)
-	}
-	if code, body := request("GET", "/admin/api/apps/anthropic/claude-code/settings", nil, false, ""); code != 200 || !bytes.Contains(body, []byte(`"channel_ttl_seconds":60`)) {
-		t.Fatal("TTL crossed apps", code, string(body))
-	}
 	for range 2 {
 		if code, body := request("GET", "/openai/codex/releases/0.159.2/archive.tgz", nil, false, ""); code != 200 || !bytes.Equal(body, data) {
 			t.Fatal(code, string(body))

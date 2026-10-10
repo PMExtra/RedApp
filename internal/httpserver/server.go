@@ -509,7 +509,7 @@ func revisionReply(w http.ResponseWriter, revision int64, value any) {
 	reply(w, 200, value)
 }
 func settingsError(w http.ResponseWriter, err error) {
-	if errors.Is(err, store.ErrRevisionConflict) || errors.Is(err, store.ErrConflict) {
+	if errors.Is(err, store.ErrConflict) {
 		problem(w, 409, "SETTINGS_REVISION_CONFLICT", "Settings changed; reload before saving")
 	} else {
 		fail(w, 503, "Unable to persist settings")
@@ -723,14 +723,7 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 			if entry.Protocol == nil {
 				break
 			}
-			ttl, rev, err := entry.Descriptor.DefaultChannelTTLSeconds, entry.Revision, error(nil)
-			if entry.UID == "" {
-				ttl, rev, err = s.Catalog.TTL(app)
-			}
-			if err != nil {
-				fail(w, 503, "Application settings unavailable")
-				return
-			}
+			ttl, rev := entry.Descriptor.DefaultChannelTTLSeconds, entry.Revision
 			revisionReply(w, rev, map[string]any{"channel_ttl_seconds": ttl, "revision": rev})
 			return
 		case "settings/site":
@@ -788,13 +781,7 @@ func (s *Server) admin(w http.ResponseWriter, r *http.Request, requestOrigin, pu
 				fail(w, 400, "Channel TTL must be between 1 and 86400 seconds")
 				return
 			}
-			var next int64
-			var e error
-			if entry.UID != "" {
-				next, e = s.setDirectoryTTL(app, rev, input.TTL)
-			} else {
-				next, e = s.Catalog.SetTTL(app, rev, input.TTL)
-			}
+			next, e := s.setDirectoryTTL(app, rev, input.TTL)
 			if e != nil {
 				settingsError(w, e)
 				return

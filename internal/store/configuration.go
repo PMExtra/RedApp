@@ -1798,23 +1798,11 @@ func decodeProxy(value any) (networkproxy.Config, error) {
 	return c, err
 }
 func parseGlobalProxy(raw []byte) (networkproxy.Config, error) {
-	var legacy struct {
-		Server string `json:"server"`
-		Mode   string `json:"mode"`
-		URL    string `json:"url"`
-	}
-	if err := json.Unmarshal(raw, &legacy); err != nil {
+	var c networkproxy.Config
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if d.Decode(&c) != nil || c.Validate(false) != nil {
 		return networkproxy.Config{}, ErrInvalidDirectory
-	}
-	c := networkproxy.Config{Mode: legacy.Mode, URL: legacy.URL}
-	if c.Mode == "" {
-		c = networkproxy.Direct()
-		if legacy.Server != "" {
-			c = networkproxy.Config{Mode: "url", URL: legacy.Server}
-		}
-	}
-	if err := c.Validate(false); err != nil {
-		return c, ErrInvalidDirectory
 	}
 	return c, nil
 }

@@ -115,15 +115,6 @@ func TestSharedCatalogIsolationAndImmutableBinding(t *testing.T) {
 	if _, err := service.Authorize(context.Background(), ids[0], "1.2.3", "missing.tgz"); !errors.Is(err, application.ErrNotFound) {
 		t.Fatal("unknown artifact did not return not found", err)
 	}
-	if _, err := service.SetTTL(ids[0], 0, 120); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.SetTTL(ids[0], 0, 1); !errors.Is(err, store.ErrConflict) {
-		t.Fatal("lost-update TTL accepted", err)
-	}
-	if ttl, _, err := service.TTL(ids[1]); err != nil || ttl != 60 {
-		t.Fatalf("TTL crossed apps: %d %v", ttl, err)
-	}
 	channel, err := db.Channel(ids[0], "latest")
 	if err != nil {
 		t.Fatal(err)

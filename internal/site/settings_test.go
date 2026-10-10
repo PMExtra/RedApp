@@ -18,7 +18,7 @@ func TestDefaultsPartialRecordsAndRestart(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(initial.Settings, Defaults()) {
 		t.Fatal(initial, err)
 	}
-	if _, err = db.CompareAndSwapSetting("global", "", "site", 0, map[string]any{"title": map[string]string{"en": "Company tools"}}); err != nil {
+	if _, err = db.SaveSiteSettings(0, map[string]any{"title": map[string]string{"en": "Company tools"}}); err != nil {
 		t.Fatal(err)
 	}
 	partial, err := LoadSnapshot(db)
@@ -58,7 +58,7 @@ func TestDefaultsPartialRecordsAndRestart(t *testing.T) {
 	if !reflect.DeepEqual(after, got) {
 		t.Fatal("invalid update changed stored settings")
 	}
-	if _, err = db.CompareAndSwapSetting("global", "", "site", got.Revision, map[string]any{"title": false}); err != nil {
+	if _, err = db.SaveSiteSettings(got.Revision, map[string]any{"title": false}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = LoadSnapshot(db); err == nil {

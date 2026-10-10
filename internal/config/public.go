@@ -1,7 +1,6 @@
 package config
 
 import (
-	"database/sql"
 	"errors"
 	"sync"
 
@@ -38,8 +37,8 @@ func LoadPublicSettings(db *store.Store, environment string) (*PublicSettings, e
 		return p, nil
 	}
 	var saved publicSetting
-	p.revision, err = db.ReadSetting("global", "", "public_url", &saved)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	p.revision, err = db.ReadPublicURLSetting(&saved)
+	if err != nil {
 		return nil, err
 	}
 	if saved.OverrideURL != nil {
@@ -83,7 +82,7 @@ func (p *PublicSettings) Set(override *string, expected int64) (int64, error) {
 	if p.db == nil {
 		return 0, errors.New("public URL settings are unavailable")
 	}
-	revision, err := p.db.CompareAndSwapSetting("global", "", "public_url", expected, publicSetting{OverrideURL: value})
+	revision, err := p.db.SavePublicURLSetting(expected, publicSetting{OverrideURL: value})
 	if err != nil {
 		return 0, err
 	}

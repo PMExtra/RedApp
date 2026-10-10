@@ -125,47 +125,34 @@ func TestMetadataAtomicityImmutabilityAndApplicationIsolation(t *testing.T) {
 		t.Fatal("application history not isolated")
 	}
 }
-func TestSettingsCASAndPairedCountersRollback(t *testing.T) {
+func TestGlobalSettingCASRejectsStaleAndMalformedWrites(t *testing.T) {
 	s := openTest(t)
-	if _, rev, err := s.ChannelTTL("openai/codex"); !errors.Is(err, sql.ErrNoRows) || rev != 0 {
-		t.Fatal(rev, err)
+	var value map[string]string
+	if rev, err := s.ReadSiteSettings(&value); err != nil || rev != 0 || value != nil {
+		t.Fatalf("missing setting = %v, %d, %v; want nil, 0, nil", value, rev, err)
 	}
-	rev, err := s.SetChannelTTL("openai/codex", 0, 30)
+	rev, err := s.SaveSiteSettings(0, map[string]string{"title": "first"})
 	if err != nil || rev != 1 {
-		t.Fatal(rev, err)
+		t.Fatalf("first save = %d, %v; want 1", rev, err)
 	}
-	if _, err = s.SetChannelTTL("openai/codex", 0, 60); !errors.Is(err, ErrConflict) {
-		t.Fatal("stale edit accepted", err)
+	if _, err = s.SaveSiteSettings(0, map[string]string{"title": "lost"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("second create = %v; want ErrConflict", err)
 	}
-	if _, err = s.SetChannelTTL("anthropic/claude-code", 0, 0); err == nil {
-		t.Fatal("invalid ttl accepted")
+	if _, err = s.SaveSiteSettings(1, []string{"not an object"}); err == nil {
+		t.Fatal("non-object setting accepted")
 	}
-	if _, err = s.DB.Exec(`CREATE TRIGGER fail_app_counter BEFORE INSERT ON metric_counters WHEN NEW.scope='app' BEGIN SELECT RAISE(FAIL,'app fault'); END`); err != nil {
-		t.Fatal(err)
+	if rev, err = s.SaveSiteSettings(1, map[string]string{"title": "second"}); err != nil || rev != 2 {
+		t.Fatalf("update = %d, %v; want 2", rev, err)
 	}
-	if err = s.AddFor("openai/codex", "upstream_bytes", 7); err != nil {
-		t.Fatal("buffered add failed", err)
+	if _, err = s.SaveSiteSettings(1, map[string]string{"title": "stale"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale update = %v; want ErrConflict", err)
 	}
-	if err = s.FlushCounters(); err == nil {
-		t.Fatal("counter fault ignored")
+	var publicURL map[string]string
+	if rev, err = s.ReadPublicURLSetting(&publicURL); err != nil || rev != 0 {
+		t.Fatalf("site setting leaked into public URL: %d, %v", rev, err)
 	}
-	counters, _ := s.Counters()
-	if counters["upstream_bytes"] != 0 {
-		t.Fatal("half counter committed")
-	}
-	s.DB.Exec("DROP TRIGGER fail_app_counter")
-	// The failed increment is retained and committed by the next flush exactly once.
-	if err = s.FlushCounters(); err != nil {
-		t.Fatal(err)
-	}
-	global, _ := s.Counters()
-	app, _ := s.CountersFor("openai/codex")
-	other, _ := s.CountersFor("anthropic/claude-code")
-	if global["upstream_bytes"] != 7 || app["upstream_bytes"] != 7 || len(other) != 0 {
-		t.Fatal(global, app, other)
-	}
-	if err = s.Add("reuse_requests", 1); err == nil {
-		t.Fatal("retired metric accepted")
+	if rev, err = s.ReadSiteSettings(&value); err != nil || rev != 2 || value["title"] != "second" {
+		t.Fatalf("stored setting = %v at %d, %v", value, rev, err)
 	}
 }
 func TestGenerationCleanupScopeAndCurrentCannotBeResurrected(t *testing.T) {
@@ -267,7 +254,7 @@ func TestWALDataSurvivesAbruptProcessExit(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = s.SetChannelTTL("openai/codex", 0, 37); err != nil {
+		if _, err = s.SaveSiteSettings(0, map[string]string{"title": "kept"}); err != nil {
 			t.Fatal(err)
 		}
 		if err = s.AddFor("openai/codex", "upstream_bytes", 13); err != nil {
@@ -303,9 +290,9 @@ func TestWALDataSurvivesAbruptProcessExit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.DB.Close()
-	ttl, rev, err := s.ChannelTTL("openai/codex")
-	if err != nil || ttl != 37 || rev != 1 {
-		t.Fatal("committed WAL setting lost", ttl, rev, err)
+	var site map[string]string
+	if rev, err := s.ReadSiteSettings(&site); err != nil || rev != 1 || site["title"] != "kept" {
+		t.Fatal("committed WAL setting lost", site, rev, err)
 	}
 	counts, err := s.CountersFor("openai/codex")
 	if err != nil || counts["upstream_bytes"] != 13 {

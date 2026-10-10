@@ -297,25 +297,18 @@ func TestSiblingSharesProxyUpdatesButKeepsOriginBoundary(t *testing.T) {
 	}
 }
 
-func TestLegacyServerReadsExactEncodedURLWithoutRewrite(t *testing.T) {
+func TestProxyURLKeepsExactEncodingAcrossReload(t *testing.T) {
 	c, db, _ := proxyFixture(t)
-	if _, err := db.CompareAndSwapSetting("global", "", "upstream_proxy", 0, map[string]string{"server": "http://user%40name:p%3Aa%2Fss@proxy.example:3128"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.LoadProxy(db); err != nil {
-		t.Fatal(err)
-	}
 	want := "http://user%40name:p%3Aa%2Fss@proxy.example:3128"
+	if err := c.SetProxy(ProxyUpdate{Mode: "url", URL: want}, 0); err != nil {
+		t.Fatal(err)
+	}
+	err := c.LoadProxy(db)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if c.Proxy().URL != want || c.Proxy().Revision != 1 {
-		t.Fatal(c.Proxy())
-	}
-	var stored map[string]any
-	rev, err := db.ReadSetting("global", "", "upstream_proxy", &stored)
-	if err != nil || rev != 1 || len(stored) != 2 || stored["mode"] != "url" || stored["url"] != want {
-		t.Fatal("dual credential representation survived", stored, err)
-	}
-	if err = c.LoadProxy(db); err != nil || c.Proxy().Revision != 1 {
-		t.Fatal("migration repeated", err)
+		t.Fatalf("reloaded proxy = %+v; want URL %s at revision 1", c.Proxy(), want)
 	}
 	for _, bad := range []string{"http://u:p%0Ass@proxy.example:3128", "http://proxy.example:3128?", "http://proxy.example:3128#"} {
 		if err = c.SetProxy(ProxyUpdate{Mode: "url", URL: bad}, 1); err == nil {
