@@ -144,6 +144,8 @@ func (p *Protocol) FetchRelease(ctx context.Context, version string) (applicatio
 	}
 	signature, err := application.ReadBody(ctx, p.upstream, version+"/manifest.json.sig", 16<<10)
 	if err != nil {
+		// The cause is formatted, not wrapped: a missing signature must stay an
+		// upstream failure and never match application.ErrNotFound.
 		return application.Envelope{}, fmt.Errorf("%w: signed manifest requires a valid signature: %v", application.ErrUpstream, err)
 	}
 	return application.Envelope{Raw: raw, Signature: signature}, nil

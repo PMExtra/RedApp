@@ -18,6 +18,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/fsutil"
+	"github.com/PMExtra/RedApp/internal/pathmatch"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -47,6 +48,9 @@ type fixture struct {
 	clock  atomic.Int64
 	budget *testBudget
 }
+
+// allPaths matches every application-relative path.
+var allPaths = pathmatch.Spec{Type: "glob", Pattern: "/"}
 
 func testID(t *testing.T) string {
 	t.Helper()
@@ -79,11 +83,10 @@ func newFixture(t *testing.T, h http.Handler, ttl int) *fixture {
 	f := &fixture{db: db, app: app, vendor: vendor, budget: &testBudget{limit: 1024}}
 	f.entry = application.Entry{Descriptor: application.Descriptor{ID: app.Key, DefaultChannelTTLSeconds: ttl}, UID: app.UID, SourceEpoch: app.SourceEpoch, Revision: app.Revision, VendorRevision: vendor.Revision, RuntimeRevision: app.RuntimeRevision, VendorRuntimeRevision: vendor.RuntimeRevision, Provider: application.HttpCache, Enabled: true, Upstream: client}
 	f.clock.Store(time.Now().Unix())
-	f.s, err = New(dir, db, f.budget)
+	f.s, err = New(dir, db, f.budget, WithClock(func() time.Time { return time.Unix(f.clock.Load(), 0).UTC() }))
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.s.now = func() time.Time { return time.Unix(f.clock.Load(), 0).UTC() }
 	t.Cleanup(func() { f.s.Close() })
 	return f
 }
@@ -549,19 +552,19 @@ func TestCleanupAccessRecheckPinsReceiptAndRefreshFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.clock.Add(400)
-	preview, err := f.s.Preview(f.entry, "last_access", f.s.now().Add(-time.Second))
+	preview, err := f.s.PreviewCleanup(context.Background(), f.entry, "last_access", f.s.now().Add(-time.Second), allPaths)
 	if err != nil || preview.SelectedFiles != 1 {
 		t.Fatal(preview, err)
 	}
 	if _, err = f.serve(t, "GET", http.Header{}); err != nil {
 		t.Fatal(err)
 	}
-	result, err := f.s.Execute(f.entry, preview.ID)
+	result, err := f.s.ExecuteCleanup(context.Background(), f.entry, preview.ID)
 	if err != nil || result.SkippedChanged+result.SkippedAccessed != 1 {
 		t.Fatal(result, err)
 	}
 	f.clock.Add(400)
-	preview, err = f.s.Preview(f.entry, "fetched_at", f.s.now().Add(-time.Second))
+	preview, err = f.s.PreviewCleanup(context.Background(), f.entry, "fetched_at", f.s.now().Add(-time.Second), allPaths)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -569,7 +572,7 @@ func TestCleanupAccessRecheckPinsReceiptAndRefreshFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err = f.s.Execute(f.entry, preview.ID)
+	result, err = f.s.ExecuteCleanup(context.Background(), f.entry, preview.ID)
 	if err != nil || result.RetiredFiles != 1 {
 		t.Fatal(result, err)
 	}
@@ -580,7 +583,7 @@ func TestCleanupAccessRecheckPinsReceiptAndRefreshFence(t *testing.T) {
 	if _, err = os.Stat(f.s.bodyPath(row.GenerationID)); !os.IsNotExist(err) {
 		t.Fatal("unpinned retired body not collected", err)
 	}
-	again, err := f.s.Execute(f.entry, preview.ID)
+	again, err := f.s.ExecuteCleanup(context.Background(), f.entry, preview.ID)
 	if err != nil || !reflect.DeepEqual(result, again) {
 		t.Fatal("receipt not idempotent", again, err)
 	}
@@ -592,11 +595,11 @@ func TestCleanupAccessRecheckPinsReceiptAndRefreshFence(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { _, err := f.serve(t, "GET", http.Header{}); done <- err }()
 	<-entered
-	preview, err = f.s.Preview(f.entry, "fetched_at", f.s.now().Add(-time.Second))
+	preview, err = f.s.PreviewCleanup(context.Background(), f.entry, "fetched_at", f.s.now().Add(-time.Second), allPaths)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.s.Execute(f.entry, preview.ID); err != nil {
+	if _, err = f.s.ExecuteCleanup(context.Background(), f.entry, preview.ID); err != nil {
 		t.Fatal(err)
 	}
 	close(release)

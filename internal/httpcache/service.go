@@ -47,9 +47,6 @@ type Row struct {
 	current      bool
 }
 
-type fetchLengthKey struct{}
-type fetchObserverKey struct{}
-type fetchFlightKey struct{}
 type fetchWaiter struct {
 	observe func(int64) error
 	check   func(int64) error
@@ -78,7 +75,6 @@ type transfer struct {
 	bytes     int64
 	diskBytes int64
 }
-type transferContextKey struct{}
 
 type Service struct {
 	sourceCursors   map[string]*list.Element
@@ -103,7 +99,14 @@ type Service struct {
 	now             func() time.Time
 }
 
-func New(dir string, db *store.Store, budget download.Budget) (*Service, error) {
+// Option configures a Service at construction.
+type Option func(*Service)
+
+// WithClock replaces the wall clock used for freshness, access buckets and
+// maintenance previews.
+func WithClock(now func() time.Time) Option { return func(s *Service) { s.now = now } }
+
+func New(dir string, db *store.Store, budget download.Budget, options ...Option) (*Service, error) {
 	if db == nil || budget == nil || budget.MaxArtifactBytes() <= 0 {
 		return nil, errors.New("HTTP cache requires storage and shared limits")
 	}
@@ -114,6 +117,9 @@ func New(dir string, db *store.Store, budget download.Budget) (*Service, error) 
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Service{dir: filepath.Join(dir, "objects", "http"), db: db, budget: budget, flights: map[string]*flight{}, transfers: map[string]*transfer{}, pins: map[string]int{}, readers: map[string]int{}, ctx: ctx, cancel: cancel, now: time.Now, cleanupCursors: map[string]cleanupCursor{}}
+	for _, option := range options {
+		option(s)
+	}
 	if err := s.recover(); err != nil {
 		cancel()
 		return nil, err

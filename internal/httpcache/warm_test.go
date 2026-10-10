@@ -318,11 +318,11 @@ func TestWarmTTLFallbackRechecksRetiredGeneration(t *testing.T) {
 	go func() { done <- f.s.Warm(context.Background(), f.entry, "/file", &warmplan.Budget{Max: 100}) }()
 	<-entered
 	f.clock.Add(1)
-	preview, err := f.s.Preview(f.entry, "fetched_at", f.s.now())
+	preview, err := f.s.PreviewCleanup(context.Background(), f.entry, "fetched_at", f.s.now(), allPaths)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := f.s.Execute(f.entry, preview.ID)
+	result, err := f.s.ExecuteCleanup(context.Background(), f.entry, preview.ID)
 	if err != nil || result.RetiredFiles != 1 {
 		t.Fatal(result, err)
 	}

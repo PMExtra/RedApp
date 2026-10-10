@@ -1,7 +1,6 @@
 package httpcache
 
 import (
-	"context"
 	"net/http"
 	"time"
 
@@ -10,8 +9,6 @@ import (
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
 )
-
-type policyContextKey struct{}
 
 func (s *Service) readPolicy(entry application.Entry) (*cachepolicy.Policy, error) {
 	config := cachepolicy.Empty()
@@ -39,10 +36,37 @@ func evaluatedFreshness(policy *cachepolicy.Policy, entry application.Entry, pat
 	return freshness(headers, decision.TTLSeconds, validatedAt)
 }
 
-func contextFreshness(ctx context.Context, entry application.Entry, path string, headers http.Header, at time.Time) time.Time {
-	policy, _ := ctx.Value(policyContextKey{}).(*cachepolicy.Policy)
-	return evaluatedFreshness(policy, entry, path, headers, at)
+// fill holds the inputs of one cache operation on one path: the application
+// snapshot admitted for the request, the policy compiled for that snapshot
+// and, for maintenance warm-ups, the budget callbacks and source order.
+type fill struct {
+	entry  application.Entry
+	path   string // application-relative, without the leading slash
+	policy *cachepolicy.Policy
+	// warm marks a maintenance read, which never counts as a public request.
+	warm bool
+	// attempts, when set, replaces the configured source order; a warm-up
+	// continues from the source whose HEAD response asked for a GET.
+	attempts []sourceAttempt
+	// observe is charged for each body chunk and check is given the declared
+	// length; either may fail this caller's wait without failing the flight.
+	observe func(int64) error
+	check   func(int64) error
 }
+
+func (f fill) decision() CacheDecision { return resolveCacheDecision(f.policy, f.entry, f.path) }
+
+// eligible reports whether a representation with these headers may be stored
+// and served under the current policy.
+func (f fill) eligible(h http.Header) bool { return cacheBlockReason(h, f.decision()) == "" }
+
+func (f fill) blockReason(h http.Header) string { return cacheBlockReason(h, f.decision()) }
+
+func (f fill) freshness(h http.Header, validatedAt time.Time) time.Time {
+	return evaluatedFreshness(f.policy, f.entry, f.path, h, validatedAt)
+}
+
+func (f fill) staleFallback() bool { return f.policy == nil || f.policy.StaleFallback() }
 
 // ListEntry evaluates the same current policy used for serving; changing a rule
 // does not require rewriting all previously stored body metadata.
@@ -101,8 +125,4 @@ func resolveCacheDecision(policy *cachepolicy.Policy, entry application.Entry, p
 		}
 	}
 	return decision
-}
-func contextCacheDecision(ctx context.Context, entry application.Entry, path string) CacheDecision {
-	policy, _ := ctx.Value(policyContextKey{}).(*cachepolicy.Policy)
-	return resolveCacheDecision(policy, entry, path)
 }

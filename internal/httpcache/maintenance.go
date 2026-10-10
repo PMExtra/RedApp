@@ -125,9 +125,6 @@ func (s *Service) LookupPreview(storageID, kind, id string) (MaintenancePreview,
 	return p, s.validatePreview(p, kind)
 }
 
-func (s *Service) BuildPreview(ctx context.Context, entry application.Entry, kind string, criteria PreviewCriteria) (MaintenancePreview, error) {
-	return s.buildPreview(ctx, entry, kind, criteria, buildOptions{})
-}
 func (s *Service) buildPreview(ctx context.Context, entry application.Entry, kind string, criteria PreviewCriteria, options buildOptions) (out MaintenancePreview, buildErr error) {
 	ctx, finish, err := s.db.ApplicationWork(ctx, entry.StorageID())
 	if err != nil {
@@ -150,7 +147,7 @@ func (s *Service) buildPreview(ctx context.Context, entry application.Entry, kin
 	}
 	matcher, err := pathmatch.Compile(criteria.Match)
 	if err != nil {
-		return out, fmt.Errorf("%w: %v", ErrInvalidCleanup, err)
+		return out, fmt.Errorf("%w: %w", ErrInvalidCleanup, err)
 	}
 	if criteria.Path != "" && pathmatch.ValidatePath("/"+criteria.Path) != nil {
 		return out, ErrInvalidPreview

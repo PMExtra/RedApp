@@ -9,9 +9,6 @@ import (
 	"strings"
 )
 
-type warmAttemptsKey struct{}
-type warmContextKey struct{}
-
 // Warm is an admitted maintenance read, never a synthetic public GET or access touch.
 func (s *Service) Warm(ctx context.Context, entry application.Entry, path string, budget *warmplan.Budget) (item warmplan.Item) {
 	item = warmplan.Item{Key: path, Status: "failed", Reason: "warm_failed"}
@@ -44,10 +41,7 @@ func (s *Service) Warm(ctx context.Context, entry application.Entry, path string
 	if err != nil {
 		return item
 	}
-	ctx = context.WithValue(ctx, policyContextKey{}, policy)
-	ctx = context.WithValue(ctx, warmContextKey{}, true)
-	ctx = context.WithValue(ctx, fetchObserverKey{}, func(n int64) error { return budget.Consume(n) })
-	ctx = context.WithValue(ctx, fetchLengthKey{}, func(n int64) error { return budget.CheckLength(n) })
+	f := fill{entry: entry, path: relative, policy: policy, warm: true, observe: budget.Consume, check: budget.CheckLength}
 	for tries := 0; tries < fetchAgainLimit; tries++ {
 		if ctx.Err() != nil {
 			item.Reason = "cancelled"
@@ -57,7 +51,7 @@ func (s *Service) Warm(ctx context.Context, entry application.Entry, path string
 		if err != nil {
 			return item
 		}
-		result := s.warmCurrent(ctx, entry, relative, old, budget)
+		result := s.warmCurrent(ctx, f, old)
 		if old != nil {
 			s.unpin(old.GenerationID)
 		}
@@ -70,7 +64,8 @@ func (s *Service) Warm(ctx context.Context, entry application.Entry, path string
 	item.Reason = "generation_changed"
 	return item
 }
-func (s *Service) warmCurrent(ctx context.Context, entry application.Entry, path string, old *Row, budget *warmplan.Budget) warmplan.Item {
+func (s *Service) warmCurrent(ctx context.Context, f fill, old *Row) warmplan.Item {
+	entry, path := f.entry, f.path
 	failed := warmplan.Item{Status: "failed", Reason: "upstream_failed"}
 	attempts, err := s.sourceAttempts(entry)
 	if err != nil {
@@ -97,7 +92,7 @@ func (s *Service) warmCurrent(ctx context.Context, entry application.Entry, path
 				if i+1 < len(attempts) {
 					continue
 				}
-				fallback, err := s.fallback(ctx, entry, path, old, ErrUpstream)
+				fallback, err := s.fallback(ctx, f, old, ErrUpstream)
 				if err == nil && fallback.row != nil {
 					s.unpin(fallback.row.GenerationID)
 					return warmplan.Item{Status: "stale_fallback", Reason: "head_failed"}
@@ -117,11 +112,11 @@ func (s *Service) warmCurrent(ctx context.Context, entry application.Entry, path
 					return warmplan.Item{Status: "failed", Reason: "invalid_not_modified"}
 				}
 				combined := mergedHeaders(old.headers, resp.Header)
-				if !contextEligible(ctx, entry, path, combined) || !contextEligible(ctx, entry, path, resp.Header) {
+				if !f.eligible(combined) || !f.eligible(resp.Header) {
 					_ = s.retire(old)
 					return warmplan.Item{Status: "not_cacheable", Reason: "source_policy"}
 				}
-				result, err := s.revalidate(ctx, entry, old, combined)
+				result, err := s.revalidate(f, old, combined)
 				if err != nil {
 					return warmplan.Item{Status: "failed", Reason: "generation_changed"}
 				}
@@ -129,7 +124,7 @@ func (s *Service) warmCurrent(ctx context.Context, entry application.Entry, path
 				return warmplan.Item{Status: "not_modified"}
 			}
 			if resp.StatusCode == 200 {
-				if !contextEligible(ctx, entry, path, resp.Header) {
+				if !f.eligible(resp.Header) {
 					_ = s.retire(old)
 					return warmplan.Item{Status: "not_cacheable", Reason: "source_policy"}
 				}
@@ -138,14 +133,14 @@ func (s *Service) warmCurrent(ctx context.Context, entry application.Entry, path
 				oldModified, newModified := old.headers.Get("Last-Modified"), resp.Header.Get("Last-Modified")
 				changed := sameSource && (oldTag != "" && newTag != "" && oldTag != newTag || oldModified != "" && newModified != "" && oldModified != newModified || resp.ContentLength >= 0 && resp.ContentLength != old.SizeBytes)
 				if sameSource && oldTag != "" && oldTag == newTag && resp.ContentLength == old.SizeBytes {
-					result, err := s.revalidate(ctx, entry, old, mergedHeaders(old.headers, resp.Header))
+					result, err := s.revalidate(f, old, mergedHeaders(old.headers, resp.Header))
 					if err != nil {
 						return warmplan.Item{Status: "failed", Reason: "generation_changed"}
 					}
 					s.unpin(result.row.GenerationID)
 					return warmplan.Item{Status: "not_modified"}
 				}
-				if !changed && s.now().Before(contextFreshness(ctx, entry, path, old.headers, old.ValidatedAt)) {
+				if !changed && s.now().Before(f.freshness(old.headers, old.ValidatedAt)) {
 					if err := s.warmCurrentGeneration(entry, old.GenerationID); err != nil {
 						return warmplan.Item{Reason: "generation_changed"}
 					}
@@ -154,11 +149,11 @@ func (s *Service) warmCurrent(ctx context.Context, entry application.Entry, path
 			} else if resp.StatusCode != 405 && resp.StatusCode != 501 {
 				return failed
 			}
-			ctx = context.WithValue(ctx, warmAttemptsKey{}, attempts[i:])
+			f.attempts = attempts[i:]
 			break
 		}
 	}
-	result, err := s.sharedFetch(ctx, entry, path, old)
+	result, err := s.sharedFetch(ctx, f, old)
 	if errors.Is(err, ErrFetchAgain) {
 		return warmplan.Item{Status: "failed", Reason: "generation_changed"}
 	}

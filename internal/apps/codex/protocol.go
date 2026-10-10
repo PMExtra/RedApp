@@ -140,7 +140,7 @@ func (p *Protocol) ResolveChannel(ctx context.Context, name string) (application
 	}
 	r, err := p.parse(raw, "latest")
 	if err != nil {
-		return application.ChannelResolution{}, fmt.Errorf("%w: %v", application.ErrUpstream, err)
+		return application.ChannelResolution{}, fmt.Errorf("%w: %w", application.ErrUpstream, err)
 	}
 	v, _ := Normalize(r.Tag)
 	return application.ChannelResolution{Version: v, Envelope: &application.Envelope{Raw: raw}}, nil
