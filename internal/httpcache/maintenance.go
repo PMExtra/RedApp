@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/cachepolicy"
 	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/identity"
+	"github.com/PMExtra/RedApp/internal/logging"
 	"github.com/PMExtra/RedApp/internal/pathmatch"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -164,8 +166,10 @@ func (s *Service) buildPreview(ctx context.Context, entry application.Entry, kin
 		if buildErr != nil {
 			failureCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			_ = s.db.FailPreviewBuild(failureCtx, id, s.now())
-			_ = s.prunePreviews(failureCtx, 1)
+			// A preview left building is discarded once it expires.
+			if err := errors.Join(s.db.FailPreviewBuild(failureCtx, id, s.now()), s.prunePreviews(failureCtx, 1)); err != nil {
+				s.log.Warn("failed HTTP cache preview was not discarded", slog.String("app", entry.Descriptor.ID), slog.String("preview_id", id), logging.Error(err))
+			}
 		}
 	}()
 	after := options.after

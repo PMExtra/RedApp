@@ -3,9 +3,11 @@ package httpcache
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/internal/logging"
 	"github.com/PMExtra/RedApp/internal/pathmatch"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -53,7 +55,9 @@ func (s *Service) ExecuteCleanup(ctx context.Context, entry application.Entry, i
 		if resultErr != nil {
 			finishCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			_ = s.finishPreview(finishCtx, preview, out, true)
+			if err := s.finishPreview(finishCtx, preview, out, true); err != nil {
+				s.log.Error("HTTP cache cleanup receipt was not saved", slog.String("app", entry.Descriptor.ID), slog.String("preview_id", id), logging.Error(err))
+			}
 		}
 	}()
 	after := int64(0)

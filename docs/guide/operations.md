@@ -171,7 +171,7 @@ These tasks run inside the server. Each runs every 15 minutes. None runs at star
 | HTTP cache cleanup | Applies automatic cleanup rules of HTTP cache applications |
 | Release retention | Keeps the latest N cached versions of Codex and Claude Code applications, if enabled |
 | Automatic prewarm | Downloads new releases for configured channels and platforms, if enabled |
-| Preview expiry | Removes expired cleanup previews |
+| Preview expiry | Removes expired cleanup, retention and refresh previews and old results |
 
 Metric sampling runs once at startup and then every minute.
 
@@ -190,7 +190,7 @@ time=2026-10-10T08:15:00.000Z level=WARN msg="automatic HTTP cache cleanup faile
 | `auth` | The initial admin password, once, on the first start |
 | `configuration` | Every published configuration change, with the number of applications and sources |
 | `download` | Cache recovery at startup, failed release downloads and failed state writes |
-| `http_cache` | Failed automatic cleanup passes |
+| `http_cache` | Failed automatic cleanup passes, failed or stopped cache refresh jobs, cleanup and refresh results that could not be saved |
 | `hosted` | Removal of incomplete uploads at startup, uploaded files that could not be removed |
 | `prewarm` | One line per finished prewarm job, failed automatic prewarm starts |
 | `retention` | Retention runs that retired versions, skipped runs and failures |

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -296,6 +297,9 @@ func TestBatchRefreshRejectsStalePolicyAndStopsAfterSourceFence(t *testing.T) {
 	}
 	if rows := f.rows(t); len(rows) != 1 {
 		t.Fatal("failed refresh removed original body", rows)
+	}
+	if logs := f.logs.String(); !strings.Contains(logs, `msg="HTTP cache refresh stopped" component=http_cache app=vendor/app preview_id=`+preview.ID+" reason=source_changed") || len(f.logs.Problems()) != 0 {
+		t.Fatal("source fence stop not logged as an expected outcome", logs)
 	}
 }
 
