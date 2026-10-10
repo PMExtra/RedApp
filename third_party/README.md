@@ -39,6 +39,7 @@ Claude Code 官方安装器、公钥与官方仓库许可说明独立保存在 `
 | VueUse（Reka UI 依赖） | `@vueuse/core`、`@vueuse/shared` | 14.4.0 | MIT | [vueuse.LICENSE](vueuse.LICENSE) |
 | aria-hidden（Reka UI 依赖） | `aria-hidden` | 1.2.6 | MIT | [aria-hidden.LICENSE](aria-hidden.LICENSE) |
 | defu、ohash（Reka UI 依赖） | `defu`、`ohash` | 6.1.7 / 2.0.12 | MIT | [unjs-defu-ohash.LICENSE](unjs-defu-ohash.LICENSE) |
+| @internationalized/number（Reka UI 数字输入的本地化解析） | `@internationalized/number` | 3.6.9 | Apache-2.0 | [internationalized-number.LICENSE](internationalized-number.LICENSE) |
 | openapi-fetch 类型化 API 客户端 | `openapi-fetch` | 0.17.0 | MIT | [openapi-fetch.LICENSE](openapi-fetch.LICENSE) |
 | vee-validate 表单 | `vee-validate` | 4.15.1 | MIT | [vee-validate.LICENSE](vee-validate.LICENSE) |
 | zod 校验 | `zod` | 4.6.5 | MIT | [zod.LICENSE](zod.LICENSE) |
