@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // Cache tab: prewarm, retention and version cleanup of release applications;
 // cached files, refresh, cleanup and prewarm of HTTP cache applications.
+// AppLayout only shows it for those providers and marks deleted applications.
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
@@ -10,23 +11,17 @@ import {
   CacheEntriesPanel,
   CacheRefreshPanel,
 } from "@/features/http-cache";
+import { hasVersions, useApp } from "@/features/directory";
 import { PrewarmPanel } from "@/features/prewarm";
-import {
-  SourceEpochSelect,
-  VersionCleanup,
-  hasCache,
-  hasVersions,
-  useAdminApp,
-  useSources,
-} from "@/features/releases";
+import { SourceEpochSelect, VersionCleanup, useSources } from "@/features/releases";
 import { RetentionPanel } from "@/features/retention";
-import { Alert, AsyncState, EmptyState, Tabs, type TabItem } from "@/shared/ui";
+import { AsyncState, Tabs, type TabItem } from "@/shared/ui";
 
 const { t } = useI18n();
 const route = useRoute();
 const vendor = computed(() => String(route.params.vendor));
 const app = computed(() => String(route.params.app));
-const record = useAdminApp(vendor, app);
+const record = useApp(vendor, app);
 const provider = computed(() => record.data.value?.provider);
 const deleted = computed(() => Boolean(record.data.value?.deleted_at));
 
@@ -59,14 +54,7 @@ const sections = computed<TabItem[]>(() => [
     :error="record.error.value"
     @retry="record.refetch()"
   >
-    <EmptyState
-      v-if="!hasCache(provider)"
-      :title="t('releases.page.unsupportedTitle')"
-      :description="t('releases.page.unsupportedCache')"
-    />
-    <div v-else class="flex flex-col gap-6">
-      <Alert v-if="deleted" tone="warning">{{ t("releases.page.deleted") }}</Alert>
-
+    <div v-if="provider" class="flex flex-col gap-6">
       <template v-if="hasVersions(provider)">
         <PrewarmPanel :vendor="vendor" :app="app" :read-only="deleted" />
         <RetentionPanel :vendor="vendor" :app="app" :read-only="deleted" />

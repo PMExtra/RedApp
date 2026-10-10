@@ -3,6 +3,7 @@
  * retention, prewarm, HTTP cache and hosted files.
  */
 import type { Schema } from "@/shared/api";
+import { app } from "./directory";
 import { localized } from "./index";
 
 type Overrides<T> = Partial<T>;
@@ -15,112 +16,41 @@ export function hexId(seed: number): string {
   return seed.toString(16).padStart(32, "0");
 }
 
-export function adminApp(overrides: Overrides<Schema<"App">> = {}): Schema<"App"> {
-  return {
+/** A built-in Codex release application. */
+export function codexApp(overrides: Overrides<Schema<"App">> = {}): Schema<"App"> {
+  const {
+    base_urls: _urls,
+    source_strategy: _strategy,
+    ...base
+  } = app({
     uid: UID,
     id: "codex",
-    key: "openai/codex",
     vendor_uid: hexId(1),
     vendor_id: "openai",
     name: localized("Codex CLI"),
     description: localized("OpenAI’s coding agent for your terminal."),
     icon: "/assets/presets/openai/codex/icon.svg",
     provider: "codex",
-    base_url: "https://releases.openai.com/codex",
     cache_ttl_seconds: 60,
-    categories: [],
-    tags: [],
-    enabled: true,
     builtin_template: true,
     source_epoch: 2,
     revision: 7,
-    deleted_at: null,
-    ...overrides,
-  };
-}
-
-export function httpCacheApp(overrides: Overrides<Schema<"App">> = {}): Schema<"App"> {
-  const { base_url: _unused, ...app } = adminApp({
-    id: "mirror",
-    key: "example/mirror",
-    vendor_id: "example",
-    provider: "http-cache",
-    builtin_template: false,
   });
-  return {
-    ...app,
+  return { ...base, base_url: "https://releases.openai.com/codex", ...overrides };
+}
+
+/** An HTTP cache application without template. */
+export function httpCacheApp(overrides: Overrides<Schema<"App">> = {}): Schema<"App"> {
+  return app({
+    uid: UID,
+    id: "mirror",
+    vendor_uid: hexId(1),
+    name: localized("Mirror"),
+    description: localized(""),
     base_urls: ["https://origin.example.com"],
-    source_strategy: "ordered",
+    revision: 7,
     ...overrides,
-  };
-}
-
-export function metric(overrides: Overrides<Schema<"Metric">> = {}): Schema<"Metric"> {
-  return {
-    key: "versions.total",
-    label: "Versions",
-    kind: "gauge",
-    unit: "count",
-    group: "resources",
-    value: 3,
-    observed_seconds: 0,
-    ...overrides,
-  };
-}
-
-export function appStatus(overrides: Overrides<Schema<"AppStatus">> = {}): Schema<"AppStatus"> {
-  return {
-    sampled_at: "2026-10-10T08:00:00Z",
-    metrics: [
-      metric(),
-      metric({ key: "resources.complete", label: "Complete", value: 12 }),
-      metric({
-        key: "counters.downstream_bytes",
-        label: "Downstream bytes",
-        kind: "counter",
-        unit: "bytes",
-        group: "traffic",
-        value: 1024 * 1024 * 5,
-      }),
-      metric({ key: "resources.failed", label: "Failed", value: 1 }),
-    ],
-    ...overrides,
-  };
-}
-
-export function historySeries(
-  overrides: Overrides<Schema<"HistorySeries">> = {},
-): Schema<"HistorySeries"> {
-  return {
-    key: "versions.total",
-    label: "Versions",
-    kind: "gauge",
-    unit: "count",
-    group: "resources",
-    scope: "app",
-    app_key: "openai/codex",
-    range: "24h",
-    resolution_seconds: 60,
-    from: "2026-10-09T08:00:00Z",
-    to: "2026-10-10T08:00:00Z",
-    points: [
-      {
-        time: "2026-10-10T07:59:00Z",
-        value: 3,
-        min: 3,
-        max: 3,
-        avg: 3,
-        last: 3,
-        count: 1,
-        delta: null,
-        delta_count: 0,
-        observed_seconds: 0,
-        partial: false,
-        incomplete: false,
-      },
-    ],
-    ...overrides,
-  };
+  });
 }
 
 export function version(overrides: Overrides<Schema<"Version">> = {}): Schema<"Version"> {

@@ -3,22 +3,17 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import AppVersionsPage from "./AppVersionsPage.vue";
 import { renderAppPage } from "@/test/appPage";
-import {
-  adminApp,
-  appStatus,
-  historySeries,
-  httpCacheApp,
-  resource,
-  version,
-} from "@/test/factories/runtime";
+import { appStatus, historySeries } from "@/test/factories/metrics";
+import { resource, version } from "@/test/factories/runtime";
 import { mockApi, useHandlers } from "@/test/msw";
+
+vi.mock("uplot", () => import("@/test/uplot"));
 
 function releaseHandlers(counter: { status: number; resources: string[] }) {
   return [
-    mockApi("get", "/admin/api/apps/{vendor}/{app}", () => adminApp()),
     mockApi("get", "/admin/api/apps/{vendor}/{app}/status", () => {
       counter.status++;
-      return appStatus();
+      return appStatus({ "versions.total": 3, "counters.downstream_bytes": 5 * 1024 * 1024 });
     }),
     mockApi("get", "/admin/api/apps/{vendor}/{app}/versions", ({ request }) => {
       const cursor = new URL(request.url).searchParams.get("cursor");
@@ -51,7 +46,7 @@ describe("versions tab", () => {
     await renderAppPage(AppVersionsPage, { tab: "versions" });
     const user = userEvent.setup();
 
-    expect(await screen.findByRole("button", { name: /Versions: 3/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^Versions: 3/ })).toBeInTheDocument();
     expect(screen.getByText("5.00 MiB")).toBeInTheDocument();
     const versions = await screen.findByRole("table", { name: "Versions" });
     expect(within(versions).getByText("0.46.0")).toBeInTheDocument();
@@ -87,7 +82,7 @@ describe("versions tab", () => {
     useHandlers(...releaseHandlers(counter));
     await renderAppPage(AppVersionsPage, { tab: "versions" });
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime.bind(vi) });
-    await screen.findByRole("button", { name: /Versions: 3/ });
+    await screen.findByRole("button", { name: /^Versions: 3/ });
     const before = counter.status;
 
     await vi.advanceTimersByTimeAsync(5_000);
@@ -106,26 +101,28 @@ describe("versions tab", () => {
     useHandlers(
       ...releaseHandlers({ status: 0, resources: [] }),
       mockApi("get", "/admin/api/apps/{vendor}/{app}/history", ({ request }) => {
-        const range = new URL(request.url).searchParams.get("range") ?? "";
-        ranges.push(range);
-        return historySeries({ range: range as "24h" });
+        const url = new URL(request.url);
+        const range = url.searchParams.get("range") as "24h" | "7d" | "30d";
+        ranges.push(`${url.pathname} ${url.searchParams.get("metric") ?? ""} ${range}`);
+        return historySeries("versions.total", [2, 3], {
+          range,
+          scope: "app",
+          app_key: "openai/codex",
+        });
       }),
     );
     await renderAppPage(AppVersionsPage, { tab: "versions" });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: /Versions: 3/ }));
+    await user.click(await screen.findByRole("button", { name: /^Versions: 3/ }));
 
     const dialog = await screen.findByRole("dialog", { name: "Versions" });
-    expect(await within(dialog).findByRole("table", { name: "History of Versions" })).toBeVisible();
-    await user.click(within(dialog).getByRole("radio", { name: "7 days" }));
+    expect(await within(dialog).findByText(/^Latest 3, lowest 2, highest 3\./)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "24 hours" }));
     await waitFor(() => {
-      expect(ranges).toEqual(["24h", "7d"]);
+      expect(ranges).toEqual([
+        "/admin/api/apps/openai/codex/history versions.total 7d",
+        "/admin/api/apps/openai/codex/history versions.total 24h",
+      ]);
     });
-  });
-
-  it("explains that other providers have no versions", async () => {
-    useHandlers(mockApi("get", "/admin/api/apps/{vendor}/{app}", () => httpCacheApp()));
-    await renderAppPage(AppVersionsPage, { key: "example/mirror", tab: "versions" });
-    expect(await screen.findByText("Not available for this application")).toBeInTheDocument();
   });
 });

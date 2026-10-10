@@ -2,6 +2,8 @@ import type { LocaleModule } from "@/shared/i18n";
 
 export default {
   metrics: {
+    sampled: "Sampled",
+    stale: "Refresh failed. Showing the last successful snapshot.",
     sections: {
       common: "Common metrics",
       commonDescription:

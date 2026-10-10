@@ -2,10 +2,6 @@ import type { LocaleModule } from "@/shared/i18n";
 
 export default {
   hosted: {
-    page: {
-      unsupported: "只有托管类应用有可管理的文件。",
-      deleted: "此应用已删除。文件仍可下载和删除，但不能添加或替换。",
-    },
     add: {
       title: "添加文件",
       replaceTitle: "替换文件",

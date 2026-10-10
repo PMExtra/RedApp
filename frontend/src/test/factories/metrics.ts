@@ -97,6 +97,19 @@ export function globalStatus(
   };
 }
 
+/** `getAppStatus` with the 25 application metrics; `values` overrides single values. */
+export function appStatus(
+  values: Partial<Record<MetricKey, number | null>> = {},
+  overrides: Partial<Schema<"AppStatus">> = {},
+): Schema<"AppStatus"> {
+  const keys = GLOBAL_KEYS.filter((key) => /^(counters|resources|versions)\./.test(key));
+  return {
+    sampled_at: "2026-10-10T12:00:00Z",
+    metrics: keys.map((key) => metric(key, key in values ? { value: values[key] ?? null } : {})),
+    ...overrides,
+  };
+}
+
 export function historyPoint(
   time: string,
   value: number | null,

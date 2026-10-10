@@ -2,6 +2,8 @@ import type { LocaleModule } from "@/shared/i18n";
 
 export default {
   metrics: {
+    sampled: "采样于",
+    stale: "刷新失败，显示的是上一次成功的快照。",
     sections: {
       common: "常用指标",
       commonDescription: "容量、下载与进行中的传输。选择一个数值查看其历史。",

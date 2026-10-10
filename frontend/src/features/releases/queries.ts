@@ -2,88 +2,10 @@ import { computed, toValue, type MaybeRefOrGetter, type Ref } from "vue";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
 import { api, queryKey, unwrap, type Schema } from "@/shared/api";
 
-export type AdminApp = Schema<"App">;
-export type ProviderKey = Schema<"ProviderKey">;
-export type Metric = Schema<"Metric">;
-export type MetricKey = Schema<"MetricKey">;
-export type HistoryRange = "24h" | "7d" | "30d";
 export type SourceEpoch = Schema<"SourceEpoch">;
 export type VersionCleanupPreview = Schema<"VersionCleanupPreview">;
 
 type Name = MaybeRefOrGetter<string>;
-
-/** Providers with versions, resources, retention and release prewarm. */
-export function hasVersions(provider: ProviderKey | undefined): boolean {
-  return provider === "codex" || provider === "claude-code";
-}
-
-/** Providers with a cache tab (`x-spa-routes`): HTTP cache and release apps. */
-export function hasCache(provider: ProviderKey | undefined): boolean {
-  return provider === "http-cache" || hasVersions(provider);
-}
-
-/**
- * The administrator view of an application (`getApp`). Package B's layout
- * reads the same key, so the tabs share one cached copy.
- */
-export function useAdminApp(vendor: Name, app: Name) {
-  return useQuery({
-    queryKey: computed(() => queryKey("getApp", { vendor: toValue(vendor), app: toValue(app) })),
-    queryFn: ({ signal }) =>
-      unwrap(
-        api.GET("/admin/api/apps/{vendor}/{app}", {
-          params: { path: { vendor: toValue(vendor), app: toValue(app) } },
-          signal,
-        }),
-      ),
-  });
-}
-
-export function useAppStatus(vendor: Name, app: Name, refetchInterval: Ref<number | false>) {
-  return useQuery({
-    queryKey: computed(() =>
-      queryKey("getAppStatus", { vendor: toValue(vendor), app: toValue(app) }),
-    ),
-    queryFn: ({ signal }) =>
-      unwrap(
-        api.GET("/admin/api/apps/{vendor}/{app}/status", {
-          params: { path: { vendor: toValue(vendor), app: toValue(app) } },
-          signal,
-        }),
-      ),
-    refetchInterval,
-    staleTime: 0,
-  });
-}
-
-export function useAppHistory(
-  vendor: Name,
-  app: Name,
-  metric: MaybeRefOrGetter<MetricKey | undefined>,
-  range: MaybeRefOrGetter<HistoryRange>,
-) {
-  return useQuery({
-    queryKey: computed(() =>
-      queryKey("getAppHistory", {
-        vendor: toValue(vendor),
-        app: toValue(app),
-        metric: toValue(metric),
-        range: toValue(range),
-      }),
-    ),
-    enabled: computed(() => toValue(metric) !== undefined),
-    queryFn: ({ signal }) =>
-      unwrap(
-        api.GET("/admin/api/apps/{vendor}/{app}/history", {
-          params: {
-            path: { vendor: toValue(vendor), app: toValue(app) },
-            query: { metric: toValue(metric) as MetricKey, range: toValue(range) },
-          },
-          signal,
-        }),
-      ),
-  });
-}
 
 export function useVersions(
   vendor: Name,

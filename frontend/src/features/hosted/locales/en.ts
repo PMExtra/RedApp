@@ -2,11 +2,6 @@ import type { LocaleModule } from "@/shared/i18n";
 
 export default {
   hosted: {
-    page: {
-      unsupported: "Only hosted applications have managed files.",
-      deleted:
-        "This application is deleted. Its files can still be downloaded and deleted, but not added or replaced.",
-    },
     add: {
       title: "Add a file",
       replaceTitle: "Replace a file",

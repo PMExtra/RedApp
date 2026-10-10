@@ -6,7 +6,7 @@ import { MAINTENANCE_POLL_MS } from "@/features/http-cache";
 import type { Schema } from "@/shared/api";
 import { renderAppPage } from "@/test/appPage";
 import {
-  adminApp,
+  codexApp,
   appConfiguration,
   autoCleanupStatus,
   cacheEntry,
@@ -329,7 +329,7 @@ describe("cache tab of an HTTP cache application", () => {
 describe("cache tab of a release application", () => {
   it("shows prewarm, retention and version cleanup", async () => {
     useHandlers(
-      mockApi("get", "/admin/api/apps/{vendor}/{app}", () => adminApp()),
+      mockApi("get", "/admin/api/apps/{vendor}/{app}", () => codexApp()),
       mockApi("get", "/admin/api/apps/{vendor}/{app}/sources", () => ({ items: [sourceEpoch()] })),
       mockApi("get", "/admin/api/apps/{vendor}/{app}/prewarm/options", () => prewarmOptions()),
       mockApi("get", "/admin/api/apps/{vendor}/{app}/configuration", () => appConfiguration()),
@@ -345,7 +345,7 @@ describe("cache tab of a release application", () => {
   it("keeps a deleted application read-only", async () => {
     useHandlers(
       mockApi("get", "/admin/api/apps/{vendor}/{app}", () =>
-        adminApp({ deleted_at: "2026-10-09T00:00:00Z", enabled: false }),
+        codexApp({ deleted_at: "2026-10-09T00:00:00Z", enabled: false }),
       ),
       mockApi("get", "/admin/api/apps/{vendor}/{app}/sources", () => ({ items: [sourceEpoch()] })),
       mockApi("get", "/admin/api/apps/{vendor}/{app}/prewarm/options", () => prewarmOptions()),
@@ -353,7 +353,6 @@ describe("cache tab of a release application", () => {
       mockApi("get", "/admin/api/apps/{vendor}/{app}/retention/status", () => retentionStatus()),
     );
     await renderAppPage(AppCachePage);
-    expect(await screen.findByText(/This application is deleted/)).toBeInTheDocument();
     await screen.findByRole("heading", { name: "Prewarm" });
     expect(screen.queryByRole("button", { name: "Start prewarming" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Save retention" })).toBeNull();

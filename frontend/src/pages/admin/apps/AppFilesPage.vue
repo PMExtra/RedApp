@@ -1,17 +1,15 @@
 <script setup lang="ts">
-// Files tab of hosted applications.
+// Files tab of hosted applications (AppLayout only shows it for them).
 import { computed } from "vue";
-import { useI18n } from "vue-i18n";
 import { useRoute } from "vue-router";
+import { useApp } from "@/features/directory";
 import { HostedFilesPanel } from "@/features/hosted";
-import { useAdminApp } from "@/features/releases";
-import { Alert, AsyncState, EmptyState } from "@/shared/ui";
+import { AsyncState } from "@/shared/ui";
 
-const { t } = useI18n();
 const route = useRoute();
 const vendor = computed(() => String(route.params.vendor));
 const app = computed(() => String(route.params.app));
-const record = useAdminApp(vendor, app);
+const record = useApp(vendor, app);
 const deleted = computed(() => Boolean(record.data.value?.deleted_at));
 </script>
 
@@ -21,14 +19,6 @@ const deleted = computed(() => Boolean(record.data.value?.deleted_at));
     :error="record.error.value"
     @retry="record.refetch()"
   >
-    <EmptyState
-      v-if="record.data.value?.provider !== 'hosted'"
-      :title="t('releases.page.unsupportedTitle')"
-      :description="t('hosted.page.unsupported')"
-    />
-    <div v-else class="flex flex-col gap-6">
-      <Alert v-if="deleted" tone="warning">{{ t("hosted.page.deleted") }}</Alert>
-      <HostedFilesPanel :vendor="vendor" :app="app" :deleted="deleted" />
-    </div>
+    <HostedFilesPanel v-if="record.data.value" :vendor="vendor" :app="app" :deleted="deleted" />
   </AsyncState>
 </template>

@@ -49,7 +49,7 @@ const selected = computed<Metric | undefined>({
     >
       <template #meta>
         <span>
-          {{ t("overviewPage.sampled") }}
+          {{ t("metrics.sampled") }}
           <RelativeTime :value="snapshot?.sampled_at" />
         </span>
         <span v-if="snapshot" aria-hidden="true">·</span>
@@ -71,7 +71,7 @@ const selected = computed<Metric | undefined>({
       </template>
     </PageHeader>
 
-    <Alert v-if="staleError" tone="warning" :title="t('overviewPage.stale')">
+    <Alert v-if="staleError" tone="warning" :title="t('metrics.stale')">
       {{ staleError.message }}
       <span v-if="staleError.requestId" class="mt-1 block text-xs text-muted">
         {{ t("common.requestId") }}: <code>{{ staleError.requestId }}</code>
