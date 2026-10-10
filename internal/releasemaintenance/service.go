@@ -18,7 +18,7 @@ import (
 const Interval = 15 * time.Minute
 const VersionLimit = 100
 
-var ErrChannels = errors.New("Declared channel could not be verified")
+var ErrChannels = errors.New("declared channel could not be verified")
 
 type Service struct {
 	DB               *store.Store

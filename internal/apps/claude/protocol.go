@@ -46,21 +46,21 @@ func parse(raw []byte, requested string) (Manifest, error) {
 	}
 	var m Manifest
 	if json.Unmarshal(raw, &m) != nil || !ValidVersion(m.Version) || m.Version != requested || len(m.Platforms) == 0 || len(m.Platforms) > len(platforms) {
-		return m, errors.New("Invalid manifest version or platform count")
+		return m, errors.New("invalid manifest version or platform count")
 	}
 	for platform, p := range m.Platforms {
 		if platforms[platform] == "" || platforms[platform] != p.Binary || len(p.Checksum) != 64 || strings.ToLower(p.Checksum) != p.Checksum || p.Size <= 0 || p.Size > 4<<30 {
-			return m, errors.New("Invalid manifest platform")
+			return m, errors.New("invalid manifest platform")
 		}
 		if _, err := hex.DecodeString(p.Checksum); err != nil {
-			return m, errors.New("Invalid manifest digest")
+			return m, errors.New("invalid manifest digest")
 		}
 	}
 	return m, nil
 }
 func Compare(a, b string) (int, error) {
 	if !ValidVersion(a) || !ValidVersion(b) {
-		return 0, errors.New("Invalid Claude version")
+		return 0, errors.New("invalid Claude version")
 	}
 	x, y := strings.SplitN(a, "-", 2), strings.SplitN(b, "-", 2)
 	xs, ys := strings.Split(x[0], "."), strings.Split(y[0], ".")
@@ -87,7 +87,7 @@ func Compare(a, b string) (int, error) {
 	if x[1] == y[1] {
 		return 0, nil
 	}
-	return 0, errors.New("Unordered prerelease identifiers")
+	return 0, errors.New("unordered prerelease identifiers")
 }
 
 type Protocol struct {
@@ -102,7 +102,7 @@ func newProtocol(upstream *distributor.Client, verify verifier) *Protocol {
 }
 func (p *Protocol) ValidateVersion(v string) (string, error) {
 	if !ValidVersion(v) {
-		return "", errors.New("Invalid Claude version")
+		return "", errors.New("invalid Claude version")
 	}
 	return v, nil
 }

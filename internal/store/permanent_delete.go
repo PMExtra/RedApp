@@ -248,7 +248,7 @@ func (s *Store) ProcessPendingDeletes(dir string) error {
 	defer root.Close()
 	for _, path := range paths {
 		if !deleteObjectPath.MatchString(path) {
-			return errors.New("Invalid pending object deletion")
+			return errors.New("invalid pending object deletion")
 		}
 		if strings.HasPrefix(path, "objects/blobs/") {
 			err = root.RemoveAll(path)

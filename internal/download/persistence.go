@@ -17,9 +17,9 @@ import (
 )
 
 var (
-	ErrWriterLimit   = errors.New("Active download limit exceeded")
-	ErrReaderLimit   = errors.New("Client limit exceeded")
-	ErrArtifactLimit = errors.New("Artifact length exceeds configured limit")
+	ErrWriterLimit   = errors.New("active download limit exceeded")
+	ErrReaderLimit   = errors.New("client limit exceeded")
+	ErrArtifactLimit = errors.New("artifact length exceeds configured limit")
 )
 
 func validApplication(app string) bool { return store.ValidAppID(app) }
@@ -28,10 +28,10 @@ func (m *Manager) ConfigureLimits(writers, readers int, bytes int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if writers <= 0 || readers <= 0 || bytes <= 0 {
-		return errors.New("Download limits must be positive")
+		return errors.New("download limits must be positive")
 	}
 	if m.jobs != 0 {
-		return errors.New("Download limits must be configured before serving requests")
+		return errors.New("download limits must be configured before serving requests")
 	}
 	m.maxWriters, m.maxReaders, m.maxBytes = writers, readers, bytes
 	return nil
@@ -47,15 +47,15 @@ func (m *Manager) validateResource(r Resource) error {
 }
 func (m *Manager) validateIdentityLocked(r Resource) error {
 	if !validApplication(r.Application) || r.Version == "" || r.Key == "" || strings.ContainsAny(r.Version+r.Key, "\x00\r\n") || r.ID != LogicalIdentity(r.Application, r.Version, r.Key) || len(r.Hash) != 64 || !validID(r.Hash) || strings.ToLower(r.Hash) != r.Hash || (r.Size != nil && *r.Size < 0) {
-		return errors.New("Invalid logical resource identity")
+		return errors.New("invalid logical resource identity")
 	}
 	client := m.upstreams[r.Application]
 	if client == nil {
-		return errors.New("Unknown resource application")
+		return errors.New("unknown resource application")
 	}
 	u, e := url.Parse(r.Source)
 	if e != nil || client.Validate(u) != nil {
-		return errors.New("Resource does not belong to application upstream")
+		return errors.New("resource does not belong to application upstream")
 	}
 	return nil
 }
@@ -65,10 +65,10 @@ func (m *Manager) validateIdentityLocked(r Resource) error {
 func (m *Manager) checkBinding(r Resource) error {
 	bound, e := m.db.Resource(r.Application, r.Version, r.Key)
 	if e != nil {
-		return fmt.Errorf("Resource has no persisted metadata authorization: %w", e)
+		return fmt.Errorf("resource has no persisted metadata authorization: %w", e)
 	}
 	if bound.SourceURL != r.Source || bound.SHA256 != r.Hash || !equalSize(bound.ExpectedSize, r.Size) {
-		return errors.New("Resource differs from immutable metadata authorization")
+		return errors.New("resource differs from immutable metadata authorization")
 	}
 	return nil
 }
@@ -172,7 +172,7 @@ func (m *Manager) recover() error {
 	}
 	for _, row := range records {
 		if !validID(row.ID) {
-			return errors.New("Invalid persisted generation identity")
+			return errors.New("invalid persisted generation identity")
 		}
 		bound, e := m.db.Resource(row.AppID, row.Version, row.ResourceKey)
 		if e != nil {
@@ -184,7 +184,7 @@ func (m *Manager) recover() error {
 			return e
 		}
 		if row.ExpectedSHA256 != r.Hash {
-			return errors.New("Persisted generation digest differs from authorization")
+			return errors.New("persisted generation digest differs from authorization")
 		}
 		g := &Generation{ID: row.ID, Resource: r, Path: m.partPath(row.ID), State: "interrupted", Bytes: row.Bytes, Total: -1, SourceBytes: row.SourceBytes, ETag: row.ETag, Resumes: row.Resumes, Started: row.StartedAt, Error: row.LastErrorCode, checkpoint: row.Checkpoint, Retired: row.RetiredAt != nil || !row.IsCurrent, FullRetry: row.FullRetry, downloadNS: row.DownloadNS, changed: make(chan struct{})}
 		fences := []store.SourceFence{r.SourceFence}
@@ -259,7 +259,7 @@ func (m *Manager) recover() error {
 				}
 				continue
 			}
-			openErr = errors.New("Recovered blob failed verification")
+			openErr = errors.New("recovered blob failed verification")
 		}
 		if g.State == "complete" || !errors.Is(openErr, fs.ErrNotExist) {
 			g.Error = errBlobInvalid.Error()
@@ -347,7 +347,7 @@ func (m *Manager) publishLocked(g *Generation, existing *fileCheck) error {
 				return e
 			}
 			if e = os.Rename(g.Path, path); e != nil {
-				return errors.New("Cache repair publication failed")
+				return errors.New("cache repair publication failed")
 			}
 		} else if e = os.Remove(g.Path); e != nil {
 			return e
@@ -356,7 +356,7 @@ func (m *Manager) publishLocked(g *Generation, existing *fileCheck) error {
 	} else if !errors.Is(e, fs.ErrNotExist) {
 		return e
 	} else if e = os.Rename(g.Path, path); e != nil {
-		return errors.New("Cache publication failed")
+		return errors.New("cache publication failed")
 	}
 	g.Path = path
 	if e := fsutil.SyncDir(filepath.Dir(path)); e != nil {
@@ -403,7 +403,7 @@ func (m *Manager) collectBlob(r Resource) (int64, error) {
 	var released int64
 	if st, e := os.Lstat(path); e == nil {
 		if !st.Mode().IsRegular() {
-			return 0, errors.New("Invalid blob file type")
+			return 0, errors.New("invalid blob file type")
 		}
 		released = st.Size()
 	} else if !errors.Is(e, fs.ErrNotExist) {
@@ -438,7 +438,7 @@ func (m *Manager) removeOrphans() error {
 				return e
 			}
 			if d.Type()&os.ModeSymlink != 0 {
-				return errors.New("Symlink in cache directory")
+				return errors.New("symlink in cache directory")
 			}
 			if d.IsDir() {
 				return nil

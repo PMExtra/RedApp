@@ -29,15 +29,15 @@ type VersionStats struct {
 
 func validateResource(r Resource) error {
 	if requireApp(r.AppID) != nil || r.Version == "" || r.Key == "" || r.SourceURL == "" || len(r.SHA256) != 64 {
-		return errors.New("Invalid authorized resource")
+		return errors.New("invalid authorized resource")
 	}
 	for _, c := range r.SHA256 {
 		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
-			return errors.New("Invalid resource digest")
+			return errors.New("invalid resource digest")
 		}
 	}
 	if r.ExpectedSize != nil && *r.ExpectedSize < 0 {
-		return errors.New("Invalid resource size")
+		return errors.New("invalid resource size")
 	}
 	return nil
 }
@@ -47,7 +47,7 @@ func equalSize(a, b *int64) bool { return a == nil && b == nil || a != nil && b 
 // resource set. Trust revalidation may replace envelope bytes but never bindings.
 func (s *Store) PutRelease(m ReleaseMetadata, resources []Resource, expected ...SourceFence) error {
 	if requireApp(m.AppID) != nil || m.Version == "" || m.Raw == nil || m.TrustRevision < 1 || m.FetchedAt.IsZero() {
-		return errors.New("Invalid trusted release")
+		return errors.New("invalid trusted release")
 	}
 	seen := map[string]bool{}
 	for _, r := range resources {
@@ -55,7 +55,7 @@ func (s *Store) PutRelease(m ReleaseMetadata, resources []Resource, expected ...
 			return err
 		}
 		if r.AppID != m.AppID || r.Version != m.Version || seen[r.Key] {
-			return errors.New("Release resource identity mismatch")
+			return errors.New("release resource identity mismatch")
 		}
 		seen[r.Key] = true
 	}
@@ -76,7 +76,7 @@ func (s *Store) PutRelease(m ReleaseMetadata, resources []Resource, expected ...
 	existing := err == nil
 	if existing {
 		if m.TrustRevision < oldRevision {
-			return errors.New("Trust revision cannot move backwards")
+			return errors.New("trust revision cannot move backwards")
 		}
 		rows, e := tx.Query("SELECT resource_key,source_url,sha256,expected_size FROM resources WHERE app_id=? AND version=?", m.AppID, m.Version)
 		if e != nil {
@@ -163,7 +163,7 @@ func (s *Store) Resources(app, version string) ([]Resource, error) {
 }
 func (s *Store) PutChannel(c Channel, expected ...SourceFence) error {
 	if requireApp(c.AppID) != nil || c.Name == "" || c.Version == "" || !c.ExpiresAt.After(c.FetchedAt) {
-		return errors.New("Invalid channel record")
+		return errors.New("invalid channel record")
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -192,7 +192,7 @@ func (s *Store) Channel(app, name string) (Channel, error) {
 }
 func (s *Store) SeenFor(app, version string) error {
 	if requireApp(app) != nil || version == "" {
-		return errors.New("Application and version are required")
+		return errors.New("application and version are required")
 	}
 	_, err := s.db.Exec("INSERT OR IGNORE INTO app_versions(app_id,version,first_seen_s) VALUES(?,?,?)", app, version, time.Now().Unix())
 	return err

@@ -95,7 +95,7 @@ func TestHTTPProxyTLSResumeAndPrivateCredentials(t *testing.T) {
 	}
 	if _, err := c.Get(context.Background(), sourceURL(c, "channels/latest"), nil); err == nil {
 		t.Fatal("untrusted TLS certificate accepted")
-	} else if err.Error() != "Upstream connection failed" {
+	} else if err.Error() != "upstream connection failed" {
 		t.Fatal("connection error exposed details")
 	}
 	trustFixture(c, upstream)

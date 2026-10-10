@@ -29,7 +29,7 @@ func (m *Manager) preview(app string, ids map[string]bool, unknown []string, gua
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.upstreams[app] == nil {
-		return Cleanup{}, errors.New("Unknown cleanup application")
+		return Cleanup{}, errors.New("unknown cleanup application")
 	}
 	if e := m.db.DeleteExpiredCleanupPreviews(time.Now()); e != nil {
 		return Cleanup{}, e
@@ -49,7 +49,7 @@ func (m *Manager) preview(app string, ids map[string]bool, unknown []string, gua
 			continue
 		}
 		if g.Resource.Application != app {
-			return Cleanup{}, errors.New("Cleanup selection belongs to another application")
+			return Cleanup{}, errors.New("cleanup selection belongs to another application")
 		}
 		job.Selected = append(job.Selected, Selection{Resource: rid, Generation: g.ID, Version: g.Resource.Version, Key: g.Resource.Key, Bytes: g.Bytes})
 		selected[g.ID] = true
@@ -105,10 +105,10 @@ func (m *Manager) Cleanup(app, jobID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.upstreams[app] == nil {
-		return errors.New("Unknown cleanup application")
+		return errors.New("unknown cleanup application")
 	}
 	if !validID(jobID) {
-		return errors.New("Invalid cleanup ID")
+		return errors.New("invalid cleanup ID")
 	}
 	job, e := m.db.RetireCleanupPreview(app, jobID, time.Now())
 	if e != nil {
@@ -125,7 +125,7 @@ func (m *Manager) Cleanup(app, jobID string) error {
 			continue
 		}
 		if g.Resource.Application != app || g.Resource.Version != s.Version || g.Resource.Key != s.ResourceKey {
-			return errors.New("Persisted cleanup selection identity mismatch")
+			return errors.New("persisted cleanup selection identity mismatch")
 		}
 		g.Retired = true
 		m.checkpoint("cleanup.after_tombstone", g)

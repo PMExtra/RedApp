@@ -20,11 +20,11 @@ import (
 )
 
 var (
-	ErrInvalidDirectory      = errors.New("Invalid vendor or application configuration")
-	ErrDirectoryExists       = errors.New("Vendor or application ID is already reserved")
-	ErrDirectoryDeleted      = errors.New("Vendor or application is deleted")
-	ErrVendorHasApplications = errors.New("Delete the vendor's applications first")
-	ErrSourceInactive        = errors.New("Application source is no longer active")
+	ErrInvalidDirectory      = errors.New("invalid vendor or application configuration")
+	ErrDirectoryExists       = errors.New("vendor or application ID is already reserved")
+	ErrDirectoryDeleted      = errors.New("vendor or application is deleted")
+	ErrVendorHasApplications = errors.New("delete the vendor's applications first")
+	ErrSourceInactive        = errors.New("application source is no longer active")
 	// ErrVendorNotFound and ErrApplicationNotFound name the missing object when
 	// an operation involves both kinds; both match sql.ErrNoRows.
 	ErrVendorNotFound      = fmt.Errorf("vendor not found: %w", sql.ErrNoRows)

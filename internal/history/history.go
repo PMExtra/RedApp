@@ -128,14 +128,14 @@ func (h *History) Query(key, window string, at time.Time) (Series, error) {
 }
 func (h *History) QueryFor(app, key, window string, at time.Time) (Series, error) {
 	if !store.ValidAppID(app) {
-		return Series{}, errors.New("Canonical application identity is required")
+		return Series{}, errors.New("canonical application identity is required")
 	}
 	return h.query("app", app, key, window, at)
 }
 func (h *History) query(scope, app, key, window string, at time.Time) (Series, error) {
 	d, ok := definitionFor(scope, key)
 	if !ok {
-		return Series{}, errors.New("Unknown metric for this scope")
+		return Series{}, errors.New("unknown metric for this scope")
 	}
 	duration := time.Duration(0)
 	resolution := time.Hour
@@ -148,7 +148,7 @@ func (h *History) query(scope, app, key, window string, at time.Time) (Series, e
 	case "30d":
 		duration = 30 * 24 * time.Hour
 	default:
-		return Series{}, errors.New("History range must be 24h, 7d, or 30d")
+		return Series{}, errors.New("history range must be 24h, 7d, or 30d")
 	}
 	from := at.UTC().Add(-duration).Truncate(resolution).Unix()
 	to := at.UTC().Truncate(resolution).Unix()

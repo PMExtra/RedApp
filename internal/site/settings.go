@@ -41,11 +41,11 @@ func (s *Settings) Validate() error {
 		for _, value := range []*string{&field.value.EN, &field.value.ZHCN} {
 			*value = strings.TrimSpace(*value)
 			if !utf8.ValidString(*value) || utf8.RuneCountInString(*value) > field.limit || field.required && *value == "" {
-				return errors.New("Site text is missing or exceeds its limit")
+				return errors.New("site text is missing or exceeds its limit")
 			}
 			for _, r := range *value {
 				if unicode.IsControl(r) && r != '\n' && r != '\t' {
-					return errors.New("Site text contains control characters")
+					return errors.New("site text contains control characters")
 				}
 			}
 		}

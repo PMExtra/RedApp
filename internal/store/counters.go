@@ -33,7 +33,7 @@ func counterKey(name string) (string, error) {
 	case "requests", "artifact_requests", "cache_hit_requests", "shared_follower_requests", "miss_requests", "download_success", "download_errors", "upstream_errors", "upstream_bytes", "downstream_bytes", "cleanup_freed_bytes":
 		return "counters." + name, nil
 	}
-	return "", errors.New("Unknown active counter")
+	return "", errors.New("unknown active counter")
 }
 func increment(tx *sql.Tx, scope, app, key string, n int64, at int64) error {
 	_, err := tx.Exec("INSERT INTO metric_counters(scope,app_id,metric,value,observed_since_s) VALUES(?,?,?,?,?) ON CONFLICT(scope,app_id,metric) DO UPDATE SET value=value+excluded.value", scope, app, key, n, at)
@@ -47,7 +47,7 @@ func (s *Store) add(app, name string, n int64) error {
 		return err
 	}
 	if n < 0 {
-		return errors.New("Counter increments cannot be negative")
+		return errors.New("counter increments cannot be negative")
 	}
 	b := &s.pending
 	b.mu.Lock()
@@ -72,7 +72,7 @@ func (s *Store) AddFor(app, name string, n int64) error {
 // AddVersion buffers per-version request and downstream byte counters.
 func (s *Store) AddVersion(app, version string, requests, downstreamBytes int64) error {
 	if requireApp(app) != nil || requests < 0 || downstreamBytes < 0 {
-		return errors.New("Invalid version counter")
+		return errors.New("invalid version counter")
 	}
 	b := &s.pending
 	b.mu.Lock()

@@ -30,7 +30,7 @@ type CleanupPreview struct {
 
 func (s *Store) SaveCleanupPreview(p CleanupPreview) error {
 	if requireApp(p.AppID) != nil || p.ID == "" || p.CreatedAt.IsZero() || !p.ExpiresAt.After(p.CreatedAt) || p.ExpiresAt.Sub(p.CreatedAt) > 10*time.Minute || p.ExecutedAt != nil || p.Result != nil {
-		return errors.New("Invalid cleanup preview")
+		return errors.New("invalid cleanup preview")
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -48,7 +48,7 @@ func (s *Store) SaveCleanupPreview(p CleanupPreview) error {
 	seen := map[string]bool{}
 	for _, item := range p.Selection {
 		if item.GenerationID == "" || seen[item.GenerationID] || item.SnapshotBytes < 0 {
-			return errors.New("Invalid cleanup selection")
+			return errors.New("invalid cleanup selection")
 		}
 		seen[item.GenerationID] = true
 		var app, v, k string
@@ -57,7 +57,7 @@ func (s *Store) SaveCleanupPreview(p CleanupPreview) error {
 			return err
 		}
 		if app != p.AppID || v != item.Version || k != item.ResourceKey || !current {
-			return errors.New("Cleanup selection ownership changed")
+			return errors.New("cleanup selection ownership changed")
 		}
 	}
 	raw, err := json.Marshal(p.Selection)
@@ -198,7 +198,7 @@ func (s *Store) retireCleanupPreview(app, id string, at time.Time, blocked map[s
 			return p, err
 		}
 		if a != app || v != item.Version || k != item.ResourceKey {
-			return p, errors.New("Cleanup snapshot ownership mismatch")
+			return p, errors.New("cleanup snapshot ownership mismatch")
 		}
 		if safe {
 			receipt.Selection = append(receipt.Selection, item)
@@ -224,7 +224,7 @@ func (s *Store) retireCleanupPreview(app, id string, at time.Time, blocked map[s
 }
 func (s *Store) CompleteCleanupPreview(app, id string, result json.RawMessage) error {
 	if requireApp(app) != nil || !json.Valid(result) {
-		return errors.New("Invalid cleanup result")
+		return errors.New("invalid cleanup result")
 	}
 	r, err := s.db.Exec("UPDATE cleanup_previews SET result_json=? WHERE id=? AND app_id=? AND executed_at_s IS NOT NULL", []byte(result), id, app)
 	return affected(r, err)

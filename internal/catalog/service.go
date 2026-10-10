@@ -285,7 +285,7 @@ func (s *Service) CandidatesForSource(app, storageID, minimum string, views []do
 
 func candidates(e application.Entry, storageID, minimum string, views []download.View) (map[string]bool, []string, error) {
 	if v, err := e.Protocol.ValidateVersion(minimum); err != nil || v != minimum {
-		return nil, nil, errors.New("Invalid canonical minimum version")
+		return nil, nil, errors.New("invalid canonical minimum version")
 	}
 	ids := map[string]bool{}
 	unknownSet := map[string]bool{}

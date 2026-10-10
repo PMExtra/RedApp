@@ -77,7 +77,7 @@ func validGeneration(g Generation) bool {
 }
 func (s *Store) CreateGeneration(g Generation) error {
 	if !validGeneration(g) || !g.IsCurrent || g.RetiredAt != nil {
-		return errors.New("Invalid new generation")
+		return errors.New("invalid new generation")
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -149,12 +149,12 @@ func (s *Store) DeleteGeneration(app, id string) error {
 }
 func putBlob(tx *sql.Tx, b Blob) error {
 	if requireApp(b.AppID) != nil || b.SizeBytes < 0 || b.VerifiedAt.IsZero() {
-		return errors.New("Invalid verified blob")
+		return errors.New("invalid verified blob")
 	}
 	var size int64
 	err := tx.QueryRow("SELECT size_bytes FROM blobs WHERE app_id=? AND sha256=?", b.AppID, b.SHA256).Scan(&size)
 	if err == nil && size != b.SizeBytes {
-		return errors.New("Verified blob size changed")
+		return errors.New("verified blob size changed")
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
@@ -260,7 +260,7 @@ func (s *Store) CompleteGeneration(c GenerationCompletion, expectedFence ...Sour
 		}
 	}
 	if !current || hash != b.SHA256 || expected != nil && *expected != b.SizeBytes {
-		return errors.New("Generation retired or verified blob does not match authorization")
+		return errors.New("generation retired or verified blob does not match authorization")
 	}
 	if err = putBlob(tx, b); err != nil {
 		return err

@@ -86,7 +86,7 @@ func TestUpstreamPayloadIncludesFailedWritesAndRetries(t *testing.T) {
 	}
 	db.Add("upstream_bytes", 100) // Existing cumulative values must be retained.
 	for attempt := int64(1); attempt <= 2; attempt++ {
-		if err = m.attempt(g); err == nil || !strings.Contains(err.Error(), "Disk write") {
+		if err = m.attempt(g); err == nil || !strings.Contains(err.Error(), "disk write") {
 			t.Fatal(err)
 		}
 		counters, _ := db.Counters()

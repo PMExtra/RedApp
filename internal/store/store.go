@@ -30,15 +30,15 @@ const applicationID = 0x52644170
 
 const databaseName = "state.sqlite"
 
-var ErrIncompatibleDirectory = errors.New("This data directory belongs to another RedApp schema version or is not a RedApp data directory; use a new empty data directory. Data is never migrated and the old directory is left unchanged")
+var ErrIncompatibleDirectory = errors.New("this data directory belongs to another RedApp schema version or is not a RedApp data directory; use a new empty data directory. Data is never migrated and the old directory is left unchanged")
 
 // ErrNotFound reports that a requested row does not exist. It is
 // sql.ErrNoRows, so callers outside this package match it without importing
 // database/sql.
 var ErrNotFound = sql.ErrNoRows
-var ErrConflict = errors.New("Setting revision changed; reload before saving")
-var ErrImmutableRelease = errors.New("Trusted release resource bindings changed")
-var ErrExpired = errors.New("Cleanup preview expired")
+var ErrConflict = errors.New("setting revision changed; reload before saving")
+var ErrImmutableRelease = errors.New("trusted release resource bindings changed")
+var ErrExpired = errors.New("cleanup preview expired")
 
 //go:embed schema.sql
 var schema string
@@ -180,7 +180,7 @@ func createSchema(db *sql.DB) error {
 		return err
 	}
 	if busy != 0 {
-		return errors.New("Initial schema checkpoint is busy")
+		return errors.New("initial schema checkpoint is busy")
 	}
 	return nil
 }
@@ -248,7 +248,7 @@ func probeExisting(path string) error {
 	}
 	db, err := sql.Open("sqlite3", sqliteURL(path, "mode=ro&immutable=1&_query_only=on"))
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrIncompatibleDirectory, err)
+		return fmt.Errorf("%w: %w", ErrIncompatibleDirectory, err)
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
@@ -258,10 +258,10 @@ func probeExisting(path string) error {
 func checkVersion(db *sql.DB) error {
 	var app, version int
 	if err := db.QueryRow("PRAGMA application_id").Scan(&app); err != nil {
-		return fmt.Errorf("%w: %v", ErrIncompatibleDirectory, err)
+		return fmt.Errorf("%w: %w", ErrIncompatibleDirectory, err)
 	}
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
-		return fmt.Errorf("%w: %v", ErrIncompatibleDirectory, err)
+		return fmt.Errorf("%w: %w", ErrIncompatibleDirectory, err)
 	}
 	if app != applicationID || version != SchemaVersion {
 		return ErrIncompatibleDirectory
@@ -271,7 +271,7 @@ func checkVersion(db *sql.DB) error {
 
 func requireApp(app string) error {
 	if !ValidAppID(app) {
-		return errors.New("Canonical vendor/app identity is required")
+		return errors.New("canonical vendor/app identity is required")
 	}
 	return nil
 }

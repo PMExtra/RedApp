@@ -14,7 +14,7 @@ type Event struct {
 
 func (s *Store) RecordEvent(e Event) error {
 	if e.AppID != "" && !ValidAppID(e.AppID) || e.Category == "" || e.Code == "" || e.Message == "" || e.UpstreamStatus != nil && (*e.UpstreamStatus < 100 || *e.UpstreamStatus > 599) {
-		return errors.New("Invalid structured event")
+		return errors.New("invalid structured event")
 	}
 	if e.Time.IsZero() {
 		e.Time = time.Now()

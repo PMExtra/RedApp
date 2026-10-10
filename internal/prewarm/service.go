@@ -27,8 +27,8 @@ import (
 	"unicode/utf8"
 )
 
-var ErrBusy = errors.New("Prewarm worker busy")
-var ErrInvalid = errors.New("Invalid prewarm input")
+var ErrBusy = errors.New("prewarm worker busy")
+var ErrInvalid = errors.New("invalid prewarm input")
 
 // ErrRunning reports that a running job cannot be retried.
 var ErrRunning = errors.New("prewarm job is still running")

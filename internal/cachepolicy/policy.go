@@ -17,7 +17,7 @@ const (
 	MaxAgeSeconds int64 = 315360000
 )
 
-var ErrInvalidPolicy = errors.New("Invalid HTTP cache policy")
+var ErrInvalidPolicy = errors.New("invalid HTTP cache policy")
 
 type CacheRule struct {
 	ID         string         `json:"id,omitempty"`

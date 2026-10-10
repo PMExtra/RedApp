@@ -193,7 +193,7 @@ func NewApplications(dir string, db *store.Store, clients map[string]*distributo
 	upstreams := make(map[string]*distributor.Client, len(clients))
 	for app, client := range clients {
 		if client == nil || !validApplication(app) {
-			return nil, errors.New("Invalid application upstream registration")
+			return nil, errors.New("invalid application upstream registration")
 		}
 		upstreams[app] = client
 	}
@@ -227,15 +227,15 @@ func (m *Manager) PrepareUpstreams(clients map[string]*distributor.Client) (*Ups
 	defer m.mu.Unlock()
 	fail := func(err error) (*UpstreamPublication, error) { m.publicationMu.Unlock(); return nil, err }
 	if m.closed {
-		return fail(errors.New("Server is shutting down"))
+		return fail(errors.New("server is shutting down"))
 	}
 	copied := make(map[string]*distributor.Client, len(clients))
 	for app, client := range clients {
 		if client == nil || !validApplication(app) {
-			return fail(errors.New("Invalid application upstream registration"))
+			return fail(errors.New("invalid application upstream registration"))
 		}
 		if old := m.upstreams[app]; old != nil && old.Base.String() != client.Base.String() {
-			return fail(errors.New("Source namespace cannot change upstream"))
+			return fail(errors.New("source namespace cannot change upstream"))
 		}
 		copied[app] = client
 	}
@@ -349,7 +349,7 @@ type verification struct {
 	err  error
 }
 
-var errVerificationPending = errors.New("Cache verification in progress")
+var errVerificationPending = errors.New("cache verification in progress")
 
 // startVerificationLocked runs check without mu under application work owned
 // by the manager, so a waiter's cancellation never aborts it for the others.
@@ -469,7 +469,7 @@ func (m *Manager) verifyBlobLocked(r Resource, fullRetry bool, path string, size
 			return err
 		}
 		if m.closed {
-			return errors.New("Server is shutting down")
+			return errors.New("server is shutting down")
 		}
 		if m.current[r.ID] != nil {
 			return nil // Another admission installed a head; waiters re-run admission.
@@ -604,7 +604,7 @@ func (m *Manager) admitLocked(ctx context.Context, r Resource, finish func()) (*
 		return nil, false, e
 	}
 	if m.closed {
-		return nil, false, errors.New("Server is shutting down")
+		return nil, false, errors.New("server is shutting down")
 	}
 	if r.Size != nil && *r.Size > m.maxBytes {
 		return nil, false, ErrArtifactLimit
@@ -631,7 +631,7 @@ func (m *Manager) admitLocked(ctx context.Context, r Resource, finish func()) (*
 		return nil, false, ErrArtifactLimit
 	}
 	if g != nil && (g.Resource.Source != r.Source || g.Resource.Hash != r.Hash || g.Resource.Application != r.Application) {
-		return nil, false, errors.New("Cached resource application or identity does not match")
+		return nil, false, errors.New("cached resource application or identity does not match")
 	}
 	if g != nil && g.Retired {
 		if e := m.db.RetireGeneration(r.Application, g.ID, time.Now()); e != nil {
@@ -721,7 +721,7 @@ func (r *Reader) Read(p []byte) (int, error) {
 		// Failure must not become a successful EOF, even after all bytes were streamed.
 		if done && state != "complete" {
 			r.m.mu.Unlock()
-			return 0, fmt.Errorf("Download is not verified: %s", errMsg)
+			return 0, fmt.Errorf("download is not verified: %s", errMsg)
 		}
 		if available > 0 {
 			if int64(len(p)) > available {
@@ -831,11 +831,11 @@ func (e *failure) Error() string { return e.message }
 func (e *failure) Unwrap() error { return e.cause }
 
 var (
-	unsafeResume    = &failure{message: "Unsafe upstream resume; a new generation is required", category: "range"}
-	errHashMismatch = &failure{message: "Complete file SHA256 does not match", category: "hash"}
-	errTruncated    = &failure{message: "Artifact truncated", category: "length", transient: true}
-	errLength       = &failure{message: "Artifact length exceeds limit or does not match", category: "length"}
-	errBlobInvalid  = &failure{message: "Completed cache file is missing or invalid", category: "disk"}
+	unsafeResume    = &failure{message: "unsafe upstream resume; a new generation is required", category: "range"}
+	errHashMismatch = &failure{message: "complete file SHA256 does not match", category: "hash"}
+	errTruncated    = &failure{message: "artifact truncated", category: "length", transient: true}
+	errLength       = &failure{message: "artifact length exceeds limit or does not match", category: "length"}
+	errBlobInvalid  = &failure{message: "completed cache file is missing or invalid", category: "disk"}
 )
 
 type upstreamHTTPError int
@@ -899,7 +899,7 @@ func (m *Manager) attempt(g *Generation) error {
 	client := m.upstreams[g.Resource.Application]
 	m.mu.Unlock()
 	if client == nil {
-		return errors.New("Unknown persisted resource application")
+		return errors.New("unknown persisted resource application")
 	}
 	resp, e := client.Send(g.ctx, distributor.Request{Method: http.MethodGet, URL: g.Resource.Source, Header: headers, IdleTimeout: m.idleTimeout})
 	if e != nil {
@@ -974,7 +974,7 @@ func (m *Manager) attempt(g *Generation) error {
 			}
 			written, we := g.file.WriteAt(buf[:n], offset)
 			if we != nil {
-				return &failure{message: "Disk write failed", category: "disk", cause: we}
+				return &failure{message: "disk write failed", category: "disk", cause: we}
 			}
 			if written != n {
 				return io.ErrShortWrite
@@ -997,7 +997,7 @@ func (m *Manager) attempt(g *Generation) error {
 		}
 		if re != nil {
 			if re != io.EOF {
-				return &failure{message: "Upstream download interrupted", category: "upstream", cause: re, transient: true}
+				return &failure{message: "upstream download interrupted", category: "upstream", cause: re, transient: true}
 			}
 			break
 		}
@@ -1095,7 +1095,7 @@ func (m *Manager) run(g *Generation) {
 		snapshot := m.checkpointLocked(g)
 		m.mu.Unlock()
 		if e := m.write(snapshot); e != nil {
-			err = &failure{message: "Cache state checkpoint failed", category: "database", cause: e}
+			err = &failure{message: "cache state checkpoint failed", category: "database", cause: e}
 		} else if e = m.db.CheckSourceActive(g.Resource.Application, g.Resource.SourceFence); errors.Is(e, store.ErrSourceInactive) {
 			inactive = true
 		} else if e != nil {
@@ -1116,7 +1116,7 @@ func (m *Manager) run(g *Generation) {
 	}
 	if err == nil {
 		if e := g.file.Sync(); e != nil {
-			err = &failure{message: "File fsync failed", category: "disk", cause: e}
+			err = &failure{message: "file fsync failed", category: "disk", cause: e}
 		}
 		if err == nil && !g.Retired && m.current[g.Resource.ID] == g {
 			err = m.publishLocked(g, existing)
@@ -1130,7 +1130,7 @@ func (m *Manager) run(g *Generation) {
 				if errors.Is(e, store.ErrSourceInactive) {
 					err = m.retireLocked(g)
 				} else {
-					err = &failure{message: "Cache state commit failed", category: "database", cause: e}
+					err = &failure{message: "cache state commit failed", category: "database", cause: e}
 				}
 			}
 		}
@@ -1276,7 +1276,7 @@ func (r *Reader) WaitVerified() error {
 			if state == "complete" {
 				return nil
 			}
-			return errors.New("Download verification failed")
+			return errors.New("download verification failed")
 		}
 		select {
 		case <-r.ctx.Done():

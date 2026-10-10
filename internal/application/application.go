@@ -26,7 +26,7 @@ type Key struct{ Vendor, App string }
 func ParseKey(id string) (Key, error) {
 	vendor, app, ok := strings.Cut(id, "/")
 	if !ok || !identity.ValidKey(id) {
-		return Key{}, errors.New("Invalid canonical application identity")
+		return Key{}, errors.New("invalid canonical application identity")
 	}
 	return Key{vendor, app}, nil
 }
@@ -86,13 +86,13 @@ type Protocol interface {
 	Render(Release, Operation, string) (Representation, error)
 }
 
-var ErrNotFound = errors.New("Application resource not found")
-var ErrUpstream = errors.New("Trusted upstream metadata unavailable")
+var ErrNotFound = errors.New("application resource not found")
+var ErrUpstream = errors.New("trusted upstream metadata unavailable")
 
 // ErrUntrusted marks upstream metadata that was fetched but failed verification
 // (digest, signature, URL or immutability rules). It also matches ErrUpstream.
 var ErrUntrusted = fmt.Errorf("%w: metadata failed verification", ErrUpstream)
-var ErrBusy = errors.New("Metadata concurrency limit exceeded")
+var ErrBusy = errors.New("metadata concurrency limit exceeded")
 
 // MetadataTimeout bounds one whole metadata request, including its body.
 const MetadataTimeout = 5 * time.Minute
@@ -120,7 +120,7 @@ func ReadBody(ctx context.Context, client *distributor.Client, path string, limi
 	}
 	r, err := client.Get(ctx, source, http.Header{})
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUpstream, err)
+		return nil, fmt.Errorf("%w: %w", ErrUpstream, err)
 	}
 	defer r.Body.Close()
 	if r.StatusCode != http.StatusOK {
@@ -128,7 +128,7 @@ func ReadBody(ctx context.Context, client *distributor.Client, path string, limi
 	}
 	b, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrUpstream, err)
+		return nil, fmt.Errorf("%w: %w", ErrUpstream, err)
 	}
 	if len(b) == 0 || int64(len(b)) > limit {
 		return nil, fmt.Errorf("%w: metadata exceeds size limits", ErrUpstream)
@@ -212,47 +212,47 @@ func PrepareRegistry(entries []Entry) (*PreparedRegistry, error) {
 			return nil, err
 		}
 		if _, found := snapshot.byID[d.ID]; found {
-			return nil, fmt.Errorf("Duplicate application %s", d.ID)
+			return nil, fmt.Errorf("duplicate application %s", d.ID)
 		}
 		if _, known := ProviderDefinition(e.Provider); !known {
-			return nil, fmt.Errorf("Unknown provider for %s", d.ID)
+			return nil, fmt.Errorf("unknown provider for %s", d.ID)
 		}
 		// Every entry comes from a persisted directory application.
 		if !identity.ValidUID(e.UID) || e.Revision < 1 || e.VendorRevision < 1 || e.SourceEpoch < 1 || uids[e.UID] {
-			return nil, fmt.Errorf("Invalid runtime identity for %s", d.ID)
+			return nil, fmt.Errorf("invalid runtime identity for %s", d.ID)
 		}
 		uids[e.UID] = true
 		if e.Upstream == nil && e.Provider != Info && e.Provider != Hosted || d.DefaultChannelTTLSeconds < 0 || d.DefaultChannelTTLSeconds > 86400 {
-			return nil, fmt.Errorf("Incomplete application %s", d.ID)
+			return nil, fmt.Errorf("incomplete application %s", d.ID)
 		}
 		if e.Provider == Info || e.Provider == Hosted {
 			if e.Upstream != nil || len(e.Upstreams) != 0 || e.Protocol != nil || len(d.Channels) != 0 || len(d.Installers) != 0 || len(d.Assets) != 0 || len(e.PublicAssets) != 0 || d.Upstream != "" || d.DefaultChannelTTLSeconds != 0 || d.TrustRevision != 0 || e.TemplateID != "" {
-				return nil, fmt.Errorf("Content providers cannot declare upstream capabilities for %s", d.ID)
+				return nil, fmt.Errorf("content providers cannot declare upstream capabilities for %s", d.ID)
 			}
 		} else if e.Provider == HttpCache {
 			if e.Protocol != nil || len(d.Channels) != 0 || len(d.Installers) != 0 || d.TrustRevision != 0 || e.TemplateID != "" {
-				return nil, fmt.Errorf("GeneralHttp cannot declare release capabilities for %s", d.ID)
+				return nil, fmt.Errorf("HTTP cache applications cannot declare release capabilities for %s", d.ID)
 			}
 		} else if e.Protocol == nil || d.TrustRevision < 1 || d.DefaultChannelTTLSeconds < 1 || len(d.Channels) == 0 {
-			return nil, fmt.Errorf("Incomplete release application %s", d.ID)
+			return nil, fmt.Errorf("incomplete release application %s", d.ID)
 		}
 		channels := map[string]bool{}
 		for _, ch := range d.Channels {
 			if !identity.ValidSlug(ch) || channels[ch] {
-				return nil, fmt.Errorf("Invalid or duplicate channel for %s", d.ID)
+				return nil, fmt.Errorf("invalid or duplicate channel for %s", d.ID)
 			}
 			channels[ch] = true
 		}
 		files := map[string]bool{}
 		for _, installer := range d.Installers {
 			if !safePath(installer.File) || files[installer.File] || (installer.Shell != "sh" && installer.Shell != "bash" && installer.Shell != "powershell") {
-				return nil, fmt.Errorf("Invalid installer descriptor for %s", d.ID)
+				return nil, fmt.Errorf("invalid installer descriptor for %s", d.ID)
 			}
 			files[installer.File] = true
 		}
 		for _, asset := range d.Assets {
 			if !safePath(asset.File) || files[asset.File] {
-				return nil, fmt.Errorf("Invalid public asset descriptor for %s", d.ID)
+				return nil, fmt.Errorf("invalid public asset descriptor for %s", d.ID)
 			}
 			files[asset.File] = true
 		}

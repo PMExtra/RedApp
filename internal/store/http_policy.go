@@ -52,7 +52,7 @@ func (s *Store) ReadHTTPPolicy(key string) (cachepolicy.Config, int64, error) {
 		return cachepolicy.Empty(), app.Revision, err
 	}
 	if err = decoder.Decode(new(any)); err != io.EOF {
-		return cachepolicy.Empty(), app.Revision, fmt.Errorf("Invalid stored HTTP policy trailing data")
+		return cachepolicy.Empty(), app.Revision, fmt.Errorf("invalid stored HTTP policy trailing data")
 	}
 	if config, err = cachepolicy.Normalize(config); err != nil {
 		return cachepolicy.Empty(), app.Revision, err

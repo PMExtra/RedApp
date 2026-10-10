@@ -40,7 +40,7 @@ func BuiltinApplicationTemplate(key string) (EntityTemplate, bool) {
 	return EntityTemplate{}, false
 }
 
-var ErrBuiltinTemplate = errors.New("Applications matching a built-in template cannot be deleted; disable them instead")
+var ErrBuiltinTemplate = errors.New("applications matching a built-in template cannot be deleted; disable them instead")
 
 func (s *Store) EnsureEntityTemplates() error { return s.ReconcileTemplates(presets.Embedded()) }
 
