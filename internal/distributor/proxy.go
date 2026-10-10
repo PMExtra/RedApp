@@ -253,7 +253,7 @@ func resolvedDial(ctx context.Context, network, addr string, requirePublic bool)
 		return nil, e
 	}
 	if len(ips) == 0 {
-		return nil, errors.New("DNS returned no addresses")
+		return nil, &net.DNSError{Err: "DNS returned no addresses", Name: host, IsNotFound: true}
 	}
 	for _, ip := range ips {
 		if requirePublic && !publicIP(ip.IP) {

@@ -269,7 +269,7 @@ func (m *Manager) recover() error {
 				return e
 			}
 			delete(m.current, g.Resource.ID)
-			m.recordFailure(g)
+			m.recordFailure(g, nil)
 			continue
 		}
 		f, e = openRegular(g.Path)
@@ -454,12 +454,12 @@ func (m *Manager) removeOrphans() error {
 	}
 	return nil
 }
-func (m *Manager) recordFailure(g *Generation) {
+func (m *Manager) recordFailure(g *Generation, err error) {
 	// The structured method is shared by metadata and download diagnostics.
 	var status *int
 	if g.upstreamStatus >= 100 && g.upstreamStatus <= 599 {
 		v := g.upstreamStatus
 		status = &v
 	}
-	_ = m.db.RecordEvent(store.Event{UpstreamStatus: status, AppID: g.Resource.MetricScope(), Version: g.Resource.Version, ResourceKey: g.Resource.Key, GenerationID: g.ID, Category: failureCategory(g.Error), Code: "download_failed", Message: g.Error})
+	_ = m.db.RecordEvent(store.Event{UpstreamStatus: status, AppID: g.Resource.MetricScope(), Version: g.Resource.Version, ResourceKey: g.Resource.Key, GenerationID: g.ID, Category: failureCategory(err, g.Error), Code: "download_failed", Message: g.Error})
 }

@@ -765,11 +765,24 @@ func (m *Manager) removeLocked(g *Generation) error {
 	return nil
 }
 
-var unsafeResume = errors.New("Unsafe upstream resume; a new generation is required")
+var (
+	unsafeResume    = errors.New("Unsafe upstream resume; a new generation is required")
+	errHashMismatch = errors.New("Complete file SHA256 does not match")
+)
 
 type upstreamHTTPError int
 
 func (e upstreamHTTPError) Error() string { return fmt.Sprintf("Upstream HTTP %d", int(e)) }
+
+// causeError keeps a stable user-visible message while preserving its cause
+// for classification.
+type causeError struct {
+	message string
+	cause   error
+}
+
+func (e *causeError) Error() string { return e.message }
+func (e *causeError) Unwrap() error { return e.cause }
 
 func (m *Manager) attempt(g *Generation) error {
 	m.mu.Lock()
@@ -872,7 +885,7 @@ func (m *Manager) attempt(g *Generation) error {
 			}
 			written, we := g.file.WriteAt(buf[:n], offset)
 			if we != nil {
-				return errors.New("Disk write failed")
+				return &causeError{"Disk write failed", we}
 			}
 			if written != n {
 				return io.ErrShortWrite
@@ -894,7 +907,7 @@ func (m *Manager) attempt(g *Generation) error {
 		}
 		if re != nil {
 			if re != io.EOF {
-				return errors.New("Upstream download interrupted")
+				return &causeError{"Upstream download interrupted", re}
 			}
 			break
 		}
@@ -969,7 +982,7 @@ func (m *Manager) run(g *Generation) {
 		m.checkpoint("download.before_verify", g)
 		start := time.Now()
 		if !verifiedContext(g.ctx, g.file, g.Bytes, g.Resource.Hash) {
-			err = errors.New("Complete file SHA256 does not match")
+			err = errHashMismatch
 		}
 		m.mu.Lock()
 		g.VerificationNS = time.Since(start).Nanoseconds()
@@ -1039,14 +1052,14 @@ func (m *Manager) run(g *Generation) {
 		}
 		g.Error = err.Error()
 		g.State = "failed"
-		if strings.Contains(g.Error, "SHA256") {
+		if errors.Is(err, errHashMismatch) {
 			g.State = "invalid"
 		}
 		if g.ctx.Err() != nil {
 			g.State = "interrupted"
 		}
 		m.save(g)
-		m.recordFailure(g)
+		m.recordFailure(g, err)
 		m.db.AddFor(g.Resource.MetricScope(), "upstream_errors", 1)
 		if m.current[g.Resource.ID] == g && g.State != "interrupted" {
 			delete(m.current, g.Resource.ID)
@@ -1119,7 +1132,30 @@ func (m *Manager) Close() error {
 	return nil
 }
 
-func failureCategory(message string) string {
+// failureCategory classifies typed errors first; message patterns remain for
+// persisted messages without an error value and for local stable messages.
+func failureCategory(err error, message string) string {
+	var status upstreamHTTPError
+	switch {
+	case errors.Is(err, errHashMismatch):
+		return "hash"
+	case errors.Is(err, unsafeResume):
+		return "range"
+	case errors.Is(err, distributor.ErrUnsafeEncoding):
+		return "encoding"
+	case errors.As(err, &status):
+		return "http"
+	}
+	if err != nil {
+		switch distributor.Classify(err) {
+		case distributor.KindDNS:
+			return "dns"
+		case distributor.KindTLS:
+			return "tls"
+		case distributor.KindTimeout:
+			return "timeout"
+		}
+	}
 	for _, c := range []struct{ pattern, category string }{{"SHA256", "hash"}, {"resume", "range"}, {"Content-Encoding", "encoding"}, {"Disk", "disk"}, {"fsync", "disk"}, {"length", "length"}, {"truncated", "length"}, {"HTTP", "http"}, {"DNS", "dns"}, {"TLS", "tls"}, {"timeout", "timeout"}, {"commit", "database"}} {
 		if strings.Contains(message, c.pattern) {
 			return c.category

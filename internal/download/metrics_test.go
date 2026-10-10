@@ -3,10 +3,15 @@ package download
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"github.com/PMExtra/RedApp/internal/testutil"
 	"io"
 	"math"
+	"net"
 	"net/http"
+	"os"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -86,8 +91,46 @@ func TestEnglishFailureCategories(t *testing.T) {
 		"request timeout":                                      "timeout",
 		"Cache state commit failed":                            "database",
 	} {
-		if got := failureCategory(message); got != want {
+		if got := failureCategory(nil, message); got != want {
 			t.Errorf("%q: got %s want %s", message, got, want)
 		}
+	}
+}
+
+type failingTransport struct{ err error }
+
+func (f failingTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, f.err }
+
+func TestTransportFailureCategories(t *testing.T) {
+	c, _ := testutil.Upstream(t, http.NotFoundHandler())
+	for _, tc := range []struct {
+		name  string
+		cause error
+		want  string
+	}{
+		{"dns", &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "upstream.example", IsNotFound: true}}, "dns"},
+		{"certificate", x509.UnknownAuthorityError{}, "tls"},
+		{"handshake", tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"}, "tls"},
+		{"deadline", context.DeadlineExceeded, "timeout"},
+		{"refused", &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}, "upstream"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c.HTTP.Transport = failingTransport{tc.cause}
+			_, err := c.Get(context.Background(), c.URL("asset"), nil)
+			if err == nil || err.Error() != "Upstream connection failed" {
+				t.Fatal("transport failure message changed", err)
+			}
+			if got := failureCategory(err, err.Error()); got != tc.want {
+				t.Fatalf("got %s want %s", got, tc.want)
+			}
+		})
+	}
+	// Body read failures keep their stable message and their transport class.
+	interrupted := &causeError{"Upstream download interrupted", &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}}
+	if got := failureCategory(interrupted, interrupted.Error()); got != "timeout" {
+		t.Fatal("interrupted read timeout category", got)
+	}
+	if got := failureCategory(errHashMismatch, "Upstream connection failed"); got != "hash" {
+		t.Fatal("typed hash mismatch category", got)
 	}
 }
