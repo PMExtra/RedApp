@@ -82,9 +82,7 @@ func (b *metricBody) Read(p []byte) (int, error) {
 			t.bytes += int64(n)
 		}
 		b.s.mu.Unlock()
-		if e := b.s.db.AddFor(b.app, "upstream_bytes", int64(n)); e != nil {
-			return n, e
-		}
+		_ = b.s.db.AddFor(b.app, "upstream_bytes", int64(n)) // Buffered; accounting never fails a transfer.
 	}
 	return n, err
 }
@@ -113,10 +111,7 @@ func (w *metricWriter) Write(p []byte) (int, error) {
 		w.failed = true
 	}
 	if n > 0 && (w.status == http.StatusOK || w.status == http.StatusPartialContent) {
-		if e := w.s.db.AddFor(w.app, "downstream_bytes", int64(n)); e != nil {
-			w.failed = true
-			return n, e
-		}
+		_ = w.s.db.AddFor(w.app, "downstream_bytes", int64(n)) // Buffered; accounting never fails a transfer.
 	}
 	return n, err
 }
@@ -141,6 +136,7 @@ func (s *Service) finishMetrics(w *metricWriter, entry application.Entry, path s
 	if key == "download_errors" {
 		_ = s.db.RecordEvent(store.Event{AppID: entry.MetricsID(), ResourceKey: path, Category: "http", Code: "download_failed", Message: "HTTP download did not complete"})
 	}
+	s.db.SettleCounters()
 }
 
 func (s *Service) startTransfer(entry application.Entry, path string) (string, func()) {

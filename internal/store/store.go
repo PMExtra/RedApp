@@ -33,6 +33,7 @@ var schema string
 type Store struct {
 	DB                    *sql.DB
 	rates                 rates
+	pending               counterBuffer
 	work                  applicationWork
 	configMu              sync.Mutex
 	validateDistributions func([]presets.Descriptor) error
