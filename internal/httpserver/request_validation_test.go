@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestJSONBodiesAreDecodedStrictly(t *testing.T) {
@@ -89,7 +91,9 @@ func TestErrorResponsesNeverCarryInternalErrorText(t *testing.T) {
 }
 
 func TestHealthProbes(t *testing.T) {
-	h := newHarness(t)
+	var clock atomic.Int64
+	clock.Store(time.Now().UnixNano())
+	h := newHarness(t, withOptions(WithClock(func() time.Time { return time.Unix(0, clock.Load()) })))
 	for _, path := range []string{"/health/live", "/health/ready"} {
 		if body, _ := h.request("GET", path, nil, 200, nil); string(body) != "{\"ok\":true}\n" {
 			t.Fatal(path, string(body))
@@ -99,6 +103,11 @@ func TestHealthProbes(t *testing.T) {
 	if err := h.store.Close(); err != nil {
 		t.Fatal(err)
 	}
+	// A readiness result answers probes for 5 seconds, then the next probe
+	// checks again.
+	clock.Add(int64(4 * time.Second))
+	h.request("GET", "/health/ready", nil, 200, nil)
+	clock.Add(int64(time.Second))
 	h.expectError("GET", "/health/ready", nil, 503, codeNotReady, nil)
 	h.request("GET", "/health/live", nil, 200, nil)
 }

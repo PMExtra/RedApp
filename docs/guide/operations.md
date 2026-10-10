@@ -119,7 +119,7 @@ Set `REDAPP_PUBLIC_URL` (or the override in the console) so that install command
 | Endpoint | Checks | Success |
 | --- | --- | --- |
 | `GET /health/live` | The process answers HTTP | `200` |
-| `GET /health/ready` | The database responds and the data directory is writable | `200`; otherwise `503` |
+| `GET /health/ready` | The database responds and the data directory is writable, checked at most once every 5 seconds | `200`; otherwise `503` |
 
 Neither endpoint contacts upstream sources, so an internet outage does not mark RedApp unhealthy. Health requests are not counted in metrics.
 

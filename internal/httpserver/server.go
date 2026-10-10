@@ -72,6 +72,12 @@ func WithDeleteWait(wait time.Duration) Option {
 	return func(s *Server) { s.deleteWait = wait }
 }
 
+// WithClock replaces the clock that ages the cached readiness result
+// (default time.Now).
+func WithClock(now func() time.Time) Option {
+	return func(s *Server) { s.now = now }
+}
+
 // Server is the HTTP layer: routing, middleware, request parsing and response
 // encoding over the domain services in Deps.
 type Server struct {
@@ -100,6 +106,9 @@ type Server struct {
 
 	configurationCheck func(store.DirectorySnapshot) error
 	deleteWait         time.Duration
+	now                func() time.Time
+
+	readiness readiness
 
 	exchangeMu       sync.Mutex
 	exchangePreviews map[string]exchangePreview
@@ -130,7 +139,7 @@ func New(deps Deps, options ...Option) (*Server, error) {
 		proxies: deps.TrustedProxies, pool: deps.Pool, icons: deps.Icons, history: deps.History,
 		public: deps.PublicSettings, prewarmer: deps.Prewarmer, maintenance: deps.Maintenance,
 		dataDir: deps.DataDir, started: deps.Started, log: deps.Logger,
-		deleteWait: 15 * time.Second,
+		deleteWait: 15 * time.Second, now: time.Now,
 	}
 	if s.version == "" {
 		s.version = "dev"
