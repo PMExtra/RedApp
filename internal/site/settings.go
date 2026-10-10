@@ -2,7 +2,6 @@
 package site
 
 import (
-	"database/sql"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -64,8 +63,8 @@ func LoadSnapshot(db *store.Store) (Snapshot, error) {
 	if db == nil {
 		return value, nil
 	}
-	revision, err := db.ReadSetting("global", "", "site", &value.Settings)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	revision, err := db.ReadSiteSettings(&value.Settings)
+	if err != nil {
 		return Snapshot{}, err
 	}
 	value.Revision = revision
@@ -79,7 +78,7 @@ func SaveCAS(db *store.Store, value Settings, expected int64) (Snapshot, error) 
 	if err := value.Validate(); err != nil {
 		return Snapshot{}, err
 	}
-	revision, err := db.CompareAndSwapSetting("global", "", "site", expected, value)
+	revision, err := db.SaveSiteSettings(expected, value)
 	if err != nil {
 		return Snapshot{}, err
 	}

@@ -29,7 +29,7 @@ RedApp 是单进程 Go 服务：一个二进制、一个 SQLite 数据库、一�
 
 `serve` 的启动顺序：
 
-1. `store.Preflight`：只读检查已有数据目录，schema 不匹配直接拒绝（见 [SQLite](#sqlite-schema)）。
+1. `store.Preflight`：先用 `instance.Check` 确认没有存活的实例持锁，再只读检查已有数据目录，schema 不匹配直接拒绝（见 [SQLite](#sqlite-schema)）。不创建任何文件。
 2. 获取 `<data>/instance.lock`（flock），保证同一数据目录只有一个实例；打开数据库。
 3. 同步嵌入的预置模板，恢复未完成的应用删除和待删除对象。
 4. 构建上游连接池、应用注册表、下载管理器、认证、指标历史、媒体、HTTP 缓存、托管文件服务。
@@ -70,7 +70,7 @@ RedApp 是单进程 Go 服务：一个二进制、一个 SQLite 数据库、一�
 | | `internal/media` | 图标（SVG 白名单、PNG/JPEG 重编码）按内容哈希存储 |
 | | `internal/jsoncheck` | 拒绝重复键、过深嵌套和尾随数据 |
 | | `internal/yamlconfig` | 严格的单文档 YAML → JSON |
-| | `internal/instance` | 数据目录实例锁 |
+| | `internal/instance` | 数据目录实例锁与只读的持锁检查 |
 | 测试 | `internal/testutil` | 基于 httptest 的上游客户端（仅测试使用） |
 | 嵌入数据 | `presets/` | 内置厂商、应用、分类的 YAML 模板与图标 |
 | | `installers/` | 嵌入 generated 安装脚本、许可证和公钥（见 [installers.md](installers.md)） |
@@ -163,8 +163,9 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 
 ## SQLite schema
 
-- schema 内嵌在 `internal/store/schema.sql`，版本常量 `store.SchemaVersion`（当前为 11）。
-- 新目录（只含实例锁或为空）创建全新 schema。已有数据库以只读、immutable 方式打开检查：版本必须完全一致，表和索引的 DDL 必须与内嵌 schema 一致，不允许未知表；否则拒绝启动，不改写、不删除。
+- schema 内嵌在 `internal/store/schema.sql`，版本写入 `PRAGMA user_version`，常量为 `store.SchemaVersion`（当前为 12）。`PRAGMA application_id` 固定为 RedApp 的标识，用来拒绝版本号碰巧相同的其他 SQLite 文件。
+- 新目录（为空或只含实例锁）创建全新 schema，并在首次启动前 checkpoint 到主文件。已有数据库以只读、immutable 方式检查 `application_id` 与 `user_version`，任一不符就拒绝启动，不改写、不删除，也不创建 WAL/SHM 文件。不比较表结构：1.0 前每次 schema 变化都提升版本。
+- 属于厂商或应用的行以 UID 引用父行并 `ON DELETE CASCADE`；应用引用厂商不级联，因为必须先删除应用并登记其对象文件。发布、缓存和指标数据以存储命名空间或指标命名空间为键，永久删除应用时按前缀删除；同一版本的元数据、渠道、资源和下载代际随版本级联删除。
 - 1.0 前没有迁移，规则见 [ADR 0001](adr/0001-pre-1.0-no-migrations.md)。
 - 连接参数：WAL、`synchronous=FULL`、外键开启、单连接。
 - 流量与请求计数先在内存累加，每秒、每次传输结束、每次读取计数前以及关闭时批量写入一个事务；写入失败保留增量重试，不影响传输。异常退出最多丢失约 1 秒的计数。
@@ -228,5 +229,6 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 | 手写路由 | `Server.ServeHTTP` 按前缀和字符串切分分发；错误码由 HTTP 状态推导；`request_id` 不进日志 | 阶段 3：按 [OpenAPI 契约](api.md) 改用 `http.ServeMux` + 中间件、显式错误码、request_id 日志与契约测试 |
 | HTTP 缓存冷请求 | 冷请求必须先完整落盘才响应，单次下载在全部来源上合计最长 9 分钟；慢速链路上的超大文件会失败，前置反代也可能先超时 | 阶段 5：复用下载引擎边下边读后取消总时限 |
 | 锁内 I/O | 下载进度保存和数据库调用仍在 `Manager.mu` 内（整文件哈希和 bcrypt 已移出）；媒体、预热和目录写入在持锁期间做 I/O | 阶段 2/5：按[约定](conventions.md#并发)调整 |
-| 测试钩子与命名 | 生产结构体含测试钩子字段；部分测试文件以版本或评审轮次命名 | 阶段 2 |
+| 测试钩子 | `store` 已改用构造选项注入故障；`download.Manager.testFault` 与 `httpserver.Server.testConfigurationPrepare` 仍是生产结构体字段 | 阶段 2（download）、阶段 3（httpserver） |
+| 无 UID 的静态测试条目 | `builtin.New` 和多个包的测试用没有 UID 的 `application.Entry`；`Entry.StorageID`/`MetricsID`/`Active`、`store.checkSourceActive`、`catalog.CandidatesForSource` 为它们保留了分支 | 测试改用真实目录后删除这些分支 |
 | 日志 | 只有入口使用标准库 `log`，无请求日志 | 阶段 3：`log/slog` |

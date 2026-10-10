@@ -7,7 +7,8 @@ import (
 )
 
 func TestApplicationDeletionValidationPrecedesCancellation(t *testing.T) {
-	s := openTest(t)
+	fault := &commitFault{}
+	s := openTest(t, fault.option())
 	if err := s.EnsureEntityTemplates(); err != nil {
 		t.Fatal(err)
 	}
@@ -39,15 +40,14 @@ func TestApplicationDeletionValidationPrecedesCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer finish2()
-	if _, err = s.DB.Exec(`CREATE TEMP TRIGGER reject_delete_intent BEFORE INSERT ON pending_application_deletes BEGIN SELECT RAISE(ABORT,'fixture failure'); END`); err != nil {
-		t.Fatal(err)
-	}
+	fault.armed.Store(true)
 	if _, _, err = s.PrepareApplicationDeletion(a.Key, a.Revision); err == nil {
 		t.Fatal("intent failure ignored")
 	}
 	if ctx2.Err() != nil {
 		t.Fatal("failed intent interrupted task")
 	}
+	fault.armed.Store(false)
 	row, _ := s.Application(a.Key)
 	if row.DeletedAt != nil || row.Revision != a.Revision {
 		t.Fatal("failed intent changed row")

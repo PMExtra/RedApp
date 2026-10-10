@@ -75,7 +75,7 @@ func New(db *store.Store, bootstrap func(string)) (*Auth, error) {
 		if e != nil {
 			return nil, e
 		}
-		if _, e = db.DB.Exec("INSERT INTO admin VALUES(1,?,1)", hash); e != nil {
+		if _, e = db.DB.Exec("INSERT INTO admin(id,hash,revision) VALUES(1,?,1)", hash); e != nil {
 			return nil, e
 		}
 		a.hash = hash

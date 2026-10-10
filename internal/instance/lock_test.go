@@ -50,7 +50,7 @@ func TestLockAliasDoubleInstanceAndSIGKILL(t *testing.T) {
 		t.Fatal("SIGKILL 后锁未释放", e)
 	}
 	g.Close()
-	if _, e = os.Stat(filepath.Join(dir, "instance.lock")); e != nil {
+	if _, e = os.Stat(filepath.Join(dir, LockName)); e != nil {
 		t.Fatal("锁 inode 被删除")
 	}
 }

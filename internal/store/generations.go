@@ -35,7 +35,7 @@ func generationArgs(g Generation) []any {
 	if g.BlobSHA256 != "" {
 		blob = g.BlobSHA256
 	}
-	return []any{g.ID, g.AppID, g.Version, g.ResourceKey, g.ExpectedSHA256, blob, g.Phase, g.IsCurrent, unixPointer(g.RetiredAt), g.Bytes, g.TotalBytes, g.SourceBytes, g.ETag, g.Resumes, g.StartedAt.Unix(), unixPointer(g.FinishedAt), g.VerificationNS, g.LastErrorCode, g.FullRetry, g.DownloadNS, g.AppRevision, g.VendorRevision}
+	return []any{g.ID, g.AppID, g.Version, g.ResourceKey, g.ExpectedSHA256, blob, g.Phase, g.IsCurrent, unixPointer(g.RetiredAt), g.Bytes, g.TotalBytes, g.SourceBytes, g.ETag, g.Resumes, g.StartedAt.Unix(), unixPointer(g.FinishedAt), g.VerificationNS, g.LastErrorCode, g.FullRetry, g.DownloadNS, g.AppRuntimeRevision, g.VendorRuntimeRevision}
 }
 
 type scanner interface{ Scan(...any) error }
@@ -45,7 +45,7 @@ func scanGeneration(row scanner) (Generation, error) {
 	var blob, etag, last sql.NullString
 	var retired, finished sql.NullInt64
 	var started int64
-	err := row.Scan(&g.ID, &g.AppID, &g.Version, &g.ResourceKey, &g.ExpectedSHA256, &blob, &g.Phase, &g.IsCurrent, &retired, &g.Bytes, &g.TotalBytes, &g.SourceBytes, &etag, &g.Resumes, &started, &finished, &g.VerificationNS, &last, &g.FullRetry, &g.DownloadNS, &g.AppRevision, &g.VendorRevision)
+	err := row.Scan(&g.ID, &g.AppID, &g.Version, &g.ResourceKey, &g.ExpectedSHA256, &blob, &g.Phase, &g.IsCurrent, &retired, &g.Bytes, &g.TotalBytes, &g.SourceBytes, &etag, &g.Resumes, &started, &finished, &g.VerificationNS, &last, &g.FullRetry, &g.DownloadNS, &g.AppRuntimeRevision, &g.VendorRuntimeRevision)
 	g.BlobSHA256 = blob.String
 	g.ETag = etag.String
 	g.LastErrorCode = last.String
@@ -143,7 +143,7 @@ func putBlob(tx *sql.Tx, b Blob) error {
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	_, err = tx.Exec("INSERT INTO blobs VALUES(?,?,?,?) ON CONFLICT(app_id,sha256) DO UPDATE SET verified_at_s=excluded.verified_at_s", b.AppID, b.SHA256, b.SizeBytes, b.VerifiedAt.Unix())
+	_, err = tx.Exec("INSERT INTO blobs(app_id,sha256,size_bytes,verified_at_s) VALUES(?,?,?,?) ON CONFLICT(app_id,sha256) DO UPDATE SET verified_at_s=excluded.verified_at_s", b.AppID, b.SHA256, b.SizeBytes, b.VerifiedAt.Unix())
 	return err
 }
 func (s *Store) PutBlob(b Blob) error {
@@ -220,7 +220,7 @@ func (s *Store) CompleteGeneration(app, id string, b Blob, finished time.Time, v
 	var admitted SourceFence
 	var current bool
 	var expected *int64
-	err = tx.QueryRow("SELECT g.expected_sha256,g.is_current,r.expected_size,g.app_revision,g.vendor_revision FROM generations g JOIN resources r ON r.app_id=g.app_id AND r.version=g.version AND r.resource_key=g.resource_key WHERE g.app_id=? AND g.id=?", app, id).Scan(&hash, &current, &expected, &admitted.AppRevision, &admitted.VendorRevision)
+	err = tx.QueryRow("SELECT g.expected_sha256,g.is_current,r.expected_size,g.app_revision,g.vendor_revision FROM generations g JOIN resources r ON r.app_id=g.app_id AND r.version=g.version AND r.resource_key=g.resource_key WHERE g.app_id=? AND g.id=?", app, id).Scan(&hash, &current, &expected, &admitted.AppRuntimeRevision, &admitted.VendorRuntimeRevision)
 	if err != nil {
 		return err
 	}

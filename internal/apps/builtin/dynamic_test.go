@@ -15,11 +15,7 @@ func TestDynamicProviderInstancesAndDirectoryLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.DB.Close() })
-	seedVendors, seedApps, err := Seeds()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.SeedDirectory(seedVendors, seedApps); err != nil {
+	if err := db.EnsureEntityTemplates(); err != nil {
 		t.Fatal(err)
 	}
 	vendor, err := db.CreateVendor(store.VendorInput{ID: "enterprise", Name: store.LocalizedText{En: "Enterprise", ZhCN: "企业"}, Enabled: true})
@@ -83,8 +79,13 @@ func TestDynamicProviderInstancesAndDirectoryLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	registry = load()
-	if _, ok := registry.Lookup(first.Descriptor.ID); ok || len(registry.Entries()) != 2 {
+	if _, ok := registry.Lookup(first.Descriptor.ID); ok {
 		t.Fatal("disabled vendor applications remained public")
+	}
+	for _, entry := range registry.Entries() {
+		if entry.VendorID == vendor.ID {
+			t.Fatalf("application %s of a disabled vendor remained public", entry.Descriptor.ID)
+		}
 	}
 	if entry, ok := registry.LookupAny(first.Descriptor.ID); !ok || entry.VendorRevision != 2 {
 		t.Fatal("disabled application or vendor admission revision disappeared")

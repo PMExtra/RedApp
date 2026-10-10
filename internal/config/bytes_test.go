@@ -37,15 +37,15 @@ func TestArtifactSizeFilesPreserveStrictConfiguration(t *testing.T) {
 		name, extension, body string
 		want                  int64
 	}{
-		{"json integer", ".json", `{"download_limits":{"max_artifact_bytes":4294967296}}`, 4 << 30},
+		{"flow integer", ".yaml", `{"download_limits":{"max_artifact_bytes":4294967296}}`, 4 << 30},
 		{"yaml integer", ".yaml", "download_limits: {max_artifact_bytes: 4294967296}", 4 << 30},
-		{"json size", ".json", `{"download_limits":{"max_artifact_bytes":"4gb"}}`, 4000000000},
+		{"flow size", ".yaml", `{"download_limits":{"max_artifact_bytes":"4gb"}}`, 4000000000},
 		{"yaml size", ".yaml", "download_limits: {max_artifact_bytes: '1.5GiB'}", 3 << 29},
-		{"json float", ".json", `{"download_limits":{"max_artifact_bytes":1.5}}`, 0},
-		{"json null", ".json", `{"download_limits":{"max_artifact_bytes":null}}`, 0},
-		{"json duplicate", ".json", `{"download_limits":{"max_artifact_bytes":"4GiB","max_artifact_bytes":1}}`, 0},
-		{"json unknown", ".json", `{"download_limits":{"max_artifact_bytes":"4GiB","extra":1}}`, 0},
-		{"other field type", ".json", `{"download_limits":{"max_artifact_bytes":"4GiB","max_readers":"16"}}`, 0},
+		{"float", ".yaml", `{"download_limits":{"max_artifact_bytes":1.5}}`, 0},
+		{"null", ".yaml", `{"download_limits":{"max_artifact_bytes":null}}`, 0},
+		{"duplicate", ".yaml", `{"download_limits":{"max_artifact_bytes":"4GiB","max_artifact_bytes":1}}`, 0},
+		{"unknown", ".yaml", `{"download_limits":{"max_artifact_bytes":"4GiB","extra":1}}`, 0},
+		{"other field type", ".yaml", `{"download_limits":{"max_artifact_bytes":"4GiB","max_readers":"16"}}`, 0},
 		{"yaml limit", ".yaml", "download_limits: {max_artifact_bytes: '2TiB'}", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

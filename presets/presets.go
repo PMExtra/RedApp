@@ -56,8 +56,27 @@ func (r Retention) Validate() error {
 	}
 	return nil
 }
-func VersionsProvider(provider string) bool { return provider == "codex" || provider == "claude-code" }
-func DefaultRetention() *Retention          { return &Retention{KeepLatest: 3} }
+
+// VersionsProvider reports whether a provider serves immutable releases.
+func VersionsProvider(provider string) bool {
+	_, ok := ReleaseTemplateKey(provider)
+	return ok
+}
+
+// ReleaseTemplateKey names the built-in application template whose reviewed
+// distribution a release provider uses when the application has no template
+// reference of its own.
+func ReleaseTemplateKey(provider string) (string, bool) {
+	switch provider {
+	case "codex":
+		return "openai/codex", true
+	case "claude-code":
+		return "anthropic/claude-code", true
+	}
+	return "", false
+}
+
+func DefaultRetention() *Retention { return &Retention{KeepLatest: 3} }
 
 type AppSpec struct {
 	Categories      []string            `json:"categories"`
@@ -111,23 +130,6 @@ type Image struct {
 }
 
 const ImagePrefix = "/assets/presets/"
-
-// Legacy image routes are a separate reviewed protocol/compatibility registry.
-// New display resources do not require entries here.
-var legacyImages = map[string]string{
-	"/openai/codex/icon.svg":          "assets/openai/codex/icon.svg",
-	"/anthropic/claude-code/icon.svg": "assets/anthropic/claude-code/icon.svg",
-	"/assets/builtin/openai.svg":      "assets/builtin/openai.svg",
-	"/assets/builtin/anthropic.svg":   "assets/builtin/anthropic.svg",
-}
-
-func LegacyImage(publicPath string) (Image, bool) {
-	relative, ok := legacyImages[publicPath]
-	if !ok {
-		return Image{}, false
-	}
-	return Embedded().Image(ImagePrefix + strings.TrimPrefix(relative, "assets/"))
-}
 
 func (a App) Key() string { return a.Metadata.Vendor + "/" + a.Metadata.ID }
 
@@ -437,9 +439,8 @@ func LoadFS(input fs.FS) (Set, error) {
 			return Set{}, fmt.Errorf("%s: missing vendor", a.Key())
 		}
 	}
-	// Preserve the existing two-provider inventory order with deterministic identity ordering.
-	sort.Slice(out.Apps, func(i, j int) bool { return out.Apps[i].Key() > out.Apps[j].Key() })
-	sort.Slice(out.Vendors, func(i, j int) bool { return out.Vendors[i].Metadata.ID > out.Vendors[j].Metadata.ID })
+	sort.Slice(out.Apps, func(i, j int) bool { return out.Apps[i].Key() < out.Apps[j].Key() })
+	sort.Slice(out.Vendors, func(i, j int) bool { return out.Vendors[i].Metadata.ID < out.Vendors[j].Metadata.ID })
 	return out, nil
 }
 

@@ -208,7 +208,7 @@ func (s *Service) preview(ctx context.Context, key string, automatic bool) (Prev
 		channels[name] = store.RetentionChannel{Version: cached.Version, FetchedAt: cached.FetchedAt, ExpiresAt: cached.ExpiresAt}
 	}
 	versions, ids := Select(e.Protocol, e.StorageID(), policy.KeepLatest, s.Downloads.Snapshot(), channels)
-	guard := store.RetentionGuard{Automatic: automatic, SourceFence: store.SourceFence{AppRevision: e.RuntimeRevision, VendorRevision: e.VendorRuntimeRevision}, Hash: hash, Channels: channels, Versions: versions}
+	guard := store.RetentionGuard{Automatic: automatic, SourceFence: store.SourceFence{AppRuntimeRevision: e.RuntimeRevision, VendorRuntimeRevision: e.VendorRuntimeRevision}, Hash: hash, Channels: channels, Versions: versions}
 	job, err := s.Downloads.PreviewRetention(e.StorageID(), ids, guard)
 	if err != nil {
 		return Preview{}, err

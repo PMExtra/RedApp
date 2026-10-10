@@ -140,3 +140,14 @@ func TestProviderConfigurationsHaveExplicitCapabilities(t *testing.T) {
 		})
 	}
 }
+
+func TestParseKeyAcceptsOnlyCanonicalUnreservedIdentities(t *testing.T) {
+	if key, err := ParseKey("openai/codex"); err != nil || key != (Key{"openai", "codex"}) {
+		t.Fatalf("ParseKey(openai/codex) = %v, %v", key, err)
+	}
+	for _, id := range []string{"codex", "openai/codex/extra", "OpenAI/codex", "admin/tool", "all/tool", "vendor/-app", "/app", "vendor/"} {
+		if _, err := ParseKey(id); err == nil {
+			t.Errorf("ParseKey(%q) accepted a non-canonical or reserved identity", id)
+		}
+	}
+}

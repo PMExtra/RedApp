@@ -700,7 +700,7 @@ func (s *Store) ExecuteConfigurationImport(plan ImportPlan, id string, trust boo
 		if _, e := tx.Exec(`DELETE FROM configuration_import_receipts WHERE created_s<?`, time.Now().Add(-24*time.Hour).Unix()); e != nil {
 			return e
 		}
-		_, e := tx.Exec(`INSERT INTO configuration_import_receipts VALUES(?,?,?)`, id, encode(result), time.Now().Unix())
+		_, e := tx.Exec(`INSERT INTO configuration_import_receipts(id,result_json,created_s) VALUES(?,?,?)`, id, encode(result), time.Now().Unix())
 		return e
 	})
 	if errors.Is(err, errImportReceipt) {

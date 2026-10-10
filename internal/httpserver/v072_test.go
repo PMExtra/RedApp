@@ -3,18 +3,16 @@ package httpserver
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/store"
+	"github.com/PMExtra/RedApp/presets"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -201,58 +199,16 @@ func TestV072CacheHitsRankAndReceiptRejectsFailedWrites(t *testing.T) {
 
 func TestV072DisabledBrandIconRemainsAvailableOnlyToAdmin(t *testing.T) {
 	h := newDirectoryHarness(t, t.TempDir())
-	path := "/admin/api/assets/builtin-icon?path=%2Fopenai%2Fcodex%2Ficon.svg"
+	path := "/admin/api/assets/builtin-icon?path=" + url.QueryEscape(presets.ImagePrefix+"openai/codex/icon.svg")
 	h.request("GET", path, nil, 401, nil)
 	h.login(h.password)
 	v, _ := h.server.DB.Vendor("openai")
 	h.request("PATCH", "/admin/api/vendors/openai", map[string]any{"enabled": false, "revision": v.Revision}, 200, nil)
-	h.request("GET", "/openai/codex/icon.svg", nil, 404, nil)
 	data, headers := h.request("GET", path, nil, 200, nil)
 	if !bytes.Contains(data, []byte("<svg")) || headers.Get("Content-Type") != "image/svg+xml" || !strings.Contains(headers.Get("Content-Security-Policy"), "sandbox") {
 		t.Fatal("missing reviewed brand icon or static policy")
 	}
 	h.request("GET", "/admin/api/assets/builtin-icon?path=https%3A%2F%2Fexample.com%2Fevil.svg", nil, 404, nil)
-}
-
-// This extends the existing schema-5 upgrade/collision case with a real Hosted
-// body and the production HTTP reader, rather than adding another fixture matrix.
-func TestV072LegacyV5IncludingReservedVendorIsRejectedReadOnly(t *testing.T) {
-	ddl, err := os.ReadFile("../store/testdata/schema_v5.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, id := range []string{"acme", "all"} {
-		t.Run(id, func(t *testing.T) {
-			dir := t.TempDir()
-			path := filepath.Join(dir, "state.sqlite")
-			db, err := sql.Open("sqlite3", path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err = db.Exec(string(ddl)); err != nil {
-				t.Fatal(err)
-			}
-			if _, err = db.Exec(`INSERT INTO vendors VALUES('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',?,'Keep','保留','Custom description','自定义说明','',1,9,NULL)`, id); err != nil {
-				t.Fatal(err)
-			}
-			db.Close()
-			before, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			opened, err := store.Open(dir)
-			if opened != nil {
-				opened.DB.Close()
-			}
-			if !errors.Is(err, store.ErrFreshDirectory) {
-				t.Fatal("accepted old directory", err)
-			}
-			after, err := os.ReadFile(path)
-			if err != nil || !bytes.Equal(before, after) {
-				t.Fatal("legacy data changed", err)
-			}
-		})
-	}
 }
 
 func TestFieldResetNeverChangesEnabled(t *testing.T) {

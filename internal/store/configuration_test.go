@@ -7,9 +7,10 @@ import (
 	"errors"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
@@ -163,7 +164,8 @@ func TestConfigurationMissingTemplateFrozenAndReappearance(t *testing.T) {
 	}
 	before, _ := s.Application("openai/codex")
 	missing := presets.Embedded()
-	missing.Apps = missing.Apps[1:]
+	codex := slices.IndexFunc(missing.Apps, func(a presets.App) bool { return a.Key() == before.Key })
+	missing.Apps = slices.Delete(missing.Apps, codex, codex+1)
 	if err := s.ReconcileTemplates(missing); err != nil {
 		t.Fatal(err)
 	}
@@ -176,8 +178,8 @@ func TestConfigurationMissingTemplateFrozenAndReappearance(t *testing.T) {
 		t.Fatal("missing template admitted new binding", err)
 	}
 	bad := presets.Embedded()
-	bad.Apps[0].Spec.Provider = "http-cache"
-	bad.Apps[0].Distribution = nil
+	bad.Apps[codex].Spec.Provider = "http-cache"
+	bad.Apps[codex].Distribution = nil
 	state, _ := s.configurationState()
 	if err := s.ReconcileTemplates(bad); err == nil {
 		t.Fatal("Provider changed")
@@ -236,7 +238,8 @@ type publicationProbe struct{ published, aborted *int }
 func (p publicationProbe) Publish() { *p.published++ }
 func (p publicationProbe) Abort()   { *p.aborted++ }
 func TestConfigurationPrepareCASAndDatabaseFailuresAreAtomic(t *testing.T) {
-	s := openTest(t)
+	fault := &commitFault{}
+	s := openTest(t, fault.option())
 	if err := s.EnsureEntityTemplates(); err != nil {
 		t.Fatal(err)
 	}
@@ -252,9 +255,7 @@ func TestConfigurationPrepareCASAndDatabaseFailuresAreAtomic(t *testing.T) {
 	s.SetConfigurationPrepare(func(DirectorySnapshot) (ConfigurationPublication, error) {
 		return publicationProbe{&published, &aborted}, nil
 	})
-	if _, err := s.DB.Exec(`CREATE TRIGGER reject_config BEFORE UPDATE ON applications BEGIN SELECT RAISE(FAIL,'injected DB failure'); END`); err != nil {
-		t.Fatal(err)
-	}
+	fault.armed.Store(true)
 	if _, err := s.PatchApplicationConfiguration(a.Key, ConfigurationPatch{Revision: a.Revision, Set: map[string]json.RawMessage{"description.en": encode("new")}}); err == nil {
 		t.Fatal("DB failure ignored")
 	}
@@ -262,7 +263,7 @@ func TestConfigurationPrepareCASAndDatabaseFailuresAreAtomic(t *testing.T) {
 	if !reflect.DeepEqual(before, after) || published != 0 || aborted != 1 {
 		t.Fatal("partial save/publication", after, published, aborted)
 	}
-	s.DB.Exec(`DROP TRIGGER reject_config`)
+	fault.armed.Store(false)
 	s.SetConfigurationPrepare(func(DirectorySnapshot) (ConfigurationPublication, error) {
 		_, err := s.DB.Exec(`UPDATE vendors SET revision=revision+1 WHERE id='anthropic'`)
 		if err != nil {
@@ -279,40 +280,7 @@ func TestConfigurationPrepareCASAndDatabaseFailuresAreAtomic(t *testing.T) {
 	}
 }
 
-func TestSchemaElevenFreshRestartAndLegacyDirectoriesReadOnly(t *testing.T) {
-	for _, version := range []string{"4", "5", "6", "7", "8", "9", "10"} {
-		t.Run(version, func(t *testing.T) {
-			dir := t.TempDir()
-			ddl, err := os.ReadFile("testdata/schema_v" + version + ".sql")
-			if err != nil {
-				t.Fatal(err)
-			}
-			db, err := sql.Open("sqlite3", sqliteURL(filepath.Join(dir, "state.sqlite"), "_journal_mode=WAL"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err = db.Exec(string(ddl)); err != nil {
-				t.Fatal(err)
-			}
-			db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)
-			db.Exec(`INSERT INTO admin VALUES(1,'keep',1)`)
-			before := snapshotFiles(t, dir)
-			if !errors.Is(Preflight(dir), ErrFreshDirectory) {
-				t.Fatal("old preflight accepted")
-			}
-			opened, err := Open(dir)
-			if opened != nil {
-				opened.DB.Close()
-			}
-			if !errors.Is(err, ErrFreshDirectory) {
-				t.Fatal("old directory accepted", err)
-			}
-			if !reflect.DeepEqual(before, snapshotFiles(t, dir)) {
-				t.Fatal("main or sidecars changed")
-			}
-			db.Close()
-		})
-	}
+func TestRestartWithSameSchemaKeepsConfiguration(t *testing.T) {
 	dir := t.TempDir()
 	s, err := Open(dir)
 	if err != nil {
@@ -338,7 +306,18 @@ func TestSchemaElevenFreshRestartAndLegacyDirectoriesReadOnly(t *testing.T) {
 }
 
 func TestConfigurationCommitFailureDoesNotPublish(t *testing.T) {
-	s := openTest(t)
+	var armed atomic.Bool
+	// A deferred foreign-key violation makes the commit itself fail after every write.
+	s := openTest(t, withBeforeCommit(func(tx *sql.Tx) error {
+		if !armed.Load() {
+			return nil
+		}
+		if _, err := tx.Exec(`PRAGMA defer_foreign_keys=ON`); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`INSERT INTO vendor_config(entity_uid,template_ref,overrides_json,spec_json) VALUES('ffffffffffffffffffffffffffffffff',NULL,'{}','{}')`)
+		return err
+	}))
 	if err := s.EnsureEntityTemplates(); err != nil {
 		t.Fatal(err)
 	}
@@ -347,13 +326,7 @@ func TestConfigurationCommitFailureDoesNotPublish(t *testing.T) {
 	s.SetConfigurationPrepare(func(DirectorySnapshot) (ConfigurationPublication, error) {
 		return publicationProbe{&published, &aborted}, nil
 	})
-	s.configurationFault = func(stage string, tx *sql.Tx) error {
-		if _, err := tx.Exec(`PRAGMA defer_foreign_keys=ON`); err != nil {
-			return err
-		}
-		_, err := tx.Exec(`INSERT INTO vendor_config VALUES('ffffffffffffffffffffffffffffffff',NULL,'{}','{}')`)
-		return err
-	}
+	armed.Store(true)
 	_, err := s.PatchApplicationConfiguration("openai/codex", ConfigurationPatch{Revision: before.Revision, Set: map[string]json.RawMessage{"description.en": encode("failed commit")}})
 	if err == nil {
 		t.Fatal("deferred foreign-key commit failure ignored")
@@ -436,5 +409,44 @@ func TestDistributionDigestRevisionSeparateFromSpec(t *testing.T) {
 	final, _ := s.ApplicationConfiguration(a.Key)
 	if final.Revision != after.Revision+1 {
 		t.Fatal("double revision increment", final.Revision)
+	}
+}
+
+// Configuration writes only insert and update rows, so a change that drops a
+// persisted entry must fail instead of leaving the row behind.
+func TestConfigurationChangeCannotDropPersistedEntries(t *testing.T) {
+	s := openTest(t)
+	if err := s.EnsureEntityTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.Application("openai/codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SaveAdminNotes("app", a.Key, 0, "private"); err != nil {
+		t.Fatal(err)
+	}
+	for name, drop := range map[string]func(*configurationState){
+		"application": func(st *configurationState) {
+			for i := range st.Applications {
+				if st.Applications[i].UID == a.UID {
+					st.Applications = append(st.Applications[:i], st.Applications[i+1:]...)
+					return
+				}
+			}
+		},
+		"admin note": func(st *configurationState) { delete(st.Notes, configKey("App", a.UID)) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			before, _ := s.configurationState()
+			err := s.changeConfiguration(func(st *configurationState) error { drop(st); return nil })
+			if err == nil {
+				t.Fatal("dropping a persisted entry was accepted")
+			}
+			after, _ := s.configurationState()
+			if !bytes.Equal(encode(before), encode(after)) {
+				t.Fatal("rejected change modified the configuration")
+			}
+		})
 	}
 }

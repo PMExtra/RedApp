@@ -6,80 +6,53 @@ import (
 	"errors"
 )
 
-var ErrRevisionConflict = ErrConflict
+// Global settings are JSON objects owned by their typed callers (internal/site
+// and internal/config). A missing setting reads as revision zero and leaves the
+// destination unchanged, so callers keep their defaults.
 
-func validSetting(scope, app, key string) bool {
-	if scope == "global" && app == "" {
-		return key == "site" || key == "upstream_proxy" || key == "public_url"
-	}
-	return scope == "app" && ValidAppID(app) && (key == "channel_ttl" || key == "http_policy")
+func (s *Store) ReadSiteSettings(out any) (int64, error) { return s.readGlobalSetting("site", out) }
+func (s *Store) SaveSiteSettings(expected int64, value any) (int64, error) {
+	return s.saveGlobalSetting("site", expected, value)
+}
+func (s *Store) ReadPublicURLSetting(out any) (int64, error) {
+	return s.readGlobalSetting("public_url", out)
+}
+func (s *Store) SavePublicURLSetting(expected int64, value any) (int64, error) {
+	return s.saveGlobalSetting("public_url", expected, value)
 }
 
-// ReadSetting is limited to schema-owned setting kinds. Callers use
-// their typed settings structs; missing settings have revision zero.
-func (s *Store) ReadSetting(scope, app, key string, out any) (int64, error) {
-	if !validSetting(scope, app, key) {
-		return 0, errors.New("Unknown setting scope or key")
-	}
+func (s *Store) readGlobalSetting(key string, out any) (int64, error) {
 	var raw []byte
-	var rev int64
-	err := s.DB.QueryRow("SELECT revision,payload FROM settings WHERE scope=? AND app_id=? AND key=?", scope, app, key).Scan(&rev, &raw)
+	var revision int64
+	err := s.DB.QueryRow(`SELECT revision,payload FROM settings WHERE key=?`, key).Scan(&revision, &raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
 	if err != nil {
 		return 0, err
 	}
-	return rev, json.Unmarshal(raw, out)
+	return revision, json.Unmarshal(raw, out)
 }
-func (s *Store) CompareAndSwapSetting(scope, app, key string, expected int64, payload any) (int64, error) {
-	if scope == "global" && app == "" && key == "upstream_proxy" {
-		raw, err := json.Marshal(payload)
-		if err != nil {
-			return 0, err
-		}
-		c, err := parseGlobalProxy(raw)
-		if err != nil {
-			return 0, err
-		}
-		return s.PatchGlobalProxy(expected, c)
-	}
-	if scope == "app" && key == "channel_ttl" {
-		if owner, err := s.Application(app); err == nil {
-			raw, err := json.Marshal(payload)
-			if err != nil {
-				return 0, err
-			}
-			row, err := s.PatchApplicationFields(owner.Key, expected, map[string]json.RawMessage{"cache_ttl_seconds": raw}, nil)
-			return row.Revision, err
-		} else if err != sql.ErrNoRows {
-			return 0, err
-		}
-	}
 
-	if key == "http_policy" {
-		return 0, errors.New("HTTP policy writes require application revision CAS through SaveHTTPPolicy")
+// saveGlobalSetting replaces a setting when its stored revision still equals
+// expected; zero means the setting must not exist yet.
+func (s *Store) saveGlobalSetting(key string, expected int64, value any) (int64, error) {
+	if expected < 0 {
+		return 0, errors.New("Invalid setting revision")
 	}
-	if !validSetting(scope, app, key) || expected < 0 {
-		return 0, errors.New("Invalid setting scope, key or revision")
-	}
-	raw, err := json.Marshal(payload)
+	raw, err := json.Marshal(value)
 	if err != nil {
 		return 0, err
 	}
-	if key == "channel_ttl" {
-		var n int
-		if json.Unmarshal(raw, &n) != nil || n < 1 || n > 86400 {
-			return 0, errors.New("Channel TTL must be between 1 and 86400 seconds")
-		}
-	} else {
-		var obj map[string]json.RawMessage
-		if json.Unmarshal(raw, &obj) != nil || obj == nil {
-			return 0, errors.New("Settings require a typed JSON object")
-		}
+	var object map[string]json.RawMessage
+	if json.Unmarshal(raw, &object) != nil || object == nil {
+		return 0, errors.New("Settings require a typed JSON object")
 	}
 	var result sql.Result
 	if expected == 0 {
-		result, err = s.DB.Exec("INSERT INTO settings(scope,app_id,key,revision,payload) VALUES(?,?,?,1,?) ON CONFLICT(scope,app_id,key) DO NOTHING", scope, app, key, raw)
+		result, err = s.DB.Exec(`INSERT INTO settings(key,revision,payload) VALUES(?,1,?) ON CONFLICT(key) DO NOTHING`, key, raw)
 	} else {
-		result, err = s.DB.Exec("UPDATE settings SET revision=revision+1,payload=? WHERE scope=? AND app_id=? AND key=? AND revision=?", raw, scope, app, key, expected)
+		result, err = s.DB.Exec(`UPDATE settings SET revision=revision+1,payload=? WHERE key=? AND revision=?`, raw, key, expected)
 	}
 	if err != nil {
 		return 0, err
@@ -92,18 +65,4 @@ func (s *Store) CompareAndSwapSetting(scope, app, key string, expected int64, pa
 		return 0, ErrConflict
 	}
 	return expected + 1, nil
-}
-func (s *Store) ChannelTTL(app string) (int, int64, error) {
-	if owner, err := s.Application(app); err == nil {
-		return owner.CacheTTLSeconds, owner.Revision, nil
-	} else if err != sql.ErrNoRows {
-		return 0, 0, err
-	}
-
-	var seconds int
-	revision, err := s.ReadSetting("app", app, "channel_ttl", &seconds)
-	return seconds, revision, err
-}
-func (s *Store) SetChannelTTL(app string, expected int64, seconds int) (int64, error) {
-	return s.CompareAndSwapSetting("app", app, "channel_ttl", expected, seconds)
 }

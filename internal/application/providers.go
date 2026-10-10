@@ -145,10 +145,7 @@ func NormalizeConfig(provider string, config ProviderConfig) (ProviderConfig, er
 }
 
 func presetDefault(provider string) presets.AppSpec {
-	key := "openai/codex"
-	if provider == ClaudeCode {
-		key = "anthropic/claude-code"
-	}
+	key, _ := presets.ReleaseTemplateKey(provider)
 	for _, a := range presets.Embedded().Apps {
 		if a.Key() == key && a.Spec.Provider == provider {
 			return a.Spec

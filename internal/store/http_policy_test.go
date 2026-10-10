@@ -10,7 +10,8 @@ import (
 )
 
 func TestHTTPPolicyApplicationCASAndAtomicPersistence(t *testing.T) {
-	s := openTest(t)
+	fault := &commitFault{}
+	s := openTest(t, fault.option())
 	v, err := s.CreateVendor(directoryVendor("publisher"))
 	if err != nil {
 		t.Fatal(err)
@@ -22,15 +23,6 @@ func TestHTTPPolicyApplicationCASAndAtomicPersistence(t *testing.T) {
 	empty, revision, err := s.ReadHTTPPolicy(app.Key)
 	if err != nil || revision != app.Revision || empty.Rules == nil || empty.AutoCleanup == nil || !empty.StaleFallback || len(empty.Rules) != 0 {
 		t.Fatal(empty, revision, err)
-	}
-	// Missing persisted fields inherit the documented default; an explicit false
-	// must remain false. Read configuration and app revision share one transaction.
-	if _, err = s.DB.Exec(`INSERT OR REPLACE INTO settings VALUES('app',?,'http_policy',1,?)`, app.MetricsID(), []byte(`{"rules":[],"auto_cleanup":[]}`)); err != nil {
-		t.Fatal(err)
-	}
-	legacy, _, err := s.ReadHTTPPolicy(app.Key)
-	if err != nil || !legacy.StaleFallback {
-		t.Fatal(legacy, err)
 	}
 	config := cachepolicy.Empty()
 	config.Rules = []cachepolicy.CacheRule{{Match: pathmatch.Spec{Type: "glob", Pattern: "/releases/"}, TTLSeconds: 0}}
@@ -56,12 +48,7 @@ func TestHTTPPolicyApplicationCASAndAtomicPersistence(t *testing.T) {
 	if _, err = s.SaveHTTPPolicy(app.Key, app.Revision, config); !errors.Is(err, ErrConflict) {
 		t.Fatal("stale policy revision accepted", err)
 	}
-	if _, err = s.CompareAndSwapSetting("app", app.MetricsID(), "http_policy", updated.Revision, config); err == nil {
-		t.Fatal("raw setting write bypassed app CAS")
-	}
-	if _, err = s.DB.Exec(`CREATE TRIGGER reject_policy_revision BEFORE UPDATE ON applications BEGIN SELECT RAISE(FAIL,'injected failure'); END`); err != nil {
-		t.Fatal(err)
-	}
+	fault.armed.Store(true)
 	changed := got
 	changed.StaleFallback = false
 	if _, err = s.SaveHTTPPolicy(app.Key, updated.Revision, changed); err == nil {
@@ -71,9 +58,7 @@ func TestHTTPPolicyApplicationCASAndAtomicPersistence(t *testing.T) {
 	if err != nil || revision != updated.Revision || !retained.StaleFallback || retained.Rules[0].ID != got.Rules[0].ID {
 		t.Fatal("partial policy commit", retained, revision, err)
 	}
-	if _, err = s.DB.Exec("DROP TRIGGER reject_policy_revision"); err != nil {
-		t.Fatal(err)
-	}
+	fault.armed.Store(false)
 	changes := applicationChanges(updated)
 	changes.BaseURL = "https://replacement.internal/files"
 	changes.Enabled = false

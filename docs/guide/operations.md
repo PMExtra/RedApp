@@ -200,7 +200,7 @@ A [configuration export](configuration.md#export) is a lightweight alternative f
 
 | Symptom | Likely cause and action |
 | --- | --- |
-| Startup fails with "belongs to an old or unknown database" | The data directory comes from another schema version. Use a new empty directory. |
+| Startup fails with "belongs to another RedApp schema version" | The data directory comes from another schema version. Use a new empty directory. |
 | Startup fails with "already owned by another instance" | Another process uses the directory. Stop it. Do not delete `instance.lock`. |
 | Startup fails with a permission error | The directory is not writable by the service user (`65532` in Docker). Fix ownership. |
 | Container is unhealthy after changing flags | The health check does not see your flags. Use environment variables, or pass the same flags in an exec-form health check. |
