@@ -6764,6 +6764,7 @@ components:
           $ref: '#/components/schemas/Revision'
         template_ref:
           type: [string, 'null']
+          description: Category ID in the embedded taxonomy for built-in categories, otherwise `null`.
         template_hash:
           type: [string, 'null']
         template_missing:
@@ -6872,7 +6873,8 @@ components:
           description: Vendor ID or application key.
         include_apps:
           type: boolean
-          description: Vendors only; also export all applications of the vendor.
+          default: false
+          description: Vendors only; also export all applications of the vendor. Not allowed for applications.
     ImportUpload:
       type: object
       additionalProperties: false
@@ -6976,6 +6978,7 @@ components:
           type: integer
           format: int64
           minimum: 0
+          description: Notes revision of the existing target (`1` when it has no notes), `0` when created.
         template_hash_mismatch:
           type: boolean
         template_missing:
@@ -7058,7 +7061,7 @@ components:
           type: integer
           format: int64
           minimum: 1
-          description: Required with `include_notes`; revision of the source notes the user saw.
+          description: Required with `include_notes` (ignored otherwise); revision of the source notes the user saw (`1` before the first save).
 
     # ------------------------------------------------------------ releases
     Version:
