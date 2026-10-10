@@ -25,6 +25,7 @@ withDefaults(
 <template>
   <Button
     v-if="noTooltip"
+    v-bind="$attrs"
     icon
     :variant="variant"
     :size="size"
@@ -32,12 +33,12 @@ withDefaults(
     :loading="loading"
     :type="type"
     :aria-label="label"
-    v-bind="$attrs"
   >
     <slot v-if="!loading" />
   </Button>
   <Tooltip v-else :content="label">
     <Button
+      v-bind="$attrs"
       icon
       :variant="variant"
       :size="size"
@@ -45,7 +46,6 @@ withDefaults(
       :loading="loading"
       :type="type"
       :aria-label="label"
-      v-bind="$attrs"
     >
       <slot v-if="!loading" />
     </Button>

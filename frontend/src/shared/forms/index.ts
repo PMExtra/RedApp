@@ -5,6 +5,7 @@ export {
   formError,
   displayFormError,
   utf8Length,
+  codePointLength,
   useDirtyGuard,
   confirmDiscardDrafts,
 } from "./forms";

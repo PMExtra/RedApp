@@ -8,6 +8,7 @@ import { apiError, mockApi, noContent, useHandlers } from "@/test/msw";
 import { renderEntry } from "@/test/render";
 
 const PASSWORD = "correct horse battery";
+const emptyPage = { items: [], page: 1, limit: 25, total: 0, total_pages: 1 };
 
 function signedOutServer() {
   let signedIn = false;
@@ -29,6 +30,9 @@ function signedOutServer() {
       signedIn = false;
       return noContent();
     }),
+    // Pages visited by the navigation tests.
+    mockApi("get", "/admin/api/vendors", () => emptyPage),
+    mockApi("get", "/admin/api/categories", () => emptyPage),
   );
   return { csrf, signIn: () => (signedIn = true) };
 }

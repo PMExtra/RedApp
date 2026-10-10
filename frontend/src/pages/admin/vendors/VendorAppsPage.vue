@@ -1,11 +1,12 @@
 <script setup lang="ts">
-// Package B: application table with sorting, toggles and delete (`listApps`, `updateApp`, `deleteApp`).
-import { useI18n } from "vue-i18n";
-import { PagePlaceholder } from "@/shared/ui";
+import { computed } from "vue";
+import { useRoute } from "vue-router";
+import { AppsTable, useVendor } from "@/features/directory";
 
-const { t } = useI18n();
+const route = useRoute();
+const vendor = useVendor(computed(() => String(route.params.vendor)));
 </script>
 
 <template>
-  <PagePlaceholder :title="t('adminShell.tabs.vendorApps')" />
+  <AppsTable v-if="vendor.data.value" :key="vendor.data.value.uid" :vendor="vendor.data.value" />
 </template>

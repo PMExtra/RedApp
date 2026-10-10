@@ -1,11 +1,20 @@
 <script setup lang="ts">
-// Package B: application admin notes (`getAppNotes`, `replaceAppNotes`).
-import { useI18n } from "vue-i18n";
-import { PagePlaceholder } from "@/shared/ui";
+import { computed } from "vue";
+import { useRoute } from "vue-router";
+import { useApp } from "@/features/directory";
+import { NotesEditor } from "@/features/notes";
 
-const { t } = useI18n();
+const route = useRoute();
+const vendorId = computed(() => String(route.params.vendor));
+const appId = computed(() => String(route.params.app));
+const app = useApp(vendorId, appId);
 </script>
 
 <template>
-  <PagePlaceholder :title="t('adminShell.tabs.adminNotes')" />
+  <NotesEditor
+    v-if="app.data.value"
+    :key="app.data.value.uid"
+    :owner="{ vendor: vendorId, app: appId }"
+    :read-only="app.data.value.deleted_at !== null"
+  />
 </template>
