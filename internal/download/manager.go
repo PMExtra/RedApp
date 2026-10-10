@@ -1100,6 +1100,9 @@ func (m *Manager) run(g *Generation) {
 			inactive = true
 		} else if e != nil {
 			err = e
+		} else if e = g.file.Sync(); e != nil {
+			// The running writer owns g.file; it is closed only once done.
+			err = &failure{message: "file fsync failed", category: "disk", cause: e}
 		}
 	}
 	m.mu.Lock()
@@ -1114,13 +1117,8 @@ func (m *Manager) run(g *Generation) {
 	if err == nil && inactive {
 		err = m.retireLocked(g)
 	}
-	if err == nil {
-		if e := g.file.Sync(); e != nil {
-			err = &failure{message: "file fsync failed", category: "disk", cause: e}
-		}
-		if err == nil && !g.Retired && m.current[g.Resource.ID] == g {
-			err = m.publishLocked(g, existing)
-		}
+	if err == nil && !g.Retired && m.current[g.Resource.ID] == g {
+		err = m.publishLocked(g, existing)
 	}
 	if err == nil {
 		g.State = "complete"
