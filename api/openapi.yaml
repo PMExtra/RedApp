@@ -129,7 +129,9 @@ x-spa-routes:
     admin routes; public `/<vendor>` and `/<vendor>/<app>` routes require the vendor and application to be
     published, otherwise they return `index.html` with status 404 so that the SPA shows its not-found page.
     Tab availability follows provider capabilities: `files` only for `hosted`; `cache` for
-    `http-cache`, `codex`, `claude-code`; `versions` for `codex`, `claude-code`.
+    `http-cache`, `codex`, `claude-code`; `versions` for `codex`, `claude-code`. The bare application path
+    `/admin/vendors/{vendor}/apps/{app}` exists for every application; the SPA redirects it client-side to the
+    provider's default tab.
     The frontend has two entries so that public visitors never download administrator code:
     public routes (`/`, `/all`, `/{vendor}`, `/{vendor}/{app}`) serve `index.html`, and every `/admin/...`
     page (including the 404 document) serves `admin.html`. Both files are read from the embedded build
@@ -156,6 +158,7 @@ x-spa-routes:
     - /admin/vendors/{vendor}/apps
     - /admin/vendors/{vendor}/apps/new
     - /admin/vendors/{vendor}/admin-notes
+    - /admin/vendors/{vendor}/apps/{app}
     - /admin/vendors/{vendor}/apps/{app}/settings
     - /admin/vendors/{vendor}/apps/{app}/admin-notes
     - /admin/vendors/{vendor}/apps/{app}/versions

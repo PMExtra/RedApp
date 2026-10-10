@@ -39,6 +39,7 @@ var adminSPARoutes = []string{
 	"/admin/vendors/{vendor}/apps",
 	"/admin/vendors/{vendor}/apps/new",
 	"/admin/vendors/{vendor}/admin-notes",
+	"/admin/vendors/{vendor}/apps/{app}",
 	"/admin/vendors/{vendor}/apps/{app}/settings",
 	"/admin/vendors/{vendor}/apps/{app}/admin-notes",
 	"/admin/vendors/{vendor}/apps/{app}/versions",

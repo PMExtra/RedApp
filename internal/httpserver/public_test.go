@@ -27,11 +27,11 @@ func TestSPADocumentsFollowTheRouteFamilies(t *testing.T) {
 	for _, path := range []string{"/", "/all", "/all?q=x&category=tools&page=2", "/openai", "/openai/codex", "/anthropic/claude-code", "/acme"} {
 		document(path, 200, "public")
 	}
-	for _, path := range []string{"/admin/login?returnTo=/admin/vendors", "/admin/overview", "/admin/settings/site", "/admin/vendors?state=deleted&cleanup=pending", "/admin/vendors/acme/apps/hidden/settings", "/admin/vendors/anthropic/apps/claude-code/settings", "/admin/vendors/anthropic/apps/claude-code/versions"} {
+	for _, path := range []string{"/admin/login?returnTo=/admin/vendors", "/admin/overview", "/admin/settings/site", "/admin/vendors?state=deleted&cleanup=pending", "/admin/vendors/acme/apps/hidden/settings", "/admin/vendors/anthropic/apps/claude-code/settings", "/admin/vendors/anthropic/apps/claude-code/versions", "/admin/vendors/anthropic/apps/claude-code", "/admin/vendors/acme/apps/hidden", "/admin/vendors/openai/apps/new"} {
 		document(path, 200, "admin")
 	}
 	// Unknown admin pages, missing objects and unsupported tabs: admin document with 404.
-	for _, path := range []string{"/admin/missing", "/admin/vendors/missing", "/admin/vendors/anthropic/apps/claude-code/files", "/admin/vendors/anthropic/apps/missing/settings", "/admin/a/b/c/d", "/admin/api"} {
+	for _, path := range []string{"/admin/missing", "/admin/vendors/missing", "/admin/vendors/anthropic/apps/claude-code/files", "/admin/vendors/anthropic/apps/missing/settings", "/admin/vendors/anthropic/apps/missing", "/admin/vendors/missing/apps/codex", "/admin/a/b/c/d", "/admin/api"} {
 		document(path, 404, "admin")
 	}
 	// Unknown or unpublished vendors and applications: public document with 404.
