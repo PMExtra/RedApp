@@ -39,4 +39,4 @@ func (c *Client) IndexBoundary(u *url.URL) bool {
 	return strings.HasPrefix(u.Path, strings.TrimSuffix(c.Base.Path, "/")+"/")
 }
 
-var errIndexBoundary = errors.New("Directory target outside configured root")
+var errIndexBoundary = errors.New("directory target outside configured root")

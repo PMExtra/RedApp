@@ -9,9 +9,9 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -27,6 +27,10 @@ type ConfigurationPublication interface {
 	Publish()
 	Abort()
 }
+
+// DirectorySnapshot is the complete runtime input of the configuration: every
+// vendor, application and source with the resolved proxy scopes and reviewed
+// release contracts.
 type DirectorySnapshot struct {
 	GlobalProxy         networkproxy.Config
 	GlobalProxyRevision int64
@@ -87,6 +91,8 @@ func (p *ConfigurationPatch) UnmarshalJSON(raw []byte) error {
 	return nil
 }
 
+// ownedConfig is an entity's authoritative configuration: a template reference
+// with sparse overrides, or an independent spec.
 type ownedConfig struct {
 	Ref       *string
 	Overrides Object
@@ -106,39 +112,71 @@ type templateSnapshot struct {
 	Hash      string
 	Present   bool
 }
-type configurationState struct {
-	DirectorySnapshot
-	Configs       map[string]ownedConfig
-	Templates     map[string]templateSnapshot
-	Instructions  map[string]Instructions
-	Policies      map[string]cachepolicy.Config
-	Pending       map[string]int64
-	Distributions map[string]trustedDistribution
-	Taxonomy      map[string]TaxonomyItem
-	Notes         map[string]AdminNotes
-}
 
-// SetConfigurationPrepare installs the runtime coordinator. Every authoritative
-// Store configuration writer serializes through configMu, including direct users,
-// admin notes and permanent deletion. Lock order: configMu before the publication
-// gate and the downloads mutex.
+// SetConfigurationPrepare installs the runtime coordinator called by every
+// configuration write before it commits (see writeConfiguration).
 func (s *Store) SetConfigurationPrepare(prepare func(DirectorySnapshot) (ConfigurationPublication, error)) {
-	s.configMu.Lock()
-	defer s.configMu.Unlock()
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	s.prepareConfiguration = prepare
 }
 
+// SetInitialConfigurationPrepare installs a startup coordinator without replacing
+// the running server's composite publication callback.
+func (s *Store) SetInitialConfigurationPrepare(prepare func(DirectorySnapshot) (ConfigurationPublication, error)) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if s.prepareConfiguration == nil {
+		s.prepareConfiguration = prepare
+	}
+}
+
+func (s *Store) SetDistributionValidation(validate func([]presets.Descriptor) error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	s.validateDistributions = validate
+}
+
+// object converts a typed value to its generic JSON form.
 func object(value any) Object {
 	b, _ := json.Marshal(value)
 	var out Object
 	_ = json.Unmarshal(b, &out)
 	return out
 }
+
+// cloneObject deep-copies a generic JSON object.
 func cloneObject(in Object) Object {
 	if in == nil {
 		return nil
 	}
-	return object(in)
+	return Object(cloneValue(map[string]any(in)).(map[string]any))
+}
+func cloneValue(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, item := range v {
+			out[key] = cloneValue(item)
+		}
+		return out
+	case Object:
+		return map[string]any(cloneObject(v))
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = cloneValue(item)
+		}
+		return out
+	case []string:
+		return slices.Clone(v)
+	case nil, string, bool, float64, json.Number:
+		return v
+	}
+	// Typed values (structs, typed slices) are converted to their JSON form.
+	var out any
+	_ = json.Unmarshal(encode(value), &out)
+	return out
 }
 func encode(value any) []byte             { b, _ := json.Marshal(value); return b }
 func configKey(kind, uid string) string   { return kind + ":" + uid }
@@ -215,6 +253,9 @@ func unsetLeaf(in Object, path string) {
 		delete(in, parts[0])
 	}
 }
+
+// merge overlays sparse overrides on a template spec. Ordered lists, proxy,
+// prewarm and retention are whole leaves; other objects merge per key.
 func merge(base, over Object) Object {
 	out := cloneObject(base)
 	if out == nil {
@@ -222,14 +263,14 @@ func merge(base, over Object) Object {
 	}
 	for key, value := range over {
 		if key == "proxy" || key == "prewarm" || key == "retention" {
-			out[key] = cloneObject(Object{"leaf": value})["leaf"]
+			out[key] = cloneValue(value)
 			continue
 		}
 		if nested, ok := value.(map[string]any); ok {
 			old, _ := out[key].(map[string]any)
 			out[key] = map[string]any(merge(Object(old), Object(nested)))
 		} else {
-			out[key] = value
+			out[key] = cloneValue(value)
 		}
 	}
 	return out
@@ -290,20 +331,40 @@ func validateOverrides(kind string, over Object) error {
 	return walk(map[string]any(over), "")
 }
 
-func (st *configurationState) effective(kind, uid string) (Object, error) {
-	c, ok := st.Configs[configKey(kind, uid)]
-	if !ok {
-		return nil, fmt.Errorf("missing authoritative configuration for %s", uid)
+// validateOwnedConfig checks the shape of an authoritative configuration:
+// exactly one of a template reference or a spec, and only known overrides.
+func validateOwnedConfig(kind string, c ownedConfig) error {
+	if c.Overrides == nil {
+		return ErrInvalidDirectory
 	}
+	if c.Ref == nil {
+		if c.Spec == nil || !noNull(map[string]any(c.Spec)) || len(c.Overrides) != 0 {
+			return ErrInvalidDirectory
+		}
+	} else if c.Spec != nil {
+		return ErrInvalidDirectory
+	}
+	return validateOverrides(kind, c.Overrides)
+}
+
+// effective merges the configuration over its template. Application specs get
+// their provider defaults and normalized sources.
+func (w *configSet) effective(kind string, c ownedConfig) (Object, error) {
 	var effective Object
 	if c.Ref == nil {
 		effective = cloneObject(c.Spec)
 	} else {
-		t, ok := st.Templates[templateKey(kind, *c.Ref)]
-		if !ok {
+		t, err := w.template(kind, *c.Ref)
+		if err != nil {
+			return nil, err
+		}
+		if t == nil {
 			return nil, invalidf("unknown template %s", *c.Ref)
 		}
 		effective = merge(t.Spec, c.Overrides)
+	}
+	if effective == nil {
+		return nil, ErrInvalidDirectory
 	}
 	if kind == "App" {
 		var spec presets.AppSpec
@@ -343,27 +404,135 @@ func (st *configurationState) effective(kind, uid string) (Object, error) {
 	}
 	return effective, nil
 }
-func (st *configurationState) view(kind, uid string, revision int64) (Configuration, error) {
-	c := st.Configs[configKey(kind, uid)]
-	effective, err := st.effective(kind, uid)
+
+// ownProxy is the entity's own proxy setting. proxy is a whole leaf, so it is
+// the override when present and the template's or independent spec's otherwise.
+func (w *configSet) ownProxy(kind string, c ownedConfig) (networkproxy.Config, error) {
+	value, ok := c.Spec["proxy"]
+	if c.Ref != nil {
+		if value, ok = c.Overrides["proxy"]; !ok {
+			t, err := w.template(kind, *c.Ref)
+			if err != nil {
+				return networkproxy.Config{}, err
+			}
+			if t == nil {
+				return networkproxy.Config{}, invalidf("unknown template %s", *c.Ref)
+			}
+			value = t.Spec["proxy"]
+		}
+	}
+	proxy, err := decodeProxy(value)
+	if err != nil {
+		return proxy, ErrInvalidDirectory
+	}
+	return proxy, nil
+}
+
+// objectProxy is the proxy an entity uses: an application's resolved through
+// its vendor and the global setting, a vendor's resolved to the global
+// setting. own replaces the entity's own setting when not nil.
+func (w *configSet) objectProxy(kind, uid string, own *networkproxy.Config) (networkproxy.Config, error) {
+	global, err := w.globalProxy()
+	if err != nil {
+		return networkproxy.Config{}, err
+	}
+	if kind == "Vendor" {
+		v, err := w.vendor(uid)
+		if err != nil || v == nil {
+			return networkproxy.Config{}, missingEntity(err)
+		}
+		proxy := own
+		if proxy == nil {
+			p, err := w.ownProxy("Vendor", v.config)
+			if err != nil {
+				return p, err
+			}
+			proxy = &p
+		}
+		if proxy.Mode == "inherit" {
+			return global.config, nil
+		}
+		return *proxy, nil
+	}
+	e, err := w.app(uid)
+	if err != nil || e == nil {
+		return networkproxy.Config{}, missingEntity(err)
+	}
+	effective, err := w.appProxy(e, own, global.config)
+	return effective.Config, err
+}
+
+// appProxy resolves an application's proxy through its vendor and the global setting.
+func (w *configSet) appProxy(e *appEntry, own *networkproxy.Config, global networkproxy.Config) (networkproxy.Effective, error) {
+	v, err := w.vendor(e.VendorUID)
+	if err != nil || v == nil {
+		return networkproxy.Effective{}, missingEntity(err)
+	}
+	app := own
+	if app == nil {
+		p, err := w.ownProxy("App", e.config)
+		if err != nil {
+			return networkproxy.Effective{}, err
+		}
+		app = &p
+	}
+	vendor, err := w.ownProxy("Vendor", v.config)
+	if err != nil {
+		return networkproxy.Effective{}, err
+	}
+	return networkproxy.Resolve(*app, e.Key, vendor, v.ID, global), nil
+}
+func missingEntity(err error) error {
+	if err != nil {
+		return err
+	}
+	return ErrInvalidDirectory
+}
+
+// view renders the administrator's configuration document of one entity.
+func (w *configSet) view(kind, uid string) (Configuration, error) {
+	var c ownedConfig
+	var revision, instructions int64
+	var provider string
+	if kind == "Vendor" {
+		v, err := w.vendor(uid)
+		if err != nil || v == nil {
+			return Configuration{}, missingEntity(err)
+		}
+		c, revision = v.config, v.Revision
+	} else {
+		a, err := w.app(uid)
+		if err != nil || a == nil {
+			return Configuration{}, missingEntity(err)
+		}
+		c, revision, instructions, provider = a.config, a.Revision, a.instructions.Revision, a.Provider
+	}
+	effective, err := w.effective(kind, c)
 	if err != nil {
 		return Configuration{}, err
 	}
-	out := Configuration{InstructionsRevision: st.Instructions[uid].Revision, Revision: revision, TemplateRef: c.Ref, Overrides: cloneObject(c.Overrides), Effective: effective, Fields: map[string]FieldOrigin{}}
+	out := Configuration{InstructionsRevision: instructions, Revision: revision, TemplateRef: c.Ref, Overrides: cloneObject(c.Overrides), Effective: effective, Fields: map[string]FieldOrigin{}}
 	if out.Overrides == nil {
 		out.Overrides = Object{}
 	}
 	if c.Ref != nil {
-		t := st.Templates[templateKey(kind, *c.Ref)]
+		t, err := w.template(kind, *c.Ref)
+		if err != nil {
+			return Configuration{}, err
+		}
+		hash := t.Hash
 		out.Defaults = cloneObject(t.Spec)
-		out.TemplateHash = &t.Hash
+		out.TemplateHash = &hash
 		out.TemplateMissing = !t.Present
 	}
+	if kind == "App" {
+		provider = fmt.Sprint(effective["provider"])
+	}
 	for _, p := range paths(kind) {
-		if (p == "retention" || p == "prewarm") && !presets.VersionsProvider(fmt.Sprint(effective["provider"])) {
+		if (p == "retention" || p == "prewarm") && !presets.VersionsProvider(provider) {
 			continue
 		}
-		if strings.HasPrefix(p, "http_policy.") && effective["provider"] != "http-cache" {
+		if strings.HasPrefix(p, "http_policy.") && provider != "http-cache" {
 			continue
 		}
 		f := FieldOrigin{Source: "custom"}
@@ -379,295 +548,76 @@ func (st *configurationState) view(kind, uid string, revision int64) (Configurat
 		out.Fields[p] = f
 	}
 	if kind == "App" {
-		out.ProxyEffective = st.ProxyScopes[uid].Proxy
+		a, _ := w.app(uid)
+		global, err := w.globalProxy()
+		if err != nil {
+			return Configuration{}, err
+		}
+		if out.ProxyEffective, err = w.appProxy(a, nil, global.config); err != nil {
+			return Configuration{}, err
+		}
 	} else {
-		proxy, _ := decodeProxy(effective["proxy"])
-		out.ProxyEffective = networkproxy.Resolve(networkproxy.Inherit(), "", proxy, func() string {
-			for _, v := range st.Vendors {
-				if v.UID == uid {
-					return v.ID
-				}
-			}
-			return ""
-		}(), st.GlobalProxy)
+		v, _ := w.vendor(uid)
+		global, err := w.globalProxy()
+		if err != nil {
+			return Configuration{}, err
+		}
+		proxy, err := w.ownProxy("Vendor", c)
+		if err != nil {
+			return Configuration{}, err
+		}
+		out.ProxyEffective = networkproxy.Resolve(networkproxy.Inherit(), "", proxy, v.ID, global.config)
 	}
 	return out, nil
 }
 
-func readConfigurationState(tx *sql.Tx) (configurationState, error) {
-	st := configurationState{Configs: map[string]ownedConfig{}, Templates: map[string]templateSnapshot{}, Instructions: map[string]Instructions{}, Policies: map[string]cachepolicy.Config{}, Pending: map[string]int64{}, Distributions: map[string]trustedDistribution{}}
-	var notesErr error
-	st.Notes, notesErr = readAllNotes(tx)
-	if notesErr != nil {
-		return st, notesErr
-	}
-	var taxonomyErr error
-	st.Taxonomy, taxonomyErr = readTaxonomy(tx)
-	if taxonomyErr != nil {
-		return st, taxonomyErr
-	}
-	rows, err := tx.Query(`SELECT ` + vendorColumns + ` FROM vendors ORDER BY id`)
+// readConfiguration runs read against a working set in one read transaction.
+func (s *Store) readConfiguration(read func(*configSet) error) error {
+	tx, err := s.read.Begin()
 	if err != nil {
-		return st, err
-	}
-	for rows.Next() {
-		v, e := scanVendor(rows)
-		if e != nil {
-			rows.Close()
-			return st, e
-		}
-		st.Vendors = append(st.Vendors, v)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return st, err
-	}
-	rows, err = tx.Query(`SELECT ` + applicationColumns + ` FROM applications a JOIN vendors v ON v.uid=a.vendor_uid ORDER BY v.id,a.id`)
-	if err != nil {
-		return st, err
-	}
-	for rows.Next() {
-		a, e := scanApplication(rows)
-		if e != nil {
-			rows.Close()
-			return st, e
-		}
-		st.Applications = append(st.Applications, a)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return st, err
-	}
-	rows, err = tx.Query(`SELECT ` + sourceColumns + sourceJoin + ` ORDER BY src.app_uid,src.epoch`)
-	if err != nil {
-		return st, err
-	}
-	for rows.Next() {
-		a, e := scanSource(rows)
-		if e != nil {
-			rows.Close()
-			return st, e
-		}
-		st.Sources = append(st.Sources, a)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return st, err
-	}
-	for _, kind := range []string{"Vendor", "App"} {
-		table := "vendor_config"
-		if kind == "App" {
-			table = "application_config"
-		}
-		rows, err = tx.Query(`SELECT entity_uid,template_ref,overrides_json,spec_json FROM ` + table)
-		if err != nil {
-			return st, err
-		}
-		for rows.Next() {
-			var uid string
-			var ref sql.NullString
-			var over, spec []byte
-			if err = rows.Scan(&uid, &ref, &over, &spec); err != nil {
-				break
-			}
-			c := ownedConfig{}
-			if ref.Valid {
-				c.Ref = &ref.String
-			}
-			if err = json.Unmarshal(over, &c.Overrides); err != nil {
-				break
-			}
-			if spec != nil {
-				if err = json.Unmarshal(spec, &c.Spec); err != nil {
-					break
-				}
-			}
-			st.Configs[configKey(kind, uid)] = c
-		}
-		if err == nil {
-			err = rows.Err()
-		}
-		rows.Close()
-		if err != nil {
-			return st, err
-		}
-	}
-	rows, err = tx.Query(`SELECT kind,canonical_key,schema_version,metadata_json,spec_json,semantic_hash,present FROM template_snapshots`)
-	if err != nil {
-		return st, err
-	}
-	for rows.Next() {
-		var t templateSnapshot
-		var metadata, spec []byte
-		if err = rows.Scan(&t.Kind, &t.Key, &t.Schema, &metadata, &spec, &t.Hash, &t.Present); err != nil {
-			break
-		}
-		if err = json.Unmarshal(metadata, &t.Metadata); err != nil {
-			break
-		}
-		if err = json.Unmarshal(spec, &t.Spec); err != nil {
-			break
-		}
-		st.Templates[templateKey(t.Kind, t.Key)] = t
-	}
-	if err == nil {
-		err = rows.Err()
-	}
-	rows.Close()
-	if err != nil {
-		return st, err
-	}
-	rows, err = tx.Query(`SELECT app_uid,en,zh_cn,revision FROM application_instructions`)
-	if err != nil {
-		return st, err
-	}
-	for rows.Next() {
-		var uid string
-		var i Instructions
-		if err = rows.Scan(&uid, &i.En, &i.ZhCN, &i.Revision); err != nil {
-			break
-		}
-		st.Instructions[uid] = i
-	}
-	if err == nil {
-		err = rows.Err()
-	}
-	rows.Close()
-	if err != nil {
-		return st, err
-	}
-	rows, err = tx.Query(`SELECT app_uid,payload FROM application_http_policies`)
-	if err != nil {
-		return st, err
-	}
-	for rows.Next() {
-		var uid string
-		var raw []byte
-		var c cachepolicy.Config
-		if err = rows.Scan(&uid, &raw); err != nil {
-			break
-		}
-		if err = json.Unmarshal(raw, &c); err != nil {
-			break
-		}
-		st.Policies[uid] = c
-	}
-	if err == nil {
-		err = rows.Err()
-	}
-	rows.Close()
-	if err != nil {
-		return st, err
-	}
-	rows, err = tx.Query(`SELECT canonical_key,provider,descriptor_json,distribution_digest FROM trusted_distribution_snapshots`)
-	if err != nil {
-		return st, err
-	}
-	for rows.Next() {
-		var key string
-		var raw []byte
-		var dist trustedDistribution
-		if err = rows.Scan(&key, &dist.Provider, &raw, &dist.Digest); err != nil {
-			break
-		}
-		d := json.NewDecoder(bytes.NewReader(raw))
-		d.DisallowUnknownFields()
-		if err = d.Decode(&dist.Descriptor); err != nil {
-			break
-		}
-		if dist.Descriptor.ID != key || dist.Digest != distributionDigest(dist.Descriptor) {
-			err = fmt.Errorf("invalid trusted distribution snapshot %s", key)
-			break
-		}
-		st.Distributions[key] = dist
-	}
-	if err == nil {
-		err = rows.Err()
-	}
-	rows.Close()
-	if err != nil {
-		return st, err
-	}
-	rows, err = tx.Query(`SELECT app_uid,requested_revision FROM pending_application_deletes`)
-	if err != nil {
-		return st, err
-	}
-	for rows.Next() {
-		var uid string
-		var revision int64
-		if err = rows.Scan(&uid, &revision); err != nil {
-			break
-		}
-		st.Pending[uid] = revision
-	}
-	if err == nil {
-		err = rows.Err()
-	}
-	rows.Close()
-	if err == nil {
-		var raw []byte
-		st.GlobalProxy = networkproxy.Direct()
-		err = tx.QueryRow(`SELECT revision,payload FROM settings WHERE key='upstream_proxy'`).Scan(&st.GlobalProxyRevision, &raw)
-		if err == sql.ErrNoRows {
-			err = nil
-		} else if err == nil {
-			st.GlobalProxy, err = parseGlobalProxy(raw)
-		}
-		if err == nil {
-			err = st.refreshProxyScopes()
-		}
-	}
-	if err == nil {
-		err = st.refreshReviewedContracts()
-	}
-	return st, err
-}
-func (s *Store) configurationState() (configurationState, error) {
-	tx, err := s.DB.Begin()
-	if err != nil {
-		return configurationState{}, err
+		return err
 	}
 	defer tx.Rollback()
-	st, err := readConfigurationState(tx)
-	return st, err
+	return read(newConfigSet(tx))
 }
 
 func (s *Store) VendorConfiguration(id string) (Configuration, error) {
-	st, err := s.configurationState()
-	if err != nil {
-		return Configuration{}, err
-	}
-	for _, v := range st.Vendors {
-		if v.ID == id {
-			return st.view("Vendor", v.UID, v.Revision)
+	var out Configuration
+	err := s.readConfiguration(func(w *configSet) error {
+		v, err := w.vendorByID(id)
+		if err != nil {
+			return err
 		}
-	}
-	return Configuration{}, sql.ErrNoRows
+		if v == nil {
+			return sql.ErrNoRows
+		}
+		out, err = w.view("Vendor", v.UID)
+		return err
+	})
+	return out, err
 }
 func (s *Store) ApplicationConfiguration(key string) (Configuration, error) {
-	st, err := s.configurationState()
-	if err != nil {
-		return Configuration{}, err
-	}
-	for _, a := range st.Applications {
-		if a.Key == key {
-			return st.view("App", a.UID, a.Revision)
+	var out Configuration
+	err := s.readConfiguration(func(w *configSet) error {
+		a, err := w.appByKey(key)
+		if err != nil {
+			return err
 		}
-	}
-	return Configuration{}, sql.ErrNoRows
+		if a == nil {
+			return sql.ErrNoRows
+		}
+		out, err = w.view("App", a.UID)
+		return err
+	})
+	return out, err
 }
 
 func vendorSpec(v Vendor) Object {
 	return object(presets.VendorSpec{Proxy: networkproxy.Inherit(), Name: presets.Text{En: v.Name.En, ZhCN: v.Name.ZhCN}, Description: presets.Text{En: v.Description.En, ZhCN: v.Description.ZhCN}, Icon: v.Icon, LocalizedIcons: presets.Text{En: v.LocalizedIcons.En, ZhCN: v.LocalizedIcons.ZhCN}})
 }
 
-type appConfigurationSpec = presets.AppSpec
-
 func appSpec(a Application, instructions LocalizedText, policy cachepolicy.Config) Object {
-	spec := appConfigurationSpec{Categories: append([]string{}, a.Categories...), Tags: append([]string{}, a.Tags...), Proxy: networkproxy.Inherit(), Name: presets.Text{En: a.Name.En, ZhCN: a.Name.ZhCN}, Description: presets.Text{En: a.Description.En, ZhCN: a.Description.ZhCN}, Icon: a.Icon, Provider: a.Provider, BaseURL: a.BaseURL, BaseURLs: a.BaseURLs, SourceStrategy: a.SourceStrategy, CacheTTLSeconds: a.CacheTTLSeconds, Instructions: presets.Text{En: instructions.En, ZhCN: instructions.ZhCN}}
+	spec := presets.AppSpec{Categories: append([]string{}, a.Categories...), Tags: append([]string{}, a.Tags...), Proxy: networkproxy.Inherit(), Name: presets.Text{En: a.Name.En, ZhCN: a.Name.ZhCN}, Description: presets.Text{En: a.Description.En, ZhCN: a.Description.ZhCN}, Icon: a.Icon, Provider: a.Provider, BaseURL: a.BaseURL, BaseURLs: a.BaseURLs, SourceStrategy: a.SourceStrategy, CacheTTLSeconds: a.CacheTTLSeconds, Instructions: presets.Text{En: instructions.En, ZhCN: instructions.ZhCN}}
 	if presets.VersionsProvider(a.Provider) {
 		spec.Retention = presets.DefaultRetention()
 		spec.Prewarm = presets.DefaultPrewarm()
@@ -692,521 +642,6 @@ func validateInstructions(value LocalizedText) error {
 		}
 	}
 	return nil
-}
-
-func materialize(st *configurationState, before configurationState) error {
-	for key, c := range st.Configs {
-		if c.Overrides == nil {
-			return ErrInvalidDirectory
-		}
-		kind, _, _ := strings.Cut(key, ":")
-		if c.Ref == nil {
-			if c.Spec == nil || !noNull(map[string]any(c.Spec)) || len(c.Overrides) != 0 {
-				return ErrInvalidDirectory
-			}
-		} else if c.Spec != nil {
-			return ErrInvalidDirectory
-		}
-		if err := validateOverrides(kind, c.Overrides); err != nil {
-			return err
-		}
-	}
-	for i := range st.Vendors {
-		v := &st.Vendors[i]
-		spec, err := st.effective("Vendor", v.UID)
-		if err != nil {
-			return err
-		}
-		if !noNull(map[string]any(spec)) {
-			return ErrInvalidDirectory
-		}
-		var typed presets.VendorSpec
-		if err = strict(spec, &typed); err != nil {
-			return err
-		}
-		in := VendorInput{ID: v.ID, Name: LocalizedText{typed.Name.En, typed.Name.ZhCN}, Description: LocalizedText{typed.Description.En, typed.Description.ZhCN}, Icon: typed.Icon, LocalizedIcons: LocalizedText{typed.LocalizedIcons.En, typed.LocalizedIcons.ZhCN}, Enabled: v.Enabled}
-		if err = validateVendor(in); err != nil {
-			return err
-		}
-		v.Name, v.Description, v.Icon, v.LocalizedIcons = in.Name, in.Description, in.Icon, in.LocalizedIcons
-	}
-	for i := range st.Applications {
-		a := &st.Applications[i]
-		spec, err := st.effective("App", a.UID)
-		if err != nil {
-			return err
-		}
-		if !noNull(map[string]any(spec)) {
-			return ErrInvalidDirectory
-		}
-		var typed appConfigurationSpec
-		if err = strict(spec, &typed); err != nil {
-			return err
-		}
-		categories, catErr := presets.NormalizeCategories(typed.Categories)
-		tags, tagErr := presets.NormalizeTags(typed.Tags)
-		if catErr != nil || tagErr != nil {
-			return ErrInvalidDirectory
-		}
-		if a.DeletedAt == nil {
-			if err = st.validateCategories(categories); err != nil {
-				return err
-			}
-			a.Categories, a.Tags = categories, tags
-		} else {
-			a.Categories, a.Tags = []string{}, []string{}
-		}
-		if typed.Provider != a.Provider {
-			return invalidf("Provider is immutable")
-		}
-		in := ApplicationInput{ID: a.ID, Name: LocalizedText{typed.Name.En, typed.Name.ZhCN}, Description: LocalizedText{typed.Description.En, typed.Description.ZhCN}, Icon: typed.Icon, Provider: typed.Provider, BaseURL: typed.BaseURL, BaseURLs: typed.BaseURLs, SourceStrategy: typed.SourceStrategy, CacheTTLSeconds: typed.CacheTTLSeconds, Enabled: a.Enabled}
-		if err = validateApplication(&in); err != nil {
-			return err
-		}
-		instructions := LocalizedText{typed.Instructions.En, typed.Instructions.ZhCN}
-		if err = validateInstructions(instructions); err != nil {
-			return err
-		}
-		old := before.Instructions[a.UID]
-		changed := old.LocalizedText != instructions
-		for _, p := range []string{"instructions.en", "instructions.zh-CN"} {
-			prev, ok := before.Configs[configKey("App", a.UID)]
-			cur := st.Configs[configKey("App", a.UID)]
-			_, was := leaf(prev.Overrides, p)
-			_, now := leaf(cur.Overrides, p)
-			if ok && was != now {
-				changed = true
-			}
-			if prev.Ref != nil && cur.Ref != nil && !was && !now {
-				oldDefault, _ := leaf(before.Templates[templateKey("App", *prev.Ref)].Spec, p)
-				newDefault, _ := leaf(st.Templates[templateKey("App", *cur.Ref)].Spec, p)
-				if !reflect.DeepEqual(oldDefault, newDefault) {
-					changed = true
-				}
-			}
-		}
-		if old.Revision == 0 {
-			old.Revision = 1
-		} else if changed {
-			old.Revision++
-		}
-		old.LocalizedText = instructions
-		if st.Configs[configKey("App", a.UID)].Ref == nil && st.Instructions[a.UID].Revision == 0 && instructions == (LocalizedText{}) {
-			delete(st.Instructions, a.UID)
-		} else {
-			st.Instructions[a.UID] = old
-		}
-		if typed.HTTPPolicy != nil && a.Provider != "http-cache" {
-			return ErrInvalidDirectory
-		}
-		if a.Provider == "http-cache" {
-			if typed.HTTPPolicy == nil {
-				return ErrInvalidDirectory
-			}
-			policy, err := cachepolicy.Normalize(*typed.HTTPPolicy)
-			if err != nil {
-				return err
-			}
-			st.Policies[a.UID] = policy
-		}
-		exists := false
-		for _, prev := range before.Applications {
-			if prev.UID == a.UID {
-				exists = true
-			}
-		}
-		if exists && (a.BaseURL != in.BaseURL || !reflect.DeepEqual(a.BaseURLs, in.BaseURLs) || a.SourceStrategy != in.SourceStrategy) {
-			a.SourceEpoch++
-		}
-		a.Name, a.Description, a.Icon, a.BaseURL, a.BaseURLs, a.SourceStrategy, a.CacheTTLSeconds = in.Name, in.Description, in.Icon, in.BaseURL, in.BaseURLs, in.SourceStrategy, in.CacheTTLSeconds
-	}
-	// One classifier owns all runtime revision changes, regardless of write endpoint.
-	for i := range st.Vendors {
-		v := &st.Vendors[i]
-		v.RuntimeRevision = 1
-		for _, prev := range before.Vendors {
-			if prev.UID == v.UID {
-				v.RuntimeRevision = prev.RuntimeRevision
-				if prev.Enabled != v.Enabled || !reflect.DeepEqual(prev.DeletedAt, v.DeletedAt) {
-					v.RuntimeRevision++
-				}
-			}
-		}
-	}
-	for i := range st.Applications {
-		a := &st.Applications[i]
-		a.RuntimeRevision = 1
-		for _, prev := range before.Applications {
-			if prev.UID != a.UID {
-				continue
-			}
-			a.RuntimeRevision = prev.RuntimeRevision
-			changed := prev.Enabled != a.Enabled || !reflect.DeepEqual(prev.DeletedAt, a.DeletedAt) || prev.BaseURL != a.BaseURL || !reflect.DeepEqual(prev.BaseURLs, a.BaseURLs) || prev.SourceStrategy != a.SourceStrategy || prev.CacheTTLSeconds != a.CacheTTLSeconds || !reflect.DeepEqual(before.Policies[a.UID], st.Policies[a.UID])
-			key := st.distributionKey(*a)
-			if key != "" && before.Distributions[key].Digest != st.Distributions[key].Digest {
-				changed = true
-			}
-			if changed {
-				a.RuntimeRevision++
-			}
-		}
-	}
-	// Include both retained historical clients and proposed immutable namespaces.
-	for _, a := range st.Applications {
-		if a.Provider == "info" || a.Provider == "hosted" {
-			continue
-		}
-		found := false
-		for _, src := range st.Sources {
-			if src.AppUID == a.UID && src.Epoch == a.SourceEpoch {
-				found = true
-			}
-		}
-		if !found {
-			st.Sources = append(st.Sources, SourceRecord{AppUID: a.UID, Epoch: a.SourceEpoch, Provider: a.Provider, BaseURL: a.BaseURL, BaseURLs: a.BaseURLs, SourceStrategy: a.SourceStrategy, CreatedAt: time.Now().UTC()})
-		}
-	}
-	return nil
-}
-
-func cloneState(st configurationState) configurationState {
-	var out configurationState
-	_ = json.Unmarshal(encode(st), &out)
-	out.Taxonomy = map[string]TaxonomyItem{}
-	for key, item := range st.Taxonomy {
-		if item.Default != nil {
-			copy := *item.Default
-			item.Default = &copy
-		}
-		item.Override = cloneObject(item.Override)
-		item.decorate()
-		out.Taxonomy[key] = item
-	}
-	return out
-}
-
-// The private state has exported fields so deterministic JSON also supplies a
-// complete CAS fingerprint: all entity revisions/epochs, configs and template hashes.
-func (s *Store) changeConfiguration(change func(*configurationState) error) error {
-	return s.changeConfigurationAtomic(change, nil)
-}
-func (s *Store) changeConfigurationAtomic(change func(*configurationState) error, finalize func(*sql.Tx) error) error {
-	s.configMu.Lock()
-	defer s.configMu.Unlock()
-	return s.changeConfigurationLocked(change, finalize)
-}
-
-// changeConfigurationLocked requires configMu and may prepare a runtime publication.
-func (s *Store) changeConfigurationLocked(change func(*configurationState) error, finalize func(*sql.Tx) error) error {
-	baseline, err := s.configurationState()
-	if err != nil {
-		return err
-	}
-	candidate := cloneState(baseline)
-	if err = change(&candidate); err != nil {
-		return err
-	}
-	if err = candidate.acceptMissingCompiledContracts(); err != nil {
-		return err
-	}
-	if err = materialize(&candidate, baseline); err != nil {
-		return err
-	}
-	if err = candidate.refreshProxyScopes(); err != nil {
-		return err
-	}
-	if err = candidate.refreshReviewedContracts(); err != nil {
-		return err
-	}
-	if s.validateDistributions != nil {
-		if err = s.validateDistributions(candidate.ReviewedDescriptors); err != nil {
-			return err
-		}
-	}
-	if finalize == nil && bytes.Equal(encode(baseline), encode(candidate)) {
-		return nil
-	}
-	var publication ConfigurationPublication
-	if s.prepareConfiguration != nil {
-		publication, err = s.prepareConfiguration(candidate.DirectorySnapshot)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if publication != nil {
-				publication.Abort()
-			}
-		}()
-	}
-	tx, err := s.DB.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	actual, err := readConfigurationState(tx)
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(encode(actual), encode(baseline)) {
-		return ErrConflict
-	}
-	if err = writeConfigurationState(tx, baseline, candidate); err != nil {
-		return err
-	}
-	if finalize != nil {
-		if err = finalize(tx); err != nil {
-			return err
-		}
-	}
-	if s.beforeCommit != nil {
-		if err = s.beforeCommit(tx); err != nil {
-			return err
-		}
-	}
-	if err = tx.Commit(); err != nil {
-		return err
-	}
-	if publication != nil {
-		publication.Publish()
-		publication = nil
-	}
-	return nil
-}
-
-// writeConfigurationState inserts and updates the rows that changed between
-// old and next. It never deletes: rows leave the database only through a
-// finalize step (permanent deletion), deletion recovery or category pruning,
-// all of which delete the rows directly. A change that drops an entry from
-// the state is therefore rejected rather than silently kept in the database.
-func writeConfigurationState(tx *sql.Tx, old, next configurationState) error {
-	if err := requireRetained(old, next); err != nil {
-		return err
-	}
-	taxonomyChanged := !reflect.DeepEqual(old.Taxonomy, next.Taxonomy)
-	for key, item := range next.Taxonomy {
-		if !reflect.DeepEqual(old.Taxonomy[key], item) {
-			if err := writeTaxonomy(tx, item); err != nil {
-				return err
-			}
-		}
-	}
-
-	if old.GlobalProxyRevision != next.GlobalProxyRevision {
-		if _, err := tx.Exec(`INSERT INTO settings(key,revision,payload) VALUES('upstream_proxy',?,?) ON CONFLICT(key) DO UPDATE SET revision=excluded.revision,payload=excluded.payload`, next.GlobalProxyRevision, encode(next.GlobalProxy)); err != nil {
-			return err
-		}
-	}
-	for uid, revision := range next.Pending {
-		if _, ok := old.Pending[uid]; !ok {
-			if _, err := tx.Exec(`INSERT INTO pending_application_deletes(app_uid,requested_revision) VALUES(?,?)`, uid, revision); err != nil {
-				return err
-			}
-		}
-	}
-	for key, t := range next.Templates {
-		if reflect.DeepEqual(old.Templates[key], t) {
-			continue
-		}
-		if _, err := tx.Exec(`INSERT INTO template_snapshots(kind,canonical_key,schema_version,metadata_json,spec_json,semantic_hash,present) VALUES(?,?,?,?,?,?,?) ON CONFLICT(kind,canonical_key) DO UPDATE SET schema_version=excluded.schema_version,metadata_json=excluded.metadata_json,spec_json=excluded.spec_json,semantic_hash=excluded.semantic_hash,present=excluded.present`, t.Kind, t.Key, t.Schema, encode(t.Metadata), encode(t.Spec), t.Hash, t.Present); err != nil {
-			return err
-		}
-		if t.Kind == "App" {
-			if err := projectTemplateTaxonomy(tx, t); err != nil {
-				return err
-			}
-		}
-	}
-	for key, d := range next.Distributions {
-		if reflect.DeepEqual(old.Distributions[key], d) {
-			continue
-		}
-		if _, err := tx.Exec(`INSERT INTO trusted_distribution_snapshots(kind,canonical_key,provider,descriptor_json,distribution_digest) VALUES('App',?,?,?,?) ON CONFLICT(canonical_key) DO UPDATE SET provider=excluded.provider,descriptor_json=excluded.descriptor_json,distribution_digest=excluded.distribution_digest`, key, d.Provider, encode(d.Descriptor), d.Digest); err != nil {
-			return err
-		}
-	}
-	oldV := map[string]Vendor{}
-	for _, v := range old.Vendors {
-		oldV[v.UID] = v
-	}
-	oldA := map[string]Application{}
-	for _, a := range old.Applications {
-		oldA[a.UID] = a
-	}
-	for _, v := range next.Vendors {
-		prev, exists := oldV[v.UID]
-		if exists && reflect.DeepEqual(prev, v) {
-			continue
-		}
-		if !exists {
-			_, err := tx.Exec(`INSERT INTO vendors(`+vendorColumns+`) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.UID, v.ID, v.Name.En, v.Name.ZhCN, v.Description.En, v.Description.ZhCN, v.Icon, v.LocalizedIcons.En, v.LocalizedIcons.ZhCN, v.Enabled, v.Revision, v.RuntimeRevision, unixPointer(v.DeletedAt))
-			if err != nil {
-				return err
-			}
-		} else {
-			_, err := tx.Exec(`UPDATE vendors SET name_en=?,name_zh_cn=?,description_en=?,description_zh_cn=?,icon=?,enabled=?,revision=?,deleted_at_s=?,icon_en=?,icon_zh_cn=?,runtime_revision=? WHERE uid=?`, v.Name.En, v.Name.ZhCN, v.Description.En, v.Description.ZhCN, v.Icon, v.Enabled, v.Revision, unixPointer(v.DeletedAt), v.LocalizedIcons.En, v.LocalizedIcons.ZhCN, v.RuntimeRevision, v.UID)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	for _, a := range next.Applications {
-		prev, exists := oldA[a.UID]
-		if exists && reflect.DeepEqual(prev, a) {
-			continue
-		}
-		if !exists {
-			_, err := tx.Exec(`INSERT INTO applications(uid,vendor_uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,provider,base_url,base_urls_json,source_strategy,cache_ttl_seconds,enabled,revision,runtime_revision,source_epoch,deleted_at_s) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.UID, a.VendorUID, a.ID, a.Name.En, a.Name.ZhCN, a.Description.En, a.Description.ZhCN, a.Icon, a.Provider, a.BaseURL, string(encode(a.BaseURLs)), a.SourceStrategy, a.CacheTTLSeconds, a.Enabled, a.Revision, a.RuntimeRevision, a.SourceEpoch, unixPointer(a.DeletedAt))
-			if err != nil {
-				return err
-			}
-		} else {
-			_, err := tx.Exec(`UPDATE applications SET name_en=?,name_zh_cn=?,description_en=?,description_zh_cn=?,icon=?,base_url=?,base_urls_json=?,source_strategy=?,cache_ttl_seconds=?,enabled=?,revision=?,source_epoch=?,deleted_at_s=?,runtime_revision=? WHERE uid=?`, a.Name.En, a.Name.ZhCN, a.Description.En, a.Description.ZhCN, a.Icon, a.BaseURL, string(encode(a.BaseURLs)), a.SourceStrategy, a.CacheTTLSeconds, a.Enabled, a.Revision, a.SourceEpoch, unixPointer(a.DeletedAt), a.RuntimeRevision, a.UID)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	for _, a := range next.Applications {
-		prev, exists := oldA[a.UID]
-		if !exists || !reflect.DeepEqual(prev, a) {
-			if err := projectAppTaxonomy(tx, a); err != nil {
-				return err
-			}
-		}
-		if !exists || !reflect.DeepEqual(prev.Categories, a.Categories) || !reflect.DeepEqual(prev.Tags, a.Tags) {
-			taxonomyChanged = true
-		}
-		before, after := old.Configs[configKey("App", a.UID)], next.Configs[configKey("App", a.UID)]
-		for _, path := range []string{"categories", "tags"} {
-			x, xok := leaf(before.Overrides, path)
-			y, yok := leaf(after.Overrides, path)
-			if xok != yok || !reflect.DeepEqual(x, y) {
-				taxonomyChanged = true
-			}
-		}
-	}
-	// Every association change in this transaction, including deletes, copies and imports, prunes unused categories.
-	removed, err := cleanupCategories(tx)
-	if err != nil {
-		return err
-	}
-	if taxonomyChanged || removed > 0 {
-		if err := bumpCategoryRevision(tx); err != nil {
-			return err
-		}
-	}
-	if err := writeAllNotes(tx, old.Notes, next.Notes); err != nil {
-		return err
-	}
-	for key, c := range next.Configs {
-		if reflect.DeepEqual(old.Configs[key], c) {
-			continue
-		}
-		kind, uid, _ := strings.Cut(key, ":")
-		table := "vendor_config"
-		if kind == "App" {
-			table = "application_config"
-		}
-		var spec any
-		if c.Spec != nil {
-			spec = encode(c.Spec)
-		}
-		if _, err := tx.Exec(`INSERT INTO `+table+`(entity_uid,template_ref,overrides_json,spec_json) VALUES(?,?,?,?) ON CONFLICT(entity_uid) DO UPDATE SET template_ref=excluded.template_ref,overrides_json=excluded.overrides_json,spec_json=excluded.spec_json`, uid, c.Ref, encode(c.Overrides), spec); err != nil {
-			return err
-		}
-	}
-	for uid, i := range next.Instructions {
-		if reflect.DeepEqual(old.Instructions[uid], i) {
-			continue
-		}
-		if _, err := tx.Exec(`INSERT INTO application_instructions(app_uid,revision,en,zh_cn) VALUES(?,?,?,?) ON CONFLICT(app_uid) DO UPDATE SET revision=excluded.revision,en=excluded.en,zh_cn=excluded.zh_cn`, uid, i.Revision, i.En, i.ZhCN); err != nil {
-			return err
-		}
-	}
-	for _, src := range next.Sources {
-		exists := false
-		for _, prev := range old.Sources {
-			if prev.StorageID() == src.StorageID() {
-				exists = true
-				break
-			}
-		}
-		if exists {
-			continue
-		}
-		if _, err := tx.Exec(`INSERT INTO application_sources(app_uid,epoch,provider,base_url,base_urls_json,source_strategy,created_at_s) VALUES(?,?,?,?,?,?,?)`, src.AppUID, src.Epoch, src.Provider, src.BaseURL, string(encode(src.BaseURLs)), src.SourceStrategy, src.CreatedAt.Unix()); err != nil {
-			return err
-		}
-	}
-	for uid, policy := range next.Policies {
-		if reflect.DeepEqual(old.Policies[uid], policy) {
-			continue
-		}
-		if _, err := tx.Exec(`INSERT INTO application_http_policies(app_uid,payload) VALUES(?,?) ON CONFLICT(app_uid) DO UPDATE SET payload=excluded.payload`, uid, encode(policy)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// requireRetained fails when next lacks any entity, configuration, template,
-// distribution, pending deletion, instruction, policy, source, note or
-// taxonomy entry of old.
-func requireRetained(old, next configurationState) error {
-	missing := func(kind string) error {
-		return fmt.Errorf("configuration change removed a persisted %s", kind)
-	}
-	vendors := map[string]bool{}
-	for _, v := range next.Vendors {
-		vendors[v.UID] = true
-	}
-	for _, v := range old.Vendors {
-		if !vendors[v.UID] {
-			return missing("vendor")
-		}
-	}
-	apps := map[string]bool{}
-	for _, a := range next.Applications {
-		apps[a.UID] = true
-	}
-	for _, a := range old.Applications {
-		if !apps[a.UID] {
-			return missing("application")
-		}
-	}
-	sources := map[string]bool{}
-	for _, src := range next.Sources {
-		sources[src.StorageID()] = true
-	}
-	for _, src := range old.Sources {
-		if !sources[src.StorageID()] {
-			return missing("source")
-		}
-	}
-	for kind, kept := range map[string]bool{
-		"configuration":    retained(old.Configs, next.Configs),
-		"template":         retained(old.Templates, next.Templates),
-		"distribution":     retained(old.Distributions, next.Distributions),
-		"pending deletion": retained(old.Pending, next.Pending),
-		"instruction":      retained(old.Instructions, next.Instructions),
-		"HTTP policy":      retained(old.Policies, next.Policies),
-		"admin note":       retained(old.Notes, next.Notes),
-		"taxonomy entry":   retained(old.Taxonomy, next.Taxonomy),
-	} {
-		if !kept {
-			return missing(kind)
-		}
-	}
-	return nil
-}
-
-func retained[V any](old, next map[string]V) bool {
-	for key := range old {
-		if _, ok := next[key]; !ok {
-			return false
-		}
-	}
-	return true
 }
 
 func applyPatch(c *ownedConfig, kind string, patch ConfigurationPatch) error {
@@ -1290,33 +725,46 @@ func patchObject(spec Object, kind string) map[string]json.RawMessage {
 	}
 	return out
 }
+
+// patchConfiguration applies a sparse patch to one vendor or application. It
+// reads and writes only that entity (plus its template, its vendor's proxy and
+// the categories it names) and fails with ErrConflict when the entity's
+// revision is not the expected one.
 func (s *Store) patchConfiguration(kind, key string, patch ConfigurationPatch, enabled *bool, instructionRevision *int64) error {
-	return s.changeConfiguration(func(st *configurationState) error {
-		var uid string
-		var revision int64
-		for _, v := range st.Vendors {
-			if kind == "Vendor" && v.ID == key {
-				uid, revision = v.UID, v.Revision
-				if v.DeletedAt != nil {
-					return ErrDirectoryDeleted
-				}
+	return s.writeConfiguration(func(w *configSet) error {
+		var c *ownedConfig
+		var revision *int64
+		var setEnabled, changed *bool
+		var app *appEntry
+		if kind == "Vendor" {
+			v, err := w.vendorByID(key)
+			if err != nil {
+				return err
 			}
-		}
-		for _, a := range st.Applications {
-			if kind == "App" && a.Key == key {
-				uid, revision = a.UID, a.Revision
-				if a.DeletedAt != nil {
-					return ErrDirectoryDeleted
-				}
+			if v == nil {
+				return sql.ErrNoRows
 			}
+			if v.DeletedAt != nil {
+				return ErrDirectoryDeleted
+			}
+			c, revision, setEnabled, changed = &v.config, &v.Revision, &v.Enabled, &v.changed
+		} else {
+			a, err := w.appByKey(key)
+			if err != nil {
+				return err
+			}
+			if a == nil {
+				return sql.ErrNoRows
+			}
+			if a.DeletedAt != nil {
+				return ErrDirectoryDeleted
+			}
+			c, revision, setEnabled, changed, app = &a.config, &a.Revision, &a.Enabled, &a.changed, a
 		}
-		if uid == "" {
-			return sql.ErrNoRows
-		}
-		if revision != patch.Revision {
+		if *revision != patch.Revision {
 			return ErrConflict
 		}
-		if instructionRevision != nil && st.Instructions[uid].Revision != *instructionRevision {
+		if instructionRevision != nil && app.instructions.Revision != *instructionRevision {
 			return ErrConflict
 		}
 		if len(patch.NewCategories) > 0 {
@@ -1325,7 +773,7 @@ func (s *Store) patchConfiguration(kind, key string, patch ConfigurationPatch, e
 			if kind != "App" || !ok || json.Unmarshal(raw, &ids) != nil {
 				return invalidf("new categories require the categories field")
 			}
-			created, err := st.resolveNewCategories(patch.NewCategories)
+			created, err := w.resolveNewCategories(patch.NewCategories)
 			if err != nil {
 				return err
 			}
@@ -1340,22 +788,18 @@ func (s *Store) patchConfiguration(kind, key string, patch ConfigurationPatch, e
 		if len(patch.Set) == 0 && len(patch.Unset) == 0 && enabled == nil {
 			return nil
 		}
-		if kind == "App" {
-			for _, a := range st.Applications {
-				if a.UID == uid && a.Provider == "http-cache" {
-					if raw, ok := patch.Set["base_url"]; ok {
-						var base string
-						if json.Unmarshal(raw, &base) != nil {
-							return ErrInvalidDirectory
-						}
-						normalized, e := normalizeDirectoryBase(base)
-						if e != nil {
-							return e
-						}
-						if _, hasList := patch.Set["base_urls"]; !hasList && normalized != a.BaseURL {
-							return invalidf("HTTP cache sources use base_urls; base_url must match the first source")
-						}
-					}
+		if app != nil && app.Provider == "http-cache" {
+			if raw, ok := patch.Set["base_url"]; ok {
+				var base string
+				if json.Unmarshal(raw, &base) != nil {
+					return ErrInvalidDirectory
+				}
+				normalized, e := normalizeDirectoryBase(base)
+				if e != nil {
+					return e
+				}
+				if _, hasList := patch.Set["base_urls"]; !hasList && normalized != app.BaseURL {
+					return invalidf("HTTP cache sources use base_urls; base_url must match the first source")
 				}
 			}
 		}
@@ -1364,11 +808,10 @@ func (s *Store) patchConfiguration(kind, key string, patch ConfigurationPatch, e
 			if json.Unmarshal(raw, &submitted) != nil {
 				return ErrInvalidDirectory
 			}
-			effective, err := st.effective(kind, uid)
+			saved, err := w.ownProxy(kind, *c)
 			if err != nil {
 				return err
 			}
-			saved, _ := decodeProxy(effective["proxy"])
 			kept, err := networkproxy.KeepRedactedPassword(submitted, saved)
 			if err != nil {
 				return invalidf("%w", err)
@@ -1380,32 +823,16 @@ func (s *Store) patchConfiguration(kind, key string, patch ConfigurationPatch, e
 			set["proxy"] = encode(kept)
 			patch.Set = set
 		}
-		c := st.Configs[configKey(kind, uid)]
-		if err := applyPatch(&c, kind, patch); err != nil {
+		if err := applyPatch(c, kind, patch); err != nil {
 			return err
 		}
-		st.Configs[configKey(kind, uid)] = c
-		if kind == "Vendor" {
-			for i := range st.Vendors {
-				if st.Vendors[i].UID == uid {
-					st.Vendors[i].Revision++
-					if enabled != nil {
-						st.Vendors[i].Enabled = *enabled
-					}
-				}
-			}
-		} else {
-			for i := range st.Applications {
-				if st.Applications[i].UID == uid {
-					st.Applications[i].Revision++
-					if enabled != nil {
-						st.Applications[i].Enabled = *enabled
-					}
-				}
-			}
+		*revision++
+		if enabled != nil {
+			*setEnabled = *enabled
 		}
+		*changed = true
 		return nil
-	})
+	}, nil)
 }
 func (s *Store) PatchVendorConfiguration(id string, patch ConfigurationPatch) (Configuration, error) {
 	if err := s.patchConfiguration("Vendor", id, patch, nil, nil); err != nil {
@@ -1529,8 +956,23 @@ func snapshots(set presets.Set) ([]templateSnapshot, error) {
 	return out, nil
 }
 
+func templateHash(t *templateSnapshot) string {
+	if t == nil {
+		return ""
+	}
+	return t.Hash
+}
+func distributionDigestOf(d *trustedDistribution) string {
+	if d == nil {
+		return ""
+	}
+	return d.Digest
+}
+
 // ReconcileTemplates validates all proposed effective entities before any write.
 // Missing templates retain the last accepted snapshot and freeze effective data.
+// A template can affect every entity bound to it, so this is the one
+// configuration write that loads the whole configuration.
 func (s *Store) ReconcileTemplates(set presets.Set) error {
 	if err := set.ValidateTaxonomyReferences(); err != nil {
 		return err
@@ -1539,30 +981,37 @@ func (s *Store) ReconcileTemplates(set presets.Set) error {
 	if err != nil {
 		return err
 	}
-	return s.changeConfiguration(func(st *configurationState) error {
-		if err := st.reconcileTaxonomy(set.Taxonomy); err != nil {
+	return s.writeConfiguration(func(w *configSet) error {
+		if err := w.loadEverything(); err != nil {
 			return err
 		}
-		previousDistributions := map[string]trustedDistribution{}
-		for key, d := range st.Distributions {
-			previousDistributions[key] = d
+		if err := w.reconcileTaxonomy(set.Taxonomy); err != nil {
+			return err
+		}
+		previousDistributions := map[string]string{}
+		for key, d := range w.distributions {
+			previousDistributions[key] = distributionDigestOf(d)
 		}
 		providers := map[string]string{}
 		for _, a := range set.Apps {
 			providers[a.Key()] = a.Spec.Provider
 		}
 		for _, d := range set.Descriptors() {
-			st.Distributions[d.ID] = trustedDistribution{Provider: providers[d.ID], Descriptor: d, Digest: distributionDigest(d)}
+			w.putDistribution(trustedDistribution{Provider: providers[d.ID], Descriptor: d, Digest: distributionDigest(d)})
 		}
-		previous := map[string]templateSnapshot{}
-		for key, t := range st.Templates {
+		previous := map[string]*templateSnapshot{}
+		for key, t := range w.templates {
+			if t == nil {
+				continue
+			}
 			previous[key] = t
-			t.Present = false
-			st.Templates[key] = t
+			missing := *t
+			missing.Present = false
+			w.templates[key] = &missing
 		}
 		for _, t := range incoming {
 			key := templateKey(t.Kind, t.Key)
-			if prev, ok := previous[key]; ok {
+			if prev := previous[key]; prev != nil {
 				if !reflect.DeepEqual(prev.Metadata, t.Metadata) {
 					return invalidf("template identity changed")
 				}
@@ -1570,45 +1019,38 @@ func (s *Store) ReconcileTemplates(set presets.Set) error {
 					return invalidf("template Provider changed")
 				}
 			}
-			st.Templates[key] = t
+			w.putTemplate(t)
 		}
-		for i := range st.Vendors {
-			v := &st.Vendors[i]
-			c := st.Configs[configKey("Vendor", v.UID)]
-			if c.Ref != nil {
-				key := templateKey("Vendor", *c.Ref)
-				if previous[key].Hash != st.Templates[key].Hash {
+		for _, v := range w.sortedVendors() {
+			if v.config.Ref != nil {
+				key := templateKey("Vendor", *v.config.Ref)
+				if templateHash(previous[key]) != templateHash(w.templates[key]) {
 					v.Revision++
+					v.changed = true
 				}
 			}
 		}
-		for i := range st.Applications {
-			a := &st.Applications[i]
-			c := st.Configs[configKey("App", a.UID)]
-			distributionKey := st.distributionKey(*a)
+		for _, a := range w.sortedApps() {
 			changed := false
-			if c.Ref != nil {
-				key := templateKey("App", *c.Ref)
-				changed = previous[key].Hash != st.Templates[key].Hash
+			if a.config.Ref != nil {
+				key := templateKey("App", *a.config.Ref)
+				changed = templateHash(previous[key]) != templateHash(w.templates[key])
 			}
-			if distributionKey != "" && previousDistributions[distributionKey].Digest != st.Distributions[distributionKey].Digest {
+			if key := distributionKey(a); key != "" && previousDistributions[key] != distributionDigestOf(w.distributions[key]) {
 				changed = true
 			}
 			if changed {
 				a.Revision++
+				a.changed = true
 			}
 		}
 		for _, t := range incoming {
 			if t.Kind != "Vendor" {
 				continue
 			}
-			exists := false
-			for _, v := range st.Vendors {
-				if v.ID == t.Key {
-					exists = true
-				}
-			}
-			if exists {
+			if existing, err := w.vendorByID(t.Key); err != nil {
+				return err
+			} else if existing != nil {
 				continue
 			}
 			uid, err := identity.NewUID()
@@ -1616,30 +1058,23 @@ func (s *Store) ReconcileTemplates(set presets.Set) error {
 				return err
 			}
 			ref := t.Key
-			st.Vendors = append(st.Vendors, Vendor{UID: uid, ID: t.Key, Revision: 1})
-			st.Configs[configKey("Vendor", uid)] = ownedConfig{Ref: &ref, Overrides: Object{}}
+			w.addVendor(Vendor{UID: uid, ID: t.Key, Revision: 1}, ownedConfig{Ref: &ref, Overrides: Object{}})
 		}
 		for _, t := range incoming {
 			if t.Kind != "App" {
 				continue
 			}
-			exists := false
-			for _, a := range st.Applications {
-				if a.Key == t.Key {
-					exists = true
-				}
-			}
-			if exists {
+			if existing, err := w.appByKey(t.Key); err != nil {
+				return err
+			} else if existing != nil {
 				continue
 			}
 			vendor, id, _ := strings.Cut(t.Key, "/")
-			var parent Vendor
-			for _, v := range st.Vendors {
-				if v.ID == vendor {
-					parent = v
-				}
+			parent, err := w.vendorByID(vendor)
+			if err != nil {
+				return err
 			}
-			if parent.UID == "" || parent.DeletedAt != nil {
+			if parent == nil || parent.DeletedAt != nil {
 				continue
 			}
 			uid, err := identity.NewUID()
@@ -1647,21 +1082,18 @@ func (s *Store) ReconcileTemplates(set presets.Set) error {
 				return err
 			}
 			ref := t.Key
-			spec := t.Spec
-			st.Applications = append(st.Applications, Application{UID: uid, ID: id, Key: t.Key, VendorID: vendor, VendorUID: parent.UID, Provider: spec["provider"].(string), Revision: 1, SourceEpoch: 1})
-			st.Configs[configKey("App", uid)] = ownedConfig{Ref: &ref, Overrides: Object{}}
+			w.addApp(Application{UID: uid, ID: id, Key: t.Key, VendorID: vendor, VendorUID: parent.UID, Provider: t.Spec["provider"].(string), Revision: 1, SourceEpoch: 1}, ownedConfig{Ref: &ref, Overrides: Object{}})
 		}
 		return nil
-	})
+	}, nil)
 }
 
 func (s *Store) CreateConfiguredVendor(in VendorInput, ref *string) (Vendor, error) {
-	var result Vendor
-	err := s.changeConfiguration(func(st *configurationState) error {
-		for _, v := range st.Vendors {
-			if v.ID == in.ID {
-				return ErrDirectoryExists
-			}
+	err := s.writeConfiguration(func(w *configSet) error {
+		if existing, err := w.vendorByID(in.ID); err != nil {
+			return err
+		} else if existing != nil {
+			return ErrDirectoryExists
 		}
 		if err := validateVendor(in); err != nil {
 			return err
@@ -1670,20 +1102,22 @@ func (s *Store) CreateConfiguredVendor(in VendorInput, ref *string) (Vendor, err
 		if err != nil {
 			return err
 		}
-		result = Vendor{UID: uid, ID: in.ID, Name: in.Name, Description: in.Description, Icon: in.Icon, LocalizedIcons: in.LocalizedIcons, Enabled: in.Enabled, Revision: 1}
-		c := ownedConfig{Overrides: Object{}, Spec: vendorSpec(result)}
+		v := Vendor{UID: uid, ID: in.ID, Name: in.Name, Description: in.Description, Icon: in.Icon, LocalizedIcons: in.LocalizedIcons, Enabled: in.Enabled, Revision: 1}
+		c := ownedConfig{Overrides: Object{}, Spec: vendorSpec(v)}
 		if ref != nil {
-			t, ok := st.Templates[templateKey("Vendor", *ref)]
-			if !ok || !t.Present {
+			t, err := w.template("Vendor", *ref)
+			if err != nil {
+				return err
+			}
+			if t == nil || !t.Present {
 				return invalidf("unknown template")
 			}
 			c.Ref = ref
 			c.Spec = nil
 		}
-		st.Vendors = append(st.Vendors, result)
-		st.Configs[configKey("Vendor", uid)] = c
+		w.addVendor(v, c)
 		return nil
-	})
+	}, nil)
 	if err != nil {
 		return Vendor{}, err
 	}
@@ -1696,22 +1130,20 @@ func (s *Store) CreateConfiguredApplication(vendor string, in ApplicationInput, 
 		return Application{}, ErrInvalidDirectory
 	}
 	in.Categories, in.Tags = categories, tags
-	err := s.changeConfiguration(func(st *configurationState) error {
-		for _, a := range st.Applications {
-			if a.Key == vendor+"/"+in.ID {
-				return ErrDirectoryExists
-			}
+	err := s.writeConfiguration(func(w *configSet) error {
+		if existing, err := w.appByKey(vendor + "/" + in.ID); err != nil {
+			return err
+		} else if existing != nil {
+			return ErrDirectoryExists
 		}
 		if err := validateApplication(&in); err != nil {
 			return err
 		}
-		var parent Vendor
-		for _, v := range st.Vendors {
-			if v.ID == vendor {
-				parent = v
-			}
+		parent, err := w.vendorByID(vendor)
+		if err != nil {
+			return err
 		}
-		if parent.UID == "" {
+		if parent == nil {
 			return ErrVendorNotFound
 		}
 		if parent.DeletedAt != nil {
@@ -1724,17 +1156,19 @@ func (s *Store) CreateConfiguredApplication(vendor string, in ApplicationInput, 
 		a := Application{Categories: in.Categories, Tags: in.Tags, UID: uid, ID: in.ID, Key: vendor + "/" + in.ID, VendorID: vendor, VendorUID: parent.UID, Name: in.Name, Description: in.Description, Icon: in.Icon, Provider: in.Provider, BaseURL: in.BaseURL, BaseURLs: in.BaseURLs, SourceStrategy: in.SourceStrategy, CacheTTLSeconds: in.CacheTTLSeconds, Enabled: in.Enabled, Revision: 1, SourceEpoch: 1}
 		c := ownedConfig{Overrides: Object{}, Spec: appSpec(a, LocalizedText{}, cachepolicy.Empty())}
 		if ref != nil {
-			t, ok := st.Templates[templateKey("App", *ref)]
-			if !ok || !t.Present || t.Spec["provider"] != in.Provider {
+			t, err := w.template("App", *ref)
+			if err != nil {
+				return err
+			}
+			if t == nil || !t.Present || t.Spec["provider"] != in.Provider {
 				return invalidf("unknown or incompatible template")
 			}
 			c.Ref = ref
 			c.Spec = nil
 		}
-		st.Applications = append(st.Applications, a)
-		st.Configs[configKey("App", uid)] = c
+		w.addApp(a, c)
 		return nil
-	})
+	}, nil)
 	if err != nil {
 		return Application{}, err
 	}
@@ -1758,7 +1192,7 @@ func (s *Store) canonicalApplicationProtected(key string) (bool, error) {
 		return true, nil
 	}
 	var count int
-	err := s.DB.QueryRow(`SELECT count(*) FROM template_snapshots WHERE kind='App' AND canonical_key=?`, key).Scan(&count)
+	err := s.read.QueryRow(`SELECT count(*) FROM template_snapshots WHERE kind='App' AND canonical_key=?`, key).Scan(&count)
 	return count != 0, err
 }
 
@@ -1779,98 +1213,61 @@ func distributionDigest(d presets.Descriptor) string {
 // distributionKey names the trusted distribution an application runs with: its
 // template reference, or the provider's built-in template for an independent
 // configuration. Applications of content providers without a template have none.
-func (st *configurationState) distributionKey(a Application) string {
-	if c := st.Configs[configKey("App", a.UID)]; c.Ref != nil {
-		return *c.Ref
+func distributionKey(a *appEntry) string {
+	if a.config.Ref != nil {
+		return *a.config.Ref
 	}
 	key, _ := presets.ReleaseTemplateKey(a.Provider)
 	return key
 }
 
-func (st *configurationState) refreshReviewedContracts() error {
-	st.ReviewedDescriptors = nil
-	st.TemplateBindings = map[string]string{}
-	st.ProviderDefaults = map[string]string{}
-	keys := make([]string, 0, len(st.Distributions))
-	for key := range st.Distributions {
-		keys = append(keys, key)
+// acceptMissingContract gives an independent release instance the canonical
+// compiled contract when no trusted build record exists yet. It never changes
+// an existing snapshot.
+func (w *configSet) acceptMissingContract(a *appEntry) error {
+	if !presets.VersionsProvider(a.Provider) {
+		return nil
 	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		d := st.Distributions[key]
-		template, ok := st.Templates[templateKey("App", key)]
-		if !ok || template.Spec["provider"] != d.Provider {
-			return fmt.Errorf("invalid trusted Provider binding for %s", key)
-		}
-		st.ReviewedDescriptors = append(st.ReviewedDescriptors, d.Descriptor)
-		if builtin, _ := presets.ReleaseTemplateKey(d.Provider); builtin == key {
-			st.ProviderDefaults[d.Provider] = d.Descriptor.Upstream
-		}
-	}
-	for _, a := range st.Applications {
-		c := st.Configs[configKey("App", a.UID)]
-		if c.Ref != nil {
-			st.TemplateBindings[a.UID] = *c.Ref
-		}
-		if presets.VersionsProvider(a.Provider) {
-			d, ok := st.Distributions[st.distributionKey(a)]
-			if ok && d.Provider != a.Provider {
-				return fmt.Errorf("missing trusted distribution for %s", a.Key)
-			}
-		}
-	}
-	return nil
-}
-func (s *Store) SetDistributionValidation(validate func([]presets.Descriptor) error) {
-	s.configMu.Lock()
-	defer s.configMu.Unlock()
-	s.validateDistributions = validate
-}
-func (s *Store) DirectoryConfigurationSnapshot() (DirectorySnapshot, error) {
-	st, err := s.configurationState()
-	return st.DirectorySnapshot, err
-}
-
-// Independent release instances use the canonical compiled contract. This accepts
-// only missing trusted build records, and never changes an existing snapshot.
-func (st *configurationState) acceptMissingCompiledContracts() error {
-	set := presets.Embedded()
-	incoming, err := snapshots(set)
-	if err != nil {
+	key := distributionKey(a)
+	if d, err := w.distribution(key); err != nil || d != nil {
 		return err
 	}
-	byKey := map[string]templateSnapshot{}
-	for _, t := range incoming {
-		byKey[templateKey(t.Kind, t.Key)] = t
-	}
-	for _, a := range st.Applications {
-		if !presets.VersionsProvider(a.Provider) {
+	set := presets.Embedded()
+	for _, d := range set.Descriptors() {
+		if d.ID != key {
 			continue
 		}
-		key := st.distributionKey(a)
-		if _, ok := st.Distributions[key]; ok {
-			continue
+		incoming, err := snapshots(set)
+		if err != nil {
+			return err
 		}
-		found := false
-		for _, d := range set.Descriptors() {
-			if d.ID != key {
+		for _, t := range incoming {
+			if t.Kind != "App" || t.Key != key {
 				continue
 			}
-			t := byKey[templateKey("App", key)]
 			if t.Spec["provider"] != a.Provider {
 				return ErrInvalidDirectory
 			}
-			if _, ok := st.Templates[templateKey("App", key)]; !ok {
-				st.Templates[templateKey("App", key)] = t
+			if existing, err := w.template("App", key); err != nil {
+				return err
+			} else if existing == nil {
+				w.putTemplate(t)
 			}
-			st.Distributions[key] = trustedDistribution{Provider: a.Provider, Descriptor: d, Digest: distributionDigest(d)}
-			found = true
 		}
-		if !found {
-			return fmt.Errorf("missing trusted distribution for %s", a.Key)
-		}
+		w.putDistribution(trustedDistribution{Provider: a.Provider, Descriptor: d, Digest: distributionDigest(d)})
+		return nil
 	}
-	return nil
+	return fmt.Errorf("missing trusted distribution for %s", a.Key)
+}
+
+func (s *Store) DirectoryConfigurationSnapshot() (DirectorySnapshot, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	view, err := s.reloadView()
+	if err != nil {
+		return DirectorySnapshot{}, err
+	}
+	return view.snapshot(), nil
 }
 
 func normalizedProxy(c networkproxy.Config) networkproxy.Config {
@@ -1893,75 +1290,32 @@ func parseGlobalProxy(raw []byte) (networkproxy.Config, error) {
 	}
 	return c, nil
 }
-func (st *configurationState) refreshProxyScopes() error {
-	st.ProxyScopes = map[string]networkproxy.Scope{}
-	if err := st.GlobalProxy.Validate(false); err != nil {
-		return ErrInvalidDirectory
-	}
-	vendors := map[string]Vendor{}
-	for _, v := range st.Vendors {
-		vendors[v.UID] = v
-		spec, err := st.effective("Vendor", v.UID)
-		if err != nil {
-			return err
-		}
-		if _, err = decodeProxy(spec["proxy"]); err != nil {
-			return ErrInvalidDirectory
-		}
-	}
-	for _, a := range st.Applications {
-		v, ok := vendors[a.VendorUID]
-		if !ok {
-			return ErrInvalidDirectory
-		}
-		as, err := st.effective("App", a.UID)
-		if err != nil {
-			return err
-		}
-		vs, err := st.effective("Vendor", v.UID)
-		if err != nil {
-			return err
-		}
-		ap, err := decodeProxy(as["proxy"])
-		if err != nil {
-			return ErrInvalidDirectory
-		}
-		vp, err := decodeProxy(vs["proxy"])
-		if err != nil {
-			return ErrInvalidDirectory
-		}
-		st.ProxyScopes[a.UID] = networkproxy.Scope{VendorUID: v.UID, Proxy: networkproxy.Resolve(ap, a.Key, vp, v.ID, st.GlobalProxy), Allowed: a.DeletedAt == nil && v.DeletedAt == nil}
-	}
-	return nil
-}
+
+// PatchGlobalProxy changes the global proxy under CAS on its own revision. It
+// rewrites no vendor or application; their effective proxies and runtime
+// transports follow from the published view.
 func (s *Store) PatchGlobalProxy(expected int64, c networkproxy.Config) (int64, error) {
 	if err := c.Validate(false); err != nil {
 		return 0, ErrInvalidDirectory
 	}
-	err := s.changeConfiguration(func(st *configurationState) error {
-		if st.GlobalProxyRevision != expected {
+	err := s.writeConfiguration(func(w *configSet) error {
+		g, err := w.globalProxy()
+		if err != nil {
+			return err
+		}
+		if g.revision != expected {
 			return ErrConflict
 		}
-		kept, err := networkproxy.KeepRedactedPassword(c, st.GlobalProxy)
+		kept, err := networkproxy.KeepRedactedPassword(c, g.config)
 		if err != nil {
 			return invalidf("%w", err)
 		}
-		st.GlobalProxy = kept
-		st.GlobalProxyRevision++
+		g.config = kept
+		g.revision++
 		return nil
-	})
+	}, nil)
 	if err != nil {
 		return 0, err
 	}
 	return expected + 1, nil
-}
-
-// SetInitialConfigurationPrepare installs a startup coordinator without replacing
-// the running server's composite publication callback.
-func (s *Store) SetInitialConfigurationPrepare(prepare func(DirectorySnapshot) (ConfigurationPublication, error)) {
-	s.configMu.Lock()
-	defer s.configMu.Unlock()
-	if s.prepareConfiguration == nil {
-		s.prepareConfiguration = prepare
-	}
 }

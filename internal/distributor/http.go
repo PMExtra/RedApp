@@ -25,10 +25,10 @@ import (
 // ErrConnection classifies transport/network failures without exposing the URL
 // or proxy credentials. Invalid redirects, encoding and certificates are not
 // retryable connection failures.
-var ErrConnection = errors.New("Upstream connection failed")
+var ErrConnection = errors.New("upstream connection failed")
 
 // ErrUnsafeEncoding rejects a response whose representation is not identity.
-var ErrUnsafeEncoding = errors.New("Unsafe upstream Content-Encoding")
+var ErrUnsafeEncoding = errors.New("unsafe upstream Content-Encoding")
 
 // ErrorKind classifies an upstream failure for diagnostics only.
 type ErrorKind uint8
@@ -59,6 +59,9 @@ func (e *RequestError) Error() string {
 }
 func (e *RequestError) Is(target error) bool { return target == ErrConnection && e.retryable }
 func (e *RequestError) Unwrap() error        { return e.cause }
+
+// Transient reports a failure another attempt may resolve (see ErrConnection).
+func (e *RequestError) Transient() bool { return e.retryable }
 
 // Classify reports the failure class of a request error or of a raw
 // transport/body read error.
@@ -108,22 +111,22 @@ type Client struct {
 // sources support HTTP, private DNS and explicit ports; TLS verification is unchanged.
 func NormalizeBase(base string, mode ClientMode) (string, error) {
 	if mode > GeneralHTTP {
-		return "", errors.New("Invalid upstream client mode")
+		return "", errors.New("invalid upstream client mode")
 	}
 	u, err := url.Parse(base)
 	if err != nil || u == nil || u.Opaque != "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawFragment != "" || u.Hostname() == "" || strings.ContainsAny(base, "\r\n\t#") {
 		return "", errors.New("BASE_URL must be an HTTP(S) base URL without query, fragment, or credentials")
 	}
 	if u.Scheme != "https" && (u.Scheme != "http" || mode == PublicRelease) {
-		return "", errors.New("Invalid upstream URL scheme")
+		return "", errors.New("invalid upstream URL scheme")
 	}
 	if port := u.Port(); port != "" {
 		n, err := strconv.Atoi(port)
 		if err != nil || n < 1 || n > 65535 || mode == PublicRelease {
-			return "", errors.New("Invalid upstream URL port")
+			return "", errors.New("invalid upstream URL port")
 		}
 	} else if strings.HasSuffix(u.Host, ":") {
-		return "", errors.New("Invalid upstream URL port")
+		return "", errors.New("invalid upstream URL port")
 	}
 	if err := validatePath(u); err != nil {
 		return "", err
@@ -142,7 +145,7 @@ func (p *Pool) NewClient(base string, mode ClientMode) (*Client, error) {
 }
 func (p *Pool) NewScopedClient(base string, mode ClientMode, appUID, vendorUID string) (*Client, error) {
 	if !identity.ValidUID(appUID) || !identity.ValidUID(vendorUID) {
-		return nil, errors.New("Application transport scope required")
+		return nil, errors.New("application transport scope required")
 	}
 	return p.newClient(base, mode, appUID, vendorUID)
 }
@@ -152,7 +155,7 @@ func (p *Pool) newClient(base string, mode ClientMode, appUID, vendorUID string)
 		return nil, err
 	}
 	if p == nil || p.transports.Load() == nil {
-		return nil, errors.New("Upstream transport is unavailable")
+		return nil, errors.New("upstream transport is unavailable")
 	}
 	u, _ := url.Parse(base)
 	c := &Client{Base: u, mode: mode, pool: p}
@@ -165,17 +168,17 @@ func (p *Pool) newClient(base string, mode ClientMode, appUID, vendorUID string)
 
 func validatePath(u *url.URL) error {
 	if !utf8.ValidString(u.Path) || strings.ContainsAny(u.Path, "\\%") || strings.Contains(u.Path, "//") {
-		return errors.New("Invalid upstream path")
+		return errors.New("invalid upstream path")
 	}
 	for _, ch := range u.Path {
 		if unicode.IsControl(ch) {
-			return errors.New("Invalid upstream path")
+			return errors.New("invalid upstream path")
 		}
 	}
 	for _, segment := range strings.Split(u.EscapedPath(), "/") {
 		decoded, err := url.PathUnescape(segment)
 		if err != nil || strings.ContainsAny(decoded, "/\\") || decoded == "." || decoded == ".." {
-			return errors.New("Upstream path traversal is not allowed")
+			return errors.New("upstream path traversal is not allowed")
 		}
 	}
 	return nil
@@ -196,13 +199,13 @@ func sameOrigin(a, b *url.URL) bool {
 
 func (c *Client) Validate(u *url.URL) error {
 	if c.Base == nil || u == nil || u.Opaque != "" || !sameOrigin(u, c.Base) || u.User != nil || u.Fragment != "" || u.RawQuery != "" || u.ForceQuery {
-		return errors.New("Only the fixed upstream without query parameters is allowed")
+		return errors.New("only the fixed upstream without query parameters is allowed")
 	}
 	if err := validatePath(u); err != nil {
 		return err
 	}
 	if !strings.HasPrefix(u.Path, c.Base.Path+"/") {
-		return errors.New("Invalid upstream path")
+		return errors.New("invalid upstream path")
 	}
 	return nil
 }
@@ -211,7 +214,7 @@ func (c *Client) Validate(u *url.URL) error {
 // segment once. It never resolves dot segments or accepts an absolute URL.
 func (c *Client) RelativeURL(path string) (string, error) {
 	if c.Base == nil || path == "" || strings.HasPrefix(path, "/") || strings.ContainsAny(path, "?#") {
-		return "", errors.New("Invalid relative upstream path")
+		return "", errors.New("invalid relative upstream path")
 	}
 	u := *c.Base
 	u.Path += "/" + path
@@ -224,7 +227,7 @@ func (c *Client) RelativeURL(path string) (string, error) {
 
 func (c *Client) checkRedirect(r *http.Request, via []*http.Request) error {
 	if len(via) > 4 {
-		return errors.New("Too many redirects")
+		return errors.New("too many redirects")
 	}
 	if len(via) == 0 {
 		return c.Validate(r.URL)
@@ -245,7 +248,7 @@ func (c *Client) checkRedirect(r *http.Request, via []*http.Request) error {
 		}
 	}
 	if previous.Scheme == "https" && r.URL.Scheme != "https" {
-		return errors.New("Upstream HTTPS downgrade is not allowed")
+		return errors.New("upstream HTTPS downgrade is not allowed")
 	}
 	if c.mode != GeneralHTTP || sameOrigin(r.URL, c.Base) {
 		return c.Validate(r.URL)
@@ -256,7 +259,7 @@ func (c *Client) checkRedirect(r *http.Request, via []*http.Request) error {
 	// addresses the new host may resolve to is decided when the hop is dialed
 	// (transportSet.forRequest), because only then are the addresses known.
 	if r.URL.Scheme != "https" {
-		return errors.New("Cross-origin upstream redirects require HTTPS")
+		return errors.New("cross-origin upstream redirects require HTTPS")
 	}
 	if _, err := NormalizeBase(r.URL.String(), GeneralHTTP); err != nil {
 		return err
@@ -325,7 +328,7 @@ func (c *Client) Send(ctx context.Context, req Request) (*http.Response, error) 
 		}
 	}
 	if c.HTTP == nil {
-		return nil, errors.New("Upstream HTTP client is unavailable")
+		return nil, errors.New("upstream HTTP client is unavailable")
 	}
 	// Retain injected transports/timeouts while enforcing the same redirect
 	// boundary for production clients and fixture clients alike.

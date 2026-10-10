@@ -2,13 +2,16 @@ package httpserver
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/PMExtra/RedApp/internal/apps/codex"
 )
@@ -145,4 +148,47 @@ func TestReleaseListsRequireReleaseProvider(t *testing.T) {
 	}
 	h.expectError("GET", "/admin/api/apps/content/missing/versions", nil, 404, codeApplicationNotFound, nil)
 	h.expectError("GET", "/admin/api/apps/content/Not_Valid/resources", nil, 400, codeInvalidPath, nil)
+}
+
+// A generation's internal failure text is listed as a sentence.
+func TestResourceListShowsFailureAsSentence(t *testing.T) {
+	h := newHarness(t)
+	h.login(h.password)
+	release := anyCodexRelease()
+	h.upstreamProxy(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/asset.tgz") {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		release.ServeHTTP(w, r)
+	}))
+	key := h.releaseApp("fixture", "codex", "codex")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r, _ := http.NewRequestWithContext(ctx, "GET", h.http.URL+"/"+key+"/releases/1.0.0/asset.tgz", nil)
+		if response, err := h.client.Do(r); err == nil {
+			io.Copy(io.Discard, response.Body)
+			response.Body.Close()
+		}
+	}()
+	defer func() { cancel(); <-done }()
+	// The first 503 is retried after a backoff, during which the generation
+	// waits with the failure recorded.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		data, _ := h.request("GET", "/admin/api/apps/"+key+"/resources", nil, 200, nil)
+		page := decodeJSONBody[cursorPage[resourceDTO]](t, data)
+		if len(page.Items) == 1 && page.Items[0].State == "retry_wait" {
+			if item := page.Items[0]; item.Error == nil || *item.Error != "Upstream HTTP 503" {
+				t.Fatal("resource error", string(data))
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("download did not wait for a retry", string(data))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }

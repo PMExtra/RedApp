@@ -39,7 +39,7 @@ func newCacheFixture(t *testing.T) *cacheFixture {
 // time-based cleanup selects it without sleeping.
 func ageCache(t *testing.T, h *harness, storageID string, age time.Duration) {
 	t.Helper()
-	if _, err := h.store.DB.Exec(`UPDATE http_cache_generations SET fetched_at_s=? WHERE storage_id=?`, time.Now().Add(-age).Unix(), storageID); err != nil {
+	if _, err := h.sql().Exec(`UPDATE http_cache_generations SET fetched_at_s=? WHERE storage_id=?`, time.Now().Add(-age).Unix(), storageID); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -195,7 +195,7 @@ func TestCachePreviewErrors(t *testing.T) {
 	}
 	h.expectError("GET", api+"/cache/refresh/"+twoFiles.ID+"/items?limit=101", nil, 400, codeInvalidQuery, nil)
 	// Expired previews are gone.
-	if _, err := h.store.DB.Exec(`UPDATE http_cleanup_previews SET expires_at_s=? WHERE id=?`, time.Now().Add(-time.Second).Unix(), cleanup.ID); err != nil {
+	if _, err := h.sql().Exec(`UPDATE http_cleanup_previews SET expires_at_s=? WHERE id=?`, time.Now().Add(-time.Second).Unix(), cleanup.ID); err != nil {
 		t.Fatal(err)
 	}
 	h.expectError("GET", api+"/cache/cleanup/"+cleanup.ID, nil, 404, codePreviewNotFound, nil)
@@ -386,7 +386,7 @@ func TestCacheRefreshSingleOutcomesAndPreviewFences(t *testing.T) {
 	h, app, api := policyHTTPApp(t, upstream.URL)
 	h.request("GET", "/"+app.Key+"/file.bin", nil, 200, nil)
 	accessBefore := time.Now().Add(-48*time.Hour).Unix() / 60 * 60
-	if _, err := h.store.DB.Exec(`UPDATE http_cache_generations SET last_access_bucket_s=? WHERE storage_id=?`, accessBefore, app.StorageID()); err != nil {
+	if _, err := h.sql().Exec(`UPDATE http_cache_generations SET last_access_bucket_s=? WHERE storage_id=?`, accessBefore, app.StorageID()); err != nil {
 		t.Fatal(err)
 	}
 	input := map[string]any{"path": "/file.bin"}
@@ -410,7 +410,7 @@ func TestCacheRefreshSingleOutcomesAndPreviewFences(t *testing.T) {
 		t.Fatal("conditional refresh lost its unchanged outcome", unchanged)
 	}
 	var accessAfter int64
-	if err := h.store.DB.QueryRow(`SELECT last_access_bucket_s FROM http_cache_generations WHERE storage_id=? AND is_current=1`, app.StorageID()).Scan(&accessAfter); err != nil || accessAfter > accessBefore {
+	if err := h.sql().QueryRow(`SELECT last_access_bucket_s FROM http_cache_generations WHERE storage_id=? AND is_current=1`, app.StorageID()).Scan(&accessAfter); err != nil || accessAfter > accessBefore {
 		t.Fatalf("admin refresh fabricated client access: %d %v", accessAfter, err)
 	}
 	fail.Store(true)

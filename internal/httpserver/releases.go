@@ -1,7 +1,6 @@
 package httpserver
 
 import (
-	"database/sql"
 	"errors"
 	"net/http"
 	"slices"
@@ -23,7 +22,7 @@ func (s *Server) maintainedApp(w http.ResponseWriter, r *http.Request, supported
 		return application.Entry{}, false
 	}
 	e, ok := s.registry.LookupAny(key)
-	if !ok || e.UID == "" {
+	if !ok {
 		s.fail(w, r, codeApplicationNotFound, nil, "Application not found")
 		return application.Entry{}, false
 	}
@@ -208,7 +207,7 @@ func (s *Server) listResources(w http.ResponseWriter, r *http.Request) {
 			item.FinishedAt = &finished
 		}
 		if v.Error != "" {
-			message := v.Error
+			message := displayText(v.Error)
 			item.Error = &message
 		}
 		page.Items = append(page.Items, item)
@@ -331,7 +330,7 @@ func (s *Server) executeVersionCleanup(w http.ResponseWriter, r *http.Request) {
 	}
 	preview, err := s.store.ApplicationCleanupPreview(e.UID, id)
 	if err == nil && preview.Retention != nil {
-		err = sql.ErrNoRows
+		err = store.ErrNotFound
 	}
 	if err == nil {
 		err = s.downloads.Cleanup(preview.AppID, id)

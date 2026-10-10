@@ -135,8 +135,12 @@ func TestEventsPaginateNewestFirstWithPublicKeys(t *testing.T) {
 		t.Fatal("events skipped or repeated", events)
 	}
 	for i, event := range events {
-		if i > 0 && event.ID >= events[i-1].ID || event.Message != fmt.Sprint("event ", 4-i) {
+		if i > 0 && event.ID >= events[i-1].ID {
 			t.Fatal("events are not newest first", events)
+		}
+		// Recorded messages are internal lower-case texts shown as sentences.
+		if event.Message != fmt.Sprint("Event ", 4-i) {
+			t.Fatal("event message", event.Message)
 		}
 		owned := (4-i)%2 == 0
 		if owned && (event.AppKey == nil || *event.AppKey != files.Key || *event.StatusCode != 503 || *event.Version != "1.0.0" || *event.ResourceKey != "artifact" || event.GenerationID != nil) {
@@ -207,10 +211,10 @@ func TestAppMetricsFollowTheApplicationAcrossSourceEpochs(t *testing.T) {
 	cancel()
 	h.server.SampleHistory(ctx, func(e error) { t.Fatal(e) })
 	var value int64
-	if err := h.store.DB.QueryRow("SELECT CAST(value AS INTEGER) FROM metric_samples WHERE scope='app' AND app_id=? AND metric='counters.artifact_requests'", current.MetricsID()).Scan(&value); err != nil || value != 2 {
+	if err := h.sql().QueryRow("SELECT CAST(value AS INTEGER) FROM metric_samples WHERE scope='app' AND app_id=? AND metric='counters.artifact_requests'", current.MetricsID()).Scan(&value); err != nil || value != 2 {
 		t.Fatal("history sampler did not use the stable identity", value, err)
 	}
-	if err := h.store.DB.QueryRow("SELECT count(*) FROM metric_samples WHERE scope='app' AND (app_id=? OR (app_id=? AND metric='versions.total'))", key, files.MetricsID()).Scan(&value); err != nil || value != 0 {
+	if err := h.sql().QueryRow("SELECT count(*) FROM metric_samples WHERE scope='app' AND (app_id=? OR (app_id=? AND metric='versions.total'))", key, files.MetricsID()).Scan(&value); err != nil || value != 0 {
 		t.Fatal("history sampled a public key or an inapplicable metric", value, err)
 	}
 }

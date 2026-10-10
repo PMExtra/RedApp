@@ -27,7 +27,7 @@ func notesEntity(q directoryQuerier, kind, key string) (table, uid string, delet
 	}
 }
 func (s *Store) AdminNotes(kind, key string) (AdminNotes, error) {
-	tx, err := s.DB.Begin()
+	tx, err := s.read.Begin()
 	if err != nil {
 		return AdminNotes{}, err
 	}
@@ -50,10 +50,7 @@ func (s *Store) SaveAdminNotes(kind, key string, expected int64, text string) (A
 	if !validNotes(text) {
 		return AdminNotes{}, invalidf("notes must be at most 12000 characters without control characters other than newline, CR and tab")
 	}
-	// Notes are part of the configuration CAS state; serialize with its writers.
-	s.configMu.Lock()
-	defer s.configMu.Unlock()
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return AdminNotes{}, err
 	}
@@ -74,7 +71,9 @@ func (s *Store) SaveAdminNotes(kind, key string, expected int64, text string) (A
 		return AdminNotes{}, ErrConflict
 	}
 	saved := AdminNotes{Text: text, Revision: expected + 1}
-	if _, err = tx.Exec(`INSERT INTO `+table+`(entity_uid,revision,text) VALUES(?,?,?) ON CONFLICT(entity_uid) DO UPDATE SET text=excluded.text,revision=excluded.revision`, uid, saved.Revision, text); err != nil {
+	// Notes are not published, so they need no configuration lock: the
+	// conditional write alone rejects a concurrent save.
+	if err = writeNote(tx, table, uid, current.Revision, saved); err != nil {
 		return AdminNotes{}, err
 	}
 	if err = tx.Commit(); err != nil {

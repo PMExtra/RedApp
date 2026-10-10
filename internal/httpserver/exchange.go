@@ -3,7 +3,6 @@ package httpserver
 import (
 	"bytes"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -50,7 +49,7 @@ func importFailure(err error) *apiError {
 	switch {
 	case errors.Is(err, store.ErrDirectoryExists), errors.Is(err, store.ErrDirectoryDeleted):
 		return directoryFailure(err, codeApplicationNotFound)
-	case errors.Is(err, store.ErrInvalidDirectory), errors.Is(err, networkproxy.ErrRedactedMismatch), errors.Is(err, sql.ErrNoRows):
+	case errors.Is(err, store.ErrInvalidDirectory), errors.Is(err, networkproxy.ErrRedactedMismatch), errors.Is(err, store.ErrNotFound):
 		return newError(codeValidationFailed, err, "Invalid configuration, unavailable template or unresolved import choice; use an independent copy when the template is unavailable")
 	}
 	return storageError(err)
@@ -314,7 +313,6 @@ func (s *Server) executeImport(w http.ResponseWriter, r *http.Request) {
 			needed[path] = body
 		}
 	}
-	s.directoryMu.Lock()
 	err = s.icons.ApplyImages(needed, s.store.IconReferenced, func() error {
 		var e error
 		result, e = s.store.ExecuteConfigurationImport(preview.plan, id, *in.TrustInstructions, func() bool {
@@ -323,7 +321,6 @@ func (s *Server) executeImport(w http.ResponseWriter, r *http.Request) {
 		})
 		return e
 	})
-	s.directoryMu.Unlock()
 	switch {
 	case errors.Is(err, store.ErrImportGuard):
 		s.fail(w, r, codePreviewNotFound, err, "The session changed during the import; nothing was imported")
@@ -387,8 +384,6 @@ func (s *Server) copyApp(w http.ResponseWriter, r *http.Request) {
 	if input.IncludeNotes {
 		input.NotesRevision = *in.NotesRevision
 	}
-	s.directoryMu.Lock()
-	defer s.directoryMu.Unlock()
 	a, err := s.store.CopyApplication(key, input)
 	if err != nil {
 		s.writeError(w, r, directoryFailure(err, codeApplicationNotFound))

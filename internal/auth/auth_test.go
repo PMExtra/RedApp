@@ -16,7 +16,7 @@ func newAuth(t *testing.T) (*Auth, string) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	t.Cleanup(func() { db.DB.Close() })
+	t.Cleanup(func() { db.Close() })
 	var password string
 	a, e := New(db, func(p string) { password = p })
 	if e != nil {

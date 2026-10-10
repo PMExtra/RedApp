@@ -2,7 +2,6 @@ package httpserver
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -150,12 +149,15 @@ func TestForceDeleteTimeoutBlocksAdmissionAndRestartsFromIntent(t *testing.T) {
 	expectCode(t, h.deleteApp(a.Key, a.UID, a.Revision, 409), codeApplicationDeletePending)
 	// A failed final transaction must retain the intent and files, with the same retry response.
 	release()
-	if _, err = h.server.store.DB.Exec(`CREATE TEMP TRIGGER fail_final_delete BEFORE DELETE ON applications BEGIN SELECT RAISE(ABORT,'isolated final-delete failure'); END`); err != nil {
+	if _, err = h.sql().Exec(`CREATE TRIGGER fail_final_delete BEFORE DELETE ON applications BEGIN SELECT RAISE(ABORT,'isolated final-delete failure'); END`); err != nil {
 		t.Fatal(err)
 	}
 	expectCode(t, h.deleteApp(a.Key, a.UID, a.Revision, 409), codeApplicationDeletePending)
 	if _, err = os.Stat(filepath.Join(dir, "objects", "hosted", file.ID)); err != nil {
 		t.Fatal("failed transaction deleted the body", err)
+	}
+	if _, err = h.sql().Exec(`DROP TRIGGER fail_final_delete`); err != nil {
+		t.Fatal(err)
 	}
 	// Startup recovery handles only explicit permanent-deletion intents.
 	soft := h.createApp("force", "soft", "info", nil)
@@ -168,14 +170,14 @@ func TestForceDeleteTimeoutBlocksAdmissionAndRestartsFromIntent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.DB.Close()
+	defer db.Close()
 	if _, _, err = db.ApplicationWork(context.Background(), a.UID); !errors.Is(err, store.ErrSourceInactive) {
 		t.Fatal("restart admitted pending UID", err)
 	}
 	if err = db.RecoverApplicationDeletions(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.Application(a.Key); !errors.Is(err, sql.ErrNoRows) {
+	if _, err = db.Application(a.Key); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("intent not recovered", err)
 	}
 	if _, err = db.Application(soft.Key); err != nil {
@@ -216,7 +218,7 @@ func TestForceDeleteStopsHostedImportBeforePublishing(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("import did not exit")
 	}
-	if _, err := h.server.store.HostedFile(a.UID, "file"); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := h.server.store.HostedFile(a.UID, "file"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal(err)
 	}
 	files, err := os.ReadDir(filepath.Join(h.server.dataDir, "objects", "hosted"))

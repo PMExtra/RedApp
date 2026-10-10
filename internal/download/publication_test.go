@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/distributor"
+	"github.com/PMExtra/RedApp/internal/store/storetest"
 	"github.com/PMExtra/RedApp/internal/testutil"
 )
 
@@ -24,21 +25,27 @@ func publicationDone(t *testing.T, done <-chan error) {
 func TestPublicationTransactionInterleavesAcquireWithoutDeadlock(t *testing.T) {
 	client, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("fixture")) }))
 	hook := &faultHook{}
-	m, db, _ := setup(t, client, withTrace(hook.trace))
+	m, _, dir := setup(t, client, withTrace(hook.trace))
 	r := authorizedResource(t, m, client, []byte("fixture"))
 	plan, err := m.PrepareUpstreams(map[string]*distributor.Client{testApp: client})
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx, err := db.DB.Begin()
+	// A connection holding the database write lock stands in for a
+	// configuration transaction that has not committed yet.
+	writer, err := storetest.Open(t, dir).Conn(context.Background())
+	if err == nil {
+		_, err = writer.ExecContext(context.Background(), "BEGIN IMMEDIATE")
+	}
 	if err != nil {
 		plan.Abort()
 		t.Fatal(err)
 	}
+	defer writer.Close()
 	entered := make(chan struct{})
 	continueAcquire := make(chan struct{})
 	hook.set(func(point string, _ *Generation) {
-		if point == "acquire_before_db_validation" {
+		if point == "acquire_holding_lock" {
 			close(entered)
 			<-continueAcquire
 		}
@@ -51,11 +58,11 @@ func TestPublicationTransactionInterleavesAcquireWithoutDeadlock(t *testing.T) {
 		}
 		acquired <- err
 	}()
-	<-entered // Acquire owns mu; the configuration transaction owns the only DB connection.
+	<-entered // Acquire owns mu; the other transaction owns the write lock.
 	close(continueAcquire)
-	// Commit releases the connection before publication needs mu. There is no
+	// Commit releases the write lock before publication needs mu. There is no
 	// transaction -> mu edge, even if Acquire is waiting on SQLite right now.
-	if err = tx.Commit(); err != nil {
+	if _, err = writer.ExecContext(context.Background(), "COMMIT"); err != nil {
 		plan.Abort()
 		t.Fatal(err)
 	}

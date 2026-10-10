@@ -18,19 +18,19 @@ func queueDelete(tx *sql.Tx, path string) error {
 }
 
 // PermanentlyDeleteApplication soft-deletes (if needed) and purges the
-// application's rows in one transaction, serialized with other configuration writers.
+// application's rows in one transaction.
 func (s *Store) PermanentlyDeleteApplication(key string, revision int64) error {
 	if protected, err := s.canonicalApplicationProtected(key); err != nil {
 		return err
 	} else if protected {
 		return ErrBuiltinTemplate
 	}
-	s.configMu.Lock()
-	defer s.configMu.Unlock()
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	return s.permanentlyDeleteApplicationLocked(key, revision, true)
 }
 
-// permanentlyDeleteApplicationLocked requires configMu. Purging an application
+// permanentlyDeleteApplicationLocked requires writeMu. Purging an application
 // that is already soft-deleted changes no published configuration, so it never
 // prepares a publication; that path may therefore run under Downloads.mu.
 // Without allowPublish a live application is a conflict rather than a publication.
@@ -48,11 +48,15 @@ func (s *Store) permanentlyDeleteApplicationLocked(key string, revision int64, a
 		if !allowPublish {
 			return ErrConflict
 		}
-		return s.changeConfigurationLocked(func(st *configurationState) error {
-			return st.softDeleteApplication(key, revision)
+		return s.writeConfigurationLocked(func(w *configSet) error {
+			a, err := w.softDeleteApplication(key, revision)
+			if err == nil {
+				w.removedApps = append(w.removedApps, a.UID)
+			}
+			return err
 		}, func(tx *sql.Tx) error { return purgeApplication(tx, key, revision+1) })
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -60,7 +64,11 @@ func (s *Store) permanentlyDeleteApplicationLocked(key string, revision int64, a
 	if err = purgeApplication(tx, key, revision); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	s.dropFromView([]string{current.UID}, nil)
+	return nil
 }
 func purgeApplication(tx *sql.Tx, key string, revision int64) error {
 	a, err := readApplication(tx, key)
@@ -167,13 +175,13 @@ func purgeApplication(tx *sql.Tx, key string, revision int64) error {
 }
 
 // PermanentlyDeleteVendor soft-deletes (if needed) and removes the vendor in one
-// transaction, serialized with other configuration writers.
+// transaction.
 func (s *Store) PermanentlyDeleteVendor(id string, revision int64) error {
 	if _, ok := BuiltinVendorTemplate(id); ok {
 		return ErrBuiltinTemplate
 	}
-	s.configMu.Lock()
-	defer s.configMu.Unlock()
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	current, e := s.Vendor(id)
 	if e != nil {
 		return e
@@ -182,11 +190,15 @@ func (s *Store) PermanentlyDeleteVendor(id string, revision int64) error {
 		return ErrConflict
 	}
 	if current.DeletedAt == nil {
-		return s.changeConfigurationLocked(func(st *configurationState) error {
-			return st.softDeleteVendor(id, revision)
+		return s.writeConfigurationLocked(func(w *configSet) error {
+			v, err := w.softDeleteVendor(id, revision)
+			if err == nil {
+				w.removedVendors = append(w.removedVendors, v.UID)
+			}
+			return err
 		}, func(tx *sql.Tx) error { return purgeVendor(tx, id, revision+1) })
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -194,7 +206,11 @@ func (s *Store) PermanentlyDeleteVendor(id string, revision int64) error {
 	if err = purgeVendor(tx, id, revision); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	s.dropFromView(nil, []string{current.UID})
+	return nil
 }
 func purgeVendor(tx *sql.Tx, id string, revision int64) error {
 	v, err := readVendor(tx, id)
@@ -218,7 +234,7 @@ func purgeVendor(tx *sql.Tx, id string, revision int64) error {
 var deleteObjectPath = regexp.MustCompile(`^objects/(parts/[0-9a-f]{32}\.part|http/[0-9a-f]{32}\.body|hosted/[0-9a-f]{32}|blobs/[0-9a-f]{64})$`)
 
 func (s *Store) ProcessPendingDeletes(dir string) error {
-	rows, err := s.DB.Query(`SELECT path FROM pending_object_deletes`)
+	rows, err := s.read.Query(`SELECT path FROM pending_object_deletes`)
 	if err != nil {
 		return err
 	}
@@ -248,7 +264,7 @@ func (s *Store) ProcessPendingDeletes(dir string) error {
 	defer root.Close()
 	for _, path := range paths {
 		if !deleteObjectPath.MatchString(path) {
-			return errors.New("Invalid pending object deletion")
+			return errors.New("invalid pending object deletion")
 		}
 		if strings.HasPrefix(path, "objects/blobs/") {
 			err = root.RemoveAll(path)
@@ -266,20 +282,21 @@ func (s *Store) ProcessPendingDeletes(dir string) error {
 		if e != nil && !errors.Is(e, os.ErrNotExist) {
 			return e
 		}
-		if _, err = s.DB.Exec(`DELETE FROM pending_object_deletes WHERE path=?`, path); err != nil {
+		if _, err = s.db.Exec(`DELETE FROM pending_object_deletes WHERE path=?`, path); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// Late background observations must not recreate the private history of a deleted
-// UID. Legacy static fixtures do not use this private namespace.
-func PrivateApplicationExists(q directoryQuerier, app string) (bool, error) {
-	if !strings.HasPrefix(app, "app/") {
-		return true, nil
+// applicationNamespaceExists reports whether the application owning a metrics
+// or storage namespace (app/<uid> or app/<uid>-e<epoch>) still exists, so late
+// background observations cannot recreate the history of a deleted UID.
+func applicationNamespaceExists(q directoryQuerier, app string) (bool, error) {
+	uid, ok := strings.CutPrefix(app, "app/")
+	if !ok {
+		return false, ErrInvalidDirectory
 	}
-	uid := strings.TrimPrefix(app, "app/")
 	if i := strings.Index(uid, "-e"); i >= 0 {
 		uid = uid[:i]
 	}

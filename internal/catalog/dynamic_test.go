@@ -2,7 +2,6 @@ package catalog_test
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"net/http"
 	"strings"
@@ -22,16 +21,12 @@ import (
 
 func dynamicEntry(t *testing.T, db *store.Store, client *distributor.Client) (application.Entry, store.Application) {
 	t.Helper()
-	name := store.LocalizedText{En: "Vendor", ZhCN: "厂商"}
-	vendor, err := db.CreateVendor(store.VendorInput{ID: "example", Name: name, Enabled: true})
+	entry := directoryEntry(t, db, "example/tool", application.Codex, application.Entry{Descriptor: descriptor("example/tool", "latest"), Protocol: codex.NewProtocol(client), Upstream: client})
+	app, err := db.Application(entry.Descriptor.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := db.CreateApplication(vendor.ID, store.ApplicationInput{ID: "tool", Name: name, Provider: "codex", BaseURL: client.Base.String(), CacheTTLSeconds: 60, Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return application.Entry{Descriptor: descriptor(app.Key, "latest"), Protocol: codex.NewProtocol(client), Upstream: client, UID: app.UID, Provider: app.Provider, Revision: app.Revision, VendorRevision: vendor.Revision, RuntimeRevision: app.RuntimeRevision, VendorRuntimeRevision: vendor.RuntimeRevision, SourceEpoch: app.SourceEpoch, Enabled: true}, app
+	return entry, app
 }
 
 // Even when disable/enable returns to the same source epoch, the delayed flight
@@ -73,10 +68,10 @@ func TestDynamicMetadataFlightFencesVendorDisableEnable(t *testing.T) {
 	if err = <-result; !errors.Is(err, store.ErrSourceInactive) {
 		t.Fatalf("old metadata admission published: %v", err)
 	}
-	if _, err = db.Release(app.StorageID(), "1.2.3"); !errors.Is(err, sql.ErrNoRows) {
+	if _, err = db.Release(app.StorageID(), "1.2.3"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("old release persisted: %v", err)
 	}
-	if _, err = db.Channel(app.StorageID(), "latest"); !errors.Is(err, sql.ErrNoRows) {
+	if _, err = db.Channel(app.StorageID(), "latest"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("old channel persisted: %v", err)
 	}
 }

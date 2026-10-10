@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/fsutil"
-	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -30,7 +29,7 @@ func (m *Manager) preview(app string, ids map[string]bool, unknown []string, gua
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.upstreams[app] == nil {
-		return Cleanup{}, errors.New("Unknown cleanup application")
+		return Cleanup{}, errors.New("unknown cleanup application")
 	}
 	if e := m.db.DeleteExpiredCleanupPreviews(time.Now()); e != nil {
 		return Cleanup{}, e
@@ -50,7 +49,7 @@ func (m *Manager) preview(app string, ids map[string]bool, unknown []string, gua
 			continue
 		}
 		if g.Resource.Application != app {
-			return Cleanup{}, errors.New("Cleanup selection belongs to another application")
+			return Cleanup{}, errors.New("cleanup selection belongs to another application")
 		}
 		job.Selected = append(job.Selected, Selection{Resource: rid, Generation: g.ID, Version: g.Resource.Version, Key: g.Resource.Key, Bytes: g.Bytes})
 		selected[g.ID] = true
@@ -79,15 +78,13 @@ func (m *Manager) preview(app string, ids map[string]bool, unknown []string, gua
 		}
 	}
 	row := store.CleanupPreview{Retention: guard, ID: job.ID, AppID: app, CreatedAt: now, ExpiresAt: job.Expires, Selection: []store.CleanupSelection{}, ReclaimableBytes: job.ReclaimableBlobBytes, ActiveGenerations: job.ActiveGenerations, UnknownVersions: unknown}
-	if _, _, dynamic := identity.ParseStorageID(app); dynamic {
-		source, err := m.db.Source(app)
-		if err != nil {
-			return job, err
-		}
-		row.SourceFence = source.Fence()
-		if guard != nil && guard.SourceFence != row.SourceFence {
-			return job, store.ErrConflict
-		}
+	source, err := m.db.Source(app)
+	if err != nil {
+		return job, err
+	}
+	row.SourceFence = source.Fence()
+	if guard != nil && guard.SourceFence != row.SourceFence {
+		return job, store.ErrConflict
 	}
 	for _, item := range job.Selected {
 		row.Selection = append(row.Selection, store.CleanupSelection{GenerationID: item.Generation, Version: item.Version, ResourceKey: item.Key, SnapshotBytes: item.Bytes})
@@ -108,10 +105,10 @@ func (m *Manager) Cleanup(app, jobID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.upstreams[app] == nil {
-		return errors.New("Unknown cleanup application")
+		return errors.New("unknown cleanup application")
 	}
 	if !validID(jobID) {
-		return errors.New("Invalid cleanup ID")
+		return errors.New("invalid cleanup ID")
 	}
 	job, e := m.db.RetireCleanupPreview(app, jobID, time.Now())
 	if e != nil {
@@ -128,7 +125,7 @@ func (m *Manager) Cleanup(app, jobID string) error {
 			continue
 		}
 		if g.Resource.Application != app || g.Resource.Version != s.Version || g.Resource.Key != s.ResourceKey {
-			return errors.New("Persisted cleanup selection identity mismatch")
+			return errors.New("persisted cleanup selection identity mismatch")
 		}
 		g.Retired = true
 		m.checkpoint("cleanup.after_tombstone", g)
@@ -137,7 +134,6 @@ func (m *Manager) Cleanup(app, jobID string) error {
 			delete(m.current, g.Resource.ID)
 			m.checkpoint("cleanup.after_detach", g)
 		}
-		signal(g)
 		if e = m.removeLocked(g); e != nil {
 			return e
 		}

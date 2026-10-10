@@ -3,7 +3,6 @@ package httpcache
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -132,27 +131,16 @@ func joinPublicFollower(t *testing.T, f *fixture) <-chan string {
 	done := make(chan string, 1)
 	go func() {
 		result, err := f.s.sharedFetch(ctx, fill{entry: f.entry, path: "file", policy: policy}, nil)
-		if err != nil {
-			done <- err.Error()
-			return
+		// A follower of a stream that already started joins without waiting.
+		ctx.once.Do(func() { close(ctx.joined) })
+		if err == nil {
+			var body string
+			if body, err = f.consume(result); err == nil {
+				done <- body
+				return
+			}
 		}
-		if result.row == nil {
-			done <- "no stored representation"
-			return
-		}
-		defer f.s.unpin(result.row.GenerationID)
-		body, _, err := f.s.bodies().Open(result.row.GenerationID)
-		if err != nil {
-			done <- err.Error()
-			return
-		}
-		defer body.Close()
-		content, err := io.ReadAll(body)
-		if err != nil {
-			done <- err.Error()
-			return
-		}
-		done <- string(content)
+		done <- err.Error()
 	}()
 	<-ctx.joined
 	return done

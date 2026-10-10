@@ -23,7 +23,7 @@ func (s *Store) SavePublicURLSetting(expected int64, value any) (int64, error) {
 func (s *Store) readGlobalSetting(key string, out any) (int64, error) {
 	var raw []byte
 	var revision int64
-	if err := s.DB.QueryRow(`SELECT revision,payload FROM settings WHERE key=?`, key).Scan(&revision, &raw); err != nil {
+	if err := s.read.QueryRow(`SELECT revision,payload FROM settings WHERE key=?`, key).Scan(&revision, &raw); err != nil {
 		return 0, err
 	}
 	return revision, json.Unmarshal(raw, out)
@@ -33,7 +33,7 @@ func (s *Store) readGlobalSetting(key string, out any) (int64, error) {
 // expected.
 func (s *Store) saveGlobalSetting(key string, expected int64, value any) (int64, error) {
 	if expected < 1 {
-		return 0, errors.New("Invalid setting revision")
+		return 0, errors.New("invalid setting revision")
 	}
 	raw, err := json.Marshal(value)
 	if err != nil {
@@ -41,9 +41,9 @@ func (s *Store) saveGlobalSetting(key string, expected int64, value any) (int64,
 	}
 	var object map[string]json.RawMessage
 	if json.Unmarshal(raw, &object) != nil || object == nil {
-		return 0, errors.New("Settings require a typed JSON object")
+		return 0, errors.New("settings require a typed JSON object")
 	}
-	result, err := s.DB.Exec(`UPDATE settings SET revision=revision+1,payload=? WHERE key=? AND revision=?`, raw, key, expected)
+	result, err := s.db.Exec(`UPDATE settings SET revision=revision+1,payload=? WHERE key=? AND revision=?`, raw, key, expected)
 	if err != nil {
 		return 0, err
 	}

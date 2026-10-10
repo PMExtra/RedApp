@@ -61,7 +61,7 @@ func TestPublicURLPrecedenceClearCASAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.DB.Close()
+	defer db.Close()
 	p, err := LoadPublicSettings(db, "https://env.example")
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +104,7 @@ func TestPublicURLPrecedenceClearCASAndRestart(t *testing.T) {
 	if p.View("http://one.example").EffectiveURL != "http://one.example" || p.View("https://two.example").EffectiveURL != "https://two.example" {
 		t.Fatal("request fallback cached across hosts")
 	}
-	db.DB.Close()
+	db.Close()
 	if _, err = p.Set(&override, 3); err == nil || p.View("http://one.example").Source != "request" {
 		t.Fatal("failed persistence became effective")
 	}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/distributor"
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
 // Serve returns errors only before writing response headers. It reserves shared
@@ -84,7 +85,7 @@ func (s *Service) Serve(w http.ResponseWriter, r *http.Request, entry applicatio
 		if tries == fetchAgainLimit {
 			return ErrFetchContended
 		}
-		old, err := s.lookup(entry.StorageID(), relativePath)
+		old, err := s.lookup(ctx, entry.StorageID(), relativePath)
 		if err != nil {
 			return err
 		}
@@ -123,7 +124,7 @@ func (s *Service) Serve(w http.ResponseWriter, r *http.Request, entry applicatio
 			if err = s.db.AddFor(entry.MetricsID(), "miss_requests", 1); err != nil {
 				return err
 			}
-			result, fetchErr = s.fetch(ctx, f, nil, false, nil)
+			result, fetchErr = s.fetch(ctx, &fetchRun{fill: f}, nil)
 		}
 		if errors.Is(fetchErr, ErrFetchAgain) {
 			continue
@@ -198,7 +199,7 @@ func (w *accessWriter) Write(p []byte) (int, error) {
 		w.WriteHeader(http.StatusOK)
 	}
 	if w.failed {
-		return 0, errors.New("Cache access persistence failed")
+		return 0, errors.New("cache access persistence failed")
 	}
 	return w.ResponseWriter.Write(p)
 }
@@ -212,25 +213,15 @@ func (s *Service) head(w http.ResponseWriter, r *http.Request, f fill, old *Row)
 		return err
 	}
 	defer release()
-	_, finish, err := s.startTransfer(entry, path)
-	if err != nil {
-		return err
-	}
-	defer finish()
-	ctx, cancel := context.WithTimeout(r.Context(), upstreamOperationTimeout)
-	defer cancel()
+	ctx := r.Context()
 	attempts, err := s.sourceAttempts(entry)
 	if err != nil {
 		return err
 	}
 	var lastErr error = ErrUpstream
 	for _, attempt := range attempts {
-		if r.Context().Err() != nil {
-			return r.Context().Err()
-		}
 		if ctx.Err() != nil {
-			lastErr = ctx.Err()
-			break
+			return ctx.Err()
 		}
 		source, err := attempt.Client.RelativeURL(path)
 		if err != nil {
@@ -242,7 +233,7 @@ func (s *Service) head(w http.ResponseWriter, r *http.Request, f fill, old *Row)
 			if e := s.upstreamFailure(entry, path, 0); e != nil {
 				return e
 			}
-			if !errors.Is(err, distributor.ErrConnection) && ctx.Err() == nil {
+			if !errors.Is(err, distributor.ErrConnection) {
 				return err
 			}
 			lastErr = err
@@ -260,7 +251,7 @@ func (s *Service) head(w http.ResponseWriter, r *http.Request, f fill, old *Row)
 		resp.Body.Close()
 		return err
 	}
-	result, err := s.fallback(r.Context(), f, old, lastErr)
+	result, err := s.fallback(ctx, f, old, lastErr)
 	if err != nil {
 		return err
 	}
@@ -342,6 +333,9 @@ func (s *Service) serveResult(w http.ResponseWriter, r *http.Request, result fet
 	if result.response != nil {
 		return s.serveDirect(w, r, result, name)
 	}
+	if result.stream != nil {
+		return s.serveStream(w, r, result.stream)
+	}
 	if result.row != nil {
 		defer s.unpin(result.row.GenerationID)
 		return s.serveStored(w, r, result.row)
@@ -384,6 +378,77 @@ func (s *Service) serveDirect(w http.ResponseWriter, r *http.Request, result fet
 	}
 	return nil
 }
+
+// serveStream answers from a body that is still being written. It waits for
+// the first byte, so a fill that fails at once is reported as an error before
+// anything is sent; a later failure aborts the response. With a declared
+// length, conditional and single-range requests are answered as for a stored
+// file, waiting for the requested bytes; without one, the whole body is sent.
+// A response that ends before the body does (a range or a 304) does not wait
+// for the rest of the fill.
+// streamFirstByte is a test hook run once a stream reader has its first byte;
+// nil in production.
+var streamFirstByte func(*stream)
+
+func (s *Service) serveStream(w http.ResponseWriter, r *http.Request, st *stream) error {
+	defer s.leaveStream(st)
+	if err := st.body.Await(r.Context(), 1); err != nil {
+		return streamError(err)
+	}
+	if streamFirstByte != nil {
+		streamFirstByte(st)
+	}
+	// Publication records the access when a public reader is already known;
+	// a short body can be published before this reader gets here, so record
+	// the access on the published entry instead.
+	s.mu.Lock()
+	st.public = true
+	published := st.published
+	s.mu.Unlock()
+	if published != "" {
+		bucket := s.now().Unix() / 60 * 60
+		if err := s.db.TouchHTTPCacheEntry(published, bucket); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+	}
+	safeHeaders(w, st.fill.path)
+	// The digest is not known yet: only an upstream ETag is sent.
+	if tag := st.header.Get("ETag"); tag != "" {
+		w.Header().Set("ETag", tag)
+	}
+	body := st.body.NewReader(r.Context())
+	reader := &contextReadSeeker{ctx: r.Context(), ReadSeekCloser: readSeekNopCloser{body}}
+	if st.body.Total() >= 0 {
+		modified, _ := http.ParseTime(st.header.Get("Last-Modified"))
+		http.ServeContent(w, requestRange(r), path.Base(st.fill.path), modified, reader)
+	} else {
+		if modified := st.header.Get("Last-Modified"); modified != "" {
+			w.Header().Set("Last-Modified", modified)
+		}
+		if status := preconditionStatus(r, st.header); status != http.StatusOK {
+			w.WriteHeader(status)
+			return nil
+		}
+		w.WriteHeader(http.StatusOK)
+		if _, err := io.Copy(w, reader); err != nil && reader.err == nil {
+			reader.err = err
+		}
+	}
+	if reader.err != nil && !errors.Is(reader.err, io.EOF) {
+		panic(http.ErrAbortHandler)
+	}
+	// A request that received the whole file completes once the file is
+	// cached, as when it was served from the cache, so that a following
+	// request finds the entry.
+	if total := st.body.Total(); total >= 0 && body.Offset() == total {
+		_, _ = s.awaitPublication(r.Context(), st)
+	}
+	return nil
+}
+
+type readSeekNopCloser struct{ io.ReadSeeker }
+
+func (readSeekNopCloser) Close() error { return nil }
 
 type contextReader struct {
 	ctx    context.Context

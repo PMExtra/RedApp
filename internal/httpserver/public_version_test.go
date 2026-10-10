@@ -13,7 +13,7 @@ func TestPublicKnownVersionUsesProtocolOrderAndFirstDiscovery(t *testing.T) {
 	for _, key := range []string{"openai/codex", "anthropic/claude-code"} {
 		entry, _ := h.server.registry.Lookup(key)
 		for version, first := range map[string]int64{"1.9.0": 200, "1.10.0": 100, "invalid": 300} {
-			if _, err := h.server.store.DB.Exec("INSERT INTO app_versions(app_id,version,first_seen_s) VALUES(?,?,?)", entry.StorageID(), version, first); err != nil {
+			if _, err := h.sql().Exec("INSERT INTO app_versions(app_id,version,first_seen_s) VALUES(?,?,?)", entry.StorageID(), version, first); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -33,7 +33,7 @@ func TestPublicKnownVersionUsesProtocolOrderAndFirstDiscovery(t *testing.T) {
 			t.Fatal("previous source leaked", item, err)
 		}
 		entry.SourceEpoch--
-		if _, err := h.server.store.DB.Exec("INSERT INTO app_versions(app_id,version,first_seen_s) VALUES(?,?,0)", entry.StorageID(), "2.0.0"); err != nil {
+		if _, err := h.sql().Exec("INSERT INTO app_versions(app_id,version,first_seen_s) VALUES(?,?,0)", entry.StorageID(), "2.0.0"); err != nil {
 			t.Fatal(err)
 		}
 		if item, err = h.server.publicApp(entry, "http://local", nil); err != nil {

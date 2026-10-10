@@ -118,7 +118,7 @@ func TestEditableInstructionVariablesAndEscaping(t *testing.T) {
 	if strings.Contains(string(raw), `class="copy-block"`) {
 		t.Fatal("explicit empty was replaced")
 	}
-	if err := h.server.store.DB.Close(); err != nil {
+	if err := h.server.store.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if got := h.server.interpolateInstructionVariables(entry, "{{latest_version}}", "", "en"); got != "&lt;version&gt;" {

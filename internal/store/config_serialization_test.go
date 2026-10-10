@@ -7,22 +7,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
-	"time"
 )
-
-// pauseFirstPublication holds the first configuration writer between its
-// baseline read and its CAS transaction, while racing writers are started.
-func pauseFirstPublication(s *Store, race func()) {
-	var once sync.Once
-	s.SetConfigurationPrepare(func(DirectorySnapshot) (ConfigurationPublication, error) {
-		once.Do(func() {
-			race()
-			// Give an unserialized writer time to commit inside the CAS window.
-			time.Sleep(100 * time.Millisecond)
-		})
-		return nil, nil
-	})
-}
 
 func TestConcurrentImportWithSameIDReturnsExistingReceipt(t *testing.T) {
 	s := openTest(t)
@@ -42,17 +27,26 @@ func TestConcurrentImportWithSameIDReturnsExistingReceipt(t *testing.T) {
 	}
 	const n = 4
 	results, errs := make([]ImportResult, n), make([]error, n)
-	var wg sync.WaitGroup
+	var wg, checked sync.WaitGroup
+	checked.Add(n)
+	importReceiptChecked = checked.Done
+	t.Cleanup(func() { importReceiptChecked = nil })
 	run := func(i int) {
 		defer wg.Done()
 		results[i], errs[i] = s.ExecuteConfigurationImport(plan, "same-id", true, func() bool { return true })
 	}
-	// The others pass the unlocked receipt check while the first holds the writer.
-	pauseFirstPublication(s, func() {
-		for i := 1; i < n; i++ {
-			wg.Add(1)
-			go run(i)
-		}
+	// The first import holds writeMu until every other import has found no
+	// receipt outside it; they must then find the first one's receipt inside.
+	var once sync.Once
+	s.SetConfigurationPrepare(func(DirectorySnapshot) (ConfigurationPublication, error) {
+		once.Do(func() {
+			for i := 1; i < n; i++ {
+				wg.Add(1)
+				go run(i)
+			}
+			checked.Wait()
+		})
+		return nil, nil
 	})
 	wg.Add(1)
 	run(0)
@@ -67,7 +61,7 @@ func TestConcurrentImportWithSameIDReturnsExistingReceipt(t *testing.T) {
 	}
 }
 
-func TestAdminNotesAndPermanentDeleteSerializeWithConfigurationWriters(t *testing.T) {
+func TestAdminNotesAndPermanentDeleteDuringConfigurationWrite(t *testing.T) {
 	s := openTest(t)
 	v, err := s.CreateVendor(VendorInput{ID: "acme", Name: LocalizedText{"Acme", "Acme"}, Enabled: true})
 	if err != nil {
@@ -82,14 +76,20 @@ func TestAdminNotesAndPermanentDeleteSerializeWithConfigurationWriters(t *testin
 		t.Fatal(err)
 	}
 	var wg sync.WaitGroup
+	var once sync.Once
 	var notesErr, deleteErr error
-	pauseFirstPublication(s, func() {
-		wg.Add(2)
-		go func() { defer wg.Done(); _, notesErr = s.SaveAdminNotes("app", a.Key, 1, "private") }()
-		go func() { defer wg.Done(); deleteErr = s.PermanentlyDeleteApplication(gone.Key, gone.Revision) }()
+	s.SetConfigurationPrepare(func(DirectorySnapshot) (ConfigurationPublication, error) {
+		once.Do(func() {
+			// Notes are not published, so they commit while the write is open.
+			_, notesErr = s.SaveAdminNotes("app", a.Key, 1, "private")
+			// Permanent deletion is published and waits for the write.
+			wg.Add(1)
+			go func() { defer wg.Done(); deleteErr = s.PermanentlyDeleteApplication(gone.Key, gone.Revision) }()
+		})
+		return nil, nil
 	})
 	if _, err = s.UpdateApplication(a.Key, a.Revision, ApplicationChanges{Name: LocalizedText{"Renamed", "Renamed"}, Enabled: true}); err != nil {
-		t.Fatal("serialized writer reported a spurious conflict", err)
+		t.Fatal("notes or a deletion made the write conflict", err)
 	}
 	wg.Wait()
 	if notesErr != nil || deleteErr != nil {

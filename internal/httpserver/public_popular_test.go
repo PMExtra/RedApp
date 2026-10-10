@@ -41,7 +41,7 @@ func TestPublicPopularCandidatesNeverExposeDisabledOrDeletedRecords(t *testing.T
 		"UPDATE applications SET enabled=0 WHERE uid=?",
 		"UPDATE applications SET enabled=1,deleted_at_s=1 WHERE uid=?",
 	} {
-		if _, err := h.server.store.DB.Exec(query, a.UID); err != nil {
+		if _, err := h.sql().Exec(query, a.UID); err != nil {
 			t.Fatal(err)
 		}
 		if err := h.server.ReloadDirectory(); err != nil {
@@ -49,17 +49,17 @@ func TestPublicPopularCandidatesNeverExposeDisabledOrDeletedRecords(t *testing.T
 		}
 		check(1)
 	}
-	if _, err := h.server.store.DB.Exec("UPDATE applications SET enabled=1,deleted_at_s=NULL WHERE uid=?", a.UID); err != nil {
+	if _, err := h.sql().Exec("UPDATE applications SET enabled=1,deleted_at_s=NULL WHERE uid=?", a.UID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.server.store.DB.Exec("UPDATE vendors SET enabled=0 WHERE uid=?", a.VendorUID); err != nil {
+	if _, err := h.sql().Exec("UPDATE vendors SET enabled=0 WHERE uid=?", a.VendorUID); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.server.ReloadDirectory(); err != nil {
 		t.Fatal(err)
 	}
 	check(1)
-	if _, err := h.server.store.DB.Exec("UPDATE vendors SET enabled=1,deleted_at_s=1 WHERE uid=?", a.VendorUID); err != nil {
+	if _, err := h.sql().Exec("UPDATE vendors SET enabled=1,deleted_at_s=1 WHERE uid=?", a.VendorUID); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.server.ReloadDirectory(); err != nil {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/PMExtra/RedApp/internal/store"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -253,7 +252,7 @@ func TestSharedUpstreamEmitsOneWarningForAllReaders(t *testing.T) {
 			}
 			ctx := context.Background()
 			fileFill := fill{entry: f.entry, path: "file", policy: policy}
-			old, err := f.s.lookup(f.entry.StorageID(), "file")
+			old, err := f.s.lookup(ctx, f.entry.StorageID(), "file")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -264,8 +263,8 @@ func TestSharedUpstreamEmitsOneWarningForAllReaders(t *testing.T) {
 			done := make(chan error, 4)
 			run := func(ctx context.Context) {
 				result, err := f.s.sharedFetch(ctx, fileFill, old)
-				if result.row != nil {
-					f.s.unpin(result.row.GenerationID)
+				if err == nil {
+					_, err = f.consume(result)
 				}
 				done <- err
 			}
@@ -333,13 +332,11 @@ func TestPolicyRevisionSeparatesFlightsAndFencesOldPublication(t *testing.T) {
 				t.Fatal("new policy joined old fallback flight", err)
 			}
 			close(release)
-			err := <-done
-			if returnOldBody {
-				if err != nil {
-					t.Fatal("admitted snapshot lost fallback", err)
-				}
-			} else if !errors.Is(err, store.ErrSourceInactive) {
-				t.Fatal("old policy republished body", err)
+			// The admitted request keeps its snapshot: it falls back to the old
+			// body, or receives the new body, which is never published under
+			// the changed policy.
+			if err := <-done; err != nil {
+				t.Fatal("admitted snapshot lost its response", err)
 			}
 			if f.rows(t)[0].GenerationID != before.GenerationID {
 				t.Fatal("policy update changed stored body")

@@ -200,14 +200,14 @@ func TestRetentionRejectsChangedPolicySourceAndChannels(t *testing.T) {
 			case "disabled":
 				h.setAppEnabled(a.Key, false)
 			case "channel":
-				_, err := h.server.store.DB.Exec(`UPDATE channels SET version='10.0.0' WHERE app_id=?`, entry.StorageID())
+				_, err := h.sql().Exec(`UPDATE channels SET version='10.0.0' WHERE app_id=?`, entry.StorageID())
 				if err != nil {
 					t.Fatal(err)
 				}
 			case "expired_channel":
-				h.server.store.DB.Exec(`UPDATE channels SET expires_at_s=? WHERE app_id=?`, time.Now().Add(-time.Hour).Unix(), entry.StorageID())
+				h.sql().Exec(`UPDATE channels SET expires_at_s=? WHERE app_id=?`, time.Now().Add(-time.Hour).Unix(), entry.StorageID())
 			case "expired_preview":
-				h.server.store.DB.Exec(`UPDATE cleanup_previews SET expires_at_s=0 WHERE id=?`, p.ID)
+				h.sql().Exec(`UPDATE cleanup_previews SET expires_at_s=0 WHERE id=?`, p.ID)
 			case "ttl":
 				h.patchApp(a.Key, map[string]any{"cache_ttl_seconds": 1})
 			}
@@ -220,7 +220,7 @@ func TestRetentionRejectsChangedPolicySourceAndChannels(t *testing.T) {
 				h.expectError("POST", retentionPath+"/"+p.ID+"/execute", nil, 409, codePreviewStale, nil)
 			}
 			var count int
-			if err := h.server.store.DB.QueryRow(`SELECT count(*) FROM generations WHERE app_id=? AND retired_at_s IS NOT NULL`, entry.StorageID()).Scan(&count); err != nil || count != 0 {
+			if err := h.sql().QueryRow(`SELECT count(*) FROM generations WHERE app_id=? AND retired_at_s IS NOT NULL`, entry.StorageID()).Scan(&count); err != nil || count != 0 {
 				t.Fatal("retired despite invalid preview", count, err)
 			}
 		})
@@ -231,7 +231,7 @@ func TestRetentionUnverifiedChannelDeletesNothingAndDisabledScheduleDoesNothing(
 	setRetention(t, h, 1, false)
 	h.server.maintenance.Pass(context.Background())
 	var count int
-	h.server.store.DB.QueryRow(`SELECT count(*) FROM cleanup_previews`).Scan(&count)
+	h.sql().QueryRow(`SELECT count(*) FROM cleanup_previews`).Scan(&count)
 	if count != 0 {
 		t.Fatal("disabled schedule ran")
 	}
@@ -239,7 +239,7 @@ func TestRetentionUnverifiedChannelDeletesNothingAndDisabledScheduleDoesNothing(
 	setRetention(t, h, 1, true)
 	h.server.maintenance.Pass(context.Background())
 	a, _ := h.server.registry.Lookup("retention/binary")
-	h.server.store.DB.QueryRow(`SELECT count(*) FROM generations WHERE app_id=? AND retired_at_s IS NOT NULL`, a.StorageID()).Scan(&count)
+	h.sql().QueryRow(`SELECT count(*) FROM generations WHERE app_id=? AND retired_at_s IS NOT NULL`, a.StorageID()).Scan(&count)
 	if count != 0 {
 		t.Fatal(count)
 	}
@@ -328,14 +328,14 @@ func TestRetentionReceiptExpiresAndEmptySelectionSucceeds(t *testing.T) {
 	if err != nil || receipt.RetiredVersions != 0 || len(receipt.Selection) != 0 {
 		t.Fatal(receipt, err)
 	}
-	if _, err = h.server.store.DB.Exec(`UPDATE cleanup_previews SET executed_at_s=? WHERE id=?`, time.Now().Add(-25*time.Hour).Unix(), p.ID); err != nil {
+	if _, err = h.sql().Exec(`UPDATE cleanup_previews SET executed_at_s=? WHERE id=?`, time.Now().Add(-25*time.Hour).Unix(), p.ID); err != nil {
 		t.Fatal(err)
 	}
 	h.expectError("POST", retentionPath+"/"+p.ID+"/execute", nil, 404, codePreviewNotFound, nil)
 	h.expectError("GET", retentionPath+"/"+p.ID, nil, 404, codePreviewNotFound, nil)
 	h.server.maintenance.Pass(context.Background())
 	var count int
-	h.server.store.DB.QueryRow(`SELECT count(*) FROM cleanup_previews WHERE id=?`, p.ID).Scan(&count)
+	h.sql().QueryRow(`SELECT count(*) FROM cleanup_previews WHERE id=?`, p.ID).Scan(&count)
 	if count != 0 {
 		t.Fatal("expired receipt not pruned while schedule disabled")
 	}
@@ -382,7 +382,7 @@ func TestRetentionClaudeUsesVerifiedChannelsAndNeverWarmsMetadataOnlyRelease(t *
 			data, _ := h.request("POST", "/admin/api/apps/"+app.Key+"/retention/preview", nil, want, ifMatchHeader(app.Revision))
 			entry, _ := h.server.registry.Lookup(app.Key)
 			var count int
-			if err = h.server.store.DB.QueryRow(`SELECT count(*) FROM generations WHERE app_id=?`, entry.StorageID()).Scan(&count); err != nil || count != 0 {
+			if err = h.sql().QueryRow(`SELECT count(*) FROM generations WHERE app_id=?`, entry.StorageID()).Scan(&count); err != nil || count != 0 {
 				t.Fatal("metadata created binary generation", count, err)
 			}
 			if valid {
@@ -401,7 +401,7 @@ func TestRetentionClaudeUsesVerifiedChannelsAndNeverWarmsMetadataOnlyRelease(t *
 				if code := errorCodeOf(t, data); code != string(codeChannelsUnverified) {
 					t.Fatal(code)
 				}
-				h.server.store.DB.QueryRow(`SELECT count(*) FROM cleanup_previews WHERE app_id=?`, entry.StorageID()).Scan(&count)
+				h.sql().QueryRow(`SELECT count(*) FROM cleanup_previews WHERE app_id=?`, entry.StorageID()).Scan(&count)
 				if count != 0 {
 					t.Fatal("created preview with unverified channel")
 				}

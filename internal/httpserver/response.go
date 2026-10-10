@@ -4,7 +4,20 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
+
+// displayText presents an internal text, which starts in lower case like every
+// Go error, as a sentence for the admin UI: validation details, recorded event
+// messages and generation errors.
+func displayText(text string) string {
+	r, size := utf8.DecodeRuneInString(text)
+	if size == 0 {
+		return text
+	}
+	return string(unicode.ToUpper(r)) + text[size:]
+}
 
 // writeOK writes a 200 JSON document.
 func writeOK(w http.ResponseWriter, value any) { writeJSON(w, http.StatusOK, value) }

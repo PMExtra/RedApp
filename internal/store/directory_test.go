@@ -102,11 +102,11 @@ func TestDirectoryIdentityEpochAndEligibilityFences(t *testing.T) {
 	if _, err = s.Release(a.StorageID(), "1.0.0"); err != nil {
 		t.Fatal("source change removed cached metadata", err)
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = s.RequireSourceActive(tx, old.StorageID(), original.Fence())
+	err = s.requireSourceActive(tx, old.StorageID(), original.Fence())
 	tx.Rollback()
 	if !errors.Is(err, ErrSourceInactive) {
 		t.Fatal("old source can publish", err)

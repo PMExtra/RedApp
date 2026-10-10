@@ -8,13 +8,14 @@
 
 - 包按职责划分，依赖只能指向更底层的包（见 [architecture.md](architecture.md#包与依赖方向)）。叶子包（`identity`、`jsoncheck`、`pathmatch`、`media` 等）不引入其他内部包。
 - `internal/httpserver` 只做 HTTP 协议转换：解析请求、调用领域服务、写响应。业务规则放在领域包里。
-- 所有 SQL 都在 `internal/store` 中。其他包不能拿 `*sql.DB` 直接写 SQL。**【目标】** store 不再对外暴露底层 DB 句柄（阶段 5）。
+- 所有 SQL 都在 `internal/store` 中。store 不对外暴露底层连接，其他包只用它的类型化方法，“行不存在”用 `store.ErrNotFound` 判断。跨包测试需要直接执行 SQL（触发器故障注入、无 API 的夹具）时用 `storetest.Open` 另开连接。
 - `internal/testutil` 等测试辅助只能被 `_test.go` 引用。
 
 ### 错误
 
-- 错误消息用小写开头、不带句末标点，描述“做什么失败了”：`fmt.Errorf("open state database: %w", err)`。**【目标】** 现有不少错误以大写开头，因为它们曾被直接返回给客户端；HTTP 层已改为显式错误码，错误文本只进日志，修改相关代码时统一为小写（阶段 5）。
-- 包装底层错误一律用 `%w`，保留错误链。
+- 错误消息用小写开头（缩写词如 `HTTP`、`JSON` 除外）、不带句末标点，描述“做什么失败了”：`fmt.Errorf("open state database: %w", err)`。错误文本只进日志和诊断；面向用户的消息来自 HTTP 层的错误码目录。
+- 例外：`store.ValidationError.Detail()` 等校验细节会经 HTTP 层 `sentence` 首字母大写后作为 `VALIDATION_FAILED` 的消息，内容要面向用户、不含机密，可以写成完整短句。后台展示的事件消息和代际错误同样是内部错误文本，由 HTTP 层的 `displayText` 首字母大写后输出；新增这类字段时同样在 DTO 层处理，不在领域包里改大小写。
+- 包装底层错误一律用 `%w`，保留错误链。确需切断错误链时（例如缺失签名不能被识别为 `ErrNotFound`）用 `%v`，并在代码中注释原因。
 - 调用方需要区分的错误，定义 sentinel（`var ErrConflict = errors.New(...)`）或带字段的类型化错误，用 `errors.Is` / `errors.As` 判断。
 - **禁止按错误文本分类**，例如 `strings.Contains(err.Error(), "SHA256")` 或比较已持久化的错误字符串。需要持久化错误类别时，单独存一个稳定的代码字段。
 - 内部错误文本不直接返回给 HTTP 客户端；对外只给稳定的错误码和面向用户的消息（见下文 HTTP API）。
@@ -33,6 +34,7 @@
 ### 可测试性
 
 - 生产结构体里不放测试钩子字段（如 `testFault`、`testConfigurationPrepare`）。需要注入时钟、故障或外部依赖，用构造函数选项或小接口，由测试传入实现。
+- 测试需要在两个内部步骤之间确定性地停住（例如“终态已写入、worker 槽位尚未释放”）而又没有可注入的依赖时，用包级、未导出、生产中为 `nil` 的钩子变量，只由同包测试设置并在 `t.Cleanup` 中复位；不要为此加结构体字段或导出 API。
 
 ### 数据库
 
@@ -40,8 +42,9 @@
 - `INSERT` 显式列出列名，不依赖表的列顺序。
 - 外键声明 `ON DELETE CASCADE`（或明确说明为什么不级联）；连接上启用外键约束。
 - 多步写入放在一个事务里；配置类写入用 revision 做乐观并发控制，冲突返回 sentinel 错误，由 HTTP 层转换成 409。
+- store 只有一个写连接：写事务内只用该事务，不调用会写的 `Store` 方法（会自锁）；只读方法走读连接池，可以调用但看不到未提交的修改。只读查询不要开在写连接上。
 - schema 变化遵守 [ADR 0001](adr/0001-pre-1.0-no-migrations.md)：1.0 前提升 schema 版本并拒绝旧目录，不写迁移。
-- **【目标】** 每个实体独立 CAS，不再用整份配置快照的单一 revision（阶段 5）。
+- 配置写入按实体做 CAS：只读写涉及的行，以 `UPDATE … WHERE … AND revision=?` 提交，影响行数为 0 即冲突；不读取或比较整份配置。需要全局串行的只有发布顺序（`Store.writeMu`，见 [architecture.md](architecture.md#写入cas-与发布)）。
 
 ### 文件
 

@@ -3,12 +3,12 @@ package download
 import (
 	"bytes"
 	"context"
-	"database/sql"
+	"github.com/PMExtra/RedApp/internal/store"
+	"github.com/PMExtra/RedApp/internal/store/storetest"
 	"github.com/PMExtra/RedApp/internal/testutil"
 	"io"
 	"net/http"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 )
@@ -30,12 +30,13 @@ func TestDiskFailureDoesNotPoisonVerifiedCache(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	g.file.Close()
-	g.file, e = os.OpenFile("/dev/full", os.O_RDWR, 0600)
+	g.body.CloseFile()
+	full, e := os.OpenFile("/dev/full", os.O_RDWR, 0600)
 	if e != nil {
 		m.mu.Unlock()
 		t.Skip("/dev/full unavailable")
 	}
+	g.body.SetFile(full)
 	m.mu.Unlock()
 	rd, _, e := m.Acquire(context.Background(), bad)
 	if e != nil {
@@ -53,17 +54,16 @@ func TestDiskFailureDoesNotPoisonVerifiedCache(t *testing.T) {
 func TestDatabaseBusyIsBoundedAndVerifiedCacheSurvives(t *testing.T) {
 	data := []byte("database-busy")
 	c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(data) }))
-	m, db, dir := setup(t, c)
-	good := authorizedResource(t, m, c, data)
-	collect(t, m, good)
-	if _, e := db.DB.Exec("PRAGMA busy_timeout=30"); e != nil {
-		t.Fatal(e)
-	}
-	blocker, e := sql.Open("sqlite3", filepath.Join(dir, "state.sqlite"))
+	dir := t.TempDir()
+	db := openStore(t, dir, store.WithBusyTimeout(30*time.Millisecond))
+	m, e := newTestManager(dir, db, c)
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer blocker.Close()
+	t.Cleanup(func() { m.Close(); db.Close() })
+	good := authorizedResource(t, m, c, data)
+	collect(t, m, good)
+	blocker := storetest.Open(t, dir)
 	bad := good
 	bad.Source = testutil.SourceURL(c, "second")
 	bad.Version = "0.2.0"

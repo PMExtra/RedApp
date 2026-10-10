@@ -4,7 +4,6 @@ package prewarm
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -28,8 +27,12 @@ import (
 	"unicode/utf8"
 )
 
-var ErrBusy = errors.New("Prewarm worker busy")
-var ErrInvalid = errors.New("Invalid prewarm input")
+var ErrBusy = errors.New("prewarm worker busy")
+
+// jobFinished is nil in production. Tests set it to run after a job's terminal
+// state is persisted and before the job releases the worker slot.
+var jobFinished func()
+var ErrInvalid = errors.New("invalid prewarm input")
 
 // ErrRunning reports that a running job cannot be retried.
 var ErrRunning = errors.New("prewarm job is still running")
@@ -51,7 +54,9 @@ type Service struct {
 	active    atomic.Pointer[activeJob]
 	closed    atomic.Bool
 	wg        sync.WaitGroup
-	mu        sync.Mutex
+	// mu orders Start's closed check and wg.Add against Close; it is never
+	// held during I/O.
+	mu sync.Mutex
 }
 
 func New(db *store.Store, registry *application.Registry, catalog *catalog.Service, downloads *download.Manager, http *httpcache.Service) (*Service, error) {
@@ -163,11 +168,17 @@ func (s *Service) Start(ctx context.Context, key string, in warmplan.Input, auto
 	if err != nil {
 		return store.PrewarmJob{}, false, err
 	}
-	current := &activeJob{UID: e.UID, ID: jobID, Done: make(chan struct{}), Budget: &warmplan.Budget{Max: in.Limits.MaxDownloadBytes}}
+	// The job context exists before the job is visible in s.active, so Cancel
+	// never races with its construction.
+	jobCtx, cancelJob := context.WithCancel(s.ctx)
+	current := &activeJob{UID: e.UID, ID: jobID, Done: make(chan struct{}), Cancel: cancelJob, Budget: &warmplan.Budget{Max: in.Limits.MaxDownloadBytes}}
+	// mu only orders the closed check and wg.Add against Close; the database
+	// work below runs after it is released, with the worker slot reserved.
 	s.mu.Lock()
 	for {
 		if s.closed.Load() {
 			s.mu.Unlock()
+			cancelJob()
 			return store.PrewarmJob{}, false, context.Canceled
 		}
 		if s.active.CompareAndSwap(nil, current) {
@@ -181,6 +192,7 @@ func (s *Service) Start(ctx context.Context, key string, in warmplan.Input, auto
 		}
 		job, _ := s.DB.PrewarmJob(existing.UID, existing.ID)
 		if job.ID == "" || job.State == "running" {
+			cancelJob()
 			return job, false, ErrBusy
 		}
 		// The worker persists the terminal state before it releases the slot;
@@ -188,29 +200,31 @@ func (s *Service) Start(ctx context.Context, key string, in warmplan.Input, auto
 		select {
 		case <-existing.Done:
 		case <-ctx.Done():
+			cancelJob()
 			return store.PrewarmJob{}, false, ctx.Err()
 		}
 		s.mu.Lock()
 	}
 	s.wg.Add(1)
-	ctxWork, finish, err := s.DB.ApplicationWork(s.ctx, e.StorageID())
-	if err != nil {
-		s.active.Store(nil)
+	s.mu.Unlock()
+	release := func() {
+		cancelJob()
+		s.active.CompareAndSwap(current, nil)
 		s.wg.Done()
-		s.mu.Unlock()
+	}
+	ctxWork, finish, err := s.DB.ApplicationWork(jobCtx, e.StorageID())
+	if err != nil {
+		release()
 		return store.PrewarmJob{}, false, err
 	}
 	work, cancel := context.WithTimeout(ctxWork, time.Duration(in.Limits.MaxDurationSeconds)*time.Second)
-	current.Cancel = cancel
 	job := store.PrewarmJob{SourceFence: store.SourceFence{AppRuntimeRevision: e.RuntimeRevision, VendorRuntimeRevision: e.VendorRuntimeRevision}, ID: current.ID, AppUID: e.UID, StorageID: e.StorageID(), RequestID: in.RequestID, Fingerprint: hash, State: "running", Created: time.Now().UTC(), Updated: time.Now().UTC(), Input: in, Target: in.Target, Platforms: in.Platforms, Limits: in.Limits, Ignored: map[string]int{}, Automatic: automatic}
 	if automatic {
 		cfg, err := s.DB.ApplicationConfiguration(key)
 		if err != nil {
 			cancel()
 			finish()
-			s.active.Store(nil)
-			s.wg.Done()
-			s.mu.Unlock()
+			release()
 			return job, false, err
 		}
 		job.PolicyHash = fingerprint(cfg.Effective["prewarm"])
@@ -218,19 +232,20 @@ func (s *Service) Start(ctx context.Context, key string, in warmplan.Input, auto
 	if err = s.DB.CreatePrewarm(job); err != nil {
 		cancel()
 		finish()
-		s.active.Store(nil)
-		s.wg.Done()
-		s.mu.Unlock()
+		release()
 		return job, false, err
 	}
-	s.mu.Unlock()
 	go func() {
 		defer s.wg.Done()
 		defer close(current.Done)
 		defer s.active.CompareAndSwap(current, nil)
+		defer cancelJob()
 		defer cancel()
 		defer finish()
 		s.run(work, e, job, current.Budget)
+		if jobFinished != nil {
+			jobFinished()
+		}
 	}()
 	return job, true, nil
 }
@@ -443,7 +458,7 @@ func (s *Service) Wait(ctx context.Context, uid, id string) (store.PrewarmJob, e
 func (s *Service) Status(uid, id string) (store.PrewarmJob, error) {
 	job, err := s.DB.PrewarmJob(uid, id)
 	if err == nil && job.State != "running" && time.Now().After(job.Updated.Add(24*time.Hour)) {
-		return store.PrewarmJob{}, sql.ErrNoRows
+		return store.PrewarmJob{}, store.ErrNotFound
 	}
 	if current := s.active.Load(); current != nil && current.UID == uid && current.ID == id && err == nil {
 		job.Bytes = current.Budget.Used()
@@ -454,16 +469,14 @@ func (s *Service) Cancel(uid, id string) error {
 	if _, err := s.DB.PrewarmJob(uid, id); err != nil {
 		return err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if current := s.active.Load(); current != nil && current.UID == uid && current.ID == id && current.Cancel != nil {
+	if current := s.active.Load(); current != nil && current.UID == uid && current.ID == id {
 		current.Cancel()
 	}
 	return nil
 }
 
 // Retry starts a job for the unsuccessful items of a finished job, with the
-// idempotency rules of Start. A missing or expired job returns sql.ErrNoRows.
+// idempotency rules of Start. A missing or expired job returns store.ErrNotFound.
 func (s *Service) Retry(ctx context.Context, key, id, requestID string) (store.PrewarmJob, bool, error) {
 	e, ok := s.Registry.Lookup(key)
 	if !ok {

@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-var ErrImport = errors.New("Import source could not be downloaded")
+var ErrImport = errors.New("import source could not be downloaded")
 
 // importTimeout preserves the administrator import transfer window that the
 // shared client deadline used to provide.

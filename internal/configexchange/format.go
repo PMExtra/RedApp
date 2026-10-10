@@ -29,7 +29,7 @@ const (
 	MaxYAML     = 1 << 20
 )
 
-var ErrPackage = errors.New("Invalid configuration package")
+var ErrPackage = errors.New("invalid configuration package")
 
 type Document struct {
 	SchemaVersion int               `json:"schema_version"`

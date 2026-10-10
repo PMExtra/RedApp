@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"github.com/PMExtra/RedApp/internal/distributor"
+	"github.com/PMExtra/RedApp/internal/spool"
 	"github.com/PMExtra/RedApp/internal/testutil"
 	"io"
 	"math"
@@ -89,7 +90,7 @@ func TestFailureCategoriesFollowErrorTypes(t *testing.T) {
 		{errLength, "length"},
 		{errTruncated, "length"},
 		{errBlobInvalid, "disk"},
-		{upstreamHTTPError(503), "http"},
+		{spool.StatusError(503), "http"},
 		{&failure{message: "Cache state commit failed", category: "database"}, "database"},
 		{&net.DNSError{Err: "no such host", Name: "upstream.example"}, "dns"},
 	} {
@@ -119,7 +120,7 @@ func TestTransportFailureCategories(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c.HTTP.Transport = failingTransport{tc.cause}
 			_, err := c.Get(context.Background(), testutil.SourceURL(c, "asset"), nil)
-			if err == nil || err.Error() != "Upstream connection failed" {
+			if err == nil || err.Error() != "upstream connection failed" {
 				t.Fatal("transport failure message changed", err)
 			}
 			if got := failureCategory(err); got != tc.want {

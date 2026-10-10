@@ -14,7 +14,7 @@ func validHost(s string) bool { return config.ValidHost(s) }
 // origin is request-scoped: it never updates shared state or cached metadata.
 func (p TrustedProxies) origin(r *http.Request) (string, error) {
 	if !validHost(r.Host) {
-		return "", errors.New("Invalid request Host")
+		return "", errors.New("invalid request Host")
 	}
 	host, proto := r.Host, "http"
 	if r.TLS != nil {
@@ -25,7 +25,7 @@ func (p TrustedProxies) origin(r *http.Request) (string, error) {
 		if values := r.Header.Values("Forwarded"); len(values) > 0 {
 			fields, err := forwardedFields(strings.Join(values, ","))
 			if err != nil {
-				return "", errors.New("Invalid trusted Forwarded header")
+				return "", errors.New("invalid trusted Forwarded header")
 			}
 			selected := len(fields) - 1
 			for i := len(fields) - 1; i >= 0 && p.trusted(peer); i-- {
@@ -33,7 +33,7 @@ func (p TrustedProxies) origin(r *http.Request) (string, error) {
 				next := parseIP(fields[i]["for"])
 				if next == nil {
 					if len(fields) != 1 {
-						return "", errors.New("Forwarded chain requires for addresses")
+						return "", errors.New("forwarded chain requires for addresses")
 					}
 					break
 				}
@@ -52,13 +52,13 @@ func (p TrustedProxies) origin(r *http.Request) (string, error) {
 			if values := r.Header.Values("X-Forwarded-For"); len(values) > 0 {
 				parts, err := splitHeader(strings.Join(values, ","), ',')
 				if err != nil {
-					return "", errors.New("Invalid trusted X-Forwarded-For header")
+					return "", errors.New("invalid trusted X-Forwarded-For header")
 				}
 				ips := make([]net.IP, len(parts))
 				for i, v := range parts {
 					ips[i] = parseIP(v)
 					if ips[i] == nil {
-						return "", errors.New("Invalid trusted X-Forwarded-For header")
+						return "", errors.New("invalid trusted X-Forwarded-For header")
 					}
 				}
 				hops = len(ips)
@@ -74,21 +74,21 @@ func (p TrustedProxies) origin(r *http.Request) (string, error) {
 				if values := r.Header.Values(item.key); len(values) > 0 {
 					parts, err := splitHeader(strings.Join(values, ","), ',')
 					if err != nil {
-						return "", errors.New("Invalid trusted origin header")
+						return "", errors.New("invalid trusted origin header")
 					}
 					if len(parts) == 1 {
 						*item.target = parts[0]
 					} else if hops > 0 && len(parts) == hops {
 						*item.target = parts[index]
 					} else {
-						return "", errors.New("Forwarded origin list must match proxy chain")
+						return "", errors.New("forwarded origin list must match proxy chain")
 					}
 				}
 			}
 		}
 	}
 	if (proto != "http" && proto != "https") || !validHost(host) {
-		return "", errors.New("Invalid request origin")
+		return "", errors.New("invalid request origin")
 	}
 	return proto + "://" + host, nil
 }

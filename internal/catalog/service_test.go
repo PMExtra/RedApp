@@ -21,6 +21,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/catalog"
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/store"
+	"github.com/PMExtra/RedApp/internal/store/storetest"
 	"github.com/PMExtra/RedApp/internal/testutil"
 )
 
@@ -29,12 +30,24 @@ func descriptor(id string, channels ...string) application.Descriptor {
 }
 func openStore(t *testing.T) *store.Store {
 	t.Helper()
-	db, err := store.Open(t.TempDir())
+	return openStoreDir(t, t.TempDir())
+}
+func openStoreDir(t *testing.T, dir string) *store.Store {
+	t.Helper()
+	db, err := store.Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.DB.Close() })
+	t.Cleanup(func() { db.Close() })
 	return db
+}
+
+// directoryEntry creates the directory application key of provider, sourced
+// from runtime's upstream, and returns runtime with its persisted identity.
+func directoryEntry(t *testing.T, db *store.Store, key, provider string, runtime application.Entry) application.Entry {
+	t.Helper()
+	testutil.App(t, db, key, store.ApplicationInput{Provider: provider, BaseURL: runtime.Upstream.Base.String(), CacheTTLSeconds: 60})
+	return testutil.Entry(t, db, key, runtime)
 }
 func registry(t *testing.T, entries ...application.Entry) *application.Registry {
 	t.Helper()
@@ -74,12 +87,12 @@ func TestSharedCatalogIsolationAndImmutableBinding(t *testing.T) {
 	}))
 	base = client.Base.String()
 	ids := []string{"openai/codex", "example/third"}
+	db := openStore(t)
 	entries := []application.Entry{}
 	for _, id := range ids {
-		entries = append(entries, application.Entry{Descriptor: descriptor(id, "latest"), Protocol: codex.NewProtocol(client), Upstream: client})
+		entries = append(entries, directoryEntry(t, db, id, application.Codex, application.Entry{Descriptor: descriptor(id, "latest"), Protocol: codex.NewProtocol(client), Upstream: client}))
 	}
 	reg := registry(t, entries...)
-	db := openStore(t)
 	service := catalog.New(db, reg)
 	var wg sync.WaitGroup
 	for range 30 {
@@ -98,13 +111,13 @@ func TestSharedCatalogIsolationAndImmutableBinding(t *testing.T) {
 		t.Fatalf("app-scoped coalescing/cache requests=%d", requests.Load())
 	}
 	resources := []download.Resource{}
-	for _, id := range ids {
+	for i, id := range ids {
 		r, err := service.Authorize(context.Background(), id, "1.2.3", "asset.tgz")
 		if err != nil {
 			t.Fatal(err)
 		}
 		resources = append(resources, r)
-		versions, err := db.VersionsFor(id)
+		versions, err := db.VersionsFor(entries[i].StorageID())
 		if err != nil || len(versions) != 1 {
 			t.Fatalf("discovery scope: %v %v", versions, err)
 		}
@@ -115,7 +128,7 @@ func TestSharedCatalogIsolationAndImmutableBinding(t *testing.T) {
 	if _, err := service.Authorize(context.Background(), ids[0], "1.2.3", "missing.tgz"); !errors.Is(err, application.ErrNotFound) {
 		t.Fatal("unknown artifact did not return not found", err)
 	}
-	channel, err := db.Channel(ids[0], "latest")
+	channel, err := db.Channel(entries[0].StorageID(), "latest")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +141,7 @@ func TestSharedCatalogIsolationAndImmutableBinding(t *testing.T) {
 	if _, err = service.Release(context.Background(), ids[0], "latest"); !errors.Is(err, application.ErrUpstream) || errors.Is(err, application.ErrUntrusted) {
 		t.Fatal("stale channel served after upstream failure", err)
 	}
-	after, _ := db.Channel(ids[0], "latest")
+	after, _ := db.Channel(entries[0].StorageID(), "latest")
 	if !after.FetchedAt.Equal(channel.FetchedAt.Truncate(time.Second)) && !after.FetchedAt.Equal(channel.FetchedAt) {
 		t.Fatal("failed fetch refreshed expiry")
 	}
@@ -189,8 +202,10 @@ func TestSignedEnvelopePersistenceAndFailureBoundary(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	}))
-	reg := registry(t, application.Entry{Descriptor: descriptor("anthropic/claude-code", "latest", "stable"), Protocol: claude.NewProtocol(client), Upstream: client})
-	db := openStore(t)
+	dir := t.TempDir()
+	db := openStoreDir(t, dir)
+	entry := directoryEntry(t, db, "anthropic/claude-code", application.ClaudeCode, application.Entry{Descriptor: descriptor("anthropic/claude-code", "latest", "stable"), Protocol: claude.NewProtocol(client), Upstream: client})
+	reg := registry(t, entry)
 	service := catalog.New(db, reg)
 	release, err := service.Release(context.Background(), "anthropic/claude-code", "latest")
 	if err != nil {
@@ -220,7 +235,7 @@ func TestSignedEnvelopePersistenceAndFailureBoundary(t *testing.T) {
 		t.Fatal("missing release mapped to upstream failure", err)
 	}
 	// Corrupt signed bytes on disk: cached parsing cannot bypass signature checks.
-	if _, err = db.DB.Exec("UPDATE release_metadata SET raw=? WHERE app_id=?", append(append([]byte(nil), raw...), '\n'), "anthropic/claude-code"); err != nil {
+	if _, err = storetest.Open(t, dir).Exec("UPDATE release_metadata SET raw=? WHERE app_id=?", append(append([]byte(nil), raw...), '\n'), entry.StorageID()); err != nil {
 		t.Fatal(err)
 	}
 	tamper.Store(true)
@@ -245,8 +260,9 @@ func TestCanceledWaiterDoesNotCancelSharedFetch(t *testing.T) {
 		w.Write(releaseJSON(base, strings.Repeat("a", 64)))
 	}))
 	base = client.Base.String()
-	reg := registry(t, application.Entry{Descriptor: descriptor("example/app", "latest"), Protocol: codex.NewProtocol(client), Upstream: client})
-	service := catalog.New(openStore(t), reg)
+	db := openStore(t)
+	reg := registry(t, directoryEntry(t, db, "example/app", application.Codex, application.Entry{Descriptor: descriptor("example/app", "latest"), Protocol: codex.NewProtocol(client), Upstream: client}))
+	service := catalog.New(db, reg)
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() { _, err := service.Release(ctx, "example/app", "latest"); result <- err }()

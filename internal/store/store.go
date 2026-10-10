@@ -2,6 +2,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	_ "embed"
 	"errors"
@@ -21,7 +22,7 @@ import (
 
 // SchemaVersion is stored in PRAGMA user_version. Before 1.0 every schema
 // change increments it and older directories are refused (ADR 0001).
-const SchemaVersion = 13
+const SchemaVersion = 14
 
 // applicationID ("RdAp") is stored in PRAGMA application_id so that a foreign
 // SQLite file whose user_version happens to match is still refused.
@@ -29,29 +30,64 @@ const applicationID = 0x52644170
 
 const databaseName = "state.sqlite"
 
-var ErrIncompatibleDirectory = errors.New("This data directory belongs to another RedApp schema version or is not a RedApp data directory; use a new empty data directory. Data is never migrated and the old directory is left unchanged")
-var ErrConflict = errors.New("Setting revision changed; reload before saving")
-var ErrImmutableRelease = errors.New("Trusted release resource bindings changed")
-var ErrExpired = errors.New("Cleanup preview expired")
+var ErrIncompatibleDirectory = errors.New("this data directory belongs to another RedApp schema version or is not a RedApp data directory; use a new empty data directory. Data is never migrated and the old directory is left unchanged")
+
+// ErrNotFound reports that a requested row does not exist. It is
+// sql.ErrNoRows, so callers outside this package match it without importing
+// database/sql.
+var ErrNotFound = sql.ErrNoRows
+var ErrConflict = errors.New("setting revision changed; reload before saving")
+var ErrImmutableRelease = errors.New("trusted release resource bindings changed")
+var ErrExpired = errors.New("cleanup preview expired")
 
 //go:embed schema.sql
 var schema string
 
+// Store owns the SQLite database. It keeps two pools over the same WAL file:
+//
+//   - db is the only writer: one connection (SetMaxOpenConns(1)) opened with
+//     _txlock=immediate, so every write and every read-modify-write transaction
+//     is serialized in the process and takes the database write lock up front.
+//   - read is a pool of query_only connections for statements and snapshot
+//     transactions that never write. WAL lets them run while a write
+//     transaction is open; each sees the last committed state.
+//
+// While a transaction on db is open the writer connection is held, so code
+// running inside it (including callbacks such as finalize, beforeCommit or a
+// purge wrapper) must use only that transaction and must not call Store
+// methods that write: they would wait for the connection the caller holds.
+// Store methods that only read use the read pool and are safe there, but they
+// do not observe the transaction's uncommitted changes.
 type Store struct {
-	DB                    *sql.DB
+	db                    *sql.DB
+	read                  *sql.DB
+	busyTimeout           time.Duration
 	rates                 rates
 	pending               counterBuffer
 	work                  applicationWork
-	configMu              sync.Mutex
+	writeMu               sync.Mutex // orders configuration writes with their publication; held across one write transaction plus the in-memory prepare and publish (see writeConfiguration)
 	validateDistributions func([]presets.Descriptor) error
 	prepareConfiguration  func(DirectorySnapshot) (ConfigurationPublication, error)
 	// beforeCommit runs inside every configuration transaction just before it
-	// commits. Only openStore options set it.
+	// commits. Only test options set it.
 	beforeCommit func(*sql.Tx) error
+	// view is the runtime view of the last committed configuration, loaded on
+	// first use. writeMu guards it.
+	view *directoryView
 }
 
-// option configures a Store at construction; production uses none.
-type option func(*Store)
+// Option configures a Store at construction; production uses none.
+type Option func(*Store)
+
+// WithBusyTimeout bounds how long a statement waits for a database lock held
+// by another connection before failing (default 5 seconds).
+func WithBusyTimeout(d time.Duration) Option {
+	return func(s *Store) { s.busyTimeout = d }
+}
+
+// readPoolSize bounds concurrent read connections; each holds a WAL snapshot
+// only for the duration of one statement or read transaction.
+const readPoolSize = 8
 
 func ValidAppID(app string) bool {
 	return identity.ValidKey(app)
@@ -63,9 +99,7 @@ func sqliteURL(path string, query string) string {
 // Open creates the schema in a new empty directory or opens a directory whose
 // database has exactly SchemaVersion. Any other directory is refused without
 // modification. The caller must hold the directory's instance lock.
-func Open(dir string) (*Store, error) { return openStore(dir) }
-
-func openStore(dir string, options ...option) (*Store, error) {
+func Open(dir string, options ...Option) (*Store, error) {
 	path, err := filepath.Abs(filepath.Join(dir, databaseName))
 	if err != nil {
 		return nil, err
@@ -83,30 +117,47 @@ func openStore(dir string, options ...option) (*Store, error) {
 			return nil, err
 		}
 	}
-	db, err := sql.Open("sqlite3", sqliteURL(path, "mode=rw&_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on&_synchronous=FULL"))
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	if fresh {
-		err = createSchema(db)
-	} else {
-		// The read-only probe saw the main file; confirm the WAL view agrees.
-		err = checkVersion(db)
-	}
-	if err != nil {
-		db.Close()
-		return nil, err
-	}
-	s := &Store{DB: db, rates: rates{started: time.Now()}}
+	s := &Store{busyTimeout: 5 * time.Second, rates: rates{started: time.Now()}}
 	for _, apply := range options {
 		apply(s)
 	}
+	busy := fmt.Sprintf("_busy_timeout=%d", s.busyTimeout.Milliseconds())
+	if s.db, err = sql.Open("sqlite3", sqliteURL(path, "mode=rw&_journal_mode=WAL&_txlock=immediate&_foreign_keys=on&_synchronous=FULL&"+busy)); err != nil {
+		return nil, err
+	}
+	s.db.SetMaxOpenConns(1)
+	if fresh {
+		err = createSchema(s.db)
+	} else {
+		// The read-only probe saw the main file; confirm the WAL view agrees.
+		err = checkVersion(s.db)
+	}
+	if err != nil {
+		s.db.Close()
+		return nil, err
+	}
+	// The writer has created the WAL and shared-memory files, which read-only
+	// connections need but cannot create.
+	if s.read, err = sql.Open("sqlite3", sqliteURL(path, "mode=ro&_query_only=on&"+busy)); err != nil {
+		s.db.Close()
+		return nil, err
+	}
+	s.read.SetMaxOpenConns(readPoolSize)
+	s.read.SetMaxIdleConns(readPoolSize)
 	if err = s.loadApplicationDeletionGates(); err != nil {
-		db.Close()
+		s.closeDatabases()
 		return nil, err
 	}
 	return s, nil
+}
+
+func (s *Store) closeDatabases() error {
+	return errors.Join(s.read.Close(), s.db.Close())
+}
+
+// Ping checks that both the writer and a reader connection are usable.
+func (s *Store) Ping(ctx context.Context) error {
+	return errors.Join(s.db.PingContext(ctx), s.read.PingContext(ctx))
 }
 
 // createSchema writes the schema and version in one transaction and then
@@ -132,7 +183,7 @@ func createSchema(db *sql.DB) error {
 		return err
 	}
 	if busy != 0 {
-		return errors.New("Initial schema checkpoint is busy")
+		return errors.New("initial schema checkpoint is busy")
 	}
 	return nil
 }
@@ -200,7 +251,7 @@ func probeExisting(path string) error {
 	}
 	db, err := sql.Open("sqlite3", sqliteURL(path, "mode=ro&immutable=1&_query_only=on"))
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrIncompatibleDirectory, err)
+		return fmt.Errorf("%w: %w", ErrIncompatibleDirectory, err)
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
@@ -210,10 +261,10 @@ func probeExisting(path string) error {
 func checkVersion(db *sql.DB) error {
 	var app, version int
 	if err := db.QueryRow("PRAGMA application_id").Scan(&app); err != nil {
-		return fmt.Errorf("%w: %v", ErrIncompatibleDirectory, err)
+		return fmt.Errorf("%w: %w", ErrIncompatibleDirectory, err)
 	}
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
-		return fmt.Errorf("%w: %v", ErrIncompatibleDirectory, err)
+		return fmt.Errorf("%w: %w", ErrIncompatibleDirectory, err)
 	}
 	if app != applicationID || version != SchemaVersion {
 		return ErrIncompatibleDirectory
@@ -223,7 +274,7 @@ func checkVersion(db *sql.DB) error {
 
 func requireApp(app string) error {
 	if !ValidAppID(app) {
-		return errors.New("Canonical vendor/app identity is required")
+		return errors.New("canonical vendor/app identity is required")
 	}
 	return nil
 }

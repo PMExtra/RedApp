@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/instance"
-	"github.com/PMExtra/RedApp/internal/store"
 	"github.com/PMExtra/RedApp/internal/testutil"
 	"io"
 	"net/http"
@@ -26,11 +25,8 @@ func TestManagerProcessHelper(t *testing.T) {
 		os.Exit(2)
 	}
 	defer guard.Close()
-	db, e := store.Open(guard.Directory)
-	if e != nil {
-		os.Exit(3)
-	}
-	defer db.DB.Close()
+	db := openStore(t, guard.Directory)
+	defer db.Close()
 	u, _ := url.Parse(os.Getenv("REDAPP_DOWNLOAD_SOURCE"))
 	c := &distributor.Client{Base: u, HTTP: &http.Client{}}
 	m, e := newTestManager(guard.Directory, db, c)
@@ -39,7 +35,7 @@ func TestManagerProcessHelper(t *testing.T) {
 	}
 	hash := os.Getenv("REDAPP_DOWNLOAD_HASH")
 	source := testutil.SourceURL(c, "asset")
-	r := Resource{Application: testApp, Version: "0.1.0", Key: "asset", ID: LogicalIdentity(testApp, "0.1.0", "asset"), Source: source, Hash: hash}
+	r := onApp(Resource{Version: "0.1.0", Key: "asset", Source: source, Hash: hash}, testApp)
 	authorize(t, m, r)
 	rd, _, e := m.Acquire(context.Background(), r)
 	if e != nil {
@@ -97,11 +93,9 @@ func TestSIGKILLReleasesLockAndResumesDiskPrefix(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer g.Close()
-	db, e := store.Open(dir)
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer db.DB.Close()
+	db := openStore(t, dir)
+	defer db.Close()
+	r = onApp(r, testApp)
 	m, e := newTestManager(dir, db, c)
 	if e != nil {
 		t.Fatal(e)

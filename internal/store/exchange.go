@@ -2,9 +2,7 @@ package store
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,14 +60,17 @@ type ImportItem struct {
 	Differences          []ImportDifference `json:"differences"`
 	Requirements         []string           `json:"requirements"`
 }
+
+// ImportPlan is a reviewed import. Executing it recomputes the plan against the
+// current rows of the entities it touches and fails with ErrConflict unless the
+// result is the one that was reviewed, so the import is checked per entity.
 type ImportPlan struct {
-	Items       []ImportItem              `json:"items"`
-	NeedsTrust  bool                      `json:"needs_instructions_trust"`
-	Ready       bool                      `json:"ready"`
-	Fingerprint string                    `json:"-"`
-	Documents   []configexchange.Document `json:"-"`
-	Choices     []ImportChoice            `json:"-"`
-	candidate   *configurationState
+	Items      []ImportItem              `json:"items"`
+	NeedsTrust bool                      `json:"needs_instructions_trust"`
+	Ready      bool                      `json:"ready"`
+	Documents  []configexchange.Document `json:"-"`
+	Choices    []ImportChoice            `json:"-"`
+	icons      map[string]bool
 }
 type ImportApplied struct {
 	Kind     string `json:"kind"`
@@ -82,35 +83,20 @@ type ImportResult struct {
 	Applied bool            `json:"applied"`
 }
 
-func stateHash(st configurationState) string {
-	sum := sha256.Sum256(encode(st))
-	return hex.EncodeToString(sum[:])
-}
-func (st *configurationState) exchangeEntity(kind, key string) (uid string, rev int64, deleted bool) {
-	if kind == "Vendor" {
-		for _, v := range st.Vendors {
-			if v.ID == key {
-				return v.UID, v.Revision, v.DeletedAt != nil
-			}
-		}
-	} else {
-		for _, a := range st.Applications {
-			if a.Key == key {
-				return a.UID, a.Revision, a.DeletedAt != nil
-			}
-		}
-	}
-	return
-}
 func (s *Store) ExportConfiguration(options ExportOptions) (configexchange.Package, error) {
-	st, err := s.configurationState()
 	p := configexchange.Package{Assets: map[string][]byte{}}
-	if err != nil {
-		return p, err
-	}
 	if len(options.Selection) == 0 || len(options.Selection) > 1000 || options.Mode != "linked" && options.Mode != "independent" {
 		return p, ErrInvalidDirectory
 	}
+	err := s.readConfiguration(func(w *configSet) error {
+		var err error
+		p, err = exportConfiguration(w, options)
+		return err
+	})
+	return p, err
+}
+func exportConfiguration(w *configSet, options ExportOptions) (configexchange.Package, error) {
+	p := configexchange.Package{Assets: map[string][]byte{}}
 	type entry struct{ kind, key, mode string }
 	entries := map[string]entry{}
 	forcedParents := map[string]bool{}
@@ -118,7 +104,10 @@ func (s *Store) ExportConfiguration(options ExportOptions) (configexchange.Packa
 		if sel.Kind != "Vendor" && sel.Kind != "App" {
 			return p, ErrInvalidDirectory
 		}
-		uid, _, deleted := st.exchangeEntity(sel.Kind, sel.Key)
+		uid, _, deleted, err := w.entity(sel.Kind, sel.Key)
+		if err != nil {
+			return p, err
+		}
 		if uid == "" && sel.Kind == "Vendor" {
 			return p, ErrVendorNotFound
 		}
@@ -134,8 +123,12 @@ func (s *Store) ExportConfiguration(options ExportOptions) (configexchange.Packa
 			forcedParents[vendor] = true
 			entries[templateKey("Vendor", vendor)] = entry{"Vendor", vendor, "independent"}
 		} else if sel.IncludeApps == nil || *sel.IncludeApps {
-			for _, app := range st.Applications {
-				if app.VendorID == sel.Key && app.DeletedAt == nil {
+			apps, err := w.vendorApps(uid)
+			if err != nil {
+				return p, err
+			}
+			for _, app := range apps {
+				if app.DeletedAt == nil {
 					entries[templateKey("App", app.Key)] = entry{"App", app.Key, options.Mode}
 				}
 			}
@@ -155,12 +148,15 @@ func (s *Store) ExportConfiguration(options ExportOptions) (configexchange.Packa
 	categoryIDs := map[string]bool{}
 	for _, key := range keys {
 		entry := entries[key]
-		uid, _, _ := st.exchangeEntity(entry.kind, entry.key)
-		effective, err := st.effective(entry.kind, uid)
+		uid, _, _, err := w.entity(entry.kind, entry.key)
 		if err != nil {
 			return p, err
 		}
-		cfg := st.Configs[configKey(entry.kind, uid)]
+		cfg := w.config(entry.kind, uid)
+		effective, err := w.effective(entry.kind, cfg)
+		if err != nil {
+			return p, err
+		}
 		meta := &presets.Metadata{ID: entry.key}
 		if entry.kind == "App" {
 			meta.Vendor, meta.ID, _ = strings.Cut(entry.key, "/")
@@ -175,8 +171,12 @@ func (s *Store) ExportConfiguration(options ExportOptions) (configexchange.Packa
 		d := configexchange.Document{SchemaVersion: 1, Kind: entry.kind, Metadata: meta}
 		if entry.mode == "linked" && cfg.Ref != nil {
 			ref := *cfg.Ref
+			t, err := w.template(entry.kind, ref)
+			if err != nil {
+				return p, err
+			}
 			d.Template = &ref
-			d.TemplateHash = st.Templates[templateKey(entry.kind, ref)].Hash
+			d.TemplateHash = templateHash(t)
 			d.Overrides = map[string]any(cloneObject(cfg.Overrides))
 			if d.Overrides == nil {
 				d.Overrides = map[string]any{}
@@ -197,7 +197,11 @@ func (s *Store) ExportConfiguration(options ExportOptions) (configexchange.Packa
 			}
 		}
 		if options.IncludeNotes {
-			text := st.Notes[configKey(entry.kind, uid)].Text
+			note, err := w.note(entry.kind, uid)
+			if err != nil {
+				return p, err
+			}
+			text := note.Text
 			d.AdminNotes = &text
 		}
 		p.Documents = append(p.Documents, d)
@@ -205,7 +209,13 @@ func (s *Store) ExportConfiguration(options ExportOptions) (configexchange.Packa
 	// Tags travel inside App specs/overrides; only referenced category names need a dictionary document.
 	tax := presets.TaxonomySpec{Categories: []presets.TaxonomyEntry{}}
 	for id := range categoryIDs {
-		item := st.Taxonomy[categoryKey(id)]
+		item, err := w.category(id)
+		if err != nil {
+			return p, err
+		}
+		if item == nil {
+			return p, invalidf("unknown category %s", id)
+		}
 		tax.Categories = append(tax.Categories, presets.TaxonomyEntry{ID: id, Name: presets.Text{En: item.Name.En, ZhCN: item.Name.ZhCN}})
 	}
 	sort.Slice(tax.Categories, func(i, j int) bool { return tax.Categories[i].ID < tax.Categories[j].ID })
@@ -219,15 +229,19 @@ func (s *Store) ExportConfiguration(options ExportOptions) (configexchange.Packa
 }
 func choiceKey(kind, key string) string { return kind + ":" + key }
 func (s *Store) PreviewConfigurationImport(documents []configexchange.Document, choices []ImportChoice) (ImportPlan, error) {
-	st, e := s.configurationState()
-	if e != nil {
-		return ImportPlan{}, e
-	}
-	return makeImportPlan(st, documents, choices)
+	var plan ImportPlan
+	err := s.readConfiguration(func(w *configSet) error {
+		var err error
+		plan, err = makeImportPlan(newConfigSet(w.q), w, documents, choices)
+		return err
+	})
+	return plan, err
 }
-func makeImportPlan(st configurationState, documents []configexchange.Document, choices []ImportChoice) (ImportPlan, error) {
-	plan := ImportPlan{Items: []ImportItem{}, Ready: true, Fingerprint: stateHash(st), Documents: documents, Choices: choices}
-	candidate := cloneState(st)
+
+// makeImportPlan applies the documents to w and reports what changes. base
+// reads the same transaction unchanged and supplies the values before the import.
+func makeImportPlan(base, w *configSet, documents []configexchange.Document, choices []ImportChoice) (ImportPlan, error) {
+	plan := ImportPlan{Items: []ImportItem{}, Ready: true, Documents: documents, Choices: choices}
 	byChoice := map[string]ImportChoice{}
 	for _, c := range choices {
 		k := choiceKey(c.Kind, c.Key)
@@ -255,17 +269,19 @@ func makeImportPlan(st configurationState, documents []configexchange.Document, 
 			if strict(Object(d.Spec), &tax) != nil {
 				return plan, ErrInvalidDirectory
 			}
-			kind := categoryKind
 			for _, entry := range tax.Categories {
-				cKey := choiceKey(kind, entry.ID)
+				cKey := choiceKey(categoryKind, entry.ID)
 				choice, chosen := byChoice[cKey]
 				if chosen {
 					usedChoices[cKey] = true
 				}
-				item, exists := candidate.Taxonomy[taxonomyKey(kind, entry.ID)]
-				row := ImportItem{Kind: kind, Key: entry.ID, Target: entry.ID, Action: "create", Differences: []ImportDifference{}, Requirements: []string{}, Omitted: []string{}}
+				item, err := w.category(entry.ID)
+				if err != nil {
+					return plan, err
+				}
+				row := ImportItem{Kind: categoryKind, Key: entry.ID, Target: entry.ID, Action: "create", Differences: []ImportDifference{}, Requirements: []string{}, Omitted: []string{}}
 				incoming := LocalizedText{entry.Name.En, entry.Name.ZhCN}
-				if exists {
+				if item != nil {
 					row.Revision = item.Revision
 					row.Action = "keep"
 					if item.Name != incoming {
@@ -279,13 +295,13 @@ func makeImportPlan(st configurationState, documents []configexchange.Document, 
 							}
 							item.Name = incoming
 							item.decorate()
-							candidate.Taxonomy[taxonomyKey(kind, entry.ID)] = item
+							w.putCategory(*item)
 						}
 					}
 				} else {
-					item = TaxonomyItem{Kind: kind, ID: entry.ID, Name: incoming, Revision: 1, Present: true, Override: Object{}}
-					item.decorate()
-					candidate.Taxonomy[taxonomyKey(kind, entry.ID)] = item
+					created := TaxonomyItem{Kind: categoryKind, ID: entry.ID, Name: incoming, Revision: 1, Present: true, Override: Object{}}
+					created.decorate()
+					w.putCategory(created)
 				}
 				plan.Items = append(plan.Items, row)
 			}
@@ -312,14 +328,21 @@ func makeImportPlan(st configurationState, documents []configexchange.Document, 
 			}
 			target = meta.Vendor + "/" + meta.ID
 		}
-		uid, revision, deleted := candidate.exchangeEntity(d.Kind, target)
+		uid, revision, deleted, err := w.entity(d.Kind, target)
+		if err != nil {
+			return plan, err
+		}
 		if deleted {
 			return plan, ErrDirectoryDeleted
 		}
 		row := ImportItem{Kind: d.Kind, Key: d.Key(), Target: target, UID: uid, Revision: revision, Action: "create", Differences: []ImportDifference{}, Requirements: []string{}, Omitted: append([]string{}, d.OmittedFields...)}
+		var note *noteEntry
 		if uid != "" {
 			row.Action = "skip"
-			row.NotesRevision = candidate.Notes[configKey(d.Kind, uid)].current()
+			if note, err = w.note(d.Kind, uid); err != nil {
+				return plan, err
+			}
+			row.NotesRevision = note.current()
 		}
 		if choice.Action != "" {
 			row.Action = choice.Action
@@ -330,25 +353,33 @@ func makeImportPlan(st configurationState, documents []configexchange.Document, 
 		if row.Action != "create" && row.Action != "skip" && row.Action != "update" || uid == "" && row.Action == "update" {
 			return plan, invalidf("%s cannot be imported with action %q", target, row.Action)
 		}
-		oldCfg := candidate.Configs[configKey(d.Kind, uid)]
+		oldCfg := w.config(d.Kind, uid)
 		var before Object
 		if uid != "" {
-			before, _ = st.effective(d.Kind, uid)
+			if _, _, _, err = base.entity(d.Kind, target); err != nil {
+				return plan, err
+			}
+			before, _ = base.effective(d.Kind, base.config(d.Kind, uid))
 		}
 		cfg := ownedConfig{Ref: d.Template, Spec: cloneObject(Object(d.Spec)), Overrides: cloneObject(Object(d.Overrides))}
 		if cfg.Overrides == nil {
 			cfg.Overrides = Object{}
 		}
+		var proposed Object
 		if cfg.Ref != nil {
-			t, ok := candidate.Templates[templateKey(d.Kind, *cfg.Ref)]
-			row.TemplateMissing = !ok || !t.Present
-			row.TemplateHashMismatch = ok && t.Hash != d.TemplateHash
-			if !ok || !t.Present && (uid == "" || oldCfg.Ref == nil || *oldCfg.Ref != *cfg.Ref) {
+			t, err := w.template(d.Kind, *cfg.Ref)
+			if err != nil {
+				return plan, err
+			}
+			row.TemplateMissing = t == nil || !t.Present
+			row.TemplateHashMismatch = t != nil && t.Hash != d.TemplateHash
+			if t == nil || !t.Present && (uid == "" || oldCfg.Ref == nil || *oldCfg.Ref != *cfg.Ref) {
 				return plan, invalidf("template unavailable; use an independent copy")
 			}
 			if err := validateOverrides(d.Kind, cfg.Overrides); err != nil {
 				return plan, ErrInvalidDirectory
 			}
+			proposed = merge(t.Spec, cfg.Overrides)
 		} else {
 			check := cloneObject(cfg.Spec)
 			if len(d.OmittedFields) > 0 {
@@ -357,13 +388,10 @@ func makeImportPlan(st configurationState, documents []configexchange.Document, 
 			if err := validateExchangeSpec(d.Kind, check); err != nil {
 				return plan, err
 			}
+			proposed = cloneObject(cfg.Spec)
 		}
 		if d.AdminNotes != nil && !validNotes(*d.AdminNotes) {
 			return plan, ErrInvalidDirectory
-		}
-		proposed := cloneObject(cfg.Spec)
-		if cfg.Ref != nil {
-			proposed = merge(candidate.Templates[templateKey(d.Kind, *cfg.Ref)].Spec, cfg.Overrides)
 		}
 		validationCopy := cloneObject(proposed)
 		if len(d.OmittedFields) > 0 {
@@ -379,7 +407,7 @@ func makeImportPlan(st configurationState, documents []configexchange.Document, 
 			}
 			categories, catErr := presets.NormalizeCategories(app.Categories)
 			_, tagErr := presets.NormalizeTags(app.Tags)
-			if catErr != nil || tagErr != nil || candidate.validateCategories(categories) != nil {
+			if catErr != nil || tagErr != nil || w.requireCategories(categories) != nil {
 				return plan, ErrInvalidDirectory
 			}
 		}
@@ -395,32 +423,30 @@ func makeImportPlan(st configurationState, documents []configexchange.Document, 
 					row.Differences = append(row.Differences, ImportDifference{field, x, y})
 				}
 			}
-			if d.AdminNotes != nil && candidate.Notes[configKey(d.Kind, uid)].Text != *d.AdminNotes {
-				row.Differences = append(row.Differences, ImportDifference{"admin_notes", candidate.Notes[configKey(d.Kind, uid)].Text, *d.AdminNotes})
+			if d.AdminNotes != nil && note.Text != *d.AdminNotes {
+				row.Differences = append(row.Differences, ImportDifference{"admin_notes", note.Text, *d.AdminNotes})
 			}
 			plan.Items = append(plan.Items, row)
 			continue
 		}
 		if uid == "" {
-			var e error
-			uid, e = identity.NewUID()
-			if e != nil {
-				return plan, e
+			if uid, err = identity.NewUID(); err != nil {
+				return plan, err
 			}
 			if d.Kind == "Vendor" {
-				candidate.Vendors = append(candidate.Vendors, Vendor{UID: uid, ID: meta.ID, Revision: 1})
+				w.addVendor(Vendor{UID: uid, ID: meta.ID, Revision: 1}, cfg)
 			} else {
-				parent, _, gone := candidate.exchangeEntity("Vendor", meta.Vendor)
-				if parent == "" || gone {
+				parent, err := w.vendorByID(meta.Vendor)
+				if err != nil {
+					return plan, err
+				}
+				if parent == nil || parent.DeletedAt != nil {
 					return plan, invalidf("target vendor required")
 				}
-				provider := ""
-				if cfg.Ref != nil {
-					provider = fmt.Sprint(candidate.Templates[templateKey("App", *cfg.Ref)].Spec["provider"])
-				} else {
-					provider = fmt.Sprint(cfg.Spec["provider"])
-				}
-				candidate.Applications = append(candidate.Applications, Application{UID: uid, ID: meta.ID, Key: target, VendorID: meta.Vendor, VendorUID: parent, Provider: provider, Revision: 1, SourceEpoch: 1})
+				w.addApp(Application{UID: uid, ID: meta.ID, Key: target, VendorID: meta.Vendor, VendorUID: parent.UID, Provider: fmt.Sprint(proposed["provider"]), Revision: 1, SourceEpoch: 1}, cfg)
+			}
+			if note, err = w.note(d.Kind, uid); err != nil {
+				return plan, err
 			}
 		}
 		if d.Template == nil && oldCfg.Ref != nil {
@@ -438,7 +464,9 @@ func makeImportPlan(st configurationState, documents []configexchange.Document, 
 				}
 				proxy = *choice.Proxy
 			} else if choice.KeepEffectiveProxy && before != nil {
-				proxy = effectiveObjectProxy(st, d.Kind, row.UID)
+				if proxy, err = base.objectProxy(d.Kind, row.UID, nil); err != nil {
+					return plan, err
+				}
 			} else if before != nil {
 				proxy, _ = decodeProxy(before["proxy"])
 			} else {
@@ -450,7 +478,7 @@ func makeImportPlan(st configurationState, documents []configexchange.Document, 
 			}
 			if choice.Proxy == nil && !choice.KeepEffectiveProxy && before != nil && cfg.Ref != nil && reflect.DeepEqual(cfg.Ref, oldCfg.Ref) {
 				if value, exists := oldCfg.Overrides["proxy"]; exists {
-					cfg.Overrides["proxy"] = value
+					cfg.Overrides["proxy"] = cloneValue(value)
 				} else {
 					delete(cfg.Overrides, "proxy")
 				}
@@ -460,23 +488,20 @@ func makeImportPlan(st configurationState, documents []configexchange.Document, 
 		} else if choice.Proxy != nil || choice.KeepEffectiveProxy {
 			return plan, ErrInvalidDirectory
 		}
-		candidate.Configs[configKey(d.Kind, uid)] = cfg
+		w.setConfig(d.Kind, uid, cfg)
 		if row.Action == "update" {
-			bumpEntity(&candidate, d.Kind, uid)
+			bumpEntity(w, d.Kind, uid)
 		}
-		if d.AdminNotes != nil {
-			old := candidate.Notes[configKey(d.Kind, uid)]
-			if old.Text != *d.AdminNotes {
-				row.Differences = append(row.Differences, ImportDifference{"admin_notes", old.Text, *d.AdminNotes})
-				if row.Action == "update" && !choice.UpdateNotes {
-					row.Requirements = append(row.Requirements, "confirm_notes_update")
-				} else {
-					candidate.Notes[configKey(d.Kind, uid)] = AdminNotes{Text: *d.AdminNotes, Revision: old.current() + 1}
-				}
+		if d.AdminNotes != nil && note.Text != *d.AdminNotes {
+			row.Differences = append(row.Differences, ImportDifference{"admin_notes", note.Text, *d.AdminNotes})
+			if row.Action == "update" && !choice.UpdateNotes {
+				row.Requirements = append(row.Requirements, "confirm_notes_update")
+			} else {
+				note.AdminNotes = AdminNotes{Text: *d.AdminNotes, Revision: note.current() + 1}
 			}
 		}
-		after, e := candidate.effective(d.Kind, uid)
-		if e != nil {
+		after, err := w.effective(d.Kind, cfg)
+		if err != nil {
 			return plan, ErrInvalidDirectory
 		}
 		for _, field := range paths(d.Kind) {
@@ -499,49 +524,68 @@ func makeImportPlan(st configurationState, documents []configexchange.Document, 
 			return plan, ErrInvalidDirectory
 		}
 	}
-	if err := materialize(&candidate, st); err != nil {
-		return plan, ErrInvalidDirectory
-	}
-	if err := candidate.refreshProxyScopes(); err != nil {
+	if err := w.materialize(); err != nil {
 		return plan, ErrInvalidDirectory
 	}
 	for i := range plan.Items {
 		row := &plan.Items[i]
 		choice := byChoice[choiceKey(row.Kind, row.Key)]
-		if row.Action == "update" && len(row.Omitted) > 0 && choice.Proxy == nil && !choice.KeepEffectiveProxy {
-			oldCfg := st.Configs[configKey(row.Kind, row.UID)]
-			uid, _, _ := candidate.exchangeEntity(row.Kind, row.Target)
-			newCfg := candidate.Configs[configKey(row.Kind, uid)]
-			if !reflect.DeepEqual(oldCfg.Ref, newCfg.Ref) {
-				// Review the route the new binding would select without silently
-				// choosing an effective-value override on the administrator's behalf.
-				alternate := cloneState(candidate)
-				cfg := alternate.Configs[configKey(row.Kind, uid)]
-				if cfg.Ref != nil {
-					delete(cfg.Overrides, "proxy")
-				} else {
-					cfg.Spec["proxy"] = object(networkproxy.Inherit())
-				}
-				alternate.Configs[configKey(row.Kind, uid)] = cfg
-				if alternate.refreshProxyScopes() != nil {
-					return plan, ErrInvalidDirectory
-				}
-				if !reflect.DeepEqual(effectiveObjectProxy(st, row.Kind, row.UID), effectiveObjectProxy(alternate, row.Kind, uid)) {
-					row.Requirements = append(row.Requirements, "resolve_changed_proxy")
-					plan.Ready = false
+		if row.Action != "update" || len(row.Omitted) == 0 || choice.Proxy != nil || choice.KeepEffectiveProxy {
+			continue
+		}
+		oldCfg := base.config(row.Kind, row.UID)
+		newCfg := w.config(row.Kind, row.UID)
+		if reflect.DeepEqual(oldCfg.Ref, newCfg.Ref) {
+			continue
+		}
+		// Review the route the new binding would select without silently
+		// choosing an effective-value override on the administrator's behalf.
+		alternate := ownedConfig{Ref: newCfg.Ref, Overrides: cloneObject(newCfg.Overrides), Spec: cloneObject(newCfg.Spec)}
+		if alternate.Ref != nil {
+			delete(alternate.Overrides, "proxy")
+		} else {
+			alternate.Spec["proxy"] = object(networkproxy.Inherit())
+		}
+		own, err := w.ownProxy(row.Kind, alternate)
+		if err != nil {
+			return plan, ErrInvalidDirectory
+		}
+		was, err := base.objectProxy(row.Kind, row.UID, nil)
+		if err != nil {
+			return plan, err
+		}
+		would, err := w.objectProxy(row.Kind, row.UID, &own)
+		if err != nil {
+			return plan, ErrInvalidDirectory
+		}
+		if !reflect.DeepEqual(was, would) {
+			row.Requirements = append(row.Requirements, "resolve_changed_proxy")
+			plan.Ready = false
+		}
+	}
+	// A created category that no resulting App uses would be pruned on commit;
+	// preview it as skipped. Only Apps of this import can use a new category.
+	referenced := map[string]bool{}
+	plan.icons = map[string]bool{}
+	for _, a := range w.apps {
+		if a.changed {
+			plan.icons[a.Icon] = true
+			if a.DeletedAt == nil {
+				for _, id := range a.Categories {
+					referenced[id] = true
 				}
 			}
 		}
 	}
-	// Package categories that no resulting App or template uses would be pruned on commit; preview them as skipped.
-	referenced, err := candidate.referencedCategories()
-	if err != nil {
-		return plan, err
+	for _, v := range w.vendors {
+		if v.changed {
+			plan.icons[v.Icon], plan.icons[v.LocalizedIcons.En], plan.icons[v.LocalizedIcons.ZhCN] = true, true, true
+		}
 	}
 	for i, row := range plan.Items {
 		if row.Kind == categoryKind && row.Action == "create" && !referenced[row.Key] {
 			plan.Items[i].Action = "skip"
-			delete(candidate.Taxonomy, categoryKey(row.Key))
+			w.dropCategory(row.Key)
 		}
 	}
 	if len(plan.Items) > configexchange.MaxEntities {
@@ -554,7 +598,6 @@ func makeImportPlan(st configurationState, documents []configexchange.Document, 
 		}
 		return a.Key < b.Key
 	})
-	plan.candidate = &candidate
 	return plan, nil
 }
 func kindOrder(k string) int {
@@ -620,37 +663,18 @@ func putConfigProxy(c *ownedConfig, p networkproxy.Config) {
 		c.Overrides["proxy"] = object(p)
 	}
 }
-func effectiveObjectProxy(st configurationState, kind, uid string) networkproxy.Config {
-	if kind == "App" {
-		return st.ProxyScopes[uid].Proxy.Config
-	}
-	spec, _ := st.effective("Vendor", uid)
-	proxy, _ := decodeProxy(spec["proxy"])
-	if proxy.Mode == "inherit" {
-		return st.GlobalProxy
-	}
-	return proxy
-}
-func bumpEntity(st *configurationState, kind, uid string) {
+func bumpEntity(w *configSet, kind, uid string) {
 	if kind == "Vendor" {
-		for i := range st.Vendors {
-			if st.Vendors[i].UID == uid {
-				st.Vendors[i].Revision++
-			}
-		}
+		w.vendors[uid].Revision++
 	} else {
-		for i := range st.Applications {
-			if st.Applications[i].UID == uid {
-				st.Applications[i].Revision++
-			}
-		}
+		w.apps[uid].Revision++
 	}
 }
-func (s *Store) ImportReceipt(id string) (ImportResult, bool, error) {
+func importReceipt(q querier, id string) (ImportResult, bool, error) {
 	var result ImportResult
 	var raw []byte
 	var created int64
-	e := s.DB.QueryRow(`SELECT result_json,created_s FROM configuration_import_receipts WHERE id=?`, id).Scan(&raw, &created)
+	e := q.QueryRow(`SELECT result_json,created_s FROM configuration_import_receipts WHERE id=?`, id).Scan(&raw, &created)
 	if errors.Is(e, sql.ErrNoRows) {
 		return result, false, nil
 	}
@@ -663,44 +687,65 @@ func (s *Store) ImportReceipt(id string) (ImportResult, bool, error) {
 	e = json.Unmarshal(raw, &result)
 	return result, e == nil, e
 }
+func (s *Store) ImportReceipt(id string) (ImportResult, bool, error) {
+	return importReceipt(s.read, id)
+}
+
+// importReceiptChecked is nil in production. Tests set it to run after an
+// import found no receipt outside writeMu.
+var importReceiptChecked func()
+
+// ExecuteConfigurationImport applies a reviewed plan atomically: every entity
+// it creates or updates, its categories and notes commit in one transaction or
+// not at all. Each touched entity is checked against what the preview saw;
+// changes to entities the import does not touch never conflict.
 func (s *Store) ExecuteConfigurationImport(plan ImportPlan, id string, trust bool, guard ...func() bool) (ImportResult, error) {
 	if result, found, e := s.ImportReceipt(id); e != nil || found {
 		return result, e
+	}
+	if importReceiptChecked != nil {
+		importReceiptChecked()
 	}
 	result := ImportResult{Items: []ImportApplied{}, Applied: true}
 	if !plan.Ready || plan.NeedsTrust && !trust {
 		return result, ErrInvalidDirectory
 	}
 	var existing *ImportResult
-	err := s.changeConfigurationAtomic(func(st *configurationState) error {
-		// Receipts are written under configMu, so a concurrent request with the
+	err := s.writeConfiguration(func(w *configSet) error {
+		// Receipts are written under writeMu, so a concurrent request with the
 		// same id that committed first is visible here.
-		if previous, found, e := s.ImportReceipt(id); e != nil {
+		if previous, found, e := importReceipt(w.q, id); e != nil {
 			return e
 		} else if found {
 			existing = &previous
 			return errImportReceipt
 		}
-		if stateHash(*st) != plan.Fingerprint {
+		fresh, e := makeImportPlan(newConfigSet(w.q), w, plan.Documents, plan.Choices)
+		if errors.Is(e, ErrInvalidDirectory) || errors.Is(e, ErrDirectoryExists) || errors.Is(e, ErrDirectoryDeleted) || errors.Is(e, sql.ErrNoRows) {
+			// The documents were valid when previewed; only a changed entity can fail them now.
 			return ErrConflict
 		}
-		fresh, e := makeImportPlan(*st, plan.Documents, plan.Choices)
 		if e != nil {
 			return e
 		}
-		if !fresh.Ready || fresh.NeedsTrust && !trust {
-			return ErrInvalidDirectory
+		if !reflect.DeepEqual(fresh.Items, plan.Items) || fresh.Ready != plan.Ready || fresh.NeedsTrust != plan.NeedsTrust {
+			return ErrConflict
 		}
-		*st = *fresh.candidate
 		for _, row := range fresh.Items {
 			if row.Action == "skip" || row.Action == "keep" {
 				continue
 			}
-			uid, revision, _ := st.exchangeEntity(row.Kind, row.Target)
+			applied := ImportApplied{Kind: row.Kind, Key: row.Target}
 			if row.Kind == categoryKind {
-				revision = st.Taxonomy[categoryKey(row.Key)].Revision
+				item, e := w.category(row.Key)
+				if e != nil {
+					return e
+				}
+				applied.Revision = item.Revision
+			} else if applied.UID, applied.Revision, _, e = w.entity(row.Kind, row.Target); e != nil {
+				return e
 			}
-			result.Items = append(result.Items, ImportApplied{Kind: row.Kind, Key: row.Target, UID: uid, Revision: revision})
+			result.Items = append(result.Items, applied)
 		}
 		return nil
 	}, func(tx *sql.Tx) error {
@@ -735,72 +780,84 @@ type CopyApplicationInput struct {
 	NotesRevision  int64  `json:"notes_revision"`
 }
 
+// CopyApplication creates a new application from another one's configuration.
+// It reads the source, its template and notes, the target vendor and key only.
 func (s *Store) CopyApplication(source string, input CopyApplicationInput) (Application, error) {
 	if !identity.ValidVendor(input.TargetVendor) || !identity.ValidSlug(input.TargetID) || input.Mode != "linked" && input.Mode != "independent" {
 		return Application{}, ErrInvalidDirectory
 	}
 	target := input.TargetVendor + "/" + input.TargetID
-	err := s.changeConfiguration(func(st *configurationState) error {
-		uid, rev, deleted := st.exchangeEntity("App", source)
+	err := s.writeConfiguration(func(w *configSet) error {
+		src, err := w.appByKey(source)
 		switch {
-		case uid == "":
+		case err != nil:
+			return err
+		case src == nil:
 			return ErrApplicationNotFound
-		case deleted:
+		case src.DeletedAt != nil:
 			return ErrDirectoryDeleted
-		case uid != input.SourceUID || rev != input.SourceRevision:
+		case src.UID != input.SourceUID || src.Revision != input.SourceRevision:
 			return ErrConflict
 		}
-		if existing, _, _ := st.exchangeEntity("App", target); existing != "" {
+		if existing, err := w.appByKey(target); err != nil {
+			return err
+		} else if existing != nil {
 			return ErrDirectoryExists
 		}
-		parent, _, gone := st.exchangeEntity("Vendor", input.TargetVendor)
-		if parent == "" {
+		parent, err := w.vendorByID(input.TargetVendor)
+		if err != nil {
+			return err
+		}
+		if parent == nil {
 			return ErrVendorNotFound
 		}
-		if gone {
+		if parent.DeletedAt != nil {
 			return ErrDirectoryDeleted
 		}
-		old := st.Configs[configKey("App", uid)]
+		old := src.config
 		cfg := ownedConfig{Overrides: Object{}}
 		if input.Mode == "linked" {
 			if old.Ref == nil {
 				return invalidf("linked copies need a source linked to a template")
 			}
-			t, exists := st.Templates[templateKey("App", *old.Ref)]
-			if !exists || !t.Present {
+			t, err := w.template("App", *old.Ref)
+			if err != nil {
+				return err
+			}
+			if t == nil || !t.Present {
 				return invalidf("the source template is unavailable; use an independent copy")
 			}
 			ref := *old.Ref
 			cfg.Ref = &ref
 			cfg.Overrides = cloneObject(old.Overrides)
 		} else {
-			effective, e := st.effective("App", uid)
+			effective, e := w.effective("App", old)
 			if e != nil {
 				return e
 			}
-			cfg.Spec = cloneObject(effective)
+			cfg.Spec = effective
 		}
 		fresh, e := identity.NewUID()
 		if e != nil {
 			return e
 		}
-		provider := ""
-		for _, a := range st.Applications {
-			if a.UID == uid {
-				provider = a.Provider
-			}
-		}
-		st.Applications = append(st.Applications, Application{UID: fresh, ID: input.TargetID, Key: target, VendorID: input.TargetVendor, VendorUID: parent, Provider: provider, Revision: 1, SourceEpoch: 1})
-		st.Configs[configKey("App", fresh)] = cfg
+		w.addApp(Application{UID: fresh, ID: input.TargetID, Key: target, VendorID: input.TargetVendor, VendorUID: parent.UID, Provider: src.Provider, Revision: 1, SourceEpoch: 1}, cfg)
 		if input.IncludeNotes {
-			note := st.Notes[configKey("App", uid)]
+			note, err := w.note("App", src.UID)
+			if err != nil {
+				return err
+			}
 			if note.current() != input.NotesRevision {
 				return ErrConflict
 			}
-			st.Notes[configKey("App", fresh)] = AdminNotes{Text: note.Text, Revision: 1}
+			copied, err := w.note("App", fresh)
+			if err != nil {
+				return err
+			}
+			copied.AdminNotes = AdminNotes{Text: note.Text, Revision: 1}
 		}
 		return nil
-	})
+	}, nil)
 	if err != nil {
 		return Application{}, err
 	}
@@ -808,23 +865,9 @@ func (s *Store) CopyApplication(source string, input CopyApplicationInput) (Appl
 }
 func (s *Store) IconReferenced(path string) bool {
 	var count int
-	e := s.DB.QueryRow(`SELECT (SELECT count(*) FROM applications WHERE icon=?)+(SELECT count(*) FROM vendors WHERE icon=? OR icon_en=? OR icon_zh_cn=?)`, path, path, path, path).Scan(&count)
+	e := s.read.QueryRow(`SELECT (SELECT count(*) FROM applications WHERE icon=?)+(SELECT count(*) FROM vendors WHERE icon=? OR icon_en=? OR icon_zh_cn=?)`, path, path, path, path).Scan(&count)
 	return e != nil || count > 0
 }
 
-func (plan ImportPlan) ReferencesIcon(path string) bool {
-	if plan.candidate == nil {
-		return false
-	}
-	for _, a := range plan.candidate.Applications {
-		if a.Icon == path {
-			return true
-		}
-	}
-	for _, v := range plan.candidate.Vendors {
-		if v.Icon == path || v.LocalizedIcons.En == path || v.LocalizedIcons.ZhCN == path {
-			return true
-		}
-	}
-	return false
-}
+// ReferencesIcon reports whether an entity the plan creates or updates uses the icon.
+func (plan ImportPlan) ReferencesIcon(path string) bool { return plan.icons[path] }

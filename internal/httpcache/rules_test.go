@@ -78,7 +78,7 @@ func TestPathRuleTTLAndCurrentListUseSamePolicy(t *testing.T) {
 	}
 	config.Rules[0].TTLSeconds = 10
 	setPolicy(t, f, config)
-	listed, err := f.s.List(f.entry.StorageID())
+	listed, err := f.s.ListEntry(f.entry)
 	if err != nil || !listed[0].FreshUntil.Equal(listed[0].ValidatedAt.Add(10*time.Second)) {
 		t.Fatal("row list retained old TTL", listed, err)
 	}
@@ -104,7 +104,7 @@ func TestPatternPreviewFreezesMatchAndPolicyRevision(t *testing.T) {
 		t.Fatal(preview, err)
 	}
 	var raw []byte
-	if err = f.db.DB.QueryRow(`SELECT selection_json FROM http_cleanup_previews WHERE id=?`, preview.ID).Scan(&raw); err != nil {
+	if err = f.sql(t).QueryRow(`SELECT selection_json FROM http_cleanup_previews WHERE id=?`, preview.ID).Scan(&raw); err != nil {
 		t.Fatal(err)
 	}
 	var frozen PreviewCriteria
@@ -191,7 +191,7 @@ func TestAutomaticFirstMatchAndAccessRecheck(t *testing.T) {
 
 func TestAutomaticBoundsCursorAndEmptyDefault(t *testing.T) {
 	f := newFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "unused") }), 300)
-	tx, err := f.db.DB.Begin()
+	tx, err := f.sql(t).Begin()
 	if err != nil {
 		t.Fatal(err)
 	}

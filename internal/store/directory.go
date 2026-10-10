@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -20,11 +21,11 @@ import (
 )
 
 var (
-	ErrInvalidDirectory      = errors.New("Invalid vendor or application configuration")
-	ErrDirectoryExists       = errors.New("Vendor or application ID is already reserved")
-	ErrDirectoryDeleted      = errors.New("Vendor or application is deleted")
-	ErrVendorHasApplications = errors.New("Delete the vendor's applications first")
-	ErrSourceInactive        = errors.New("Application source is no longer active")
+	ErrInvalidDirectory      = errors.New("invalid vendor or application configuration")
+	ErrDirectoryExists       = errors.New("vendor or application ID is already reserved")
+	ErrDirectoryDeleted      = errors.New("vendor or application is deleted")
+	ErrVendorHasApplications = errors.New("delete the vendor's applications first")
+	ErrSourceInactive        = errors.New("application source is no longer active")
 	// ErrVendorNotFound and ErrApplicationNotFound name the missing object when
 	// an operation involves both kinds; both match sql.ErrNoRows.
 	ErrVendorNotFound      = fmt.Errorf("vendor not found: %w", sql.ErrNoRows)
@@ -286,10 +287,23 @@ type directoryScanner interface{ Scan(...any) error }
 const vendorColumns = `uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,icon_en,icon_zh_cn,enabled,revision,runtime_revision,deleted_at_s`
 const applicationColumns = `a.uid,a.id,v.id||'/'||a.id,a.vendor_uid,v.id,a.name_en,a.name_zh_cn,a.description_en,a.description_zh_cn,a.icon,a.provider,a.base_url,a.base_urls_json,a.source_strategy,a.cache_ttl_seconds,a.enabled,a.revision,a.source_epoch,a.deleted_at_s,a.runtime_revision,EXISTS(SELECT 1 FROM template_snapshots t WHERE t.kind='App' AND t.canonical_key=v.id||'/'||a.id),COALESCE((SELECT json_group_array(category_id) FROM (SELECT category_id FROM application_categories WHERE app_uid=a.uid ORDER BY category_id)),'[]'),COALESCE((SELECT json_group_array(tag) FROM (SELECT tag FROM application_tags WHERE app_uid=a.uid ORDER BY ordinal)),'[]')`
 
+// entityLoads, when a test sets it, observes every vendor and application row
+// the store decodes, so tests can check how much of the directory an
+// operation reads. Production never sets it.
+var entityLoads atomic.Pointer[func(kind string)]
+
+func observeLoad(kind string) {
+	if observe := entityLoads.Load(); observe != nil {
+		(*observe)(kind)
+	}
+}
 func scanVendor(row directoryScanner) (Vendor, error) {
 	var v Vendor
 	var deleted sql.NullInt64
 	err := row.Scan(&v.UID, &v.ID, &v.Name.En, &v.Name.ZhCN, &v.Description.En, &v.Description.ZhCN, &v.Icon, &v.LocalizedIcons.En, &v.LocalizedIcons.ZhCN, &v.Enabled, &v.Revision, &v.RuntimeRevision, &deleted)
+	if err == nil {
+		observeLoad("vendor")
+	}
 	_, v.HasTemplate = BuiltinVendorTemplate(v.ID)
 	v.DeletedAt = timePointer(deleted)
 	return v, err
@@ -300,6 +314,7 @@ func scanApplication(row directoryScanner) (Application, error) {
 	var bases, categories, tags []byte
 	err := row.Scan(&a.UID, &a.ID, &a.Key, &a.VendorUID, &a.VendorID, &a.Name.En, &a.Name.ZhCN, &a.Description.En, &a.Description.ZhCN, &a.Icon, &a.Provider, &a.BaseURL, &bases, &a.SourceStrategy, &a.CacheTTLSeconds, &a.Enabled, &a.Revision, &a.SourceEpoch, &deleted, &a.RuntimeRevision, &a.BuiltinTemplate, &categories, &tags)
 	if err == nil {
+		observeLoad("application")
 		err = json.Unmarshal(bases, &a.BaseURLs)
 		if err == nil {
 			err = json.Unmarshal(categories, &a.Categories)
@@ -325,14 +340,14 @@ func readApplication(q directoryQuerier, key string) (Application, error) {
 	return scanApplication(q.QueryRow(`SELECT `+applicationColumns+` FROM applications a JOIN vendors v ON v.uid=a.vendor_uid WHERE v.id=? AND a.id=?`, vendor, app))
 }
 
-func (s *Store) Vendor(id string) (Vendor, error)            { return readVendor(s.DB, id) }
-func (s *Store) Application(key string) (Application, error) { return readApplication(s.DB, key) }
+func (s *Store) Vendor(id string) (Vendor, error)            { return readVendor(s.read, id) }
+func (s *Store) Application(key string) (Application, error) { return readApplication(s.read, key) }
 func (s *Store) Vendors(includeDeleted bool) ([]Vendor, error) {
 	query := `SELECT ` + vendorColumns + ` FROM vendors`
 	if !includeDeleted {
 		query += ` WHERE deleted_at_s IS NULL`
 	}
-	rows, err := s.DB.Query(query + ` ORDER BY id`)
+	rows, err := s.read.Query(query + ` ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -352,7 +367,7 @@ func (s *Store) Applications(includeDeleted bool) ([]Application, error) {
 	if !includeDeleted {
 		query += ` WHERE a.deleted_at_s IS NULL AND v.deleted_at_s IS NULL`
 	}
-	rows, err := s.DB.Query(query + ` ORDER BY v.id,a.id`)
+	rows, err := s.read.Query(query + ` ORDER BY v.id,a.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -379,32 +394,38 @@ func (s *Store) UpdateVendor(id string, revision int64, in VendorChanges) (Vendo
 }
 
 func (s *Store) DeleteVendor(id string, revision int64) error {
-	return s.changeConfiguration(func(st *configurationState) error { return st.softDeleteVendor(id, revision) })
+	return s.writeConfiguration(func(w *configSet) error {
+		_, err := w.softDeleteVendor(id, revision)
+		return err
+	}, nil)
 }
-func (st *configurationState) softDeleteVendor(id string, revision int64) error {
-	for i := range st.Vendors {
-		v := &st.Vendors[i]
-		if v.ID != id {
-			continue
-		}
-		if v.Revision != revision {
-			return ErrConflict
-		}
-		if v.DeletedAt != nil {
-			return ErrDirectoryDeleted
-		}
-		for _, a := range st.Applications {
-			if a.VendorUID == v.UID && a.DeletedAt == nil {
-				return ErrVendorHasApplications
-			}
-		}
-		now := time.Now().UTC()
-		v.Enabled = false
-		v.DeletedAt = &now
-		v.Revision++
-		return nil
+func (w *configSet) softDeleteVendor(id string, revision int64) (*vendorEntry, error) {
+	v, err := w.vendorByID(id)
+	if err != nil {
+		return nil, err
 	}
-	return sql.ErrNoRows
+	if v == nil {
+		return nil, sql.ErrNoRows
+	}
+	if v.Revision != revision {
+		return nil, ErrConflict
+	}
+	if v.DeletedAt != nil {
+		return nil, ErrDirectoryDeleted
+	}
+	var live int
+	if err = w.q.QueryRow(`SELECT count(*) FROM applications WHERE vendor_uid=? AND deleted_at_s IS NULL`, v.UID).Scan(&live); err != nil {
+		return nil, err
+	}
+	if live > 0 {
+		return nil, ErrVendorHasApplications
+	}
+	now := time.Now().UTC()
+	v.Enabled = false
+	v.DeletedAt = &now
+	v.Revision++
+	v.changed = true
+	return v, nil
 }
 
 func (s *Store) CreateApplication(vendorID string, in ApplicationInput) (Application, error) {
@@ -448,30 +469,36 @@ func (s *Store) DeleteApplication(key string, revision int64) error {
 	if _, ok := BuiltinApplicationTemplate(key); ok {
 		return ErrBuiltinTemplate
 	}
-	return s.changeConfiguration(func(st *configurationState) error { return st.softDeleteApplication(key, revision) })
+	return s.writeConfiguration(func(w *configSet) error {
+		_, err := w.softDeleteApplication(key, revision)
+		return err
+	}, nil)
 }
-func (st *configurationState) softDeleteApplication(key string, revision int64) error {
-	if _, ok := st.Templates[templateKey("App", key)]; ok {
-		return ErrBuiltinTemplate
+func (w *configSet) softDeleteApplication(key string, revision int64) (*appEntry, error) {
+	if t, err := w.template("App", key); err != nil {
+		return nil, err
+	} else if t != nil {
+		return nil, ErrBuiltinTemplate
 	}
-	for i := range st.Applications {
-		a := &st.Applications[i]
-		if a.Key != key {
-			continue
-		}
-		if a.Revision != revision {
-			return ErrConflict
-		}
-		if a.DeletedAt != nil {
-			return ErrDirectoryDeleted
-		}
-		now := time.Now().UTC()
-		a.Enabled = false
-		a.DeletedAt = &now
-		a.Revision++
-		return nil
+	a, err := w.appByKey(key)
+	if err != nil {
+		return nil, err
 	}
-	return sql.ErrNoRows
+	if a == nil {
+		return nil, sql.ErrNoRows
+	}
+	if a.Revision != revision {
+		return nil, ErrConflict
+	}
+	if a.DeletedAt != nil {
+		return nil, ErrDirectoryDeleted
+	}
+	now := time.Now().UTC()
+	a.Enabled = false
+	a.DeletedAt = &now
+	a.Revision++
+	a.changed = true
+	return a, nil
 }
 
 const sourceColumns = `src.app_uid,src.epoch,src.provider,src.base_url,src.base_urls_json,src.source_strategy,src.created_at_s,a.runtime_revision,v.runtime_revision,(a.enabled=1 AND v.enabled=1 AND a.deleted_at_s IS NULL AND v.deleted_at_s IS NULL AND src.epoch=a.source_epoch)`
@@ -493,10 +520,10 @@ func (s *Store) Source(storageID string) (SourceRecord, error) {
 	if !ok {
 		return SourceRecord{}, ErrInvalidDirectory
 	}
-	return scanSource(s.DB.QueryRow(`SELECT `+sourceColumns+sourceJoin+` WHERE src.app_uid=? AND src.epoch=?`, uid, epoch))
+	return scanSource(s.read.QueryRow(`SELECT `+sourceColumns+sourceJoin+` WHERE src.app_uid=? AND src.epoch=?`, uid, epoch))
 }
 func (s *Store) Sources() ([]SourceRecord, error) {
-	rows, err := s.DB.Query(`SELECT ` + sourceColumns + sourceJoin + ` ORDER BY src.app_uid,src.epoch`)
+	rows, err := s.read.Query(`SELECT ` + sourceColumns + sourceJoin + ` ORDER BY src.app_uid,src.epoch`)
 	if err != nil {
 		return nil, err
 	}
@@ -513,12 +540,6 @@ func (s *Store) Sources() ([]SourceRecord, error) {
 }
 func checkSourceActive(q directoryQuerier, storageID string, expected []SourceFence) error {
 	uid, epoch, ok := identity.ParseStorageID(storageID)
-	// Static provider fixtures and their typed storage APIs remain usable without
-	// a dynamic directory. Runtime-created applications always use app/<uid>-eN;
-	// never treat a malformed private namespace as a legacy public key.
-	if !ok && !strings.HasPrefix(storageID, "app/") && identity.ValidKey(storageID) {
-		return nil
-	}
 	if !ok || len(expected) > 1 {
 		return ErrInvalidDirectory
 	}
@@ -535,16 +556,16 @@ func checkSourceActive(q directoryQuerier, storageID string, expected []SourceFe
 	return nil
 }
 
-// RequireSourceActive checks within the same transaction as a publication. Callers
+// requireSourceActive checks within the same transaction as a publication. Callers
 // publishing admitted work must supply the captured fence, not a freshly read one.
-func (s *Store) RequireSourceActive(tx *sql.Tx, storageID string, expected ...SourceFence) error {
+func (s *Store) requireSourceActive(tx *sql.Tx, storageID string, expected ...SourceFence) error {
 	if tx == nil {
 		return ErrInvalidDirectory
 	}
 	return checkSourceActive(tx, storageID, expected)
 }
 func (s *Store) CheckSourceActive(storageID string, expected ...SourceFence) error {
-	return checkSourceActive(s.DB, storageID, expected)
+	return checkSourceActive(s.read, storageID, expected)
 }
 func (s *Store) SourceActive(storageID string) (bool, error) {
 	err := s.CheckSourceActive(storageID)

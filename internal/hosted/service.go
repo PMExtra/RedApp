@@ -5,7 +5,6 @@ package hosted
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -49,7 +48,7 @@ type Service struct {
 
 func New(dir string, db *store.Store, budget download.Budget) (*Service, error) {
 	if db == nil || budget == nil {
-		return nil, errors.New("Persistent file storage unavailable")
+		return nil, errors.New("persistent file storage unavailable")
 	}
 	for _, part := range []string{filepath.Join(dir, "objects"), filepath.Join(dir, "objects", "hosted")} {
 		if err := fsutil.EnsureDir(part); err != nil {
@@ -72,12 +71,12 @@ func New(dir string, db *store.Store, budget download.Budget) (*Service, error) 
 	for _, f := range files {
 		if f.Type()&os.ModeSymlink != 0 || f.IsDir() {
 			cancel()
-			return nil, errors.New("Unexpected persistent resource entry")
+			return nil, errors.New("unexpected persistent resource entry")
 		}
 		name := strings.TrimSuffix(f.Name(), ".part")
 		if !identity.ValidUID(name) {
 			cancel()
-			return nil, errors.New("Unexpected persistent resource filename")
+			return nil, errors.New("unexpected persistent resource filename")
 		}
 		if strings.HasSuffix(f.Name(), ".part") || !ids[name] {
 			if _, err = fsutil.Remove(filepath.Join(s.dir, f.Name())); err != nil {
@@ -144,7 +143,7 @@ func (s *Service) Put(ctx context.Context, entry application.Entry, path, expect
 	s.mu.Unlock()
 	defer func() { s.mu.Lock(); delete(s.transfers, id); s.mu.Unlock(); s.wg.Done() }()
 	existing, err := s.db.HostedFile(entry.UID, path)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return store.HostedFile{}, err
 	}
 	if existing.ID != expected {
@@ -280,7 +279,7 @@ func (s *Service) Open(uid, path string) (*os.File, store.HostedFile, func(), er
 	}
 	if !identity.ValidUID(row.ID) {
 		release()
-		return nil, row, nil, errors.New("Invalid persistent resource identity")
+		return nil, row, nil, errors.New("invalid persistent resource identity")
 	}
 	file, err := fsutil.OpenRegular(filepath.Join(s.dir, row.ID))
 	if err != nil {

@@ -3,7 +3,6 @@ package httpserver
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -34,7 +33,7 @@ func (s *Server) managedApp(w http.ResponseWriter, r *http.Request) (application
 		// Purging a deleted application publishes no new registry, so its
 		// entry outlives its data; only the stored row proves it still exists.
 		row, err := s.store.Application(key)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
 			s.writeError(w, r, storageError(err))
 			return e, false
 		}
@@ -90,7 +89,7 @@ func (s *Server) listSources(w http.ResponseWriter, r *http.Request) {
 	}
 	out := sourceListDTO{Items: []sourceEpochDTO{}}
 	for _, row := range rows {
-		if entry.UID == "" || row.AppUID != entry.UID {
+		if row.AppUID != entry.UID {
 			continue
 		}
 		item := sourceEpochDTO{Epoch: row.Epoch, Current: row.Epoch == entry.SourceEpoch, Active: row.Active, CreatedAt: row.CreatedAt.UTC()}
@@ -114,7 +113,7 @@ func (s *Server) sourceEpochEntry(entry application.Entry, epoch int64) (applica
 	}
 	entry.SourceEpoch = epoch
 	if _, err := s.store.Source(entry.StorageID()); err != nil {
-		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, store.ErrInvalidDirectory) {
+		if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrInvalidDirectory) {
 			return entry, newError(codeSourceNotFound, nil, "source_epoch does not exist for this application")
 		}
 		return entry, storageError(err)
@@ -492,7 +491,7 @@ func (s *Server) cachePreview(w http.ResponseWriter, r *http.Request, kind strin
 
 // previewLookupError maps unknown, expired and other-kind previews.
 func previewLookupError(err error) *apiError {
-	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, store.ErrExpired) || errors.Is(err, httpcache.ErrInvalidPreview) {
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrExpired) || errors.Is(err, httpcache.ErrInvalidPreview) {
 		return newError(codePreviewNotFound, nil, "Preview is unknown or expired; build a new preview")
 	}
 	return storageError(err)
@@ -577,7 +576,7 @@ func previewExecutionError(err error) *apiError {
 	switch {
 	case errors.Is(err, httpcache.ErrPreviewRunning), errors.Is(err, httpcache.ErrRefreshBusy):
 		return newError(codeOperationInProgress, nil, "The preview is running; wait for it to finish")
-	case errors.Is(err, sql.ErrNoRows), errors.Is(err, store.ErrExpired):
+	case errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrExpired):
 		return newError(codePreviewNotFound, nil, "Preview is unknown or expired; build a new preview")
 	case errors.Is(err, store.ErrSourceInactive), errors.Is(err, httpcache.ErrInvalidPreview):
 		return newError(codePreviewStale, err, "The source or policy changed since the preview; nothing was changed, build a new preview")

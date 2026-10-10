@@ -186,7 +186,7 @@ func TestPoolProxyIndependentOfApplicationsAndSharedAcrossModes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.DB.Close()
+	defer db.Close()
 	pool := NewPool()
 	if err = pool.LoadProxy(db); err != nil {
 		t.Fatal(err)

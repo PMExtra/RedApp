@@ -90,7 +90,7 @@ func TestManualRefreshForcesValidationWithoutRecordingAccess(t *testing.T) {
 	if calls.Load() != count {
 		t.Fatal("manual refresh crawled a missing path")
 	}
-	if f.budget.readers.Load() != 0 || f.budget.writers.Load() != 0 {
+	if !f.budget.drained() {
 		t.Fatal("refresh leaked shared capacity")
 	}
 }
@@ -126,7 +126,7 @@ func TestManualRefreshReportsUncacheableResponseReason(t *testing.T) {
 				if err != nil || item.Status != "skipped" || item.Reason != test.reason {
 					t.Fatalf("expected explicit uncacheable reason %q: %+v, %v", test.reason, item, err)
 				}
-				if f.budget.readers.Load() != 0 || f.budget.writers.Load() != 0 {
+				if !f.budget.drained() {
 					t.Fatal("uncacheable refresh leaked shared capacity")
 				}
 			})
@@ -194,7 +194,7 @@ func TestBatchRefreshPagesFrozenSelectionAndDurableReceipt(t *testing.T) {
 		t.Fatal(last, err)
 	}
 	seed("batch/late")
-	old, err := f.s.lookup(f.entry.StorageID(), last.Items[0].Path)
+	old, err := f.s.lookup(context.Background(), f.entry.StorageID(), last.Items[0].Path)
 	if err != nil || old == nil {
 		t.Fatal(old, err)
 	}
@@ -323,7 +323,7 @@ func TestManualRefreshCannotRepublishAfterCleanup(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { _, err := f.s.Refresh(context.Background(), f.entry, "/file"); done <- err }()
 	<-entered
-	old, err := f.s.lookup(f.entry.StorageID(), "file")
+	old, err := f.s.lookup(context.Background(), f.entry.StorageID(), "file")
 	if err != nil || old == nil {
 		t.Fatal(old, err)
 	}
@@ -397,7 +397,7 @@ func TestPermanentDeletionCancelsWholeRefreshAndSharedFollowers(t *testing.T) {
 	if err = <-follower; err == nil {
 		t.Fatal("follower survived cancellation")
 	}
-	if calls.Load() != 1 || f.budget.readers.Load() != 0 || f.budget.writers.Load() != 0 {
+	if calls.Load() != 1 || !f.budget.drained() {
 		t.Fatal("next batch restarted or leases leaked", calls.Load())
 	}
 	if err = f.db.FinishApplicationDeletion(uid, nil); err != nil {

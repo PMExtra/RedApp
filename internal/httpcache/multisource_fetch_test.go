@@ -36,7 +36,7 @@ func additionalSource(t *testing.T, f *fixture, strategy string, h http.Handler)
 	return server
 }
 
-func TestMultipleSourceFailuresRestartWholeBodyAndTerminalStatus(t *testing.T) {
+func TestMultipleSourceFailuresBeforeAResponseAndTerminalStatus(t *testing.T) {
 	for _, mode := range []string{"partial", "connection", "server-error", "not-found", "gone", "forbidden", "unsafe-encoding", "direct-partial"} {
 		t.Run(mode, func(t *testing.T) {
 			var nextCalls atomic.Int64
@@ -89,7 +89,14 @@ func TestMultipleSourceFailuresRestartWholeBodyAndTerminalStatus(t *testing.T) {
 				err = f.s.Serve(w, httptest.NewRequest("GET", "http://redapp/file", nil), f.entry, "file")
 			}()
 			switch mode {
-			case "partial", "connection", "server-error":
+			case "partial":
+				// The first source responded, so the file is bound to it; it
+				// cannot resume without a validator, so the transfer fails
+				// instead of continuing from another source.
+				if err == nil || nextCalls.Load() != 0 || len(f.rows(t)) != 0 {
+					t.Fatal("partial response completed or crossed sources", w.Body.String(), err, nextCalls.Load())
+				}
+			case "connection", "server-error":
 				if err != nil || w.Body.String() != "SECOND-COMPLETE" || nextCalls.Load() != 1 {
 					t.Fatal(w.Body.String(), err, nextCalls.Load())
 				}
@@ -115,15 +122,18 @@ func TestMultipleSourceFailuresRestartWholeBodyAndTerminalStatus(t *testing.T) {
 					t.Fatal(w.Body.String())
 				}
 			}
-			files, e := os.ReadDir(f.s.dir)
-			if e != nil {
-				t.Fatal(e)
-			}
-			for _, file := range files {
-				if strings.HasSuffix(file.Name(), ".tmp") {
-					t.Fatal("incomplete source spool survived", file.Name())
+			waitFor(t, "incomplete source spool survived", func() bool {
+				files, e := os.ReadDir(f.s.dir)
+				if e != nil {
+					t.Fatal(e)
 				}
-			}
+				for _, file := range files {
+					if strings.HasSuffix(file.Name(), ".part") {
+						return false
+					}
+				}
+				return true
+			})
 		})
 	}
 }

@@ -63,8 +63,6 @@ func (s *Server) replaceNotes(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, codeInvalidRequest, nil, "text is required")
 		return
 	}
-	s.directoryMu.Lock()
-	defer s.directoryMu.Unlock()
 	notes, err := s.store.SaveAdminNotes(kind, key, revision, *in.Text)
 	if err != nil {
 		s.writeError(w, r, directoryFailure(err, notFound))

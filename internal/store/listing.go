@@ -11,7 +11,7 @@ func (s *Store) VersionCount(app string) (int64, error) {
 		return 0, err
 	}
 	var n int64
-	err := s.DB.QueryRow("SELECT COUNT(*) FROM app_versions WHERE app_id=?", app).Scan(&n)
+	err := s.read.QueryRow("SELECT COUNT(*) FROM app_versions WHERE app_id=?", app).Scan(&n)
 	return n, err
 }
 
@@ -34,7 +34,7 @@ type ListedEvent struct {
 // also excludes expired rows when no new event has triggered write-side pruning.
 func (s *Store) EventPage(app string, beforeID int64, limit int) ([]ListedEvent, error) {
 	if app != "" && requireApp(app) != nil || beforeID < 0 || limit < 1 || limit > 101 {
-		return nil, errors.New("Invalid event page")
+		return nil, errors.New("invalid event page")
 	}
 	query := "SELECT id,time_s,app_id,version,resource_key,generation_id,category,code,message,upstream_status FROM events WHERE time_s>=?"
 	args := []any{time.Now().Add(-30 * 24 * time.Hour).Unix()}
@@ -48,7 +48,7 @@ func (s *Store) EventPage(app string, beforeID int64, limit int) ([]ListedEvent,
 	}
 	query += " ORDER BY id DESC LIMIT ?"
 	args = append(args, limit)
-	rows, err := s.DB.Query(query, args...)
+	rows, err := s.read.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -253,7 +253,7 @@ func TestPrewarmCodexPlatformCacheVerificationAndMissing(t *testing.T) {
 	service.Automatic(context.Background())
 	service.Automatic(context.Background())
 	var reason string
-	if err := h.server.store.DB.QueryRow(`SELECT reason FROM prewarm_jobs WHERE automatic=1 ORDER BY rowid DESC LIMIT 1`).Scan(&reason); err != nil || reason != "unchanged_target" || downloads.Load() != 1 {
+	if err := h.sql().QueryRow(`SELECT reason FROM prewarm_jobs WHERE automatic=1 ORDER BY rowid DESC LIMIT 1`).Scan(&reason); err != nil || reason != "unchanged_target" || downloads.Load() != 1 {
 		t.Fatal(reason, err, downloads.Load())
 	}
 }
@@ -284,7 +284,7 @@ func TestPrewarmShutdownPersistsInterruptedAndDoesNotResume(t *testing.T) {
 		t.Fatal(job)
 	}
 	var running int
-	if err := restarted.server.store.DB.QueryRow(`SELECT count(*) FROM prewarm_jobs WHERE state='running'`).Scan(&running); err != nil || running != 0 {
+	if err := restarted.sql().QueryRow(`SELECT count(*) FROM prewarm_jobs WHERE state='running'`).Scan(&running); err != nil || running != 0 {
 		t.Fatal(running, err)
 	}
 }
@@ -325,7 +325,7 @@ func TestPrewarmManualIgnoresMetadataChangesAndDeletionDrains(t *testing.T) {
 	second := startWarm(t, h, map[string]any{"request_id": strings.Repeat("b", 32), "paths": []string{"/block"}}, 201)
 	<-deleted
 	app, _ := h.server.store.Application("warm/app")
-	if err := h.server.deleteApplication(context.Background(), app.Key, app.Revision); err != nil {
+	if err := h.server.deleteApplication(context.Background(), app.Key, app.UID, app.Revision); err != nil {
 		t.Fatal(err)
 	}
 	// The deleted application's jobs are gone with it.
@@ -334,7 +334,7 @@ func TestPrewarmManualIgnoresMetadataChangesAndDeletionDrains(t *testing.T) {
 		t.Fatal(code)
 	}
 	var jobs int
-	if err := h.server.store.DB.QueryRow(`SELECT count(*) FROM prewarm_jobs WHERE app_uid=?`, app.UID).Scan(&jobs); err != nil || jobs != 0 {
+	if err := h.sql().QueryRow(`SELECT count(*) FROM prewarm_jobs WHERE app_uid=?`, app.UID).Scan(&jobs); err != nil || jobs != 0 {
 		t.Fatal(jobs, err)
 	}
 }
@@ -395,7 +395,7 @@ func TestPrewarmAutomaticPolicyChangeCancelsRemainingArtifacts(t *testing.T) {
 		t.Fatal(done, other.Load())
 	}
 	var successes int
-	if err := h.server.store.DB.QueryRow(`SELECT count(*) FROM prewarm_success`).Scan(&successes); err != nil || successes != 0 {
+	if err := h.sql().QueryRow(`SELECT count(*) FROM prewarm_success`).Scan(&successes); err != nil || successes != 0 {
 		t.Fatal(successes, err)
 	}
 }

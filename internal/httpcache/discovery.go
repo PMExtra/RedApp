@@ -100,7 +100,7 @@ func discoveredPath(client *distributor.Client, directory *url.URL, link indexLi
 	return path, nil
 }
 
-var errIndexLink = errors.New("Ignored unsafe directory link")
+var errIndexLink = errors.New("ignored unsafe directory link")
 
 // Discover streams paths into the dedicated job; listings never authorize deletion.
 func (s *Service) Discover(ctx context.Context, entry application.Entry, indexes []string, limits warmplan.Limits, budget *warmplan.Budget, emit func(string) error, summary func(string)) (err error) {
@@ -192,7 +192,7 @@ func (s *Service) Discover(ctx context.Context, entry application.Entry, indexes
 				if resp.ContentLength >= 0 {
 					body = io.LimitReader(body, resp.ContentLength)
 				}
-				body = &metricBody{ReadCloser: readerCloser{Reader: body, Closer: resp.Body}, s: s, app: entry.MetricsID()}
+				body = &upstreamBody{ReadCloser: readerCloser{Reader: body, Closer: resp.Body}, s: s, app: entry.MetricsID()}
 				respBody, err = io.ReadAll(io.LimitReader(body, min(int64(2<<20), s.budget.MaxArtifactBytes())+1))
 				resp.Body.Close()
 				writer()

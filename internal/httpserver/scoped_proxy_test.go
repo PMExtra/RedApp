@@ -163,7 +163,7 @@ func TestScopedProxiesRouteCatalogArtifactsHTTPAndHostedImports(t *testing.T) {
 	if err := h.server.pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: first.URL}, savedProxy.Revision-1); err == nil {
 		t.Fatal("stale global CAS accepted")
 	}
-	if _, err := h.server.store.DB.Exec(`CREATE TRIGGER reject_global_proxy BEFORE UPDATE ON settings WHEN NEW.key='upstream_proxy' BEGIN SELECT RAISE(FAIL,'injected write failure'); END`); err != nil {
+	if _, err := h.sql().Exec(`CREATE TRIGGER reject_global_proxy BEFORE UPDATE ON settings WHEN NEW.key='upstream_proxy' BEGIN SELECT RAISE(FAIL,'injected write failure'); END`); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.server.pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: first.URL}, savedProxy.Revision); err == nil {
@@ -172,7 +172,7 @@ func TestScopedProxiesRouteCatalogArtifactsHTTPAndHostedImports(t *testing.T) {
 	if h.server.pool.Proxy() != savedProxy {
 		t.Fatal("failed global write changed transport view")
 	}
-	h.server.store.DB.Exec(`DROP TRIGGER reject_global_proxy`)
+	h.sql().Exec(`DROP TRIGGER reject_global_proxy`)
 	// Administrative proxy credentials do not enter bootstrap, directory or events.
 	for _, path := range []string{"/api/bootstrap", "/api/vendors/routing", "/api/apps/routing/release"} {
 		raw, _ := h.request("GET", path, nil, 200, nil)

@@ -2,7 +2,6 @@ package httpcache
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,7 +18,7 @@ import (
 
 func seedMaintenanceRows(t *testing.T, f *fixture, count int) {
 	t.Helper()
-	tx, err := f.db.DB.Begin()
+	tx, err := f.sql(t).Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +40,7 @@ func TestMaintenancePaginationFrozenBoundaryAndWholeCleanup(t *testing.T) {
 	seedMaintenanceRows(t, f, 1205)
 	// An insert immediately after capturing the high-water mark must not join
 	// the selection, even though subsequent selection pages can see it.
-	_, err := f.db.DB.Exec(`CREATE TEMP TRIGGER add_after_highwater AFTER INSERT ON http_cleanup_previews BEGIN
+	_, err := f.sql(t).Exec(`CREATE TRIGGER add_after_highwater AFTER INSERT ON http_cleanup_previews BEGIN
 		INSERT INTO http_cache_generations(id,storage_id,path,sha256,size_bytes,fetched_at_s,validated_at_s,last_access_bucket_s,fresh_until_s,headers_json,is_current)
 		SELECT lower(hex(randomblob(16))),NEW.storage_id,'late/file',sha256,7,fetched_at_s,validated_at_s,0,fresh_until_s,'{}',1 FROM http_cache_generations LIMIT 1;
 	END`)
@@ -53,7 +52,7 @@ func TestMaintenancePaginationFrozenBoundaryAndWholeCleanup(t *testing.T) {
 		t.Fatal(preview, err)
 	}
 	var criteria []byte
-	if err = f.db.DB.QueryRow(`SELECT selection_json FROM http_cleanup_previews WHERE id=?`, preview.ID).Scan(&criteria); err != nil {
+	if err = f.sql(t).QueryRow(`SELECT selection_json FROM http_cleanup_previews WHERE id=?`, preview.ID).Scan(&criteria); err != nil {
 		t.Fatal(err)
 	}
 	if len(criteria) > 512 || strings.Contains(string(criteria), "generation_id") {
@@ -83,7 +82,7 @@ func TestMaintenancePaginationFrozenBoundaryAndWholeCleanup(t *testing.T) {
 	if _, err = f.s.PreviewItems(f.entry.StorageID(), "refresh", preview.ID, "", 25); !errors.Is(err, ErrInvalidPreview) {
 		t.Fatal("kind confused", err)
 	}
-	if _, err = f.s.PreviewItems("different/epoch", "cleanup", preview.ID, "", 25); !errors.Is(err, sql.ErrNoRows) {
+	if _, err = f.s.PreviewItems("different/epoch", "cleanup", preview.ID, "", 25); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("ownership confused", err)
 	}
 	if _, err = f.s.PreviewItems(f.entry.StorageID(), "cleanup", preview.ID, "01", 25); !errors.Is(err, ErrInvalidPreview) {
@@ -146,15 +145,15 @@ func TestMaintenanceReceiptsExpiryPruningAndRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	var items, headers int
-	f.db.DB.QueryRow(`SELECT COUNT(*) FROM http_cleanup_preview_items WHERE preview_id=?`, preview.ID).Scan(&items)
-	f.db.DB.QueryRow(`SELECT COUNT(*) FROM http_cleanup_previews WHERE id=?`, preview.ID).Scan(&headers)
+	f.sql(t).QueryRow(`SELECT COUNT(*) FROM http_cleanup_preview_items WHERE preview_id=?`, preview.ID).Scan(&items)
+	f.sql(t).QueryRow(`SELECT COUNT(*) FROM http_cleanup_previews WHERE id=?`, preview.ID).Scan(&headers)
 	if items != 205 || headers != 1 {
 		t.Fatal("unbounded cascade or early header deletion", items, headers)
 	}
 	if err = f.s.prunePreviews(context.Background(), 1); err != nil {
 		t.Fatal(err)
 	}
-	f.db.DB.QueryRow(`SELECT COUNT(*) FROM http_cleanup_previews WHERE id=?`, preview.ID).Scan(&headers)
+	f.sql(t).QueryRow(`SELECT COUNT(*) FROM http_cleanup_previews WHERE id=?`, preview.ID).Scan(&headers)
 	if headers != 0 {
 		t.Fatal("empty expired header retained")
 	}
@@ -230,5 +229,27 @@ func TestMaintenanceBuildCapacityAndCancellation(t *testing.T) {
 	}
 	if _, err = f.s.PreviewCleanup(context.Background(), f.entry, "fetched_at", f.s.now(), allPaths); !errors.Is(err, ErrClosed) {
 		t.Fatal("closed service admitted builder", err)
+	}
+}
+
+func TestPreviewSurvivesEditsOutsideTheSourceFence(t *testing.T) {
+	f := newFixture(t, http.NotFoundHandler(), 300)
+	seedMaintenanceRows(t, f, 3)
+	name := f.app.Name
+	name.En = "Renamed"
+	updated, err := f.db.UpdateApplication(f.app.Key, f.app.Revision, store.ApplicationChanges{Name: name, BaseURL: f.app.BaseURL, CacheTTLSeconds: 300, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.RuntimeRevision != f.entry.RuntimeRevision || updated.Revision == f.entry.Revision {
+		t.Fatal("a name edit should change only the configuration revision", updated)
+	}
+	f.entry.Revision = updated.Revision
+	preview, err := f.s.PreviewCleanup(context.Background(), f.entry, "fetched_at", f.s.now(), allPaths)
+	if err != nil || preview.SelectedFiles != 3 {
+		t.Fatal(preview, err)
+	}
+	if result, err := f.s.ExecuteCleanup(context.Background(), f.entry, preview.ID); err != nil || result.RetiredFiles != 3 {
+		t.Fatal("preview of a renamed application could not run", result, err)
 	}
 }

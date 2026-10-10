@@ -18,7 +18,7 @@ import (
 func ValidateDescriptors(input []presets.Descriptor) error {
 	for _, descriptor := range input {
 		if descriptor.Protocol != "codex-releases-v1" && descriptor.Protocol != "claude-manifest-v1" {
-			return fmt.Errorf("Unregistered protocol %s", descriptor.Protocol)
+			return fmt.Errorf("unregistered protocol %s", descriptor.Protocol)
 		}
 		validator := "codex"
 		expectedID := "openai/codex"
@@ -27,7 +27,7 @@ func ValidateDescriptors(input []presets.Descriptor) error {
 			expectedID = "anthropic/claude-code"
 		}
 		if descriptor.ID != expectedID || descriptor.TrustRevision != 1 || descriptor.InstallerValidator != validator {
-			return fmt.Errorf("Unsupported compiled trust contract for %s", descriptor.ID)
+			return fmt.Errorf("unsupported compiled trust contract for %s", descriptor.ID)
 		}
 		required := map[string]bool{"install.sh": false, "install.ps1": false}
 		assets := map[string]bool{"licenses/LICENSE": false, "licenses/NOTICE": false}
@@ -36,30 +36,30 @@ func ValidateDescriptors(input []presets.Descriptor) error {
 		}
 		for _, asset := range descriptor.Installers {
 			if _, ok := required[asset.File]; !ok {
-				return fmt.Errorf("Unreviewed installer %s", asset.File)
+				return fmt.Errorf("unreviewed installer %s", asset.File)
 			}
 			required[asset.File] = true
 			if _, err := installers.Installer(descriptor.ID, asset.File, "https://validation.invalid/"+descriptor.ID); err != nil {
-				return fmt.Errorf("Missing generated installer for %s: %w", descriptor.ID, err)
+				return fmt.Errorf("missing generated installer for %s: %w", descriptor.ID, err)
 			}
 		}
 		for _, asset := range descriptor.Assets {
 			if _, ok := assets[asset.File]; !ok {
-				return fmt.Errorf("Unreviewed static asset %s", asset.File)
+				return fmt.Errorf("unreviewed static asset %s", asset.File)
 			}
 			assets[asset.File] = true
 			if _, err := installers.PublicAsset(descriptor.ID, asset.File); err != nil {
-				return fmt.Errorf("Missing public asset for %s: %w", descriptor.ID, err)
+				return fmt.Errorf("missing public asset for %s: %w", descriptor.ID, err)
 			}
 		}
 		for file, present := range required {
 			if !present {
-				return fmt.Errorf("Missing mandatory installer %s", file)
+				return fmt.Errorf("missing mandatory installer %s", file)
 			}
 		}
 		for file, present := range assets {
 			if !present {
-				return fmt.Errorf("Missing mandatory asset %s", file)
+				return fmt.Errorf("missing mandatory asset %s", file)
 			}
 		}
 	}
@@ -76,7 +76,7 @@ func releaseEntry(descriptor application.Descriptor, client *distributor.Client)
 		entry.Provider = application.ClaudeCode
 		entry.Protocol = claude.NewProtocol(client)
 	default:
-		return application.Entry{}, fmt.Errorf("Unregistered protocol %s", descriptor.Protocol)
+		return application.Entry{}, fmt.Errorf("unregistered protocol %s", descriptor.Protocol)
 	}
 	return entry, nil
 }

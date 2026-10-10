@@ -31,7 +31,7 @@ func (m *Manager) AcquireHTTPReader() (func(), error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
-		return nil, errors.New("Server is shutting down")
+		return nil, errors.New("server is shutting down")
 	}
 	if m.readersLocked() >= m.maxReaders {
 		return nil, ErrReaderLimit
@@ -47,7 +47,7 @@ func (m *Manager) AcquireHTTPWriter() (func(), error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
-		return nil, errors.New("Server is shutting down")
+		return nil, errors.New("server is shutting down")
 	}
 	if m.jobs >= m.maxWriters {
 		return nil, ErrWriterLimit
@@ -65,7 +65,7 @@ func (m *Manager) MaxArtifactBytes() int64 {
 }
 
 // The store's UID admission gate must be closed and drained before this cleanup.
-var ErrTransfersActive = errors.New("Application work has not exited")
+var ErrTransfersActive = errors.New("application work has not exited")
 
 func (m *Manager) PurgeApplication(uid string, remove func() error) error {
 	m.mu.Lock()
@@ -81,9 +81,7 @@ func (m *Manager) PurgeApplication(uid string, remove func() error) error {
 	}
 	for id, g := range m.all {
 		if strings.HasPrefix(g.Resource.Application, prefix) {
-			if g.file != nil {
-				g.file.Close()
-			}
+			g.body.CloseFile()
 			delete(m.current, g.Resource.ID)
 			delete(m.all, id)
 		}

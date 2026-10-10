@@ -79,14 +79,15 @@ func TestUpstreamPayloadIncludesFailedWritesAndRetries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g.file.Close()
-	g.file, err = os.OpenFile("/dev/full", os.O_RDWR, 0600)
+	g.body.CloseFile()
+	full, err := os.OpenFile("/dev/full", os.O_RDWR, 0600)
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.body.SetFile(full)
 	db.Add("upstream_bytes", 100) // Existing cumulative values must be retained.
 	for attempt := int64(1); attempt <= 2; attempt++ {
-		if err = m.attempt(g); err == nil || !strings.Contains(err.Error(), "Disk write") {
+		if err = m.transfer(g); err == nil || failureCategory(err) != "disk" {
 			t.Fatal(err)
 		}
 		counters, _ := db.Counters()
@@ -108,7 +109,7 @@ func TestUpstreamPayloadCountsBodyRejectedByLengthLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = m.attempt(g); err == nil || !strings.Contains(err.Error(), "length exceeds") {
+	if err = m.transfer(g); err == nil || !strings.Contains(err.Error(), "length exceeds") {
 		t.Fatal(err)
 	}
 	counters, err := db.Counters()
