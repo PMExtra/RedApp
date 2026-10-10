@@ -48,6 +48,10 @@ const canRefresh = computed(() => {
     sourceEpoch.value === null && !deleted.value && !inactive.value && current?.active === true
   );
 });
+// An open refresh or cleanup preview belongs to the selected epoch: keep it
+// until the preview is discarded or the job finishes.
+const refreshBusy = ref(false);
+const cleanupBusy = ref(false);
 const section = ref("files");
 const sections = computed<TabItem[]>(() => [
   { value: "files", label: t("httpCache.sections.files") },
@@ -90,8 +94,20 @@ const sections = computed<TabItem[]>(() => [
       </template>
 
       <template v-else>
-        <SourceEpochSelect v-model="sourceEpoch" class="max-w-2xl" :vendor="vendor" :app="app" />
-        <Tabs v-model="section" :items="sections" :label="t('httpCache.sections.label')">
+        <SourceEpochSelect
+          v-model="sourceEpoch"
+          class="max-w-2xl"
+          :vendor="vendor"
+          :app="app"
+          :disabled="refreshBusy || cleanupBusy"
+        />
+        <!-- Kept mounted: previews and running jobs survive switching tabs. -->
+        <Tabs
+          v-model="section"
+          :items="sections"
+          :label="t('httpCache.sections.label')"
+          keep-mounted
+        >
           <template #files>
             <div class="flex flex-col gap-6">
               <CacheEntriesPanel
@@ -105,12 +121,18 @@ const sections = computed<TabItem[]>(() => [
           </template>
           <template #maintenance>
             <div class="flex flex-col gap-6">
-              <CacheRefreshPanel :vendor="vendor" :app="app" :available="canRefresh" />
+              <CacheRefreshPanel
+                :vendor="vendor"
+                :app="app"
+                :available="canRefresh"
+                @update:busy="refreshBusy = $event"
+              />
               <CacheCleanupPanel
                 :vendor="vendor"
                 :app="app"
                 :source-epoch="sourceEpoch"
                 :disabled="deleted"
+                @update:busy="cleanupBusy = $event"
               />
             </div>
           </template>

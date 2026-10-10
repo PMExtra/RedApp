@@ -192,6 +192,12 @@ describe("cache tab of an HTTP cache application", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const server = maintenanceServer("cleanup");
     useHandlers(
+      // The historical source has no cached files left after the cleanup.
+      mockApi("get", "/admin/api/apps/{vendor}/{app}/sources", () => ({
+        items: server.state.executed
+          ? [sourceEpoch()]
+          : [sourceEpoch({ epoch: 1, current: false }), sourceEpoch()],
+      })),
       ...httpCacheHandlers(),
       ...server.handlers,
       mockApi(
@@ -253,6 +259,17 @@ describe("cache tab of an HTTP cache application", () => {
     expect(await within(review).findByText("Cleanup finished")).toBeInTheDocument();
     expect(within(review).getByText(/Removed 1 of 2 files/)).toBeInTheDocument();
     expect(await within(review).findByText("Removed")).toBeInTheDocument();
+
+    await user.click(within(review).getByRole("button", { name: "Close" }));
+    const source = screen.getByRole("combobox", { name: /^Cache source/ });
+    await waitFor(() => {
+      expect(source).toBeEnabled();
+    });
+    await user.click(source);
+    expect(await screen.findByRole("option", { name: /Source 2 \(current\)/ })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole("option", { name: /historical/ })).toBeNull();
+    });
   });
 
   it("discards an expired cleanup preview instead of executing it", async () => {
@@ -286,6 +303,13 @@ describe("cache tab of an HTTP cache application", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const server = maintenanceServer("refresh");
     useHandlers(
+      // The file list changes once the background refresh has finished.
+      mockApi("get", "/admin/api/apps/{vendor}/{app}/cache/entries", () => ({
+        items: [
+          cacheEntry(server.state.preview.state === "done" ? { path: "/refreshed.bin" } : {}),
+        ],
+        next_cursor: null,
+      })),
       ...httpCacheHandlers(),
       ...server.handlers,
       mockApi(
@@ -304,8 +328,14 @@ describe("cache tab of an HTTP cache application", () => {
     await user.click(await screen.findByRole("tab", { name: "Refresh and cleanup" }));
     const panel = card("Refresh files");
     await user.click(within(panel).getByRole("button", { name: "Preview refresh" }));
-    const review = await within(panel).findByRole("region", { name: "Refresh preview" });
+    let review = await within(panel).findByRole("region", { name: "Refresh preview" });
     expect(server.state.created).toEqual({ match: { type: "glob", pattern: "/" } });
+    // The open preview belongs to the current source and survives switching tabs.
+    const source = screen.getByRole("combobox", { name: /^Cache source/ });
+    expect(source).toBeDisabled();
+    await user.click(screen.getByRole("tab", { name: "Cached files" }));
+    await user.click(screen.getByRole("tab", { name: "Refresh and cleanup" }));
+    review = within(card("Refresh files")).getByRole("region", { name: "Refresh preview" });
     await vi.advanceTimersByTimeAsync(MAINTENANCE_POLL_MS);
     await user.click(await within(review).findByRole("button", { name: "Refresh selected files" }));
     await user.click(
@@ -326,6 +356,12 @@ describe("cache tab of an HTTP cache application", () => {
     const reads = server.state.reads;
     await vi.advanceTimersByTimeAsync(MAINTENANCE_POLL_MS * 3);
     expect(server.state.reads).toBe(reads);
+    // Finished but still open: the source stays fixed until it is dismissed.
+    expect(source).toBeDisabled();
+
+    // The cached file list already shows the result of the refresh.
+    await user.click(screen.getByRole("tab", { name: "Cached files" }));
+    expect(await screen.findByText("/refreshed.bin")).toBeInTheDocument();
   });
 });
 

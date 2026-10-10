@@ -74,11 +74,15 @@ watch(
   },
 );
 watch(active, (now) => emit("update:active", now), { immediate: true });
-// Per-file results change when the job starts, runs and finishes.
+// Per-file results change when the job starts, runs and finishes; a
+// background job (refresh) also changes the cached files when it finishes.
 watch(
   () => preview.value?.state,
   (now, before) => {
     if (before && now && now !== before && now !== "building") void items.refetch();
+    if (before === "running" && (now === "done" || now === "failed")) {
+      actions.invalidateResults();
+    }
   },
 );
 

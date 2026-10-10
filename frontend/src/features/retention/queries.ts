@@ -107,6 +107,7 @@ export function useRetentionActions(vendor: Name, app: Name) {
         "listRetentionPreviewItems",
         "listVersions",
         "listResources",
+        "listSources",
         "getAppStatus",
       ] as const) {
         void queryClient.invalidateQueries({ queryKey: [operation, path()] });

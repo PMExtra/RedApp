@@ -166,6 +166,12 @@ export function useMaintenanceActions(kind: MaintenanceKind, vendor: Name, app: 
   const remember = (preview: MaintenancePreview) => {
     queryClient.setQueryData(jobKey(kind, path().vendor, path().app, preview.id), preview);
   };
+  /** Cached files and the per-source usage change when a job has run. */
+  const invalidateResults = () => {
+    for (const operation of ["listCacheEntries", "listSources"] as const) {
+      void queryClient.invalidateQueries({ queryKey: [operation, path()] });
+    }
+  };
   const create = useMutation({
     mutationFn: (body: MaintenanceRequest) =>
       kind === "refresh"
@@ -201,8 +207,8 @@ export function useMaintenanceActions(kind: MaintenanceKind, vendor: Name, app: 
     },
     onSuccess: (preview) => {
       remember(preview);
-      void queryClient.invalidateQueries({ queryKey: ["listCacheEntries", path()] });
+      invalidateResults();
     },
   });
-  return { create, execute };
+  return { create, execute, invalidateResults };
 }
