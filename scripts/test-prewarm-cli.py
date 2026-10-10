@@ -63,15 +63,15 @@ class PrewarmCLITest(ServerTestCase):
         """Poll a prewarm job until it leaves the running state."""
         deadline = time.monotonic() + JOB_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
-            result = admin.request(f"/admin/api/apps/{key}/prewarm/{job['id']}")
+            result = admin.request(f"/admin/api/apps/{key}/prewarm/jobs/{job['id']}")
             if result["state"] != "running":
                 return result
             time.sleep(0.02)
         self.fail(f"prewarm job {job['id']} for {key} still running after {JOB_TIMEOUT_SECONDS:.0f}s")
 
-    def start_job(self, admin, key, body):
-        """Start a prewarm job and return the job description."""
-        return admin.request(f"/admin/api/apps/{key}/prewarm/start", body, method="POST")
+    def start_job(self, admin, key, body, expect=201):
+        """Start a prewarm job (201 new, 200 repeated ``request_id``) and return it."""
+        return admin.request(f"/admin/api/apps/{key}/prewarm/jobs", body, method="POST", expect=expect)
 
     def test_index_and_platform_prewarm_survive_restart(self):
         fixture = self.start_fixture(PrewarmFixture)
@@ -84,30 +84,11 @@ class PrewarmCLITest(ServerTestCase):
             method="PUT",
             if_match=proxy["revision"],
         )
-        admin.request(
-            "/admin/api/vendors",
-            {"id": "prewarm", "name": {"en": "Prewarm", "zh-CN": "预热"}, "enabled": True},
-            method="POST",
-            expect=201,
-        )
-        apps = [
-            ("http", "http-cache", "http://prewarm.example/files"),
-            ("binary", "codex", "http://prewarm.example"),
-        ]
-        for name, provider, upstream in apps:
-            admin.request(
-                "/admin/api/vendors/prewarm/apps",
-                {
-                    "id": name,
-                    "provider": provider,
-                    "name": {"en": name, "zh-CN": name},
-                    "base_url": upstream,
-                    "cache_ttl_seconds": 60,
-                    "enabled": True,
-                },
-                method="POST",
-                expect=201,
-            )
+        admin.create_vendor("prewarm", {"en": "Prewarm", "zh-CN": "预热"})
+        admin.create_app("prewarm", "http", "http-cache", "http://prewarm.example/files")
+        admin.create_app("prewarm", "binary", "codex", "http://prewarm.example")
+        self.assertEqual(admin.request("/admin/api/apps/prewarm/http/prewarm/options")["kind"], "http_cache")
+        self.assertEqual(admin.request("/admin/api/apps/prewarm/binary/prewarm/options")["kind"], "release")
 
         # Cold HTML and JSON (nginx-style) indexes; links outside the base are ignored.
         http_input = {"request_id": "a" * 32, "indexes": ["/"]}
@@ -115,7 +96,7 @@ class PrewarmCLITest(ServerTestCase):
         http_result = self.await_job(admin, "prewarm/http", http_job)
         self.assertEqual(http_result["state"], "completed", http_result)
         self.assertEqual(http_result["succeeded"], 2, http_result)
-        items = admin.request(f"/admin/api/apps/prewarm/http/prewarm/{http_job['id']}/items")["items"]
+        items = admin.request(f"/admin/api/apps/prewarm/http/prewarm/jobs/{http_job['id']}/items")["items"]
         self.assertEqual([item["key"] for item in items], ["/one", "/sub/two"])
 
         release_input = {"request_id": "b" * 32, "target": "1.0.0", "platforms": ["linux-x64"]}
@@ -142,9 +123,9 @@ class PrewarmCLITest(ServerTestCase):
 
         server.restart()
         admin.login()
-        replay = self.start_job(admin, "prewarm/http", http_input)
+        replay = self.start_job(admin, "prewarm/http", http_input, expect=200)
         self.assertEqual(replay["id"], http_job["id"], "same request_id started a new job")
-        release_state = admin.request(f"/admin/api/apps/prewarm/binary/prewarm/{release_job['id']}")["state"]
+        release_state = admin.request(f"/admin/api/apps/prewarm/binary/prewarm/jobs/{release_job['id']}")["state"]
         self.assertEqual(release_state, "completed")
         self.assertEqual(admin.request("/prewarm/http/one"), b"body")
         self.assertEqual(admin.request("/prewarm/binary/releases/1.0.0/" + PLATFORM_KEY), PLATFORM_BODY)
