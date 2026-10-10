@@ -176,10 +176,6 @@ func scanPreviewItem(row scanner) (PreviewItem, error) {
 	return item, err
 }
 
-type rowQuerier interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}
-
 // loadPreview reads preview id of kind owned by uid while it is readable.
 func loadPreview(ctx context.Context, q rowQuerier, uid string, kind PreviewKind, id string, now time.Time) (Preview, error) {
 	p, err := scanPreview(q.QueryRowContext(ctx, `SELECT `+previewColumns+` FROM previews WHERE id=? AND app_uid=? AND kind=?`, id, uid, kind))

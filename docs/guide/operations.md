@@ -177,14 +177,36 @@ Metric sampling runs once at startup and then every minute.
 
 ## Logs and events
 
-RedApp writes structured log lines (`key=value` text) to standard error:
+RedApp writes structured log lines to standard error in `key=value` text format. Every line has `time`, `level` (`DEBUG` is not shown, then `INFO`, `WARN`, `ERROR`) and `msg`. Lines from background tasks also have `component`:
 
-- The initial admin password, once, on the first start
-- `RedApp started: listener ..., data directory ...`
-- One `http request` line per request with `request_id`, method, path (without the query string), status, bytes, duration, client address and the API operation
-- One `request failed` line for every server error and for client errors with a cause, with the error code and the underlying error; credentials in URLs are masked
-- Failures of metric sampling and automatic cache cleanup
-- The fatal error when startup fails
+```text
+time=2026-10-10T08:00:00.000Z level=INFO msg="RedApp started" version=1.0.0 listen=:8080 data_dir=/var/lib/redapp
+time=2026-10-10T08:15:00.000Z level=WARN msg="automatic HTTP cache cleanup failed" component=http_cache app=example/files error="database is locked"
+```
+
+| `component` | What is logged |
+| --- | --- |
+| (none) | Startup and shutdown, `http request` access lines, `request failed` lines, the fatal error when startup fails |
+| `auth` | The initial admin password, once, on the first start |
+| `configuration` | Every published configuration change, with the number of applications and sources |
+| `download` | Cache recovery at startup, failed release downloads and failed state writes |
+| `http_cache` | Failed automatic cleanup passes |
+| `hosted` | Removal of incomplete uploads at startup, uploaded files that could not be removed |
+| `prewarm` | One line per finished prewarm job, failed automatic prewarm starts |
+| `retention` | Retention runs that retired versions, skipped runs and failures |
+| `history` | Failed metric sampling |
+| `counters` | The first failed counter flush and the recovery after it |
+
+Common fields:
+
+- `request_id`: the request; HTTP lines only
+- `app`: the application as `<vendor>/<app>`
+- `storage_id`: the internal cache namespace of an application (`app/<uid>-e<epoch>`), in `download` lines
+- `job_id`, `preview_id`, `generation_id`, `transfer_id`: the prewarm job, cleanup preview, download generation or upload
+- `state`, `reason`, `outcome`: the result of a job or run
+- `error`: the underlying error; credentials in URLs are masked
+
+Background tasks log failures and results, never one line per request or per file. A failure that repeats every second, such as a counter flush, is logged once until it recovers. Apart from the initial admin password, logs contain no passwords, session or CSRF tokens, or proxy credentials.
 
 Every response carries an `X-Request-Id` header, and error responses repeat it as `error.request_id`. Search the log for that value when a user reports an error.
 

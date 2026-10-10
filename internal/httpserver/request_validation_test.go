@@ -86,17 +86,7 @@ func TestErrorResponsesNeverCarryInternalErrorText(t *testing.T) {
 	if w.Code != 500 || errorCodeOf(t, w.Body.Bytes()) != "INTERNAL_ERROR" {
 		t.Fatal("unknown code escaped the catalog", w.Code, w.Body.String())
 	}
-	if got := redactError(io.ErrUnexpectedEOF); got != "unexpected EOF" {
-		t.Fatal(got)
-	}
-	if got := redactError(errorString("proxyconnect tcp: http://ops:secret@proxy.internal:3128 refused")); strings.Contains(got, "secret") || !strings.Contains(got, "http://****@proxy.internal") {
-		t.Fatal(got)
-	}
 }
-
-type errorString string
-
-func (e errorString) Error() string { return string(e) }
 
 func TestHealthProbes(t *testing.T) {
 	h := newHarness(t)

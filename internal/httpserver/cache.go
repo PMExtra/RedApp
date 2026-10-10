@@ -14,6 +14,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/httpcache"
+	"github.com/PMExtra/RedApp/internal/logging"
 	"github.com/PMExtra/RedApp/internal/pathmatch"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -289,7 +290,7 @@ func (s *Server) refreshCacheEntry(w http.ResponseWriter, r *http.Request) {
 		writeOK(w, refreshItemDocument(item))
 	case err != nil && (item.Reason != "" || errors.Is(err, httpcache.ErrUpstream)):
 		// Upstream failures are an outcome of the refresh, not an error response.
-		s.log.Info("cache refresh failed", "request_id", requestState(r).id, "error", redactError(err))
+		s.log.Info("cache refresh failed", "request_id", requestState(r).id, logging.Error(err))
 		item.Status = "failed"
 		writeOK(w, refreshItemDocument(item))
 	case err != nil:

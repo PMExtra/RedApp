@@ -177,14 +177,36 @@ RedApp 读取转发头的方式：
 
 ## 日志与事件
 
-RedApp 向标准错误输出结构化日志（`key=value` 文本）：
+RedApp 向标准错误输出 `key=value` 文本格式的结构化日志。每行都有 `time`、`level`（不输出 `DEBUG`，其余为 `INFO`、`WARN`、`ERROR`）和 `msg`。后台任务的日志还有 `component`：
 
-- 首次启动时打印一次初始管理员密码
-- `RedApp started: listener ..., data directory ...`
-- 每个请求一行 `http request`，含 `request_id`、方法、路径（不含查询字符串）、状态、字节数、耗时、客户端地址和 API 操作
-- 每个服务端错误以及带原因的客户端错误一行 `request failed`，含错误码和底层错误；URL 中的凭据会被遮盖
-- 指标采样和自动缓存清理的失败
-- 启动失败时的致命错误
+```text
+time=2026-10-10T08:00:00.000Z level=INFO msg="RedApp started" version=1.0.0 listen=:8080 data_dir=/var/lib/redapp
+time=2026-10-10T08:15:00.000Z level=WARN msg="automatic HTTP cache cleanup failed" component=http_cache app=example/files error="database is locked"
+```
+
+| `component` | 记录的内容 |
+| --- | --- |
+| （无） | 启动和停止、`http request` 访问日志、`request failed` 错误日志、启动失败时的致命错误 |
+| `auth` | 首次启动时打印一次初始管理员密码 |
+| `configuration` | 每次发布的配置变更，含应用数和上游来源数 |
+| `download` | 启动时的缓存恢复、发布制品下载失败和状态写入失败 |
+| `http_cache` | 自动清理失败 |
+| `hosted` | 启动时移除的未完成上传、无法删除的已上传文件 |
+| `prewarm` | 每个结束的预热任务一行、自动预热无法启动 |
+| `retention` | 淘汰了版本的保留运行、被跳过的运行和失败 |
+| `history` | 指标采样失败 |
+| `counters` | 计数器首次写入失败及之后的恢复 |
+
+常用字段：
+
+- `request_id`：请求标识，只出现在 HTTP 日志中
+- `app`：应用，格式为 `<vendor>/<app>`
+- `storage_id`：应用的内部缓存命名空间（`app/<uid>-e<epoch>`），出现在 `download` 日志中
+- `job_id`、`preview_id`、`generation_id`、`transfer_id`：预热任务、清理预览、下载代际或上传
+- `state`、`reason`、`outcome`：任务或运行的结果
+- `error`：底层错误；URL 中的凭据会被遮盖
+
+后台任务只记录失败和结果，不按请求或按文件逐条记录。每秒都可能重复的失败（如计数器写入）只记录一次，直到恢复。除初始管理员密码外，日志不包含密码、会话或 CSRF token，也不包含代理凭据。
 
 每个响应都带 `X-Request-Id` 头，错误响应在 `error.request_id` 中重复该值。用户报告错误时，用这个值检索日志。
 

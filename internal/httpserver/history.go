@@ -2,25 +2,29 @@ package httpserver
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/history"
+	"github.com/PMExtra/RedApp/internal/logging"
 )
 
 // SampleHistory records immediately, then once per minute. The same owner
 // performs closed-hour aggregation and retention, independent of admin traffic.
-func (s *Server) SampleHistory(ctx context.Context, onError func(error)) {
+// Failures are logged with component=history; the next sample retries.
+func (s *Server) SampleHistory(ctx context.Context) {
+	log := logging.For(s.log, "history")
 	tick := time.NewTicker(time.Minute)
 	defer tick.Stop()
 	sample := func() {
 		at, metrics, err := s.globalMetrics()
 		if err != nil {
+			log.Error("metric sampling failed", logging.Error(err))
 			if maintenanceErr := s.history.Maintain(time.Now().UTC()); maintenanceErr != nil {
-				onError(maintenanceErr)
+				log.Error("metric history maintenance failed", logging.Error(maintenanceErr))
 			}
-			onError(err)
 			return
 		}
 		observations := []history.Observation{{Scope: "global", Metrics: metrics}}
@@ -30,13 +34,13 @@ func (s *Server) SampleHistory(ctx context.Context, onError func(error)) {
 			}
 			appMetrics, err := s.appMetrics(entry)
 			if err != nil {
-				onError(err)
+				log.Error("metric sampling failed", slog.String("app", entry.Descriptor.ID), logging.Error(err))
 				return
 			}
 			observations = append(observations, history.Observation{Scope: "app", AppID: entry.MetricsID(), Metrics: appMetrics})
 		}
 		if err = s.history.RecordScoped(at, observations); err != nil {
-			onError(err)
+			log.Error("metric history write failed", logging.Error(err))
 		}
 	}
 	sample()

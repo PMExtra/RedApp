@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -83,5 +84,31 @@ func TestDatabaseBusyIsBoundedAndVerifiedCacheSurvives(t *testing.T) {
 	}
 	if !bytes.Equal(collect(t, m, good), data) {
 		t.Fatal("busy database affected an existing complete generation")
+	}
+}
+
+// A failed background transfer is logged once, after the manager lock is
+// released, with the identity of its generation.
+func TestFailedDownloadIsLogged(t *testing.T) {
+	c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusForbidden) }))
+	var logs testutil.Logs
+	m, _, _ := setup(t, c, WithLogger(logs.Logger()))
+	r := authorizedResource(t, m, c, []byte("never served"))
+	if rd, _, e := m.Acquire(context.Background(), r); e == nil {
+		_, e = io.ReadAll(rd)
+		rd.Close()
+		if e == nil {
+			t.Fatal("failed download reported as success")
+		}
+	}
+	m.Close()
+	problems := logs.Problems()
+	if len(problems) != 1 {
+		t.Fatal("want one logged failure", problems)
+	}
+	for _, field := range []string{`msg="download failed"`, "component=download", "storage_id=" + r.Application, "version=0.1.0", "resource=asset", "generation_id=", "state=failed", "category=", "error="} {
+		if !strings.Contains(problems[0], field) {
+			t.Fatalf("failure log lacks %s: %s", field, problems[0])
+		}
 	}
 }

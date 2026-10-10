@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"regexp"
+
+	"github.com/PMExtra/RedApp/internal/logging"
 )
 
 // apiError is one error response: an explicit catalog code, a user-facing
@@ -61,7 +62,7 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, e *apiError)
 			attrs = append(attrs, slog.String("operation", info.route.operation))
 		}
 		if e.cause != nil {
-			attrs = append(attrs, slog.String("error", redactError(e.cause)))
+			attrs = append(attrs, logging.Error(e.cause))
 		}
 		s.log.LogAttrs(r.Context(), level, "request failed", attrs...)
 	}
@@ -82,14 +83,6 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, code errorCode, ca
 // storageError is the response for a database or data directory failure.
 func storageError(cause error) *apiError {
 	return newError(codeStorageUnavailable, cause, "Local storage is unavailable; retry later")
-}
-
-var credentialURL = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^/@\s]*@`)
-
-// redactError removes URL user information (proxy and upstream credentials)
-// from an error before it is logged.
-func redactError(err error) string {
-	return credentialURL.ReplaceAllString(err.Error(), "${1}****@")
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

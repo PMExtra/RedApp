@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/identity"
+	"github.com/PMExtra/RedApp/internal/logging"
 	"github.com/PMExtra/RedApp/internal/spool"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -157,10 +159,17 @@ type Manager struct {
 	idleTimeout time.Duration
 	retry       spool.Retry
 	trace       func(point string, g *Generation) // see withTrace; nil in production
+	log         *slog.Logger
 }
 
 // Option configures a Manager at construction.
 type Option func(*Manager)
+
+// WithLogger sets the logger for recovery and background transfer failures
+// (default: discard).
+func WithLogger(log *slog.Logger) Option {
+	return func(m *Manager) { m.log = log }
+}
 
 // withTrace observes named points of the generation lifecycle (publication,
 // verification, deletion). Package tests use it as a fault barrier to stop a
@@ -185,6 +194,7 @@ func NewApplications(dir string, db *store.Store, clients map[string]*distributo
 	for _, option := range options {
 		option(m)
 	}
+	m.log = logging.For(m.log, "download")
 	if e := m.recover(); e != nil {
 		cancel()
 		m.closeFiles()
@@ -863,7 +873,9 @@ func (m *Manager) transfer(g *Generation) error {
 			g.Error = describe(err).Error()
 			snapshot := m.checkpointLocked(g)
 			m.mu.Unlock()
-			_ = m.write(snapshot)
+			if e := m.write(snapshot); e != nil {
+				m.log.Warn("download state checkpoint failed", generationAttrs(g, logging.Error(e))...)
+			}
 		},
 	}
 	err := describe(fill.Run(g.ctx, nil))
@@ -890,6 +902,14 @@ func (m *Manager) startLocked(g *Generation) error {
 func (m *Manager) run(g *Generation) {
 	defer g.finishWork()
 	defer m.wg.Done()
+	// A failure is logged after mu is released (deferred before the unlock).
+	var failed []any
+	failedLevel := slog.LevelWarn
+	defer func() {
+		if failed != nil {
+			m.log.Log(context.Background(), failedLevel, "download failed", failed...)
+		}
+	}()
 	err := m.transfer(g)
 	if err == nil {
 		m.mu.Lock()
@@ -981,12 +1001,18 @@ func (m *Manager) run(g *Generation) {
 		if g.ctx.Err() != nil || spool.Retryable(err) && g.Bytes > 0 && (g.ETag != "" || g.rangeable) {
 			g.State = "interrupted"
 		}
-		m.save(g)
-		m.recordFailure(g, err)
+		persisted := []error{m.save(g), m.recordFailure(g, err)}
 		m.db.AddFor(g.Resource.MetricScope(), "upstream_errors", 1)
 		if m.current[g.Resource.ID] == g && g.State != "interrupted" {
 			delete(m.current, g.Resource.ID)
-			m.db.RetireGeneration(g.Resource.Application, g.ID, time.Now())
+			persisted = append(persisted, m.db.RetireGeneration(g.Resource.Application, g.ID, time.Now()))
+		}
+		failed = generationAttrs(g, slog.String("state", g.State), slog.String("category", failureCategory(err)), logging.Error(err))
+		if e := errors.Join(persisted...); e != nil {
+			failed = append(failed, slog.String("state_error", logging.Redact(e.Error())))
+		}
+		if g.State == "interrupted" {
+			failedLevel = slog.LevelInfo
 		}
 	}
 	// Readers see only the final outcome: verified content or a failure.
@@ -1062,6 +1088,16 @@ func (m *Manager) Files() []spool.FileStatus {
 	out := make([]spool.FileStatus, 0, len(views))
 	for _, v := range views {
 		out = append(out, spool.FileStatus{Scope: v.Resource.MetricScope(), Path: v.Path, Bytes: v.Bytes, State: v.State, Current: v.Current, Retired: v.Retired, ActiveWriter: v.ActiveWriter, Readers: v.Readers})
+	}
+	return out
+}
+
+// generationAttrs identifies g in a log record; storage_id is the private
+// storage namespace of the owning application.
+func generationAttrs(g *Generation, extra ...slog.Attr) []any {
+	out := []any{slog.String("storage_id", g.Resource.Application), slog.String("version", g.Resource.Version), slog.String("resource", g.Resource.Key), slog.String("generation_id", g.ID)}
+	for _, a := range extra {
+		out = append(out, a)
 	}
 	return out
 }

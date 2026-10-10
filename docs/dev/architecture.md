@@ -36,6 +36,8 @@ RedApp 是单进程 Go 服务：一个二进制、一个 SQLite 数据库、一�
 5. 首次启动时生成随机管理员密码并输出到日志。
 6. 启动后台循环和 HTTP 服务；收到 SIGINT/SIGTERM 后 15 秒内优雅退出。
 
+`main` 创建唯一的 `log/slog` text logger（标准错误），交给 store、各领域服务、后台循环和 HTTP 层；日志字段和级别规则见 [conventions.md](conventions.md#日志)。
+
 ## 包与依赖方向
 
 依赖从上往下，下层不引用上层：
@@ -73,7 +75,8 @@ RedApp 是单进程 Go 服务：一个二进制、一个 SQLite 数据库、一�
 | | `internal/jsoncheck` | 拒绝重复键、过深嵌套和尾随数据 |
 | | `internal/yamlconfig` | 严格的单文档 YAML → JSON |
 | | `internal/instance` | 数据目录实例锁与只读的持锁检查 |
-| 测试 | `internal/testutil` | 基于 httptest 的上游客户端；在真实 store 中创建目录应用并构造其运行时条目（`App`、`Entry`）（仅测试使用） |
+| | `internal/logging` | 日志约定：`component` 字段、遮盖 URL 凭据的 `error` 字段、未传 logger 时的丢弃默认值 |
+| 测试 | `internal/testutil` | 基于 httptest 的上游客户端；在真实 store 中创建目录应用并构造其运行时条目（`App`、`Entry`）；收集结构化日志的 `Logs`（仅测试使用） |
 | | `internal/store/storetest` | 测试另开一个到数据目录数据库的连接，用于故障注入和没有 store API 的夹具（仅测试使用） |
 | 嵌入数据 | `presets/` | 内置厂商、应用、分类的 YAML 模板与图标 |
 | | `installers/` | 嵌入 generated 安装脚本、许可证和公钥（见 [installers.md](installers.md)） |
@@ -193,8 +196,9 @@ HTTP 层只有一处映射（`previews.go`）：未知、其他应用或其他�
 
 - schema 内嵌在 `internal/store/schema.sql`，版本写入 `PRAGMA user_version`，常量为 `store.SchemaVersion`（当前为 15）。`PRAGMA application_id` 固定为 RedApp 的标识，用来拒绝版本号碰巧相同的其他 SQLite 文件。
 - 新目录（为空或只含实例锁）创建全新 schema，并在首次启动前 checkpoint 到主文件。已有数据库以只读、immutable 方式检查 `application_id` 与 `user_version`，任一不符就拒绝启动，不改写、不删除，也不创建 WAL/SHM 文件。不比较表结构：1.0 前每次 schema 变化都提升版本。
+- 迁移框架（`migrate.go`）在 1.0 前处于休眠状态：`MinimumMigratableVersion` 为 0，任何其他版本都被拒绝。启用后先用 `VACUUM INTO` 在数据目录写备份，再在一个事务中执行迁移步骤、外键检查并与全新 schema 比对；流程和发布 1.0 的步骤见 [development.md](development.md#schema-迁移)。每个 schema 版本的 golden fixture 在 `internal/store/testdata/schema/`。
 - 属于厂商或应用的行以 UID 引用父行并 `ON DELETE CASCADE`；应用引用厂商不级联，因为必须先删除应用并登记其对象文件。发布、缓存和指标数据以存储命名空间或指标命名空间为键，永久删除应用时按前缀删除；同一版本的元数据、渠道、资源和下载代际随版本级联删除。
-- 1.0 前没有迁移，规则见 [ADR 0001](adr/0001-pre-1.0-no-migrations.md)。
+- 1.0 前不运行迁移，规则见 [ADR 0001](adr/0001-pre-1.0-no-migrations.md)。
 - 连接：WAL、`synchronous=FULL`、外键开启。写连接只有一个（`_txlock=immediate`），所有写入和读改写事务都在它上面串行；只读查询和只读快照事务走独立的 `query_only` 读连接池（8 个），WAL 下不等待正在进行的写事务，看到的是最近一次提交。持有写事务时（包括 `finalize`、`beforeCommit` 和删除包装回调）只能使用该事务，不能调用会写的 `Store` 方法，否则会等待调用者自己占用的写连接；只读方法可以调用，但看不到事务内未提交的修改。
 - 其他包不能拿到底层连接：读写都通过 `Store` 的类型化方法，找不到行时返回 `store.ErrNotFound`。跨包测试用 `storetest.Open` 另开连接做故障注入。
 - 流量与请求计数先在内存累加，每秒、每次传输结束、每次读取计数前以及关闭时批量写入一个事务；写入失败保留增量重试，不影响传输。异常退出最多丢失约 1 秒的计数。
@@ -341,4 +345,3 @@ HTTP 层只有一处映射（`previews.go`）：未知、其他应用或其他�
 | 问题 | 现状 | 方向 |
 | --- | --- | --- |
 | 锁内数据库调用 | 下载 `Manager.mu` 覆盖改变当前代际的单行写入和 blob 发布，配置写入的 `Store.writeMu` 覆盖一次写事务与发布，两者都在锁声明处说明了原因和持锁范围。HTTP 缓存的条目查询、pin、发布与回收仍在 `Service.mu` 内调用 store，以保持条目行、pin 计数与回收一致（来源检查和访问记录已在锁外） | HTTP 缓存：锁外读取条目，加锁后复核仍为当前再 pin；回收同理 |
-| 后台日志 | HTTP 层用 `log/slog` 记录访问与错误日志；`cmd/redapp` 和后台循环的失败仍经标准库 `log` 进入同一个 slog handler，没有结构化字段 | 逐步改为 slog 字段 |

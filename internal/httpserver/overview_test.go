@@ -75,7 +75,10 @@ func TestHistorySeriesUseRFC3339TimesAndPublicKeys(t *testing.T) {
 	files := h.createApp("fixture", "files", application.HttpCache, map[string]any{"base_url": fixtureUpstream})
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	h.server.SampleHistory(ctx, func(e error) { t.Fatal(e) })
+	h.server.SampleHistory(ctx)
+	if logs := h.logs.String(); strings.Contains(logs, "component=history") {
+		t.Fatal("history sampling logged a failure", logs)
+	}
 	for window, resolution := range map[string]int64{"24h": 60, "7d": 3600, "30d": 3600} {
 		body, _ := h.request("GET", "/admin/api/history?metric=disk.cache_bytes&range="+window, nil, 200, nil)
 		series := decodeJSONBody[historySeriesDTO](t, body)
@@ -209,7 +212,10 @@ func TestAppMetricsFollowTheApplicationAcrossSourceEpochs(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	h.server.SampleHistory(ctx, func(e error) { t.Fatal(e) })
+	h.server.SampleHistory(ctx)
+	if logs := h.logs.String(); strings.Contains(logs, "component=history") {
+		t.Fatal("history sampling logged a failure", logs)
+	}
 	var value int64
 	if err := h.sql().QueryRow("SELECT CAST(value AS INTEGER) FROM metric_samples WHERE scope='app' AND app_id=? AND metric='counters.artifact_requests'", current.MetricsID()).Scan(&value); err != nil || value != 2 {
 		t.Fatal("history sampler did not use the stable identity", value, err)

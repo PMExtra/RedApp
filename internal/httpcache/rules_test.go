@@ -139,7 +139,7 @@ func TestAutomaticFirstMatchAndAccessRecheck(t *testing.T) {
 	}
 	setPolicy(t, f, config)
 	registry := registryFor(t, f.entry)
-	f.s.cleanupPass(context.Background(), registry, func(err error) { t.Error(err) })
+	f.cleanupPass(t, registry)
 	if len(f.rows(t)) != 1 || f.s.CleanupStatus().RetiredFiles != 0 {
 		t.Fatal("later eligible rule overrode first path match")
 	}
@@ -183,7 +183,7 @@ func TestAutomaticFirstMatchAndAccessRecheck(t *testing.T) {
 	if _, err = f.s.ExecuteCleanup(context.Background(), f.entry, id); !errors.Is(err, store.ErrPreviewStale) {
 		t.Fatal("disabled source auto cleaned", err)
 	}
-	f.s.cleanupPass(context.Background(), registryFor(t, f.entry), func(err error) { t.Error(err) })
+	f.cleanupPass(t, registryFor(t, f.entry))
 	if len(f.rows(t)) != 1 || f.s.CleanupStatus().ConfiguredApps != 0 {
 		t.Fatal("disabled app entered automatic pass")
 	}
@@ -210,7 +210,7 @@ func TestAutomaticBoundsCursorAndEmptyDefault(t *testing.T) {
 	if err = tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	f.s.cleanupPass(context.Background(), registryFor(t, f.entry), func(err error) { t.Error(err) })
+	f.cleanupPass(t, registryFor(t, f.entry))
 	if len(f.rows(t)) != 1120 || f.s.CleanupStatus().ScannedFiles != 0 {
 		t.Fatal("empty default selected data")
 	}
@@ -218,17 +218,17 @@ func TestAutomaticBoundsCursorAndEmptyDefault(t *testing.T) {
 	config.AutoCleanup = []cachepolicy.CleanupRule{{Match: pathmatch.Spec{Type: "glob", Pattern: "/zzz/"}, Basis: "fetched_at", AgeSeconds: 60}}
 	setPolicy(t, f, config)
 	registry := registryFor(t, f.entry)
-	f.s.cleanupPass(context.Background(), registry, func(err error) { t.Error(err) })
+	f.cleanupPass(t, registry)
 	status := f.s.CleanupStatus()
 	if status.ScannedFiles != 1000 || status.RetiredFiles != 0 {
 		t.Fatal("scan bound changed", status)
 	}
-	f.s.cleanupPass(context.Background(), registry, func(err error) { t.Error(err) })
+	f.cleanupPass(t, registry)
 	status = f.s.CleanupStatus()
 	if status.ScannedFiles != 100 || status.RetiredFiles != 100 {
 		t.Fatal("cursor or retire limit failed", status)
 	}
-	f.s.cleanupPass(context.Background(), registry, func(err error) { t.Error(err) })
+	f.cleanupPass(t, registry)
 	status = f.s.CleanupStatus()
 	if status.RetiredFiles != 20 || len(f.rows(t)) != 1000 {
 		t.Fatal("tail starved after page cap", status)
@@ -247,7 +247,7 @@ func TestAutomaticWaitsForIntervalAndCancelsWithClose(t *testing.T) {
 	registry := registryFor(t, f.entry)
 	done := make(chan struct{})
 	go func() {
-		f.s.RunCleanup(context.Background(), registry, func(err error) { t.Error(err) })
+		f.s.RunCleanup(context.Background(), registry)
 		close(done)
 	}()
 	deadline := time.Now().Add(time.Second)
@@ -270,5 +270,29 @@ func TestAutomaticWaitsForIntervalAndCancelsWithClose(t *testing.T) {
 	}
 	if f.s.CleanupStatus().Running {
 		t.Fatal("scheduler stayed running after shutdown")
+	}
+}
+
+// A failed automatic pass is counted, recorded as an event and logged with
+// the application, without the credentials of its upstream.
+func TestAutomaticCleanupFailureIsLogged(t *testing.T) {
+	f := newFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "body") }), 300)
+	if _, err := f.serve(t, "GET", http.Header{}); err != nil {
+		t.Fatal(err)
+	}
+	f.clock.Add(3600)
+	config := cachepolicy.Empty()
+	config.AutoCleanup = []cachepolicy.CleanupRule{{Match: allPaths, Basis: "fetched_at", AgeSeconds: 60}}
+	setPolicy(t, f, config)
+	if _, err := f.sql(t).Exec(`CREATE TRIGGER fail_cleanup_preview BEFORE INSERT ON previews BEGIN SELECT RAISE(FAIL,'injected preview failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+	f.s.cleanupPass(context.Background(), registryFor(t, f.entry))
+	if status := f.s.CleanupStatus(); status.FailuresTotal != 1 || len(f.rows(t)) != 1 {
+		t.Fatal("failed pass not counted or deleted files", status)
+	}
+	problems := f.logs.Problems()
+	if len(problems) != 1 || !strings.Contains(problems[0], "component=http_cache") || !strings.Contains(problems[0], "app=vendor/app") || !strings.Contains(problems[0], "injected preview failure") {
+		t.Fatal("cleanup failure not logged with its application", problems)
 	}
 }

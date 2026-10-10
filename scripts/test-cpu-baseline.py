@@ -95,7 +95,7 @@ def check(image, version, revision, qemu):
                 if process.poll() is None:
                     process.kill()
                     process.wait()
-        require('RedApp started:' in (root / 'serve.log').read_text(), 'Serve log lacks startup line')
+        require('msg="RedApp started"' in (root / 'serve.log').read_text(), 'Serve log lacks startup line')
     print(
         'Exact amd64 image: ELF baseline, Nehalem/no-AVX version, '
         'default serve, health and clean shutdown passed'

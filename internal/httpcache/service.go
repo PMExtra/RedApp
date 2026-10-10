@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -25,6 +26,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/identity"
+	"github.com/PMExtra/RedApp/internal/logging"
 	"github.com/PMExtra/RedApp/internal/spool"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -107,6 +109,7 @@ type Service struct {
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
 	now      func() time.Time
+	log      *slog.Logger
 }
 
 // Option configures a Service at construction.
@@ -115,6 +118,10 @@ type Option func(*Service)
 // WithClock replaces the wall clock used for freshness, access buckets and
 // maintenance previews.
 func WithClock(now func() time.Time) Option { return func(s *Service) { s.now = now } }
+
+// WithLogger sets the logger for the automatic cleanup scheduler (default:
+// discard).
+func WithLogger(log *slog.Logger) Option { return func(s *Service) { s.log = log } }
 
 // WithTransferPolicy replaces the idle read timeout and the retry bounds of
 // streamed upstream fills.
@@ -138,6 +145,7 @@ func New(dir string, db *store.Store, budget download.Budget, options ...Option)
 	for _, option := range options {
 		option(s)
 	}
+	s.log = logging.For(s.log, "http_cache")
 	if err := s.recover(); err != nil {
 		cancel()
 		return nil, err

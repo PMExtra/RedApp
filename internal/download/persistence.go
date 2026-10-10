@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/fsutil"
+	"github.com/PMExtra/RedApp/internal/logging"
 	"github.com/PMExtra/RedApp/internal/spool"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -269,7 +271,7 @@ func (m *Manager) recover() error {
 				return e
 			}
 			delete(m.current, g.Resource.ID)
-			m.recordFailure(g, errBlobInvalid)
+			m.log.Warn("cached download failed recovery and was retired", generationAttrs(g, logging.Error(errors.Join(openErr, m.recordFailure(g, errBlobInvalid))))...)
 			continue
 		}
 		// The retained part resumes in place, so it is opened for writing.
@@ -322,7 +324,17 @@ func (m *Manager) recover() error {
 	if e = m.removeOrphans(); e != nil {
 		return e
 	}
-	return m.db.PrunePreviews(context.Background(), time.Now(), pruneBatches)
+	if e = m.db.PrunePreviews(context.Background(), time.Now(), pruneBatches); e != nil {
+		return e
+	}
+	interrupted := 0
+	for _, g := range m.current {
+		if g.State == "interrupted" {
+			interrupted++
+		}
+	}
+	m.log.Info("download cache recovered", slog.Int("generations", len(m.current)), slog.Int("interrupted", interrupted))
+	return nil
 }
 
 // publishLocked reuses existing (hashed without mu) when it describes the same
@@ -453,12 +465,12 @@ func (m *Manager) removeOrphans() error {
 	}
 	return nil
 }
-func (m *Manager) recordFailure(g *Generation, err error) {
+func (m *Manager) recordFailure(g *Generation, err error) error {
 	// The structured method is shared by metadata and download diagnostics.
 	var status *int
 	if g.upstreamStatus >= 100 && g.upstreamStatus <= 599 {
 		v := g.upstreamStatus
 		status = &v
 	}
-	_ = m.db.RecordEvent(store.Event{UpstreamStatus: status, AppID: g.Resource.MetricScope(), Version: g.Resource.Version, ResourceKey: g.Resource.Key, GenerationID: g.ID, Category: failureCategory(err), Code: "download_failed", Message: g.Error})
+	return m.db.RecordEvent(store.Event{UpstreamStatus: status, AppID: g.Resource.MetricScope(), Version: g.Resource.Version, ResourceKey: g.Resource.Key, GenerationID: g.ID, Category: failureCategory(err), Code: "download_failed", Message: g.Error})
 }
