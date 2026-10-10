@@ -22,7 +22,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '24.19.0'
+          node-version-file: frontend/.node-version
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Test and build frontend once
@@ -61,7 +61,7 @@ jobs:
           fetch-depth: 2
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version: '1.27.1'
+          go-version-file: go.mod
           cache: true
       - name: Format, vet, docs, race and installer tests
         run: make check test
@@ -95,13 +95,18 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Read the pinned Go toolchain image from the Dockerfile
+        id: toolchain
+        run: |
+          image=$(sh scripts/dockerfile-arg.sh GO_IMAGE)
+          printf 'go_image_digest=%s\n' "${image##*@sha256:}" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ runner.temp }}/redapp-native-go
-          key: native-go-linux-${{ matrix.arch }}-trixie-1.27.1-8f58fd67ea075142-${{ hashFiles('go.sum') }}
+          key: native-go-linux-${{ matrix.arch }}-${{ steps.toolchain.outputs.go_image_digest }}-${{ hashFiles('go.sum') }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '24.19.0'
+          node-version-file: frontend/.node-version
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4

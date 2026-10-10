@@ -14,7 +14,7 @@
 
 | 命令 | 用途 |
 | --- | --- |
-| `make check` | 文档检查、`gofmt`、`go vet` |
+| `make check` | 文档检查、工具链版本与 CI 固定检查、`gofmt`、`go vet` |
 | `make test` | 脚本单测、`go test -race ./...`、Shell 安装器与维护回归 |
 | `make frontend-test` | 前端类型检查与 Vitest |
 | `make frontend` | 构建前端到 `internal/httpserver/web` |

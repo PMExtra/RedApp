@@ -6,7 +6,7 @@ NODE_MODULES := frontend/node_modules/.package-lock.json
 # it in the pinned native container); they never rebuild it.
 REQUIRE_BINARY := @test -x bin/redapp || { echo 'bin/redapp is missing: run `make binary` or `make build` first' >&2; exit 1; }
 
-.PHONY: build binary check test docs-check frontend frontend-test \
+.PHONY: build binary check test docs-check toolchain-check frontend frontend-test \
 	runtime-test network-test installers installer-inventory docker
 
 build: frontend
@@ -14,15 +14,18 @@ build: frontend
 binary:
 	sh scripts/build-binary.sh bin/redapp "$(VERSION)" "$(REVISION)"
 
-check: docs-check
+check: docs-check toolchain-check
 	test -z "$$(gofmt -l cmd internal installers presets)"
 	go vet ./...
 docs-check:
 	python3 scripts/check-docs.py
+toolchain-check:
+	python3 scripts/check-toolchain.py
 
 test: installer-inventory
 	python3 scripts/test-ci-release.py
 	python3 scripts/test-check-docs.py
+	python3 scripts/test-check-toolchain.py
 	go test -race ./... -count=1 -timeout=180s
 	python3 scripts/test-installers.py --platform shell
 	python3 scripts/test-update-installers.py
