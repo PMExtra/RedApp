@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -74,6 +75,9 @@ type Store struct {
 	// view is the runtime view of the last committed configuration, loaded on
 	// first use. writeMu guards it.
 	view *directoryView
+	log  *slog.Logger
+	// migrations judges and upgrades existing databases; tests replace it.
+	migrations migrationPlan
 }
 
 // Option configures a Store at construction; production uses none.
@@ -83,6 +87,11 @@ type Option func(*Store)
 // by another connection before failing (default 5 seconds).
 func WithBusyTimeout(d time.Duration) Option {
 	return func(s *Store) { s.busyTimeout = d }
+}
+
+// WithLogger sets the logger for schema migrations (default: discard).
+func WithLogger(log *slog.Logger) Option {
+	return func(s *Store) { s.log = log }
 }
 
 // readPoolSize bounds concurrent read connections; each holds a WAL snapshot
@@ -97,16 +106,28 @@ func sqliteURL(path string, query string) string {
 }
 
 // Open creates the schema in a new empty directory or opens a directory whose
-// database has exactly SchemaVersion. Any other directory is refused without
-// modification. The caller must hold the directory's instance lock.
+// database has exactly SchemaVersion. A database of a migratable older version
+// is backed up and migrated first (never before 1.0, see migrate.go). Any other
+// directory is refused without modification. The caller must hold the
+// directory's instance lock.
 func Open(dir string, options ...Option) (*Store, error) {
 	path, err := filepath.Abs(filepath.Join(dir, databaseName))
 	if err != nil {
 		return nil, err
 	}
-	fresh, err := inspectDirectory(dir, path)
+	s := &Store{busyTimeout: 5 * time.Second, rates: rates{started: time.Now()}, log: slog.New(slog.DiscardHandler), migrations: productionPlan()}
+	for _, apply := range options {
+		apply(s)
+	}
+	state, err := inspectDirectory(dir, path, s.migrations)
 	if err != nil {
 		return nil, err
+	}
+	fresh := state == directoryFresh
+	if state == directoryMigrate {
+		if err = s.migrations.migrate(dir, path, s.log); err != nil {
+			return nil, err
+		}
 	}
 	if fresh {
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
@@ -117,10 +138,6 @@ func Open(dir string, options ...Option) (*Store, error) {
 			return nil, err
 		}
 	}
-	s := &Store{busyTimeout: 5 * time.Second, rates: rates{started: time.Now()}}
-	for _, apply := range options {
-		apply(s)
-	}
 	busy := fmt.Sprintf("_busy_timeout=%d", s.busyTimeout.Milliseconds())
 	if s.db, err = sql.Open("sqlite3", sqliteURL(path, "mode=rw&_journal_mode=WAL&_txlock=immediate&_foreign_keys=on&_synchronous=FULL&"+busy)); err != nil {
 		return nil, err
@@ -130,7 +147,7 @@ func Open(dir string, options ...Option) (*Store, error) {
 		err = createSchema(s.db)
 	} else {
 		// The read-only probe saw the main file; confirm the WAL view agrees.
-		err = checkVersion(s.db)
+		err = s.migrations.requireCurrent(s.db)
 	}
 	if err != nil {
 		s.db.Close()
@@ -190,8 +207,13 @@ func createSchema(db *sql.DB) error {
 
 // Preflight checks a data directory before the instance lock is acquired. It
 // creates and modifies nothing, so a refused directory stays byte-for-byte
-// unchanged; Open repeats the check under the lock.
+// unchanged; Open repeats the check under the lock. A migratable database is
+// accepted here and migrated by Open.
 func Preflight(dir string) error {
+	return preflight(dir, productionPlan())
+}
+
+func preflight(dir string, plan migrationPlan) error {
 	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -204,72 +226,87 @@ func Preflight(dir string) error {
 	if err != nil {
 		return err
 	}
-	_, err = inspectDirectory(dir, path)
+	_, err = inspectDirectory(dir, path, plan)
 	return err
 }
 
-// inspectDirectory reports whether dir is new (no database and nothing but the
-// instance lock) or holds a database of this schema version.
-func inspectDirectory(dir, path string) (fresh bool, err error) {
+type directoryState int
+
+const (
+	directoryCurrent directoryState = iota // database of this schema version
+	directoryFresh                         // no database and nothing but the instance lock
+	directoryMigrate                       // database of a migratable older version
+)
+
+// inspectDirectory classifies dir without modifying it.
+func inspectDirectory(dir, path string, plan migrationPlan) (directoryState, error) {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
-			return false, err
+			return 0, err
 		}
 		for _, entry := range entries {
 			if entry.Name() != instance.LockName {
-				return false, ErrIncompatibleDirectory
+				return 0, ErrIncompatibleDirectory
 			}
 		}
-		return true, nil
+		return directoryFresh, nil
 	}
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	if !info.Mode().IsRegular() {
-		return false, ErrIncompatibleDirectory
+		return 0, ErrIncompatibleDirectory
 	}
-	return false, probeExisting(path)
+	upgrade, err := probeExisting(path, plan)
+	if upgrade {
+		return directoryMigrate, err
+	}
+	return directoryCurrent, err
 }
 
 // probeExisting reads the version of an existing database. immutable=1 makes
 // SQLite read only the main file and never create or update WAL, SHM or journal
 // files; the version is checkpointed into the main file at creation.
-func probeExisting(path string) error {
+func probeExisting(path string, plan migrationPlan) (bool, error) {
 	for _, suffix := range []string{"-wal", "-shm"} {
 		info, err := os.Lstat(path + suffix)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
-			return err
+			return false, err
 		}
 		if !info.Mode().IsRegular() {
-			return ErrIncompatibleDirectory
+			return false, ErrIncompatibleDirectory
 		}
 	}
 	db, err := sql.Open("sqlite3", sqliteURL(path, "mode=ro&immutable=1&_query_only=on"))
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrIncompatibleDirectory, err)
+		return false, fmt.Errorf("%w: %w", ErrIncompatibleDirectory, err)
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
-	return checkVersion(db)
+	app, version, err := readHeader(context.Background(), db)
+	if err != nil {
+		return false, err
+	}
+	return plan.classify(app, version)
 }
 
-func checkVersion(db *sql.DB) error {
-	var app, version int
-	if err := db.QueryRow("PRAGMA application_id").Scan(&app); err != nil {
-		return fmt.Errorf("%w: %w", ErrIncompatibleDirectory, err)
+// requireCurrent accepts only a database of exactly the target version.
+func (p migrationPlan) requireCurrent(db *sql.DB) error {
+	app, version, err := readHeader(context.Background(), db)
+	if err != nil {
+		return err
 	}
-	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
-		return fmt.Errorf("%w: %w", ErrIncompatibleDirectory, err)
+	if upgrade, err := p.classify(app, version); err != nil || !upgrade {
+		return err
 	}
-	if app != applicationID || version != SchemaVersion {
-		return ErrIncompatibleDirectory
-	}
-	return nil
+	// Migratable, but the version changed after the probe: refuse rather than
+	// migrate a database another process may have touched.
+	return ErrIncompatibleDirectory
 }
 
 func requireApp(app string) error {

@@ -134,6 +134,48 @@ python3 scripts/check-docs.py --base main     # 另外要求成对文档同时�
 - 发布 runner 必须先安装 `qemu-user`/`binutils`，再注册 Docker binfmt；顺序颠倒会让 ARM 容器验收时报 exec format error。
 - 候选和 `ci-<SHA>` 架构标签目前没有自动清理策略。
 
+## Schema 迁移
+
+规则见 [ADR 0001](adr/0001-pre-1.0-no-migrations.md)。框架在 `internal/store/migrate.go`：
+
+| 内容 | 位置 |
+| --- | --- |
+| 当前 schema 与版本 | `schema.sql`、`store.SchemaVersion` |
+| 最低可迁移版本（`0` 表示不支持迁移，1.0 前保持 `0`） | `store.MinimumMigratableVersion` |
+| 迁移步骤（`{From, Name, Up(tx)}`，按版本顺序，每步升一个版本） | `migrate.go` 的 `migrations` |
+| 每个 schema 版本的 golden fixture（带代表性数据的 SQL dump） | `internal/store/testdata/schema/v<N>.sql` |
+
+启用后，`Open` 遇到 `MinimumMigratableVersion` 到 `SchemaVersion-1` 之间的数据库时：
+
+1. 只读预检（`Preflight`）识别版本；比当前新（降级）或低于最低版本的数据库被拒绝，文件不变。
+2. 在实例锁下检查剩余空间（至少为数据库有效大小的两倍：一份备份、一份迁移 WAL），不足时拒绝，不写任何文件。
+3. 用 `VACUUM INTO` 写备份 `<data>/state.sqlite.schema<旧版本>-<UTC 时间>.backup`（`0600`，fsync 文件和目录）。不覆盖已有文件；写入失败（含磁盘满）时删除不完整的备份并拒绝启动。备份从不自动删除。
+4. 关闭外键约束，在一个事务中执行全部步骤，然后 `PRAGMA foreign_key_check`、写入新的 `user_version`、把 `sqlite_schema`（去掉注释、多余空白和普通标识符的引号）与全新创建的 schema 逐项比对，全部通过才提交；随后重新开启外键并 checkpoint 到主文件。
+5. 任何一步失败都回滚，数据库文件逐字节不变；进程在事务中崩溃时同样只留下原数据库和备份。
+
+1.0 前 schema 变化时：修改 `schema.sql`，提升 `SchemaVersion`，用下面的命令生成新版本的 fixture，删除旧版本的 fixture（1.0 前的旧 fixture 只验证被拒绝，没有保留价值）。
+
+```sh
+go test ./internal/store -run TestSchemaFixtureOfCurrentVersion -update-schema-fixture
+```
+
+`TestSchemaFixtureOfCurrentVersion` 要求当前版本的 fixture 存在且与 `schema.sql` 一致；`TestSchemaFixturesOfOlderVersions` 对每个旧 fixture 验证：可迁移的迁移后与全新 schema 一致且数据可读，其余被拒绝且文件不变。
+
+### 发布 1.0
+
+1. 确认 `testdata/schema/v<SchemaVersion>.sql` 存在且测试通过；从此不再删除任何 fixture。
+2. 把 `MinimumMigratableVersion` 设为当前的 `SchemaVersion`。
+3. 改写 `store.ErrIncompatibleDirectory` 的文本（去掉“Data is never migrated”），在用户运维文档（中英）中说明升级时的自动备份文件、所需空间和被拒绝的情形（降级、过旧版本）。
+4. 在 ADR 0001 顶部注明 1.0 已发布、迁移已启用。
+
+### 1.0 后新增迁移
+
+1. 修改 `schema.sql`，`SchemaVersion` 加 1。
+2. 在 `migrations` 末尾追加 `{From: <旧版本>, Name: ..., Up: ...}`。表结构变化按 SQLite 的重建流程写（建新表、复制、删旧表、改名、重建索引）；步骤里不提交事务、不改 `user_version`、不碰文件。
+3. 生成新版本的 fixture，保留旧版本的 fixture；`TestSchemaFixturesOfOlderVersions` 会把每个旧 fixture 迁移到新 schema 并逐项比对。
+4. 步骤转换数据时，另写测试从旧 fixture 迁移并断言转换后的值。
+5. 只在确实无法继续支持时才提高 `MinimumMigratableVersion`（同时删除更早的步骤），并在发布说明中写明需要先经过哪个中间版本。
+
 ## 版本号
 
 - `VERSION` 是唯一版本来源。1.0 前不为每个小改动提升版本；只在准备发布时提升。
