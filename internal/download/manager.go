@@ -4,13 +4,13 @@ package download
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"github.com/PMExtra/RedApp/internal/distributor"
+	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
 	"io"
@@ -161,13 +161,22 @@ type Manager struct {
 	retryAttempts int
 	retryBase     time.Duration
 	retryMax      time.Duration
-	// Unexported fault barrier used only by package tests; production leaves it nil.
-	testFault func(string, *Generation)
+	trace         func(point string, g *Generation) // see withTrace; nil in production
+}
+
+// Option configures a Manager at construction.
+type Option func(*Manager)
+
+// withTrace observes named points of the generation lifecycle (publication,
+// verification, deletion). Package tests use it as a fault barrier to stop a
+// manager at an exact interleaving; production managers install none.
+func withTrace(trace func(point string, g *Generation)) Option {
+	return func(m *Manager) { m.trace = trace }
 }
 
 // NewApplications owns one cache and one set of global limits across registered upstreams.
 // There is deliberately no implicit application or default upstream.
-func NewApplications(dir string, db *store.Store, clients map[string]*distributor.Client) (*Manager, error) {
+func NewApplications(dir string, db *store.Store, clients map[string]*distributor.Client, options ...Option) (*Manager, error) {
 	upstreams := make(map[string]*distributor.Client, len(clients))
 	for app, client := range clients {
 		if client == nil || !validApplication(app) {
@@ -178,6 +187,9 @@ func NewApplications(dir string, db *store.Store, clients map[string]*distributo
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{dir: dir, db: db, upstreams: upstreams, current: map[string]*Generation{}, all: map[string]*Generation{}, verifying: map[string]*verification{}, ctx: ctx, cancel: cancel, maxBytes: 4 << 30, maxReaders: 512, maxWriters: 16,
 		idleTimeout: distributor.DefaultIdleTimeout, retryAttempts: 6, retryBase: time.Second, retryMax: 30 * time.Second}
+	for _, option := range options {
+		option(m)
+	}
 	if e := m.recover(); e != nil {
 		cancel()
 		m.closeFiles()
@@ -249,13 +261,6 @@ func validID(s string) bool {
 	return e == nil
 }
 func signal(g *Generation) { close(g.changed); g.changed = make(chan struct{}) }
-func id() string {
-	b := make([]byte, 16)
-	if _, e := rand.Read(b); e != nil {
-		panic(e)
-	}
-	return hex.EncodeToString(b)
-}
 func LogicalIdentity(application, version, key string) string {
 	sum := sha256.Sum256([]byte(application + "\x00" + version + "\x00" + key))
 	return hex.EncodeToString(sum[:])
@@ -301,7 +306,7 @@ type fileCheck struct {
 // checkFile hashes a cache file without holding mu. A nil result with a nil
 // error means the file could not be opened as a regular cache file.
 func checkFile(ctx context.Context, path string, n int64, expected string) (*fileCheck, error) {
-	f, err := openRegular(path)
+	f, err := fsutil.OpenRegular(path)
 	if err != nil {
 		return nil, nil
 	}
@@ -394,7 +399,7 @@ func (m *Manager) verifyDormantLocked(g *Generation) error {
 // discardCompleteLocked retires a complete head whose bytes are missing or invalid.
 func (m *Manager) discardCompleteLocked(g *Generation) error {
 	g.Retired = true
-	g.Error = "Completed cache file is missing or invalid"
+	g.Error = errBlobInvalid.Error()
 	m.save(g)
 	if err := m.db.RetireGeneration(g.Resource.Application, g.ID, time.Now()); err != nil {
 		return err
@@ -467,7 +472,11 @@ func (m *Manager) verifyBlobLocked(r Resource, fullRetry bool, path string, size
 				return e
 			}
 			if e == nil && blob.SizeBytes == size {
-				g := &Generation{ctx: m.ctx, ID: id(), Resource: r, Path: path, Bytes: size, Total: size, State: "complete", done: true, Started: time.Now(), changed: make(chan struct{}), FullRetry: fullRetry}
+				id, e := fsutil.RandomID()
+				if e != nil {
+					return e
+				}
+				g := &Generation{ctx: m.ctx, ID: id, Resource: r, Path: path, Bytes: size, Total: size, State: "complete", done: true, Started: time.Now(), changed: make(chan struct{}), FullRetry: fullRetry}
 				g.Finished = time.Now()
 				if e = m.db.CreateGeneration(m.record(g)); e != nil {
 					return e
@@ -485,10 +494,14 @@ func (m *Manager) createPartLocked(ctx context.Context, r Resource, fullRetry bo
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	g := &Generation{ctx: ctx, ID: id(), Resource: r, State: "queued", Total: -1, Started: time.Now(), changed: make(chan struct{}), FullRetry: fullRetry}
 	if m.jobs >= m.maxWriters {
 		return nil, ErrWriterLimit
 	}
+	id, err := fsutil.RandomID()
+	if err != nil {
+		return nil, err
+	}
+	g := &Generation{ctx: ctx, ID: id, Resource: r, State: "queued", Total: -1, Started: time.Now(), changed: make(chan struct{}), FullRetry: fullRetry}
 	g.Path = m.partPath(g.ID)
 	f, e := os.OpenFile(g.Path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
 	if e != nil {
@@ -643,7 +656,12 @@ func (m *Manager) admitLocked(ctx context.Context, r Resource, finish func()) (*
 		}
 	}
 	if g.file == nil {
-		f, err := openRegular(g.Path)
+		// Complete content is only read; a retained part resumes in place.
+		open := fsutil.OpenRegularWritable
+		if g.State == "complete" {
+			open = fsutil.OpenRegular
+		}
+		f, err := open(g.Path)
 		if err != nil {
 			return nil, false, err
 		}
@@ -751,9 +769,9 @@ func (m *Manager) removeLocked(g *Generation) error {
 	if st, e := os.Lstat(part); e == nil {
 		released = st.Size()
 	}
-	if e := os.Remove(part); e != nil && !os.IsNotExist(e) {
+	if removed, e := fsutil.Remove(part); e != nil {
 		return e
-	} else if e == nil {
+	} else if removed {
 		m.checkpoint("delete.after_part_unlink", g)
 	}
 	if e := m.db.DeleteGeneration(g.Resource.Application, g.ID); e != nil {
@@ -778,39 +796,44 @@ func (m *Manager) removeLocked(g *Generation) error {
 	return nil
 }
 
+// failure is a download error with a stable user-visible message and the
+// diagnostic category recorded in events. Its cause, if any, is kept for
+// classification but never shown. transient marks failures a later attempt
+// may resolve.
+type failure struct {
+	message   string
+	category  string
+	cause     error
+	transient bool
+}
+
+func (e *failure) Error() string { return e.message }
+func (e *failure) Unwrap() error { return e.cause }
+
 var (
-	unsafeResume    = errors.New("Unsafe upstream resume; a new generation is required")
-	errHashMismatch = errors.New("Complete file SHA256 does not match")
-	errTruncated    = errors.New("Artifact truncated")
+	unsafeResume    = &failure{message: "Unsafe upstream resume; a new generation is required", category: "range"}
+	errHashMismatch = &failure{message: "Complete file SHA256 does not match", category: "hash"}
+	errTruncated    = &failure{message: "Artifact truncated", category: "length", transient: true}
+	errLength       = &failure{message: "Artifact length exceeds limit or does not match", category: "length"}
+	errBlobInvalid  = &failure{message: "Completed cache file is missing or invalid", category: "disk"}
 )
 
 type upstreamHTTPError int
 
 func (e upstreamHTTPError) Error() string { return fmt.Sprintf("Upstream HTTP %d", int(e)) }
 
-// causeError keeps a stable user-visible message while preserving its cause
-// for classification. transient marks failures a later attempt may resolve.
-type causeError struct {
-	message   string
-	cause     error
-	transient bool
-}
-
-func (e *causeError) Error() string { return e.message }
-func (e *causeError) Unwrap() error { return e.cause }
-
 // retryable reports transport-level failures; integrity, length, encoding,
 // disk and client HTTP errors are final.
 func retryable(err error) bool {
 	var status upstreamHTTPError
-	var cause *causeError
+	var f *failure
 	switch {
-	case errors.Is(err, distributor.ErrConnection), errors.Is(err, errTruncated):
+	case errors.Is(err, distributor.ErrConnection):
 		return true
 	case errors.As(err, &status):
 		return status >= 500 || status == http.StatusRequestTimeout || status == http.StatusTooManyRequests
-	case errors.As(err, &cause):
-		return cause.transient
+	case errors.As(err, &f):
+		return f.transient
 	}
 	return false
 }
@@ -858,7 +881,7 @@ func (m *Manager) attempt(g *Generation) error {
 	if client == nil {
 		return errors.New("Unknown persisted resource application")
 	}
-	resp, e := client.Get(distributor.WithIdleTimeout(g.ctx, m.idleTimeout), g.Resource.Source, headers)
+	resp, e := client.Send(g.ctx, distributor.Request{Method: http.MethodGet, URL: g.Resource.Source, Header: headers, IdleTimeout: m.idleTimeout})
 	if e != nil {
 		return e
 	}
@@ -886,7 +909,7 @@ func (m *Manager) attempt(g *Generation) error {
 		total = resp.ContentLength
 	}
 	if total > m.maxBytes || (g.Resource.Size != nil && total >= 0 && *g.Resource.Size != total) {
-		return errors.New("Artifact length exceeds limit or does not match")
+		return errLength
 	}
 	m.mu.Lock()
 	g.Total = total
@@ -927,11 +950,11 @@ func (m *Manager) attempt(g *Generation) error {
 				return e
 			}
 			if offset+int64(n) > m.maxBytes || (total >= 0 && offset+int64(n) > total) {
-				return errors.New("Artifact length exceeds limit")
+				return errLength
 			}
 			written, we := g.file.WriteAt(buf[:n], offset)
 			if we != nil {
-				return &causeError{"Disk write failed", we, false}
+				return &failure{message: "Disk write failed", category: "disk", cause: we}
 			}
 			if written != n {
 				return io.ErrShortWrite
@@ -953,7 +976,7 @@ func (m *Manager) attempt(g *Generation) error {
 		}
 		if re != nil {
 			if re != io.EOF {
-				return &causeError{"Upstream download interrupted", re, true}
+				return &failure{message: "Upstream download interrupted", category: "upstream", cause: re, transient: true}
 			}
 			break
 		}
@@ -962,7 +985,7 @@ func (m *Manager) attempt(g *Generation) error {
 		return errTruncated
 	}
 	if g.Resource.Size != nil && offset != *g.Resource.Size {
-		return errors.New("Artifact length does not match")
+		return errLength
 	}
 	return nil
 }
@@ -1051,7 +1074,7 @@ func (m *Manager) run(g *Generation) {
 	g.Error = ""
 	if err == nil {
 		if e := m.save(g); e != nil {
-			err = errors.New("Cache state checkpoint failed")
+			err = &failure{message: "Cache state checkpoint failed", category: "database", cause: e}
 		}
 	}
 	if err == nil {
@@ -1065,7 +1088,7 @@ func (m *Manager) run(g *Generation) {
 	}
 	if err == nil {
 		if e := g.file.Sync(); e != nil {
-			err = errors.New("File fsync failed")
+			err = &failure{message: "File fsync failed", category: "disk", cause: e}
 		}
 		if err == nil && !g.Retired && m.current[g.Resource.ID] == g {
 			err = m.publishLocked(g, existing)
@@ -1079,7 +1102,7 @@ func (m *Manager) run(g *Generation) {
 				if errors.Is(e, store.ErrSourceInactive) {
 					err = m.retireLocked(g)
 				} else {
-					err = errors.New("Cache state commit failed")
+					err = &failure{message: "Cache state commit failed", category: "database", cause: e}
 				}
 			}
 		}
@@ -1182,41 +1205,33 @@ func (m *Manager) Close() error {
 	return nil
 }
 
-// failureCategory classifies typed errors first; message patterns remain for
-// persisted messages without an error value and for local stable messages.
-func failureCategory(err error, message string) string {
+// failureCategory classifies a download error by type, never by its text.
+// Generic upstream failures are refined by their transport cause.
+func failureCategory(err error) string {
 	var status upstreamHTTPError
+	var f *failure
 	switch {
-	case errors.Is(err, errHashMismatch):
-		return "hash"
-	case errors.Is(err, unsafeResume):
-		return "range"
 	case errors.Is(err, distributor.ErrUnsafeEncoding):
 		return "encoding"
 	case errors.As(err, &status):
 		return "http"
+	case errors.As(err, &f) && f.category != "upstream":
+		return f.category
 	}
-	if err != nil {
-		switch distributor.Classify(err) {
-		case distributor.KindDNS:
-			return "dns"
-		case distributor.KindTLS:
-			return "tls"
-		case distributor.KindTimeout:
-			return "timeout"
-		}
-	}
-	for _, c := range []struct{ pattern, category string }{{"SHA256", "hash"}, {"resume", "range"}, {"Content-Encoding", "encoding"}, {"Disk", "disk"}, {"fsync", "disk"}, {"length", "length"}, {"truncated", "length"}, {"HTTP", "http"}, {"DNS", "dns"}, {"TLS", "tls"}, {"timeout", "timeout"}, {"commit", "database"}} {
-		if strings.Contains(message, c.pattern) {
-			return c.category
-		}
+	switch distributor.Classify(err) {
+	case distributor.KindDNS:
+		return "dns"
+	case distributor.KindTLS:
+		return "tls"
+	case distributor.KindTimeout:
+		return "timeout"
 	}
 	return "upstream"
 }
 
 func (m *Manager) checkpoint(point string, g *Generation) {
-	if m.testFault != nil {
-		m.testFault(point, g)
+	if m.trace != nil {
+		m.trace(point, g)
 	}
 }
 

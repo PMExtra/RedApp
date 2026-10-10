@@ -3,10 +3,11 @@ package httpcache
 import (
 	"errors"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+
+	"github.com/PMExtra/RedApp/internal/fsutil"
 )
 
 // bodyStore is the narrow read/delete boundary used by serving and maintenance.
@@ -37,7 +38,7 @@ func (b localBodies) Open(id string) (io.ReadSeekCloser, int64, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	f, err := openRegular(path)
+	f, err := fsutil.OpenRegular(path)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -69,10 +70,7 @@ func (b localBodies) Delete(id string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if err = os.Remove(path); errors.Is(err, fs.ErrNotExist) {
-		return false, nil
-	}
-	return err == nil, err
+	return fsutil.Remove(path)
 }
 
 // Staging, fsync, atomic local publication and crash recovery remain in the

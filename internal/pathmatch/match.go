@@ -57,7 +57,7 @@ func Compile(spec Spec) (*Matcher, error) {
 	case "re2":
 		compiled, err := regexp.Compile(`\A(?:` + spec.Pattern + `)\z`)
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrInvalidPattern, err)
+			return nil, fmt.Errorf("%w: %w", ErrInvalidPattern, err)
 		}
 		return &Matcher{regex: compiled}, nil
 	default:

@@ -120,7 +120,7 @@ func TestConfigurationRuntimeAndDatabaseStayAlignedOnFailure(t *testing.T) {
 		t.Fatal("half-saved configuration", after, current)
 	}
 	candidateID := identity.StorageID(before.UID, before.SourceEpoch+1)
-	client, err := builtin.NewSourceClient(before.Provider, "https://other.example/codex", h.server.Pool)
+	client, err := builtin.NewScopedSourceClient(before.Provider, "https://other.example/codex", "", before.UID, before.VendorUID, h.server.Pool)
 	if err != nil {
 		t.Fatal(err)
 	}

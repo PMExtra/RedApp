@@ -31,15 +31,14 @@ func flightKey(entry application.Entry, path, generation string) string {
 
 // Flights own the upstream context. A caller relinquishes only its waiter;
 // cancellation closes the upstream when no admitted waiter remains.
-func (s *Service) sharedFetch(ctx context.Context, entry application.Entry, path string, old *Row) (fetchResult, error) {
+func (s *Service) sharedFetch(ctx context.Context, f fill, old *Row) (fetchResult, error) {
+	entry, path := f.entry, f.path
 	generation := ""
 	if old != nil {
 		generation = old.GenerationID
 	}
 	key := flightKey(entry, path, generation)
-	waiter := &fetchWaiter{failed: make(chan struct{})}
-	waiter.observe, _ = ctx.Value(fetchObserverKey{}).(func(int64) error)
-	waiter.check, _ = ctx.Value(fetchLengthKey{}).(func(int64) error)
+	waiter := &fetchWaiter{failed: make(chan struct{}), observe: f.observe, check: f.check}
 	s.mu.Lock()
 	current := s.flights[key]
 	leader := current == nil
@@ -73,8 +72,10 @@ func (s *Service) sharedFetch(ctx context.Context, entry application.Entry, path
 		if old != nil {
 			s.pins[old.GenerationID]++
 		}
-		workCtx = context.WithValue(workCtx, fetchFlightKey{}, current)
-		go s.runFetch(workCtx, entry, path, old, key, current, func() { stop(); cancel(); finish() })
+		// The flight runs with the leader's policy, mode and source order. Budget
+		// callbacks stay on each waiter, so one exhausted budget only ends that wait.
+		shared := fill{entry: entry, path: path, policy: f.policy, warm: f.warm, attempts: f.attempts}
+		go s.runFetch(workCtx, shared, old, key, current, func() { stop(); cancel(); finish() })
 	}
 	current.waiters[waiter] = true
 	s.mu.Unlock()
@@ -125,7 +126,7 @@ func (s *Service) sharedFetch(ctx context.Context, entry application.Entry, path
 		s.unpin(row.GenerationID)
 		return fetchResult{}, ErrFetchAgain
 	}
-	if !leader && ctx.Value(warmContextKey{}) != true {
+	if !leader && !f.warm {
 		if err = s.db.AddFor(entry.MetricsID(), "shared_follower_requests", 1); err != nil {
 			s.unpin(row.GenerationID)
 			return fetchResult{}, err
@@ -134,18 +135,18 @@ func (s *Service) sharedFetch(ctx context.Context, entry application.Entry, path
 	result.row = row
 	return result, nil
 }
-func (s *Service) runFetch(ctx context.Context, entry application.Entry, path string, old *Row, key string, f *flight, finish func()) {
+func (s *Service) runFetch(ctx context.Context, fl fill, old *Row, key string, f *flight, finish func()) {
 	defer s.wg.Done()
 	if old != nil {
 		defer s.unpin(old.GenerationID)
 	}
 	result := fetchResult{}
 	var err error
-	if ctx.Value(warmContextKey{}) != true {
-		err = s.db.AddFor(entry.MetricsID(), "miss_requests", 1)
+	if !fl.warm {
+		err = s.db.AddFor(fl.entry.MetricsID(), "miss_requests", 1)
 	}
 	if err == nil {
-		result, err = s.fetch(ctx, entry, path, old, true)
+		result, err = s.fetch(ctx, fl, old, true, f)
 	}
 	if result.response != nil {
 		result.response.Body = &finishBody{ReadCloser: result.response.Body, finish: finish}
@@ -190,8 +191,7 @@ func (s *Service) releaseFetchResult(f *flight) {
 	})
 }
 
-func (s *Service) observeFetch(ctx context.Context, n int64) {
-	f, _ := ctx.Value(fetchFlightKey{}).(*flight)
+func (s *Service) observeFetch(f *flight, n int64) {
 	if f == nil {
 		return
 	}
@@ -222,8 +222,7 @@ type finishBody struct {
 
 func (b *finishBody) Close() error { err := b.ReadCloser.Close(); b.once.Do(b.finish); return err }
 
-func (s *Service) checkFetchLength(ctx context.Context, n int64) {
-	f, _ := ctx.Value(fetchFlightKey{}).(*flight)
+func (s *Service) checkFetchLength(f *flight, n int64) {
 	if f == nil {
 		return
 	}

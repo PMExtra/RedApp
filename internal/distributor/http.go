@@ -6,15 +6,18 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
-	"github.com/PMExtra/RedApp/internal/identity"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/PMExtra/RedApp/internal/identity"
 )
 
 // ClientMode separates built-in public release sources from administrator-configured
@@ -45,6 +48,7 @@ type RequestError struct {
 	Kind      ErrorKind
 	retryable bool
 	message   string
+	cause     error // an exported sentinel callers may match, never a URL-bearing error
 }
 
 func (e *RequestError) Error() string {
@@ -54,6 +58,7 @@ func (e *RequestError) Error() string {
 	return ErrConnection.Error()
 }
 func (e *RequestError) Is(target error) bool { return target == ErrConnection && e.retryable }
+func (e *RequestError) Unwrap() error        { return e.cause }
 
 // Classify reports the failure class of a request error or of a raw
 // transport/body read error.
@@ -153,24 +158,11 @@ func (p *Pool) newClient(base string, mode ClientMode, appUID, vendorUID string)
 	}
 	u, _ := url.Parse(base)
 	c := &Client{Base: u, mode: mode, pool: p}
-	c.transports = &transportSwitch{current: transportReference{pool: p, configured: mode != PublicRelease, appUID: appUID, vendorUID: vendorUID}}
+	c.transports = &transportSwitch{current: transportReference{pool: p, configured: mode != PublicRelease, appUID: appUID, vendorUID: vendorUID}, base: u.Hostname()}
 	// No Client.Timeout: it would bound whole body streaming. The transport
 	// bounds dial/TLS/response headers and Do bounds idle body reads.
 	c.HTTP = &http.Client{Transport: c.transports, CheckRedirect: c.checkRedirect}
 	return c, nil
-}
-
-func publicIP(ip net.IP) bool {
-	if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
-		return false
-	}
-	// Shared address space and benchmarking networks are not public upstream destinations.
-	if v := ip.To4(); v != nil {
-		if v[0] == 100 && v[1] >= 64 && v[1] <= 127 || v[0] == 198 && (v[1] == 18 || v[1] == 19) {
-			return false
-		}
-	}
-	return true
 }
 
 func validatePath(u *url.URL) error {
@@ -232,16 +224,6 @@ func (c *Client) RelativeURL(path string) (string, error) {
 	return u.String(), nil
 }
 
-// URL preserves the legacy convenience API. Callers accepting user paths should
-// use RelativeURL, which returns validation errors directly.
-func (c *Client) URL(path string) string {
-	value, err := c.RelativeURL(strings.TrimPrefix(path, "/"))
-	if err != nil {
-		return ""
-	}
-	return value
-}
-
 func (c *Client) checkRedirect(r *http.Request, via []*http.Request) error {
 	if len(via) > 4 {
 		return errors.New("Too many redirects")
@@ -272,7 +254,9 @@ func (c *Client) checkRedirect(r *http.Request, via []*http.Request) error {
 	}
 	// An arbitrary initial URL remains forbidden. Only upstream redirects may
 	// change origin, and an origin-changing hop must arrive over HTTPS. An
-	// HTTP source can upgrade to HTTPS, but HTTPS can never downgrade.
+	// HTTP source can upgrade to HTTPS, but HTTPS can never downgrade. Which
+	// addresses the new host may resolve to is decided when the hop is dialed
+	// (transportSet.forRequest), because only then are the addresses known.
 	if r.URL.Scheme != "https" {
 		return errors.New("Cross-origin upstream redirects require HTTPS")
 	}
@@ -282,23 +266,37 @@ func (c *Client) checkRedirect(r *http.Request, via []*http.Request) error {
 	return nil
 }
 
+// Request is one upstream GET or HEAD inside a client's fixed source.
+type Request struct {
+	Method string
+	URL    string
+	// Header supplies representation validators and byte ranges. Cookies,
+	// credentials and request-controlled destination headers are never sent.
+	Header http.Header
+	// IdleTimeout bounds one response body read that receives no bytes; zero
+	// means DefaultIdleTimeout. The body has no overall deadline.
+	IdleTimeout time.Duration
+	// directory keeps every redirect hop inside the configured root (Index).
+	directory bool
+}
+
 func (c *Client) Get(ctx context.Context, source string, headers http.Header) (*http.Response, error) {
-	return c.Do(ctx, http.MethodGet, source, headers)
+	return c.Send(ctx, Request{Method: http.MethodGet, URL: source, Header: headers})
 }
 
 func (c *Client) Head(ctx context.Context, source string, headers http.Header) (*http.Response, error) {
-	return c.Do(ctx, http.MethodHead, source, headers)
+	return c.Send(ctx, Request{Method: http.MethodHead, URL: source, Header: headers})
 }
 
-// Do forwards only representation validators and byte-range headers. Cookies,
-// source authentication and request-controlled destination headers are excluded.
-func (c *Client) Do(ctx context.Context, method, source string, headers http.Header) (*http.Response, error) {
-	if method != http.MethodGet && method != http.MethodHead {
-		return nil, errors.New("Only GET and HEAD upstream requests are supported")
+// Send performs one request. The returned body owns the request context: it is
+// cancelled on Close or after an idle read.
+func (c *Client) Send(ctx context.Context, req Request) (*http.Response, error) {
+	if req.Method != http.MethodGet && req.Method != http.MethodHead {
+		return nil, errors.New("only GET and HEAD upstream requests are supported")
 	}
-	u, err := url.Parse(source)
+	u, err := url.Parse(req.URL)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse upstream URL: %w", err)
 	}
 	if err = c.Validate(u); err != nil {
 		return nil, err
@@ -312,19 +310,19 @@ func (c *Client) Do(ctx context.Context, method, source string, headers http.Hea
 			cancel()
 		}
 	}()
-	r, err := http.NewRequestWithContext(requestCtx, method, u.String(), nil)
+	r, err := http.NewRequestWithContext(requestCtx, req.Method, u.String(), nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
 	r.Header.Set("Accept-Encoding", "identity")
-	if indexed, _ := ctx.Value(indexKey{}).(bool); indexed {
+	if req.directory {
 		if !c.IndexBoundary(u) {
 			return nil, errIndexBoundary
 		}
 		r.Header.Set("Accept", "application/json,text/html")
 	}
 	for _, key := range []string{"Range", "If-Range", "If-None-Match", "If-Modified-Since", "If-Match", "If-Unmodified-Since"} {
-		if v := headers.Get(key); v != "" {
+		if v := req.Header.Get(key); v != "" {
 			r.Header.Set(key, v)
 		}
 	}
@@ -335,7 +333,7 @@ func (c *Client) Do(ctx context.Context, method, source string, headers http.Hea
 	// boundary for production clients and fixture clients alike.
 	httpClient := *c.HTTP
 	httpClient.CheckRedirect = func(request *http.Request, via []*http.Request) error {
-		if indexed, _ := ctx.Value(indexKey{}).(bool); indexed && !c.IndexBoundary(request.URL) {
+		if req.directory && !c.IndexBoundary(request.URL) {
 			return errIndexBoundary
 		}
 		if err := c.checkRedirect(request, via); err != nil {
@@ -353,6 +351,9 @@ func (c *Client) Do(ctx context.Context, method, source string, headers http.Hea
 		var invalidCertificate x509.CertificateInvalidError
 		if errors.As(err, &redirect) {
 			return nil, &RequestError{Kind: KindRedirect}
+		}
+		if errors.Is(err, ErrAddressNotAllowed) {
+			return nil, &RequestError{Kind: KindNetwork, message: "Upstream address is not allowed", cause: ErrAddressNotAllowed}
 		}
 		if errors.As(err, &certificate) || errors.As(err, &unknownAuthority) || errors.As(err, &hostname) || errors.As(err, &invalidCertificate) {
 			return nil, &RequestError{Kind: KindTLS}
@@ -378,7 +379,11 @@ func (c *Client) Do(ctx context.Context, method, source string, headers http.Hea
 		resp.Body.Close()
 		return nil, ErrUnsafeEncoding
 	}
-	watchBody(resp, idleTimeoutFor(ctx), cancel)
+	idle := req.IdleTimeout
+	if idle <= 0 {
+		idle = DefaultIdleTimeout
+	}
+	watchBody(resp, idle, cancel)
 	owned = true
 	return resp, nil
 }

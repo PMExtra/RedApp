@@ -53,21 +53,29 @@ func (c Config) Validate(allowInherit bool) error {
 	if c.Mode != "url" || c.URL == "" {
 		return errors.New("invalid proxy mode")
 	}
-	u, err := url.Parse(c.URL)
-	if err != nil || u.Hostname() == "" || u.Opaque != "" || u.Path != "" || u.RawQuery != "" || u.ForceQuery || strings.Contains(c.URL, "#") || len(c.URL) > 4096 || u.Fragment != "" || (u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "socks5") || strings.ContainsAny(c.URL, "\r\n\t ") {
-		return errors.New("invalid proxy URL")
+	_, err := ParseURL(c.URL)
+	return err
+}
+
+// ParseURL validates a proxy server URL: http, https or socks5 with a host and
+// an explicit port, optional bounded credentials, and no path, query or
+// fragment. It is the only proxy URL validation; transports use its result.
+func ParseURL(raw string) (*url.URL, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" || u.Opaque != "" || u.Path != "" || u.RawQuery != "" || u.ForceQuery || strings.Contains(raw, "#") || len(raw) > 4096 || u.Fragment != "" || (u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "socks5") || strings.ContainsAny(raw, "\r\n\t ") {
+		return nil, errors.New("invalid proxy URL")
 	}
-	port, e := strconv.Atoi(u.Port())
-	if e != nil || port < 1 || port > 65535 {
-		return errors.New("proxy requires explicit port")
+	port, err := strconv.Atoi(u.Port())
+	if err != nil || port < 1 || port > 65535 {
+		return nil, errors.New("proxy requires explicit port")
 	}
 	if u.User != nil {
 		password, _ := u.User.Password()
 		if len(u.User.Username()) > 255 || len(password) > 255 || strings.ContainsAny(u.User.Username()+password, "\r\n\x00") {
-			return errors.New("invalid proxy credentials")
+			return nil, errors.New("invalid proxy credentials")
 		}
 	}
-	return nil
+	return u, nil
 }
 
 // RedactedPassword replaces saved proxy passwords in administrative responses.

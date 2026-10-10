@@ -180,7 +180,7 @@ func TestResourcePaginationBindsVersionFilterAndApplication(t *testing.T) {
 		for _, version := range []string{"1.0.0", "1.0.1"} {
 			resources := []store.Resource{}
 			for i := 0; i < 3; i++ {
-				resources = append(resources, store.Resource{AppID: owner, Version: version, Key: fmt.Sprintf("artifact-%d", i), SourceURL: client.URL("artifact"), SHA256: hash, ExpectedSize: &size})
+				resources = append(resources, store.Resource{AppID: owner, Version: version, Key: fmt.Sprintf("artifact-%d", i), SourceURL: testutil.SourceURL(client, "artifact"), SHA256: hash, ExpectedSize: &size})
 			}
 			if err := db.PutRelease(store.ReleaseMetadata{AppID: owner, Version: version, Raw: []byte("{}"), TrustRevision: 1, FetchedAt: time.Now()}, resources); err != nil {
 				t.Fatal(err)

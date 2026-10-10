@@ -18,3 +18,13 @@ func Upstream(t *testing.T, h http.Handler) (*distributor.Client, *httptest.Serv
 	t.Cleanup(s.Close)
 	return c, s
 }
+
+// SourceURL builds the upstream URL of a relative path and panics on an
+// invalid path, which in a test is a fixture bug.
+func SourceURL(c *distributor.Client, path string) string {
+	u, err := c.RelativeURL(path)
+	if err != nil {
+		panic(err)
+	}
+	return u
+}

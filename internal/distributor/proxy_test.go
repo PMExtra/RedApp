@@ -38,7 +38,7 @@ func proxyFixture(t *testing.T) (*Client, *store.Store, *httptest.Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = c.LoadProxy(db); err != nil {
+	if err = c.pool.LoadProxy(db); err != nil {
 		t.Fatal(err)
 	}
 	return c, db, upstream
@@ -86,21 +86,21 @@ func TestHTTPProxyTLSResumeAndPrivateCredentials(t *testing.T) {
 	c, db, upstream := proxyFixture(t)
 	auth := make(chan string, 4)
 	proxy := connectProxy(t, upstream, auth, nil)
-	if err := c.SetProxy(ProxyUpdate{Mode: "url", URL: strings.Replace(proxy.URL, "://", "://test-user:private-test-secret@", 1)}, c.Proxy().Revision); err != nil {
+	if err := c.pool.SetProxy(ProxyUpdate{Mode: "url", URL: strings.Replace(proxy.URL, "://", "://test-user:private-test-secret@", 1)}, c.pool.Proxy().Revision); err != nil {
 		t.Fatal(err)
 	}
 	transport := c.transports.current.Load()
-	if err := c.SetProxy(ProxyUpdate{Mode: "direct"}, 0); err == nil || c.transports.current.Load() != transport || c.Proxy().Revision != 1 {
+	if err := c.pool.SetProxy(ProxyUpdate{Mode: "direct"}, 0); err == nil || c.transports.current.Load() != transport || c.pool.Proxy().Revision != 1 {
 		t.Fatal("stale proxy update changed the active transport")
 	}
-	if _, err := c.Get(context.Background(), c.URL("channels/latest"), nil); err == nil {
+	if _, err := c.Get(context.Background(), sourceURL(c, "channels/latest"), nil); err == nil {
 		t.Fatal("untrusted TLS certificate accepted")
 	} else if err.Error() != "Upstream connection failed" {
 		t.Fatal("connection error exposed details")
 	}
 	trustFixture(c, upstream)
 	for _, path := range []string{"channels/latest", "releases/0.159.2/release.json", "releases/0.159.2/archive.tgz"} {
-		resp, err := c.Get(context.Background(), c.URL(path), nil)
+		resp, err := c.Get(context.Background(), sourceURL(c, path), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -110,7 +110,7 @@ func TestHTTPProxyTLSResumeAndPrivateCredentials(t *testing.T) {
 			t.Fatal("proxy transfer failed")
 		}
 	}
-	resp, err := c.Get(context.Background(), c.URL("releases/0.159.2/archive.tgz"), http.Header{"Range": []string{"bytes=10-"}, "If-Range": []string{"\"trusted\""}})
+	resp, err := c.Get(context.Background(), sourceURL(c, "releases/0.159.2/archive.tgz"), http.Header{"Range": []string{"bytes=10-"}, "If-Range": []string{"\"trusted\""}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,35 +122,35 @@ func TestHTTPProxyTLSResumeAndPrivateCredentials(t *testing.T) {
 	if got := <-auth; !strings.HasPrefix(got, "Basic ") {
 		t.Fatal("proxy authentication missing")
 	}
-	b, _ := json.Marshal(c.Proxy())
+	b, _ := json.Marshal(c.pool.Proxy())
 	if !strings.Contains(string(b), "private-test-secret") {
 		t.Fatal("administrative URL must preserve userinfo")
 	}
-	if err = c.SetProxy(ProxyUpdate{Mode: "url", URL: c.Proxy().URL}, c.Proxy().Revision); err != nil {
+	if err = c.pool.SetProxy(ProxyUpdate{Mode: "url", URL: c.pool.Proxy().URL}, c.pool.Proxy().Revision); err != nil {
 		t.Fatal(err)
 	}
 	reloaded, _ := New(c.Base.String())
-	if err = reloaded.LoadProxy(db); err != nil || !strings.Contains(reloaded.Proxy().URL, "private-test-secret") {
+	if err = reloaded.pool.LoadProxy(db); err != nil || !strings.Contains(reloaded.pool.Proxy().URL, "private-test-secret") {
 		t.Fatal("credentials not persisted")
 	}
 	// The redacted view round-trips only to the same scheme, user and host.
-	saved := c.Proxy()
+	saved := c.pool.Proxy()
 	redacted := saved.Redacted()
 	if b, _ = json.Marshal(redacted); strings.Contains(string(b), "private-test-secret") || !strings.Contains(redacted.URL, "://test-user:****@") {
 		t.Fatal("redacted view", string(b))
 	}
 	for _, moved := range []string{strings.Replace(redacted.URL, "test-user", "other-user", 1), strings.Replace(redacted.URL, "http://", "socks5://", 1), strings.Replace(redacted.URL, "127.0.0.1", "localhost", 1), "http://test-user:****@proxy.example:3128"} {
-		if err = c.SetProxy(ProxyUpdate{Mode: "url", URL: moved}, saved.Revision); err == nil || !errors.Is(err, ErrInvalidProxySettings) {
+		if err = c.pool.SetProxy(ProxyUpdate{Mode: "url", URL: moved}, saved.Revision); err == nil || !errors.Is(err, ErrInvalidProxySettings) {
 			t.Fatal("redacted password moved to another proxy", moved, err)
 		}
 	}
-	if err = c.SetProxy(ProxyUpdate{Mode: "url", URL: redacted.URL}, saved.Revision); err != nil || c.Proxy().URL != saved.URL || c.Proxy().Revision != saved.Revision+1 {
-		t.Fatal("redacted password not kept", err, c.Proxy().Redacted())
+	if err = c.pool.SetProxy(ProxyUpdate{Mode: "url", URL: redacted.URL}, saved.Revision); err != nil || c.pool.Proxy().URL != saved.URL || c.pool.Proxy().Revision != saved.Revision+1 {
+		t.Fatal("redacted password not kept", err, c.pool.Proxy().Redacted())
 	}
-	if err = c.SetProxy(ProxyUpdate{Mode: "url", URL: proxy.URL}, c.Proxy().Revision); err != nil || strings.Contains(c.Proxy().URL, "@") {
+	if err = c.pool.SetProxy(ProxyUpdate{Mode: "url", URL: proxy.URL}, c.pool.Proxy().Revision); err != nil || strings.Contains(c.pool.Proxy().URL, "@") {
 		t.Fatal("clear failed")
 	}
-	if err = c.SetProxy(ProxyUpdate{Mode: "direct"}, c.Proxy().Revision); err != nil || c.transports.current.Load().Proxy != nil {
+	if err = c.pool.SetProxy(ProxyUpdate{Mode: "direct"}, c.pool.Proxy().Revision); err != nil || c.transports.current.Load().Proxy != nil {
 		t.Fatal("empty proxy must be direct")
 	}
 	t.Setenv("HTTPS_PROXY", proxy.URL)
@@ -210,11 +210,11 @@ func TestSOCKS5UsesProxyDNS(t *testing.T) {
 		go io.Copy(remote, conn)
 		io.Copy(conn, remote)
 	}()
-	if err = c.SetProxy(ProxyUpdate{Mode: "url", URL: "socks5://" + listener.Addr().String()}, c.Proxy().Revision); err != nil {
+	if err = c.pool.SetProxy(ProxyUpdate{Mode: "url", URL: "socks5://" + listener.Addr().String()}, c.pool.Proxy().Revision); err != nil {
 		t.Fatal(err)
 	}
 	trustFixture(c, upstream)
-	resp, err := c.Get(context.Background(), c.URL("channels/latest"), nil)
+	resp, err := c.Get(context.Background(), sourceURL(c, "channels/latest"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,17 +238,17 @@ func TestProxySwapDoesNotCancelActiveResponse(t *testing.T) {
 	db, _ := store.Open(t.TempDir())
 	defer db.DB.Close()
 	c, _ := New("https://example.com/codex")
-	c.LoadProxy(db)
+	c.pool.LoadProxy(db)
 	first := connectProxy(t, upstream, nil, nil)
 	second := connectProxy(t, upstream, nil, nil)
-	c.SetProxy(ProxyUpdate{Mode: "url", URL: first.URL}, c.Proxy().Revision)
+	c.pool.SetProxy(ProxyUpdate{Mode: "url", URL: first.URL}, c.pool.Proxy().Revision)
 	trustFixture(c, upstream)
-	resp, err := c.Get(context.Background(), c.URL("channels/latest"), nil)
+	resp, err := c.Get(context.Background(), sourceURL(c, "channels/latest"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	<-started
-	if err = c.SetProxy(ProxyUpdate{Mode: "url", URL: second.URL}, c.Proxy().Revision); err != nil {
+	if err = c.pool.SetProxy(ProxyUpdate{Mode: "url", URL: second.URL}, c.pool.Proxy().Revision); err != nil {
 		t.Fatal(err)
 	}
 	trustFixture(c, upstream)
@@ -258,7 +258,7 @@ func TestProxySwapDoesNotCancelActiveResponse(t *testing.T) {
 	if err != nil || string(data) != "finished" {
 		t.Fatal("active response cancelled", err)
 	}
-	next, err := c.Get(context.Background(), c.URL("channels/latest"), nil)
+	next, err := c.Get(context.Background(), sourceURL(c, "channels/latest"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,12 +275,12 @@ func TestSiblingSharesProxyUpdatesButKeepsOriginBoundary(t *testing.T) {
 	}
 	for i := 0; i < 2; i++ {
 		proxy := connectProxy(t, upstream, nil, nil)
-		if err = c.SetProxy(ProxyUpdate{Mode: "url", URL: proxy.URL}, c.Proxy().Revision); err != nil {
+		if err = c.pool.SetProxy(ProxyUpdate{Mode: "url", URL: proxy.URL}, c.pool.Proxy().Revision); err != nil {
 			t.Fatal(err)
 		}
 		trustFixture(c, upstream)
 		for _, client := range []*Client{c, sibling} {
-			resp, err := client.Get(context.Background(), client.URL("manifest.json"), nil)
+			resp, err := client.Get(context.Background(), sourceURL(client, "manifest.json"), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -290,7 +290,7 @@ func TestSiblingSharesProxyUpdatesButKeepsOriginBoundary(t *testing.T) {
 				t.Fatal("shared proxy not applied")
 			}
 		}
-		if _, err = sibling.Get(context.Background(), c.URL("manifest.json"), nil); err == nil {
+		if _, err = sibling.Get(context.Background(), sourceURL(c, "manifest.json"), nil); err == nil {
 			t.Fatal("sibling accepted foreign path")
 		}
 		proxy.Close()
@@ -300,22 +300,22 @@ func TestSiblingSharesProxyUpdatesButKeepsOriginBoundary(t *testing.T) {
 func TestProxyURLKeepsExactEncodingAcrossReload(t *testing.T) {
 	c, db, _ := proxyFixture(t)
 	want := "http://user%40name:p%3Aa%2Fss@proxy.example:3128"
-	if err := c.SetProxy(ProxyUpdate{Mode: "url", URL: want}, 0); err != nil {
+	if err := c.pool.SetProxy(ProxyUpdate{Mode: "url", URL: want}, 0); err != nil {
 		t.Fatal(err)
 	}
-	err := c.LoadProxy(db)
+	err := c.pool.LoadProxy(db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Proxy().URL != want || c.Proxy().Revision != 1 {
-		t.Fatalf("reloaded proxy = %+v; want URL %s at revision 1", c.Proxy(), want)
+	if c.pool.Proxy().URL != want || c.pool.Proxy().Revision != 1 {
+		t.Fatalf("reloaded proxy = %+v; want URL %s at revision 1", c.pool.Proxy(), want)
 	}
 	for _, bad := range []string{"http://u:p%0Ass@proxy.example:3128", "http://proxy.example:3128?", "http://proxy.example:3128#"} {
-		if err = c.SetProxy(ProxyUpdate{Mode: "url", URL: bad}, 1); err == nil {
+		if err = c.pool.SetProxy(ProxyUpdate{Mode: "url", URL: bad}, 1); err == nil {
 			t.Fatal("invalid URL accepted", bad)
 		}
 	}
-	if c.Proxy().URL != want || c.Proxy().Revision != 1 {
+	if c.pool.Proxy().URL != want || c.pool.Proxy().Revision != 1 {
 		t.Fatal("failed update altered transport")
 	}
 }

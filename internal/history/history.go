@@ -66,8 +66,8 @@ func (h *History) RecordScoped(at time.Time, observations []Observation) error {
 		}
 		for _, metric := range observation.Metrics {
 			definition, ok := definitionFor(observation.Scope, metric.Key)
-			if !ok || definition.Retired {
-				return errors.New("Unknown or retired metric for this scope")
+			if !ok {
+				return errors.New("Unknown metric for this scope")
 			}
 			if metric.Value == nil {
 				continue
@@ -129,7 +129,7 @@ func (h *History) maintain(tx *sql.Tx, at time.Time) error {
 		return errors.New("Metrics clock moved behind committed hourly aggregates")
 	}
 	if hour > watermark {
-		for _, d := range historicalDefinitions() {
+		for _, d := range Definitions() {
 			query := `INSERT INTO metric_hours(scope,app_id,metric,t_s,min,max,avg,last,count,delta,delta_count,duration_s) ` + hourlySelect(d.Kind, false) + `
  ON CONFLICT(scope,app_id,metric,t_s) DO UPDATE SET min=excluded.min,max=excluded.max,avg=excluded.avg,last=excluded.last,count=excluded.count,delta=excluded.delta,delta_count=excluded.delta_count,duration_s=excluded.duration_s`
 
@@ -173,7 +173,7 @@ func hourlySelect(kind string, scoped bool) string {
 func AppDefinitions() []Definition {
 	out := []Definition{}
 	for _, d := range Definitions() {
-		if strings.HasPrefix(d.Key, "resources.") || d.Key == "versions.total" || strings.HasPrefix(d.Key, "counters.") && d.Key != "counters.requests" && d.Key != "counters.reuse_requests" {
+		if strings.HasPrefix(d.Key, "resources.") || d.Key == "versions.total" || strings.HasPrefix(d.Key, "counters.") && d.Key != "counters.requests" {
 			out = append(out, d)
 		}
 	}
@@ -188,7 +188,6 @@ func definitionFor(scope, key string) (Definition, bool) {
 	}
 	return Definition{}, false
 }
-func historicalDefinitions() []Definition { return Catalog() }
 
 type Point struct {
 	Time            int64    `json:"time"`

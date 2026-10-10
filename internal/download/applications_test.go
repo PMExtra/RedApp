@@ -174,7 +174,7 @@ func TestLogicalBindingsReuseWithinApplicationAndSurviveMove(t *testing.T) {
 		t.Fatal("incorrect physical blob scope")
 	}
 	forged := first
-	forged.Source = c.URL("unapproved")
+	forged.Source = testutil.SourceURL(c, "unapproved")
 	if rd, _, e = m.Acquire(context.Background(), forged); e == nil {
 		rd.Close()
 		t.Fatal("changed source bypassed persisted authorization")

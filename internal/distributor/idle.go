@@ -17,20 +17,6 @@ const DefaultIdleTimeout = 60 * time.Second
 // ErrIdleTimeout reports an upstream body that stopped delivering bytes.
 var ErrIdleTimeout error = &RequestError{Kind: KindTimeout, retryable: true, message: "Upstream read idle timeout"}
 
-type idleTimeoutKey struct{}
-
-// WithIdleTimeout overrides the body idle timeout for requests using ctx.
-func WithIdleTimeout(ctx context.Context, d time.Duration) context.Context {
-	return context.WithValue(ctx, idleTimeoutKey{}, d)
-}
-
-func idleTimeoutFor(ctx context.Context) time.Duration {
-	if d, ok := ctx.Value(idleTimeoutKey{}).(time.Duration); ok && d > 0 {
-		return d
-	}
-	return DefaultIdleTimeout
-}
-
 // idleBody cancels its request when a single Read waits longer than timeout.
 // Time spent by the caller between reads (e.g. a slow downstream client) is
 // not counted, so only a stalled upstream trips it.

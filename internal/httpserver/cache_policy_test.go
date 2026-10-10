@@ -217,7 +217,7 @@ func TestHTTPCacheCleanupAPIFreezesMatcherAndFencesRevision(t *testing.T) {
 	before := time.Now().Add(-time.Hour).UTC()
 	match := pathmatch.Spec{Type: "glob", Pattern: "/remove/"}
 	body, _ := h.request("POST", api+"/cache/cleanup/preview", map[string]any{"match": match, "basis": "fetched_at", "before": before}, 200, nil)
-	job := directoryDecode[httpcache.CleanupPreview](t, body, "job")
+	job := directoryDecode[httpcache.MaintenancePreview](t, body, "job")
 	if job.Match != match || job.SelectedFiles != 1 {
 		t.Fatal("cleanup preview lost match/selection", job)
 	}
@@ -240,7 +240,7 @@ func TestHTTPCacheCleanupAPIFreezesMatcherAndFencesRevision(t *testing.T) {
 	}
 	// Legacy callers omit match; this means the root glob, not an empty match.
 	body, _ = h.request("POST", api+"/cache/cleanup/preview", map[string]any{"basis": "fetched_at", "before": before}, 200, nil)
-	legacy := directoryDecode[httpcache.CleanupPreview](t, body, "job")
+	legacy := directoryDecode[httpcache.MaintenancePreview](t, body, "job")
 	if legacy.Match != (pathmatch.Spec{Type: "glob", Pattern: "/"}) || legacy.SelectedFiles != 2 {
 		t.Fatal("legacy cleanup did not default to all paths", legacy)
 	}
@@ -256,7 +256,7 @@ func TestHTTPCacheCleanupAPIFreezesMatcherAndFencesRevision(t *testing.T) {
 		t.Fatal("explicit historic epoch lost its retained cache")
 	}
 	body, _ = h.request("POST", api+"/cache/cleanup/preview?source_epoch=1", map[string]any{"match": match, "basis": "fetched_at", "before": before}, 200, nil)
-	historical := directoryDecode[httpcache.CleanupPreview](t, body, "job")
+	historical := directoryDecode[httpcache.MaintenancePreview](t, body, "job")
 	if historical.SelectedFiles != 1 {
 		t.Fatal("historical preview used the new source", historical)
 	}

@@ -3,7 +3,6 @@ package prewarm
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -12,6 +11,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/catalog"
 	"github.com/PMExtra/RedApp/internal/download"
+	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/httpcache"
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/pathmatch"
@@ -59,7 +59,6 @@ func New(db *store.Store, registry *application.Registry, catalog *catalog.Servi
 	return &Service{DB: db, Registry: registry, Catalog: catalog, Downloads: downloads, HTTP: http, ctx: ctx, cancel: cancel}, nil
 }
 func (s *Service) Close() { s.mu.Lock(); s.closed.Store(true); s.cancel(); s.mu.Unlock(); s.wg.Wait() }
-func randomID() string    { var raw [16]byte; _, _ = rand.Read(raw[:]); return hex.EncodeToString(raw[:]) }
 func fingerprint(value any) string {
 	raw, _ := json.Marshal(value)
 	hash := sha256.Sum256(raw)
@@ -154,7 +153,11 @@ func (s *Service) Start(ctx context.Context, key string, in warmplan.Input, auto
 		}
 		return old, nil
 	}
-	current := &activeJob{UID: e.UID, ID: randomID(), Done: make(chan struct{}), Budget: &warmplan.Budget{Max: in.Limits.MaxDownloadBytes}}
+	jobID, err := fsutil.RandomID()
+	if err != nil {
+		return store.PrewarmJob{}, err
+	}
+	current := &activeJob{UID: e.UID, ID: jobID, Done: make(chan struct{}), Budget: &warmplan.Budget{Max: in.Limits.MaxDownloadBytes}}
 	s.mu.Lock()
 	if s.closed.Load() {
 		s.mu.Unlock()
@@ -403,6 +406,20 @@ func (s *Service) warmRelease(ctx context.Context, entry application.Entry, vers
 	item.Status = "downloaded"
 	return item
 }
+
+// Wait blocks until the job is no longer running, or ctx ends, and returns its
+// final status.
+func (s *Service) Wait(ctx context.Context, uid, id string) (store.PrewarmJob, error) {
+	if current := s.active.Load(); current != nil && current.UID == uid && current.ID == id {
+		select {
+		case <-current.Done:
+		case <-ctx.Done():
+			return store.PrewarmJob{}, ctx.Err()
+		}
+	}
+	return s.Status(uid, id)
+}
+
 func (s *Service) Status(uid, id string) (store.PrewarmJob, error) {
 	job, err := s.DB.PrewarmJob(uid, id)
 	if err == nil && job.State != "running" && time.Now().After(job.Updated.Add(24*time.Hour)) {
@@ -474,7 +491,11 @@ func (s *Service) Automatic(ctx context.Context) {
 			continue
 		}
 		for _, channel := range policy.Channels {
-			job, startErr := s.Start(ctx, e.Descriptor.ID, warmplan.Input{RequestID: randomID(), Target: channel, Platforms: policy.Platforms, Limits: warmplan.DefaultLimits()}, true)
+			requestID, err := fsutil.RandomID()
+			if err != nil {
+				return
+			}
+			job, startErr := s.Start(ctx, e.Descriptor.ID, warmplan.Input{RequestID: requestID, Target: channel, Platforms: policy.Platforms, Limits: warmplan.DefaultLimits()}, true)
 			if errors.Is(startErr, ErrBusy) {
 				return
 			}

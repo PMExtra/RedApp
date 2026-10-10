@@ -74,7 +74,7 @@ func TestDynamicMetricsAndListsKeepStorageAndPublicNamespacesSeparate(t *testing
 		if e != nil {
 			t.Fatal(e)
 		}
-		bound := store.Resource{AppID: a.StorageID(), Version: version, Key: "artifact", SourceURL: c.URL("artifact"), SHA256: hash, ExpectedSize: &size}
+		bound := store.Resource{AppID: a.StorageID(), Version: version, Key: "artifact", SourceURL: testutil.SourceURL(c, "artifact"), SHA256: hash, ExpectedSize: &size}
 		if e = db.PutRelease(store.ReleaseMetadata{AppID: a.StorageID(), Version: version, Raw: []byte("{}"), TrustRevision: 1, FetchedAt: time.Now()}, []store.Resource{bound}, source.Fence()); e != nil {
 			t.Fatal(e)
 		}

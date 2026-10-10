@@ -29,7 +29,7 @@ func TestGeneralRedirectDropsResourceConditionsAndRanges(t *testing.T) {
 				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("complete")), Request: r}, nil
 			})
 			h := http.Header{"If-None-Match": {`"etag"`}, "If-Modified-Since": {"Sat, 03 Oct 2026 00:00:00 GMT"}, "If-Match": {`"etag"`}, "If-Unmodified-Since": {"Sat, 03 Oct 2026 00:00:00 GMT"}, "If-Range": {`"etag"`}, "Range": {"bytes=1-2"}}
-			resp, err := client.Get(context.Background(), client.URL("file"), h)
+			resp, err := client.Get(context.Background(), sourceURL(client, "file"), h)
 			if err != nil {
 				t.Fatal(err)
 			}

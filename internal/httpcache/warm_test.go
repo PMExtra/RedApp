@@ -3,14 +3,14 @@ package httpcache
 import (
 	"context"
 	"fmt"
-	"github.com/PMExtra/RedApp/internal/warmplan"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
+
+	"github.com/PMExtra/RedApp/internal/warmplan"
 )
 
 func TestWarmValidatorsAndNoAccessTouch(t *testing.T) {
@@ -120,6 +120,44 @@ func TestDiscoverOfficialFormatsAndEscapes(t *testing.T) {
 	}
 }
 
+// joinPublicFollower joins the in-flight warm-up as an ordinary public waiter
+// and returns once it has joined; the channel receives the body it obtains.
+func joinPublicFollower(t *testing.T, f *fixture) <-chan string {
+	t.Helper()
+	policy, err := f.s.readPolicy(f.entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := &joinedContext{Context: context.Background(), joined: make(chan struct{})}
+	done := make(chan string, 1)
+	go func() {
+		result, err := f.s.sharedFetch(ctx, fill{entry: f.entry, path: "file", policy: policy}, nil)
+		if err != nil {
+			done <- err.Error()
+			return
+		}
+		if result.row == nil {
+			done <- "no stored representation"
+			return
+		}
+		defer f.s.unpin(result.row.GenerationID)
+		body, _, err := f.s.bodies().Open(result.row.GenerationID)
+		if err != nil {
+			done <- err.Error()
+			return
+		}
+		defer body.Close()
+		content, err := io.ReadAll(body)
+		if err != nil {
+			done <- err.Error()
+			return
+		}
+		done <- string(content)
+	}()
+	<-ctx.joined
+	return done
+}
+
 func TestWarmCancellationPreservesPublicSharedFlight(t *testing.T) {
 	started, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
@@ -140,33 +178,7 @@ func TestWarmCancellationPreservesPublicSharedFlight(t *testing.T) {
 	warmDone := make(chan warmplan.Item, 1)
 	go func() { warmDone <- f.s.Warm(ctx, f.entry, "/file", &warmplan.Budget{Max: 100}) }()
 	<-started
-	publicDone := make(chan string, 1)
-	go func() {
-		w := httptest.NewRecorder()
-		err := f.s.Serve(w, httptest.NewRequest("GET", "http://redapp/file", nil), f.entry, "file")
-		if err != nil {
-			publicDone <- err.Error()
-			return
-		}
-		publicDone <- w.Body.String()
-	}()
-	deadline := time.Now().Add(2 * time.Second)
-	joined := false
-	for time.Now().Before(deadline) {
-		f.s.mu.Lock()
-		for _, flight := range f.s.flights {
-			joined = len(flight.waiters) >= 2
-		}
-		f.s.mu.Unlock()
-		if joined {
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
-	if !joined {
-		close(release)
-		t.Fatal("public request did not share warm flight")
-	}
+	publicDone := joinPublicFollower(t, f)
 	cancel()
 	<-warmDone
 	close(release)
@@ -195,33 +207,7 @@ func TestWarmReadLimitPreservesPublicSharedFlight(t *testing.T) {
 	warmDone := make(chan warmplan.Item, 1)
 	go func() { warmDone <- f.s.Warm(ctx, f.entry, "/file", &warmplan.Budget{Max: 3}) }()
 	<-started
-	publicDone := make(chan string, 1)
-	go func() {
-		w := httptest.NewRecorder()
-		err := f.s.Serve(w, httptest.NewRequest("GET", "http://redapp/file", nil), f.entry, "file")
-		if err != nil {
-			publicDone <- err.Error()
-			return
-		}
-		publicDone <- w.Body.String()
-	}()
-	deadline := time.Now().Add(2 * time.Second)
-	joined := false
-	for time.Now().Before(deadline) {
-		f.s.mu.Lock()
-		for _, flight := range f.s.flights {
-			joined = len(flight.waiters) >= 2
-		}
-		f.s.mu.Unlock()
-		if joined {
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
-	if !joined {
-		close(release)
-		t.Fatal("public request did not share warm flight")
-	}
+	publicDone := joinPublicFollower(t, f)
 	close(release)
 	item := <-warmDone
 	if item.Reason != "read_limit" {
@@ -318,11 +304,11 @@ func TestWarmTTLFallbackRechecksRetiredGeneration(t *testing.T) {
 	go func() { done <- f.s.Warm(context.Background(), f.entry, "/file", &warmplan.Budget{Max: 100}) }()
 	<-entered
 	f.clock.Add(1)
-	preview, err := f.s.Preview(f.entry, "fetched_at", f.s.now())
+	preview, err := f.s.PreviewCleanup(context.Background(), f.entry, "fetched_at", f.s.now(), allPaths)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := f.s.Execute(f.entry, preview.ID)
+	result, err := f.s.ExecuteCleanup(context.Background(), f.entry, preview.ID)
 	if err != nil || result.RetiredFiles != 1 {
 		t.Fatal(result, err)
 	}

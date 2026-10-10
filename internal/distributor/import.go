@@ -80,6 +80,6 @@ func (p *Pool) FetchImport(ctx context.Context, appUID, vendorUID, raw string) (
 		cancel()
 		return nil, ErrImport
 	}
-	watchBody(response, idleTimeoutFor(ctx), cancel)
+	watchBody(response, DefaultIdleTimeout, cancel)
 	return response, nil
 }

@@ -248,7 +248,7 @@ func (s *Server) cacheAPI(w http.ResponseWriter, r *http.Request, app, endpoint 
 		if input.Match != nil {
 			match = *input.Match
 		}
-		job, err := s.HTTPCache.PreviewPatternContext(r.Context(), entry, input.Basis, input.Before, match)
+		job, err := s.HTTPCache.PreviewCleanup(r.Context(), entry, input.Basis, input.Before, match)
 		if err != nil {
 			if errors.Is(err, httpcache.ErrPreviewBusy) {
 				problem(w, 503, "PREVIEW_BUSY", "Too many previews are being built; retry shortly")
@@ -318,7 +318,7 @@ func (s *Server) cacheAPI(w http.ResponseWriter, r *http.Request, app, endpoint 
 		return true
 	}
 	if len(parts) == 4 && parts[0] == "cache" && parts[1] == "cleanup" && parts[3] == "execute" {
-		result, err := s.HTTPCache.ExecuteContext(r.Context(), entry, parts[2])
+		result, err := s.HTTPCache.ExecuteCleanup(r.Context(), entry, parts[2])
 		if err != nil {
 			problem(w, 409, "CLEANUP_INVALID", "Cleanup preview expired, changed source, or execution failed")
 		} else {

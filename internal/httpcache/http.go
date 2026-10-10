@@ -73,7 +73,7 @@ func (s *Service) Serve(w http.ResponseWriter, r *http.Request, entry applicatio
 	if err != nil {
 		return err
 	}
-	ctx = context.WithValue(ctx, policyContextKey{}, policy)
+	f := fill{entry: entry, path: relativePath, policy: policy}
 	r = r.WithContext(ctx)
 	// Shared freshness belongs to administrator rules and the source response.
 	// Request no-store, no-cache, max-age and Pragma are ignored so an anonymous
@@ -91,8 +91,8 @@ func (s *Service) Serve(w http.ResponseWriter, r *http.Request, entry applicatio
 		// A previously explicit override is not an implicit permission after the
 		// rule is removed or stops matching. Keep the body for ordinary cleanup,
 		// but do not serve it or use it as a failure fallback under the new policy.
-		cacheEligible := old != nil && contextEligible(ctx, entry, relativePath, old.headers)
-		if cacheEligible && s.now().Before(evaluatedFreshness(policy, entry, relativePath, old.headers, old.ValidatedAt)) {
+		cacheEligible := old != nil && f.eligible(old.headers)
+		if cacheEligible && s.now().Before(f.freshness(old.headers, old.ValidatedAt)) {
 			if err = s.db.AddFor(entry.MetricsID(), "cache_hit_requests", 1); err != nil {
 				s.unpin(old.GenerationID)
 				return err
@@ -111,9 +111,9 @@ func (s *Service) Serve(w http.ResponseWriter, r *http.Request, entry applicatio
 			if old != nil {
 				defer s.unpin(old.GenerationID)
 			}
-			return s.head(w, r, entry, relativePath, old)
+			return s.head(w, r, f, old)
 		}
-		result, fetchErr := s.sharedFetch(ctx, entry, relativePath, old)
+		result, fetchErr := s.sharedFetch(ctx, f, old)
 		if old != nil {
 			s.unpin(old.GenerationID)
 		}
@@ -124,7 +124,7 @@ func (s *Service) Serve(w http.ResponseWriter, r *http.Request, entry applicatio
 			if err = s.db.AddFor(entry.MetricsID(), "miss_requests", 1); err != nil {
 				return err
 			}
-			result, fetchErr = s.fetch(ctx, entry, relativePath, nil, false)
+			result, fetchErr = s.fetch(ctx, f, nil, false, nil)
 		}
 		if errors.Is(fetchErr, ErrFetchAgain) {
 			continue
@@ -209,7 +209,8 @@ func (w *accessWriter) Write(p []byte) (int, error) {
 	}
 	return w.ResponseWriter.Write(p)
 }
-func (s *Service) head(w http.ResponseWriter, r *http.Request, entry application.Entry, path string, old *Row) error {
+func (s *Service) head(w http.ResponseWriter, r *http.Request, f fill, old *Row) error {
+	entry, path := f.entry, f.path
 	if err := s.db.AddFor(entry.MetricsID(), "miss_requests", 1); err != nil {
 		return err
 	}
@@ -218,7 +219,10 @@ func (s *Service) head(w http.ResponseWriter, r *http.Request, entry application
 		return err
 	}
 	defer release()
-	_, finish := s.startTransfer(entry, path)
+	_, finish, err := s.startTransfer(entry, path)
+	if err != nil {
+		return err
+	}
 	defer finish()
 	ctx, cancel := context.WithTimeout(r.Context(), upstreamOperationTimeout)
 	defer cancel()
@@ -259,11 +263,11 @@ func (s *Service) head(w http.ResponseWriter, r *http.Request, entry application
 			lastErr = ErrUpstream
 			continue
 		}
-		err = s.headResponse(w, r, entry, path, old, attempt, headers, resp)
+		err = s.headResponse(w, r, f, old, attempt, headers, resp)
 		resp.Body.Close()
 		return err
 	}
-	result, err := s.fallback(r.Context(), entry, path, old, lastErr)
+	result, err := s.fallback(r.Context(), f, old, lastErr)
 	if err != nil {
 		return err
 	}
@@ -271,7 +275,8 @@ func (s *Service) head(w http.ResponseWriter, r *http.Request, entry application
 	return s.serveStored(w, r, result.row)
 }
 
-func (s *Service) headResponse(w http.ResponseWriter, r *http.Request, entry application.Entry, path string, old *Row, attempt sourceAttempt, headers http.Header, resp *http.Response) error {
+func (s *Service) headResponse(w http.ResponseWriter, r *http.Request, f fill, old *Row, attempt sourceAttempt, headers http.Header, resp *http.Response) error {
+	path := f.path
 	var err error
 	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
 		if err = s.retire(old); err != nil {
@@ -286,14 +291,14 @@ func (s *Service) headResponse(w http.ResponseWriter, r *http.Request, entry app
 			return ErrUpstream
 		}
 		combined := mergedHeaders(old.headers, resp.Header)
-		if !contextEligible(r.Context(), entry, path, resp.Header) || !contextEligible(r.Context(), entry, path, combined) {
+		if !f.eligible(resp.Header) || !f.eligible(combined) {
 			if err = s.retire(old); err != nil {
 				return err
 			}
 			return ErrUpstream
 		}
-		result, err := s.revalidate(r.Context(), entry, old, combined)
-		result, err = s.recordOverride(r.Context(), entry, path, combined, result, err)
+		result, err := s.revalidate(f, old, combined)
+		result, err = s.recordOverride(f, combined, result, err)
 		if err != nil {
 			return err
 		}
@@ -305,7 +310,7 @@ func (s *Service) headResponse(w http.ResponseWriter, r *http.Request, entry app
 		return nil
 	}
 	if old != nil {
-		if !contextEligible(r.Context(), entry, path, resp.Header) {
+		if !f.eligible(resp.Header) {
 			if err = s.retire(old); err != nil {
 				return err
 			}
@@ -315,8 +320,8 @@ func (s *Service) headResponse(w http.ResponseWriter, r *http.Request, entry app
 			same := old.SourceURL == responseSourceURL(resp, initial) && etag != "" && etag == resp.Header.Get("ETag") && resp.ContentLength == old.SizeBytes
 			if same {
 				combined := mergedHeaders(old.headers, resp.Header)
-				result, err := s.revalidate(r.Context(), entry, old, combined)
-				result, err = s.recordOverride(r.Context(), entry, path, combined, result, err)
+				result, err := s.revalidate(f, old, combined)
+				result, err = s.recordOverride(f, combined, result, err)
 				if err != nil {
 					return err
 				}

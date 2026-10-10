@@ -68,11 +68,14 @@ func dormantFixture(t *testing.T, payload []byte, requests *atomic.Int32, fault 
 		t.Fatal(err)
 	}
 	m.Close()
-	if m, err = NewApplications(dir, db, clients); err != nil {
+	hook := &faultHook{}
+	if m, err = NewApplications(dir, db, clients, withTrace(hook.trace)); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { m.Close() })
-	m.testFault = fault
+	if fault != nil {
+		hook.set(fault)
+	}
 	changes.Enabled = true
 	if app, err = db.UpdateApplication(app.Key, app.Revision, changes); err != nil {
 		t.Fatal(err)
@@ -133,7 +136,8 @@ func TestConcurrentVerificationRunsOnceWithoutBlockingOtherResources(t *testing.
 		}
 		w.Write(payload)
 	}))
-	m, _, _ := setup(t, c)
+	hook := &faultHook{}
+	m, _, _ := setup(t, c, withTrace(hook.trace))
 	first := authorizedResource(t, m, c, payload)
 	collect(t, m, first)
 	// A second logical resource with the same digest reuses the published blob,
@@ -143,12 +147,12 @@ func TestConcurrentVerificationRunsOnceWithoutBlockingOtherResources(t *testing.
 	reuse.ID = LogicalIdentity(reuse.Application, reuse.Version, reuse.Key)
 	authorize(t, m, reuse)
 	unrelated := resource(c, other)
-	unrelated.Source, unrelated.Version = c.URL("other"), "0.3.0"
+	unrelated.Source, unrelated.Version = testutil.SourceURL(c, "other"), "0.3.0"
 	unrelated.ID = LogicalIdentity(unrelated.Application, unrelated.Version, unrelated.Key)
 	authorize(t, m, unrelated)
 
 	barrier := newVerificationBarrier()
-	m.testFault = barrier.fault
+	hook.set(barrier.fault)
 	const waiters = 3
 	results := make(chan []byte, waiters)
 	for i := 0; i < waiters; i++ {
