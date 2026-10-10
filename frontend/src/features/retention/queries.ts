@@ -1,6 +1,6 @@
 import { computed, toValue, type MaybeRefOrGetter, type Ref } from "vue";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
-import { api, ifMatch, queryKey, unwrap, type Schema } from "@/shared/api";
+import { api, queryKey, unwrap, useRevisionedMutation, type Schema } from "@/shared/api";
 
 export type RetentionPreview = Schema<"RetentionPreview">;
 
@@ -73,21 +73,28 @@ export function useRetentionItems(
 }
 
 /**
- * Preview with the saved policy (`If-Match` = configuration revision), then
- * execute by preview ID. Both responses seed the preview query.
+ * Preview with the saved policy, then execute by preview ID. Both responses
+ * seed the preview query. The preview is conditional on `revision` (the
+ * application configuration the user reviewed): after a 409 the caller shows
+ * RevisionConflictAlert, reloads the configuration and dismisses the conflict.
+ * The response is a preview, not the configuration, so no `queryKey`.
  */
-export function useRetentionActions(vendor: Name, app: Name) {
+export function useRetentionActions(
+  vendor: Name,
+  app: Name,
+  revision: MaybeRefOrGetter<number | undefined>,
+) {
   const queryClient = useQueryClient();
   const path = () => ({ vendor: toValue(vendor), app: toValue(app) });
   const remember = (preview: RetentionPreview) => {
     queryClient.setQueryData(previewKey(path().vendor, path().app, preview.id), preview);
   };
-  const preview = useMutation({
-    meta: { handledCodes: ["REVISION_CONFLICT"] },
-    mutationFn: (revision: number) =>
+  const preview = useRevisionedMutation<RetentionPreview>({
+    revision,
+    mutationFn: (_variables, ifMatch) =>
       unwrap(
         api.POST("/admin/api/apps/{vendor}/{app}/retention/preview", {
-          params: { path: path(), header: { "If-Match": ifMatch(revision) } },
+          params: { path: path(), header: { "If-Match": ifMatch } },
         }),
       ),
     onSuccess: remember,
