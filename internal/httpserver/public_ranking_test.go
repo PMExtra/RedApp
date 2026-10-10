@@ -17,7 +17,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
-func TestV072PublicDirectoryPinsTemplatesAndInstructionDocuments(t *testing.T) {
+func TestPublicDirectoryPinsTemplatesAndInstructionDocuments(t *testing.T) {
 	h := newHarness(t)
 	h.login(h.password)
 	h.createVendor("acme")
@@ -94,7 +94,7 @@ func TestV072PublicDirectoryPinsTemplatesAndInstructionDocuments(t *testing.T) {
 		}
 	}
 }
-func TestV072DownloadRankingCountsOnlySuccessfulPublicTransfers(t *testing.T) {
+func TestDownloadRankingCountsOnlySuccessfulPublicTransfers(t *testing.T) {
 	h := newHarness(t, withTrustedProxies(t, "192.0.2.0/24"))
 	h.login(h.password)
 	if _, err := h.server.store.DB.Exec(`UPDATE catalog_state SET ranking_salt=zeroblob(32)`); err != nil {
@@ -157,7 +157,7 @@ func TestV072DownloadRankingCountsOnlySuccessfulPublicTransfers(t *testing.T) {
 
 	ranking(0)
 }
-func TestV072CacheHitsRankAndReceiptRejectsFailedWrites(t *testing.T) {
+func TestCacheHitsRankAndReceiptRejectsFailedWrites(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "max-age=3600")
 		io.WriteString(w, "cached bytes")
