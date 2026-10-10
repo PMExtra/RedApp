@@ -839,10 +839,12 @@ func TestActiveSnapshotCountersAndNoStoreInterruptedBody(t *testing.T) {
 	if len(f.rows(t)) != 0 {
 		t.Fatal("no-store header did not detach stale head")
 	}
-	files, _ := os.ReadDir(f.s.dir)
-	if len(files) != 0 {
-		t.Fatal("no-store bytes stored on disk", files)
-	}
+	// The fill keeps its own pin on the detached head until it ends, so the
+	// retired body is collected shortly after the aborted response.
+	waitFor(t, "no-store bytes stored on disk", func() bool {
+		files, _ := os.ReadDir(f.s.dir)
+		return len(files) == 0
+	})
 	if !f.budget.drained() {
 		t.Fatal("private failure leaked leases")
 	}
