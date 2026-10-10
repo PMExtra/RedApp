@@ -19,7 +19,7 @@ func TestDownloadCompletesWhenCounterPersistenceFails(t *testing.T) {
 		`CREATE TRIGGER fail_version_update BEFORE UPDATE ON app_versions BEGIN SELECT RAISE(FAIL,'counter fault'); END`,
 	}
 	for _, trigger := range triggers {
-		if _, err := db.DB.Exec(trigger); err != nil {
+		if _, err := h.sql().Exec(trigger); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -38,7 +38,7 @@ func TestDownloadCompletesWhenCounterPersistenceFails(t *testing.T) {
 		t.Fatal("injected counter fault not observed")
 	}
 	for _, name := range []string{"fail_counter_insert", "fail_counter_update", "fail_version_update"} {
-		db.DB.Exec("DROP TRIGGER " + name)
+		h.sql().Exec("DROP TRIGGER " + name)
 	}
 	// Increments retained across failed flushes are persisted once storage recovers.
 	entry, _ := h.server.registry.Lookup(key)

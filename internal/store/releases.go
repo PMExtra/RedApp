@@ -29,15 +29,15 @@ type VersionStats struct {
 
 func validateResource(r Resource) error {
 	if requireApp(r.AppID) != nil || r.Version == "" || r.Key == "" || r.SourceURL == "" || len(r.SHA256) != 64 {
-		return errors.New("Invalid authorized resource")
+		return errors.New("invalid authorized resource")
 	}
 	for _, c := range r.SHA256 {
 		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
-			return errors.New("Invalid resource digest")
+			return errors.New("invalid resource digest")
 		}
 	}
 	if r.ExpectedSize != nil && *r.ExpectedSize < 0 {
-		return errors.New("Invalid resource size")
+		return errors.New("invalid resource size")
 	}
 	return nil
 }
@@ -47,7 +47,7 @@ func equalSize(a, b *int64) bool { return a == nil && b == nil || a != nil && b 
 // resource set. Trust revalidation may replace envelope bytes but never bindings.
 func (s *Store) PutRelease(m ReleaseMetadata, resources []Resource, expected ...SourceFence) error {
 	if requireApp(m.AppID) != nil || m.Version == "" || m.Raw == nil || m.TrustRevision < 1 || m.FetchedAt.IsZero() {
-		return errors.New("Invalid trusted release")
+		return errors.New("invalid trusted release")
 	}
 	seen := map[string]bool{}
 	for _, r := range resources {
@@ -55,11 +55,11 @@ func (s *Store) PutRelease(m ReleaseMetadata, resources []Resource, expected ...
 			return err
 		}
 		if r.AppID != m.AppID || r.Version != m.Version || seen[r.Key] {
-			return errors.New("Release resource identity mismatch")
+			return errors.New("release resource identity mismatch")
 		}
 		seen[r.Key] = true
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -76,7 +76,7 @@ func (s *Store) PutRelease(m ReleaseMetadata, resources []Resource, expected ...
 	existing := err == nil
 	if existing {
 		if m.TrustRevision < oldRevision {
-			return errors.New("Trust revision cannot move backwards")
+			return errors.New("trust revision cannot move backwards")
 		}
 		rows, e := tx.Query("SELECT resource_key,source_url,sha256,expected_size FROM resources WHERE app_id=? AND version=?", m.AppID, m.Version)
 		if e != nil {
@@ -130,7 +130,7 @@ func (s *Store) Release(app, version string) (ReleaseMetadata, error) {
 	}
 	m.AppID, m.Version = app, version
 	var at int64
-	err := s.DB.QueryRow("SELECT raw,signature,trust_revision,fetched_at_s FROM release_metadata WHERE app_id=? AND version=?", app, version).Scan(&m.Raw, &m.Signature, &m.TrustRevision, &at)
+	err := s.read.QueryRow("SELECT raw,signature,trust_revision,fetched_at_s FROM release_metadata WHERE app_id=? AND version=?", app, version).Scan(&m.Raw, &m.Signature, &m.TrustRevision, &at)
 	m.FetchedAt = time.Unix(at, 0).UTC()
 	return m, err
 }
@@ -139,14 +139,14 @@ func (s *Store) Resource(app, version, key string) (Resource, error) {
 	if err := requireApp(app); err != nil {
 		return r, err
 	}
-	err := s.DB.QueryRow("SELECT source_url,sha256,expected_size FROM resources WHERE app_id=? AND version=? AND resource_key=?", app, version, key).Scan(&r.SourceURL, &r.SHA256, &r.ExpectedSize)
+	err := s.read.QueryRow("SELECT source_url,sha256,expected_size FROM resources WHERE app_id=? AND version=? AND resource_key=?", app, version, key).Scan(&r.SourceURL, &r.SHA256, &r.ExpectedSize)
 	return r, err
 }
 func (s *Store) Resources(app, version string) ([]Resource, error) {
 	if err := requireApp(app); err != nil {
 		return nil, err
 	}
-	rows, err := s.DB.Query("SELECT resource_key,source_url,sha256,expected_size FROM resources WHERE app_id=? AND version=? ORDER BY resource_key", app, version)
+	rows, err := s.read.Query("SELECT resource_key,source_url,sha256,expected_size FROM resources WHERE app_id=? AND version=? ORDER BY resource_key", app, version)
 	if err != nil {
 		return nil, err
 	}
@@ -163,9 +163,9 @@ func (s *Store) Resources(app, version string) ([]Resource, error) {
 }
 func (s *Store) PutChannel(c Channel, expected ...SourceFence) error {
 	if requireApp(c.AppID) != nil || c.Name == "" || c.Version == "" || !c.ExpiresAt.After(c.FetchedAt) {
-		return errors.New("Invalid channel record")
+		return errors.New("invalid channel record")
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -185,23 +185,23 @@ func (s *Store) Channel(app, name string) (Channel, error) {
 		return c, err
 	}
 	var fetched, expires int64
-	err := s.DB.QueryRow("SELECT version,fetched_at_s,expires_at_s FROM channels WHERE app_id=? AND channel=?", app, name).Scan(&c.Version, &fetched, &expires)
+	err := s.read.QueryRow("SELECT version,fetched_at_s,expires_at_s FROM channels WHERE app_id=? AND channel=?", app, name).Scan(&c.Version, &fetched, &expires)
 	c.FetchedAt = time.Unix(fetched, 0).UTC()
 	c.ExpiresAt = time.Unix(expires, 0).UTC()
 	return c, err
 }
 func (s *Store) SeenFor(app, version string) error {
 	if requireApp(app) != nil || version == "" {
-		return errors.New("Application and version are required")
+		return errors.New("application and version are required")
 	}
-	_, err := s.DB.Exec("INSERT OR IGNORE INTO app_versions(app_id,version,first_seen_s) VALUES(?,?,?)", app, version, time.Now().Unix())
+	_, err := s.db.Exec("INSERT OR IGNORE INTO app_versions(app_id,version,first_seen_s) VALUES(?,?,?)", app, version, time.Now().Unix())
 	return err
 }
 func (s *Store) VersionsFor(app string) (map[string]string, error) {
 	if err := requireApp(app); err != nil {
 		return nil, err
 	}
-	rows, err := s.DB.Query("SELECT version,first_seen_s FROM app_versions WHERE app_id=?", app)
+	rows, err := s.read.Query("SELECT version,first_seen_s FROM app_versions WHERE app_id=?", app)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +222,7 @@ func (s *Store) VersionStats(app string) (map[string]VersionStats, error) {
 		return nil, err
 	}
 	s.SettleCounters()
-	rows, err := s.DB.Query("SELECT version,first_seen_s,artifact_requests,downstream_bytes FROM app_versions WHERE app_id=?", app)
+	rows, err := s.read.Query("SELECT version,first_seen_s,artifact_requests,downstream_bytes FROM app_versions WHERE app_id=?", app)
 	if err != nil {
 		return nil, err
 	}

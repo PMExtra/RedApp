@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/distributor"
-	"github.com/PMExtra/RedApp/internal/store"
 	"github.com/PMExtra/RedApp/internal/testutil"
 )
 
@@ -47,11 +46,8 @@ func dormantFixture(t *testing.T, payload []byte, requests *atomic.Int32, fault 
 	t.Helper()
 	client, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { requests.Add(1); w.Write(payload) }))
 	dir := t.TempDir()
-	db, err := store.Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { db.DB.Close() })
+	db := openStore(t, dir)
+	t.Cleanup(func() { db.Close() })
 	app := dynamicApplication(t, db, client)
 	clients := map[string]*distributor.Client{app.StorageID(): client}
 	m, err := NewApplications(dir, db, clients)
@@ -188,5 +184,49 @@ func TestConcurrentVerificationRunsOnceWithoutBlockingOtherResources(t *testing.
 	defer mu.Unlock()
 	if barrier.hashes.Load() != 1 || requests["/asset"] != 1 {
 		t.Fatalf("verification or download duplicated: hashes=%d requests=%v", barrier.hashes.Load(), requests)
+	}
+}
+
+// Startup recovery does not hash committed blobs. A blob corrupted while the
+// server was down stays the current head until its first admission, which
+// verifies it, retires it and downloads the content again.
+func TestRecoveryVerifiesCommittedBlobOnFirstAdmission(t *testing.T) {
+	payload := bytes.Repeat([]byte("committed blob verified lazily "), 512)
+	var requests atomic.Int32
+	c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { requests.Add(1); w.Write(payload) }))
+	m, db, dir := setup(t, c)
+	r := authorizedResource(t, m, c, payload)
+	collect(t, m, r)
+	path := m.blobPath(r)
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err == nil {
+		_, err = f.WriteAt([]byte("corrupt"), 0)
+		err = errors.Join(err, f.Close())
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hashes atomic.Int32
+	restored, err := newTestManager(dir, db, c, withTrace(func(point string, _ *Generation) {
+		if point == "verification.before_hash" {
+			hashes.Add(1)
+		}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	views := restored.Snapshot()
+	if len(views) != 1 || !views[0].Current || views[0].State != "complete" || hashes.Load() != 0 {
+		t.Fatal("startup verified or retired a committed blob", views, hashes.Load())
+	}
+	if got := collect(t, restored, r); !bytes.Equal(got, payload) {
+		t.Fatal("corrupt blob was served")
+	}
+	if hashes.Load() != 1 || requests.Load() != 2 {
+		t.Fatalf("first admission did not verify and replace the blob: hashes=%d requests=%d", hashes.Load(), requests.Load())
 	}
 }

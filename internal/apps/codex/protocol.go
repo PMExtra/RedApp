@@ -21,11 +21,11 @@ var numberPattern = regexp.MustCompile(`[0-9]+`)
 func Normalize(v string) (string, error) {
 	v = strings.TrimPrefix(strings.TrimPrefix(v, "rust-v"), "v")
 	if !versionPattern.MatchString(v) {
-		return "", errors.New("Invalid version format")
+		return "", errors.New("invalid version format")
 	}
 	for _, n := range numberPattern.FindAllString(v, -1) {
 		if _, e := strconv.ParseUint(n, 10, 64); e != nil {
-			return "", errors.New("Version number exceeds limit")
+			return "", errors.New("version number exceeds limit")
 		}
 	}
 	return v, nil
@@ -110,7 +110,7 @@ func NewProtocol(upstream *distributor.Client) *Protocol { return &Protocol{upst
 func (p *Protocol) ValidateVersion(input string) (string, error) {
 	v, err := Normalize(input)
 	if err != nil || v != input {
-		return "", errors.New("Version must use canonical form")
+		return "", errors.New("version must use canonical form")
 	}
 	return v, nil
 }
@@ -152,7 +152,7 @@ func (p *Protocol) FetchRelease(ctx context.Context, version string) (applicatio
 }
 func (p *Protocol) VerifyRelease(version string, envelope application.Envelope) (application.Release, error) {
 	if len(envelope.Signature) != 0 {
-		return application.Release{}, errors.New("Unexpected Codex metadata signature")
+		return application.Release{}, errors.New("unexpected Codex metadata signature")
 	}
 	r, err := p.parse(envelope.Raw, version)
 	if err != nil {
@@ -189,32 +189,32 @@ func (p *Protocol) parse(body []byte, requested string) (Release, error) {
 	}
 	var r Release
 	if e := json.Unmarshal(body, &r); e != nil {
-		return Release{}, errors.New("Invalid JSON metadata")
+		return Release{}, errors.New("invalid JSON metadata")
 	}
 	v, e := Normalize(r.Tag)
 	if e != nil || r.Tag != "rust-v"+v {
-		return Release{}, errors.New("Invalid release tag")
+		return Release{}, errors.New("invalid release tag")
 	}
 	if requested != "latest" && requested != v {
-		return Release{}, errors.New("Release tag does not match request")
+		return Release{}, errors.New("release tag does not match request")
 	}
 	if len(r.Assets) == 0 || len(r.Assets) > 1024 {
-		return Release{}, errors.New("Asset count exceeds limit")
+		return Release{}, errors.New("asset count exceeds limit")
 	}
 	seen := map[string]bool{}
 	for _, a := range r.Assets {
 		if !assetPattern.MatchString(a.Name) || a.Name == "." || a.Name == ".." || seen[a.Name] {
-			return Release{}, errors.New("Invalid or duplicate asset name")
+			return Release{}, errors.New("invalid or duplicate asset name")
 		}
 		seen[a.Name] = true
 		if !strings.HasPrefix(a.Digest, "sha256:") || len(a.Digest) != 71 {
-			return Release{}, errors.New("Missing trusted SHA256")
+			return Release{}, errors.New("missing trusted SHA256")
 		}
 		if _, e := hex.DecodeString(a.Digest[7:]); e != nil {
-			return Release{}, errors.New("Invalid SHA256")
+			return Release{}, errors.New("invalid SHA256")
 		}
 		if a.Size != nil && (*a.Size < 0 || *a.Size > 4<<30) {
-			return Release{}, errors.New("Invalid asset length")
+			return Release{}, errors.New("invalid asset length")
 		}
 		// A mirror may preserve the official canonical metadata URL. Never use
 		// that field as a fetch destination: the authorized relative path is
@@ -224,7 +224,7 @@ func (p *Protocol) parse(body []byte, requested string) (Release, error) {
 		configured := e == nil && a.URL == expected
 		official := a.URL == "https://releases.openai.com/codex/"+path
 		if !configured && !official {
-			return Release{}, errors.New("Asset URL is not authorized")
+			return Release{}, errors.New("asset URL is not authorized")
 		}
 	}
 	return r, nil

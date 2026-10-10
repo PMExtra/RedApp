@@ -8,7 +8,7 @@ import (
 
 // withBeforeCommit runs hook inside every configuration transaction just
 // before it commits.
-func withBeforeCommit(hook func(*sql.Tx) error) option {
+func withBeforeCommit(hook func(*sql.Tx) error) Option {
 	return func(s *Store) { s.beforeCommit = hook }
 }
 
@@ -16,7 +16,7 @@ func withBeforeCommit(hook func(*sql.Tx) error) option {
 // while it is armed, so tests can check that nothing is saved or published.
 type commitFault struct{ armed atomic.Bool }
 
-func (f *commitFault) option() option {
+func (f *commitFault) option() Option {
 	return withBeforeCommit(func(*sql.Tx) error {
 		if f.armed.Load() {
 			return errors.New("injected commit fault")

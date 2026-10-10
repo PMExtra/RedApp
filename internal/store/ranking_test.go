@@ -14,7 +14,7 @@ func TestRankingMergesClientsAndExpiresBuckets(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Fixed fixture salt makes approximation bounds reproducible; production salts remain random.
-	if _, err = s.DB.Exec(`UPDATE catalog_state SET ranking_salt=zeroblob(32)`); err != nil {
+	if _, err = s.db.Exec(`UPDATE catalog_state SET ranking_salt=zeroblob(32)`); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
@@ -39,7 +39,7 @@ func TestRankingMergesClientsAndExpiresBuckets(t *testing.T) {
 		t.Fatal("daily cardinalities were added instead of merged", scores, err)
 	}
 	var bytesStored int
-	if err = s.DB.QueryRow(`SELECT sum(length(registers)) FROM download_sketches`).Scan(&bytesStored); err != nil || bytesStored != 7*1024 {
+	if err = s.db.QueryRow(`SELECT sum(length(registers)) FROM download_sketches`).Scan(&bytesStored); err != nil || bytesStored != 7*1024 {
 		t.Fatal("unbounded sketches", bytesStored, err)
 	}
 	scores, err = s.DownloadRanking(now.Add(7*24*time.Hour), 20)
@@ -55,7 +55,7 @@ func TestRankingMergesClientsAndExpiresBuckets(t *testing.T) {
 	if scores[0].Clients < 4500 || scores[0].Clients > 5500 {
 		t.Fatal("invalid estimate", scores)
 	}
-	if _, err = s.DB.Exec(`UPDATE vendors SET enabled=0`); err != nil {
+	if _, err = s.db.Exec(`UPDATE vendors SET enabled=0`); err != nil {
 		t.Fatal(err)
 	}
 	scores, _ = s.DownloadRanking(now, 20)

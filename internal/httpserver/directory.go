@@ -2,7 +2,6 @@ package httpserver
 
 import (
 	"bytes"
-	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -60,11 +59,11 @@ func directoryFailure(err error, notFound errorCode) *apiError {
 		return newError(codeVendorNotFound, nil, "Vendor not found")
 	case errors.Is(err, store.ErrApplicationNotFound):
 		return newError(codeApplicationNotFound, nil, "Application not found")
-	case errors.Is(err, sql.ErrNoRows) && notFound == codeVendorNotFound:
+	case errors.Is(err, store.ErrNotFound) && notFound == codeVendorNotFound:
 		return newError(codeVendorNotFound, nil, "Vendor not found")
-	case errors.Is(err, sql.ErrNoRows) && notFound == codeApplicationNotFound:
+	case errors.Is(err, store.ErrNotFound) && notFound == codeApplicationNotFound:
 		return newError(codeApplicationNotFound, nil, "Application not found")
-	case errors.Is(err, sql.ErrNoRows) && notFound == codeCategoryNotFound:
+	case errors.Is(err, store.ErrNotFound) && notFound == codeCategoryNotFound:
 		return newError(codeCategoryNotFound, nil, "Category not found")
 	case errors.Is(err, errDeletePending), errors.Is(err, download.ErrTransfersActive):
 		return newError(codeApplicationDeletePending, err, "Deletion is not complete; the application stays read-only while its work stops. Retry the deletion")

@@ -626,7 +626,7 @@ func readConfigurationState(tx *sql.Tx) (configurationState, error) {
 	return st, err
 }
 func (s *Store) configurationState() (configurationState, error) {
-	tx, err := s.DB.Begin()
+	tx, err := s.read.Begin()
 	if err != nil {
 		return configurationState{}, err
 	}
@@ -938,7 +938,7 @@ func (s *Store) changeConfigurationLocked(change func(*configurationState) error
 			}
 		}()
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -1758,7 +1758,7 @@ func (s *Store) canonicalApplicationProtected(key string) (bool, error) {
 		return true, nil
 	}
 	var count int
-	err := s.DB.QueryRow(`SELECT count(*) FROM template_snapshots WHERE kind='App' AND canonical_key=?`, key).Scan(&count)
+	err := s.read.QueryRow(`SELECT count(*) FROM template_snapshots WHERE kind='App' AND canonical_key=?`, key).Scan(&count)
 	return count != 0, err
 }
 

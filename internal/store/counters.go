@@ -33,7 +33,7 @@ func counterKey(name string) (string, error) {
 	case "requests", "artifact_requests", "cache_hit_requests", "shared_follower_requests", "miss_requests", "download_success", "download_errors", "upstream_errors", "upstream_bytes", "downstream_bytes", "cleanup_freed_bytes":
 		return "counters." + name, nil
 	}
-	return "", errors.New("Unknown active counter")
+	return "", errors.New("unknown active counter")
 }
 func increment(tx *sql.Tx, scope, app, key string, n int64, at int64) error {
 	_, err := tx.Exec("INSERT INTO metric_counters(scope,app_id,metric,value,observed_since_s) VALUES(?,?,?,?,?) ON CONFLICT(scope,app_id,metric) DO UPDATE SET value=value+excluded.value", scope, app, key, n, at)
@@ -47,7 +47,7 @@ func (s *Store) add(app, name string, n int64) error {
 		return err
 	}
 	if n < 0 {
-		return errors.New("Counter increments cannot be negative")
+		return errors.New("counter increments cannot be negative")
 	}
 	b := &s.pending
 	b.mu.Lock()
@@ -72,7 +72,7 @@ func (s *Store) AddFor(app, name string, n int64) error {
 // AddVersion buffers per-version request and downstream byte counters.
 func (s *Store) AddVersion(app, version string, requests, downstreamBytes int64) error {
 	if requireApp(app) != nil || requests < 0 || downstreamBytes < 0 {
-		return errors.New("Invalid version counter")
+		return errors.New("invalid version counter")
 	}
 	b := &s.pending
 	b.mu.Lock()
@@ -123,7 +123,7 @@ func (s *Store) FlushCounters() error {
 	return err
 }
 func (s *Store) writeCounters(counters map[counterEntry]int64, versions map[versionEntry]versionDelta) error {
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -133,7 +133,7 @@ func (s *Store) writeCounters(counters map[counterEntry]int64, versions map[vers
 		if ok, seen := existing[app]; seen {
 			return ok, nil
 		}
-		ok, e := PrivateApplicationExists(tx, app)
+		ok, e := applicationNamespaceExists(tx, app)
 		if errors.Is(e, ErrInvalidDirectory) {
 			ok, e = false, nil // A malformed owner can never be recorded; drop it rather than block other counters.
 		}
@@ -213,13 +213,13 @@ func (s *Store) StartCounterFlush(interval time.Duration, onError func(error)) (
 // Close flushes buffered counters and closes the database.
 func (s *Store) Close() error {
 	s.SettleCounters()
-	return s.DB.Close()
+	return s.closeDatabases()
 }
 
 // Counter reads settle buffered increments first so they observe every accepted add.
 func (s *Store) counters(scope, app string) (map[string]int64, error) {
 	s.SettleCounters()
-	rows, err := s.DB.Query("SELECT metric,value FROM metric_counters WHERE scope=? AND app_id=?", scope, app)
+	rows, err := s.read.Query("SELECT metric,value FROM metric_counters WHERE scope=? AND app_id=?", scope, app)
 	if err != nil {
 		return nil, err
 	}

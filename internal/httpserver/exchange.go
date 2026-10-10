@@ -3,7 +3,6 @@ package httpserver
 import (
 	"bytes"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -50,7 +49,7 @@ func importFailure(err error) *apiError {
 	switch {
 	case errors.Is(err, store.ErrDirectoryExists), errors.Is(err, store.ErrDirectoryDeleted):
 		return directoryFailure(err, codeApplicationNotFound)
-	case errors.Is(err, store.ErrInvalidDirectory), errors.Is(err, networkproxy.ErrRedactedMismatch), errors.Is(err, sql.ErrNoRows):
+	case errors.Is(err, store.ErrInvalidDirectory), errors.Is(err, networkproxy.ErrRedactedMismatch), errors.Is(err, store.ErrNotFound):
 		return newError(codeValidationFailed, err, "Invalid configuration, unavailable template or unresolved import choice; use an independent copy when the template is unavailable")
 	}
 	return storageError(err)

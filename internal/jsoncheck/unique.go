@@ -48,11 +48,11 @@ func check(body []byte, maxDepth int, rejectNull bool) error {
 				}
 				k, ok := key.(string)
 				if !ok {
-					return errors.New("Invalid JSON object key")
+					return errors.New("invalid JSON object key")
 				}
 				k = foldKey(k)
 				if seen[k] {
-					return errors.New("Duplicate JSON field")
+					return errors.New("duplicate JSON field")
 				}
 				seen[k] = true
 				if e = value(depth + 1); e != nil {
@@ -82,7 +82,7 @@ func check(body []byte, maxDepth int, rejectNull bool) error {
 		return e
 	}
 	if _, e := d.Token(); e != io.EOF {
-		return errors.New("Unexpected trailing JSON data")
+		return errors.New("unexpected trailing JSON data")
 	}
 	return nil
 }

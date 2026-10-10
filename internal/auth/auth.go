@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"github.com/PMExtra/RedApp/internal/store"
@@ -41,7 +40,7 @@ var (
 type Session struct {
 	CSRF     string
 	Until    time.Time
-	Revision int
+	Revision int64
 }
 type attempt struct {
 	Start time.Time
@@ -51,7 +50,7 @@ type Auth struct {
 	mu       sync.Mutex
 	db       *store.Store
 	hash     []byte
-	revision int
+	revision int64
 	sessions map[[32]byte]Session
 	attempts map[string]attempt
 	tokens   float64
@@ -70,22 +69,21 @@ func token() string {
 }
 func New(db *store.Store, bootstrap func(string)) (*Auth, error) {
 	a := &Auth{db: db, sessions: map[[32]byte]Session{}, attempts: map[string]attempt{}, tokens: globalBurst, compare: bcrypt.CompareHashAndPassword, now: time.Now}
-	e := db.DB.QueryRow("SELECT hash,revision FROM admin WHERE id=1").Scan(&a.hash, &a.revision)
-	if e == sql.ErrNoRows {
+	stored, e := db.AdminPassword()
+	if errors.Is(e, store.ErrNotFound) {
 		password := token()
 		hash, e := bcrypt.GenerateFromPassword([]byte(password), 12)
 		if e != nil {
 			return nil, e
 		}
-		if _, e = db.DB.Exec("INSERT INTO admin(id,hash,revision) VALUES(1,?,1)", hash); e != nil {
+		if stored, e = db.CreateAdminPassword(hash); e != nil {
 			return nil, e
 		}
-		a.hash = hash
-		a.revision = 1
 		bootstrap(password)
 	} else if e != nil {
 		return nil, e
 	}
+	a.hash, a.revision = stored.Hash, stored.Revision
 	return a, nil
 }
 
@@ -227,16 +225,21 @@ func (a *Auth) Password(ip, old, next string) error {
 	if e != nil {
 		return e
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if revision != a.revision {
+	// The store CAS orders concurrent changes, so the database write runs
+	// outside a.mu. A Login that compared against the old hash meanwhile either
+	// fails its revision check or creates a session bound to the old revision,
+	// which Session rejects once a.revision advances below.
+	saved, e := a.db.ReplaceAdminPassword(hash, revision)
+	if errors.Is(e, store.ErrConflict) {
 		return ErrCurrentPasswordIncorrect
 	}
-	if _, e = a.db.DB.Exec("UPDATE admin SET hash=?,revision=? WHERE id=1", hash, revision+1); e != nil {
+	if e != nil {
 		return e
 	}
-	a.hash = hash
-	a.revision = revision + 1
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.hash = saved.Hash
+	a.revision = saved.Revision
 	a.sessions = map[[32]byte]Session{}
 	delete(a.attempts, key)
 	return nil

@@ -83,11 +83,11 @@ const MaxSources = 16
 func NormalizeConfig(provider string, config ProviderConfig) (ProviderConfig, error) {
 	definition, ok := ProviderDefinition(provider)
 	if !ok {
-		return ProviderConfig{}, errors.New("Unknown provider")
+		return ProviderConfig{}, errors.New("unknown provider")
 	}
 	if provider == Info || provider == Hosted {
 		if config.BaseURL != "" || len(config.BaseURLs) != 0 || config.SourceStrategy != "" || config.CacheTTLSeconds != 0 {
-			return ProviderConfig{}, errors.New("Content applications do not have upstream or cache settings")
+			return ProviderConfig{}, errors.New("content applications do not have upstream or cache settings")
 		}
 		return ProviderConfig{}, nil
 	}
@@ -102,26 +102,26 @@ func NormalizeConfig(provider string, config ProviderConfig) (ProviderConfig, er
 			config.SourceStrategy = "ordered"
 		}
 		if config.SourceStrategy != "ordered" && config.SourceStrategy != "round_robin" && config.SourceStrategy != "random" {
-			return ProviderConfig{}, errors.New("Invalid source strategy")
+			return ProviderConfig{}, errors.New("invalid source strategy")
 		}
 		bases := make([]string, len(config.BaseURLs))
 		seen := map[string]bool{}
 		for i, value := range config.BaseURLs {
 			if len(value) > 4096 {
-				return ProviderConfig{}, errors.New("Base URL exceeds 4096 bytes")
+				return ProviderConfig{}, errors.New("base URL exceeds 4096 bytes")
 			}
 			base, err := distributor.NormalizeBase(value, distributor.GeneralHTTP)
 			if err != nil {
 				return ProviderConfig{}, err
 			}
 			if seen[base] {
-				return ProviderConfig{}, errors.New("Duplicate source URL")
+				return ProviderConfig{}, errors.New("duplicate source URL")
 			}
 			seen[base], bases[i] = true, base
 		}
 		config.BaseURLs, config.BaseURL = bases, bases[0]
 	} else if len(config.BaseURLs) != 0 || config.SourceStrategy != "" {
-		return ProviderConfig{}, errors.New("Multiple sources are supported only by HTTP Cache")
+		return ProviderConfig{}, errors.New("multiple sources are supported only by HTTP Cache")
 	}
 	if config.BaseURL == "" {
 		config.BaseURL = definition.DefaultBaseURL
@@ -130,7 +130,7 @@ func NormalizeConfig(provider string, config ProviderConfig) (ProviderConfig, er
 		return ProviderConfig{}, errors.New("HTTP Cache requires a base URL")
 	}
 	if config.CacheTTLSeconds < 0 || config.CacheTTLSeconds > 86400 || (definition.Capabilities.Versions && config.CacheTTLSeconds == 0) {
-		return ProviderConfig{}, errors.New("Cache TTL is outside the provider limits")
+		return ProviderConfig{}, errors.New("cache TTL is outside the provider limits")
 	}
 	mode := distributor.ConfiguredRelease
 	if provider == HttpCache {

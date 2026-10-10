@@ -134,7 +134,7 @@ func (s *transportSwitch) RoundTrip(r *http.Request) (*http.Response, error) {
 func (c *Pool) LoadProxy(db *store.Store) error {
 	snapshot, err := db.DirectoryConfigurationSnapshot()
 	if err != nil {
-		return errors.New("Failed to read upstream proxy settings")
+		return errors.New("failed to read upstream proxy settings")
 	}
 	plan, err := c.PrepareConfiguration(snapshot)
 	if err != nil {
@@ -166,7 +166,7 @@ func (c *Pool) Proxy() ProxyView {
 // when expected is stale.
 func (c *Pool) SetProxy(update ProxyUpdate, expected int64) error {
 	if c.proxyStore == nil {
-		return errors.New("Upstream proxy settings are unavailable")
+		return errors.New("upstream proxy settings are unavailable")
 	}
 	conf := networkproxy.Config{Mode: update.Mode, URL: update.URL}
 	if err := conf.Validate(false); err != nil {

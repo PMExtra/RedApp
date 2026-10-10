@@ -1,7 +1,6 @@
 package httpserver
 
 import (
-	"database/sql"
 	"errors"
 	"net/http"
 
@@ -91,7 +90,7 @@ func (s *Server) replaceHomepageSettings(w http.ResponseWriter, r *http.Request)
 	switch {
 	case errors.Is(err, store.ErrConflict):
 		s.writeError(w, r, revisionConflict(err))
-	case errors.Is(err, sql.ErrNoRows), errors.Is(err, store.ErrDirectoryDeleted), errors.Is(err, store.ErrInvalidDirectory):
+	case errors.Is(err, store.ErrNotFound), errors.Is(err, store.ErrDirectoryDeleted), errors.Is(err, store.ErrInvalidDirectory):
 		s.fail(w, r, codeValidationFailed, nil, "Every pinned application must exist and not be deleted")
 	case err != nil:
 		s.writeError(w, r, storageError(err))

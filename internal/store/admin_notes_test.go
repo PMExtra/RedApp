@@ -33,12 +33,12 @@ func TestAdminNotesRestartPreservesDataAndStableIdentity(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	s.DB.Close()
+	s.Close()
 	s, err = Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.DB.Close()
+	defer s.Close()
 	for _, item := range []struct{ kind, key string }{{"vendor", v.ID}, {"app", a.Key}} {
 		got, err := s.AdminNotes(item.kind, item.key)
 		if err != nil || got.Text != item.kind+" private\n\ttext" || got.Revision != 2 {

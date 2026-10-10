@@ -33,12 +33,12 @@ func TestDefaultsPartialRecordsAndRestart(t *testing.T) {
 	if partial, err = SaveCAS(db, partial.Settings, partial.Revision); err != nil {
 		t.Fatal(err)
 	}
-	db.DB.Close()
+	db.Close()
 	db, err = store.Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.DB.Close()
+	defer db.Close()
 	got, err := LoadSnapshot(db)
 	if err != nil || !reflect.DeepEqual(got, partial) {
 		t.Fatal(got, err)

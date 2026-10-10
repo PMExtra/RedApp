@@ -205,7 +205,7 @@ func (s *Service) previewAutomatic(ctx context.Context, entry application.Entry,
 	}
 	if preview.SelectedFiles == 0 {
 		// Empty automatic passes do not accumulate durable empty jobs.
-		_, err = s.db.DB.ExecContext(ctx, `DELETE FROM http_cleanup_previews WHERE id=? AND selected_count=0 AND state='ready'`, preview.ID)
+		_, err = s.db.HTTPCacheDB().ExecContext(ctx, `DELETE FROM http_cleanup_previews WHERE id=? AND selected_count=0 AND state='ready'`, preview.ID)
 		return "", preview.ScannedFiles, next, err
 	}
 	return preview.ID, preview.ScannedFiles, next, nil

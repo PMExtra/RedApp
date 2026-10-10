@@ -4,7 +4,6 @@ package catalog
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"sort"
@@ -71,7 +70,7 @@ func (s *Service) release(ctx context.Context, e application.Entry, target strin
 	// completed flight cannot accidentally issue another upstream fetch.
 	if channel {
 		cached, err := s.db.Channel(app, target)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
 			s.mu.Unlock()
 			return application.Release{}, err
 		}
@@ -89,7 +88,7 @@ func (s *Service) release(ctx context.Context, e application.Entry, target strin
 		}
 	} else {
 		m, err := s.db.Release(app, target)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
 			s.mu.Unlock()
 			return application.Release{}, err
 		}
@@ -271,28 +270,22 @@ func (s *Service) CandidatesForSource(app, storageID, minimum string, views []do
 	if !ok || e.Protocol == nil {
 		return nil, nil, application.ErrNotFound
 	}
-	if e.UID == "" {
-		if storageID != e.StorageID() {
-			return nil, nil, application.ErrNotFound
+	uid, _, ok := identity.ParseStorageID(storageID)
+	if !ok || uid != e.UID {
+		return nil, nil, application.ErrNotFound
+	}
+	if _, err := s.db.Source(storageID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			err = application.ErrNotFound
 		}
-	} else {
-		uid, _, ok := identity.ParseStorageID(storageID)
-		if !ok || uid != e.UID {
-			return nil, nil, application.ErrNotFound
-		}
-		if _, err := s.db.Source(storageID); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				err = application.ErrNotFound
-			}
-			return nil, nil, err
-		}
+		return nil, nil, err
 	}
 	return candidates(e, storageID, minimum, views)
 }
 
 func candidates(e application.Entry, storageID, minimum string, views []download.View) (map[string]bool, []string, error) {
 	if v, err := e.Protocol.ValidateVersion(minimum); err != nil || v != minimum {
-		return nil, nil, errors.New("Invalid canonical minimum version")
+		return nil, nil, errors.New("invalid canonical minimum version")
 	}
 	ids := map[string]bool{}
 	unknownSet := map[string]bool{}

@@ -347,7 +347,7 @@ func (s *Service) publish(f fill, old *Row, result fetchResult) (fetchResult, er
 	defer result.staged.Discard()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tx, err := s.db.DB.Begin()
+	tx, err := s.db.HTTPCacheDB().Begin()
 	if err != nil {
 		return fetchResult{}, err
 	}
@@ -392,7 +392,7 @@ func (s *Service) publish(f fill, old *Row, result fetchResult) (fetchResult, er
 func (s *Service) revalidate(f fill, old *Row, headers http.Header) (fetchResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tx, err := s.db.DB.Begin()
+	tx, err := s.db.HTTPCacheDB().Begin()
 	if err != nil {
 		return fetchResult{}, err
 	}

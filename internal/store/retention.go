@@ -113,7 +113,7 @@ func checkRetention(tx *sql.Tx, app string, guard *RetentionGuard, at time.Time)
 }
 func (s *Store) RetentionStatus(uid string) (json.RawMessage, error) {
 	var raw []byte
-	err := s.DB.QueryRow(`SELECT payload FROM retention_status WHERE app_uid=?`, uid).Scan(&raw)
+	err := s.read.QueryRow(`SELECT payload FROM retention_status WHERE app_uid=?`, uid).Scan(&raw)
 	if err == sql.ErrNoRows {
 		return json.RawMessage(`{}`), nil
 	}
@@ -123,6 +123,6 @@ func (s *Store) SaveRetentionStatus(uid string, raw json.RawMessage) error {
 	if !identity.ValidUID(uid) || !json.Valid(raw) {
 		return ErrInvalidDirectory
 	}
-	_, err := s.DB.Exec(`INSERT INTO retention_status(app_uid,payload) VALUES(?,?) ON CONFLICT(app_uid) DO UPDATE SET payload=excluded.payload`, uid, []byte(raw))
+	_, err := s.db.Exec(`INSERT INTO retention_status(app_uid,payload) VALUES(?,?) ON CONFLICT(app_uid) DO UPDATE SET payload=excluded.payload`, uid, []byte(raw))
 	return err
 }

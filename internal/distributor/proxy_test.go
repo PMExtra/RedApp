@@ -33,7 +33,7 @@ func proxyFixture(t *testing.T) (*Client, *store.Store, *httptest.Server) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.DB.Close() })
+	t.Cleanup(func() { db.Close() })
 	c, err := New("https://example.com/codex")
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +95,7 @@ func TestHTTPProxyTLSResumeAndPrivateCredentials(t *testing.T) {
 	}
 	if _, err := c.Get(context.Background(), sourceURL(c, "channels/latest"), nil); err == nil {
 		t.Fatal("untrusted TLS certificate accepted")
-	} else if err.Error() != "Upstream connection failed" {
+	} else if err.Error() != "upstream connection failed" {
 		t.Fatal("connection error exposed details")
 	}
 	trustFixture(c, upstream)
@@ -236,7 +236,7 @@ func TestProxySwapDoesNotCancelActiveResponse(t *testing.T) {
 	}))
 	defer upstream.Close()
 	db, _ := store.Open(t.TempDir())
-	defer db.DB.Close()
+	defer db.Close()
 	c, _ := New("https://example.com/codex")
 	c.pool.LoadProxy(db)
 	first := connectProxy(t, upstream, nil, nil)

@@ -275,6 +275,9 @@ CREATE TABLE generations(
   last_error_code TEXT,
   app_revision INTEGER NOT NULL CHECK(app_revision>=0),
   vendor_revision INTEGER NOT NULL CHECK(vendor_revision>=0),
+  -- Monotonic per-generation write order: a progress or completion write
+  -- applies only when it is newer than the stored one.
+  checkpoint INTEGER NOT NULL CHECK(checkpoint>=0),
   CHECK(is_current=0 OR retired_at_s IS NULL),
   CHECK(blob_sha256 IS NULL OR blob_sha256=expected_sha256),
   CHECK((phase='complete' AND blob_sha256 IS NOT NULL) OR (phase<>'complete' AND blob_sha256 IS NULL)),

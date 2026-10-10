@@ -20,11 +20,11 @@ import (
 )
 
 var (
-	ErrInvalidDirectory      = errors.New("Invalid vendor or application configuration")
-	ErrDirectoryExists       = errors.New("Vendor or application ID is already reserved")
-	ErrDirectoryDeleted      = errors.New("Vendor or application is deleted")
-	ErrVendorHasApplications = errors.New("Delete the vendor's applications first")
-	ErrSourceInactive        = errors.New("Application source is no longer active")
+	ErrInvalidDirectory      = errors.New("invalid vendor or application configuration")
+	ErrDirectoryExists       = errors.New("vendor or application ID is already reserved")
+	ErrDirectoryDeleted      = errors.New("vendor or application is deleted")
+	ErrVendorHasApplications = errors.New("delete the vendor's applications first")
+	ErrSourceInactive        = errors.New("application source is no longer active")
 	// ErrVendorNotFound and ErrApplicationNotFound name the missing object when
 	// an operation involves both kinds; both match sql.ErrNoRows.
 	ErrVendorNotFound      = fmt.Errorf("vendor not found: %w", sql.ErrNoRows)
@@ -325,14 +325,14 @@ func readApplication(q directoryQuerier, key string) (Application, error) {
 	return scanApplication(q.QueryRow(`SELECT `+applicationColumns+` FROM applications a JOIN vendors v ON v.uid=a.vendor_uid WHERE v.id=? AND a.id=?`, vendor, app))
 }
 
-func (s *Store) Vendor(id string) (Vendor, error)            { return readVendor(s.DB, id) }
-func (s *Store) Application(key string) (Application, error) { return readApplication(s.DB, key) }
+func (s *Store) Vendor(id string) (Vendor, error)            { return readVendor(s.read, id) }
+func (s *Store) Application(key string) (Application, error) { return readApplication(s.read, key) }
 func (s *Store) Vendors(includeDeleted bool) ([]Vendor, error) {
 	query := `SELECT ` + vendorColumns + ` FROM vendors`
 	if !includeDeleted {
 		query += ` WHERE deleted_at_s IS NULL`
 	}
-	rows, err := s.DB.Query(query + ` ORDER BY id`)
+	rows, err := s.read.Query(query + ` ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -352,7 +352,7 @@ func (s *Store) Applications(includeDeleted bool) ([]Application, error) {
 	if !includeDeleted {
 		query += ` WHERE a.deleted_at_s IS NULL AND v.deleted_at_s IS NULL`
 	}
-	rows, err := s.DB.Query(query + ` ORDER BY v.id,a.id`)
+	rows, err := s.read.Query(query + ` ORDER BY v.id,a.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -493,10 +493,10 @@ func (s *Store) Source(storageID string) (SourceRecord, error) {
 	if !ok {
 		return SourceRecord{}, ErrInvalidDirectory
 	}
-	return scanSource(s.DB.QueryRow(`SELECT `+sourceColumns+sourceJoin+` WHERE src.app_uid=? AND src.epoch=?`, uid, epoch))
+	return scanSource(s.read.QueryRow(`SELECT `+sourceColumns+sourceJoin+` WHERE src.app_uid=? AND src.epoch=?`, uid, epoch))
 }
 func (s *Store) Sources() ([]SourceRecord, error) {
-	rows, err := s.DB.Query(`SELECT ` + sourceColumns + sourceJoin + ` ORDER BY src.app_uid,src.epoch`)
+	rows, err := s.read.Query(`SELECT ` + sourceColumns + sourceJoin + ` ORDER BY src.app_uid,src.epoch`)
 	if err != nil {
 		return nil, err
 	}
@@ -513,12 +513,6 @@ func (s *Store) Sources() ([]SourceRecord, error) {
 }
 func checkSourceActive(q directoryQuerier, storageID string, expected []SourceFence) error {
 	uid, epoch, ok := identity.ParseStorageID(storageID)
-	// Static provider fixtures and their typed storage APIs remain usable without
-	// a dynamic directory. Runtime-created applications always use app/<uid>-eN;
-	// never treat a malformed private namespace as a legacy public key.
-	if !ok && !strings.HasPrefix(storageID, "app/") && identity.ValidKey(storageID) {
-		return nil
-	}
 	if !ok || len(expected) > 1 {
 		return ErrInvalidDirectory
 	}
@@ -544,7 +538,7 @@ func (s *Store) RequireSourceActive(tx *sql.Tx, storageID string, expected ...So
 	return checkSourceActive(tx, storageID, expected)
 }
 func (s *Store) CheckSourceActive(storageID string, expected ...SourceFence) error {
-	return checkSourceActive(s.DB, storageID, expected)
+	return checkSourceActive(s.read, storageID, expected)
 }
 func (s *Store) SourceActive(storageID string) (bool, error) {
 	err := s.CheckSourceActive(storageID)

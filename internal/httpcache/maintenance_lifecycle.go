@@ -42,7 +42,7 @@ func (s *Service) beginMaintenance(ctx context.Context, builder bool) (context.C
 // bounded batches keeps crash recovery independent of the number of items.
 func (s *Service) recoverPreviews(ctx context.Context) error {
 	for {
-		result, err := s.db.DB.ExecContext(ctx, `UPDATE http_cleanup_previews SET
+		result, err := s.db.HTTPCacheDB().ExecContext(ctx, `UPDATE http_cleanup_previews SET
 			result_json=json_object('error',CASE WHEN state='building' THEN 'preview_build_failed' ELSE 'interrupted_by_restart' END,
 			'selected_files',selected_count,'completed_files',completed_count,'failed',failed_count),
 			executed_at_s=?,state='failed'
@@ -66,7 +66,7 @@ func (s *Service) recoverPreviews(ctx context.Context) error {
 // builds keep their small diagnostic receipt but discard unusable selections.
 func (s *Service) prunePreviews(ctx context.Context, batches int) error {
 	for i := 0; i < batches; i++ {
-		tx, err := s.db.DB.BeginTx(ctx, nil)
+		tx, err := s.db.HTTPCacheDB().BeginTx(ctx, nil)
 		if err != nil {
 			return err
 		}

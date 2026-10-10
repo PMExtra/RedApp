@@ -7,8 +7,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/fsutil"
+	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
 	"github.com/PMExtra/RedApp/internal/testutil"
 	"io"
@@ -25,24 +27,57 @@ func digest(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(
 func setup(t *testing.T, c *distributor.Client, options ...Option) (*Manager, *store.Store, string) {
 	t.Helper()
 	dir := t.TempDir()
-	db, e := store.Open(dir)
-	if e != nil {
-		t.Fatal(e)
-	}
+	db := openStore(t, dir)
 	m, e := newTestManager(dir, db, c, options...)
 	if e != nil {
 		t.Fatal(e)
 	}
-	t.Cleanup(func() { m.Close(); db.DB.Close() })
+	t.Cleanup(func() { m.Close(); db.Close() })
 	return m, db, dir
 }
 func resource(c *distributor.Client, b []byte) Resource {
 	source := testutil.SourceURL(c, "asset")
 	hash := digest(b)
-	return Resource{Application: testApp, Version: "0.1.0", Key: "asset", ID: LogicalIdentity(testApp, "0.1.0", "asset"), Source: source, Hash: hash, Labels: map[string]string{"version": "0.1.0", "name": "asset"}}
+	return onApp(Resource{Version: "0.1.0", Key: "asset", Source: source, Hash: hash, Labels: map[string]string{"version": "0.1.0", "name": "asset"}}, testApp)
 }
 
-const testApp = "openai/codex"
+// testApp and otherApp are the storage namespaces of the release
+// applications "openai/codex" and "anthropic/claude-code" in the store most
+// recently opened by openStore, and sourceFences their admission fences.
+// Download tests do not run in parallel.
+var (
+	testApp, otherApp string
+	sourceFences      map[string]store.SourceFence
+	metricsIDs        map[string]string
+)
+
+// openStore opens the data directory dir, creating the two directory
+// applications on first use, and points testApp and otherApp at them.
+func openStore(t *testing.T, dir string, options ...store.Option) *store.Store {
+	t.Helper()
+	db, e := store.Open(dir, options...)
+	if e != nil {
+		t.Fatal(e)
+	}
+	testApp = testutil.App(t, db, "openai/codex", store.ApplicationInput{Provider: application.Codex, BaseURL: "https://codex.example.test", CacheTTLSeconds: 60}).StorageID()
+	otherApp = testutil.App(t, db, "anthropic/claude-code", store.ApplicationInput{Provider: application.ClaudeCode, BaseURL: "https://claude.example.test", CacheTTLSeconds: 60}).StorageID()
+	sourceFences, metricsIDs = map[string]store.SourceFence{}, map[string]string{}
+	for _, app := range []string{testApp, otherApp} {
+		source, e := db.Source(app)
+		if e != nil {
+			t.Fatal(e)
+		}
+		sourceFences[app], metricsIDs[app] = source.Fence(), identity.MetricsID(source.AppUID)
+	}
+	return db
+}
+
+// onApp moves the resource r to the application storage namespace app.
+func onApp(r Resource, app string) Resource {
+	r.Application, r.SourceFence, r.MetricsID = app, sourceFences[app], metricsIDs[app]
+	r.ID = LogicalIdentity(app, r.Version, r.Key)
+	return r
+}
 
 // faultHook lets a test arm a lifecycle hook after the manager has been built
 // and recovered; until armed, every trace point passes through.
@@ -415,11 +450,8 @@ func TestCrashRecoveryPartRenameAndTombstone(t *testing.T) {
 				}
 			}))
 			dir := t.TempDir()
-			db, e := store.Open(dir)
-			if e != nil {
-				t.Fatal(e)
-			}
-			defer db.DB.Close()
+			db := openStore(t, dir)
+			defer db.Close()
 			m, e := newTestManager(dir, db, c)
 			if e != nil {
 				t.Fatal(e)

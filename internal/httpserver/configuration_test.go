@@ -141,7 +141,7 @@ func TestConfigurationRuntimeAndDatabaseStayAlignedOnFailure(t *testing.T) {
 	fail.Store(true)
 	h.expectError("PATCH", path, body, 503, codeStorageUnavailable, ifMatchHeader(before.Revision))
 	fail.Store(false)
-	if _, err := h.store.DB.Exec(`CREATE TRIGGER reject_runtime_config BEFORE UPDATE ON applications BEGIN SELECT RAISE(FAIL,'injected DB failure'); END`); err != nil {
+	if _, err := h.sql().Exec(`CREATE TRIGGER reject_runtime_config BEFORE UPDATE ON applications BEGIN SELECT RAISE(FAIL,'injected DB failure'); END`); err != nil {
 		t.Fatal(err)
 	}
 	h.expectError("PATCH", path, body, 503, codeStorageUnavailable, ifMatchHeader(before.Revision))
@@ -160,7 +160,7 @@ func TestConfigurationRuntimeAndDatabaseStayAlignedOnFailure(t *testing.T) {
 		t.Fatal("aborted namespace leaked into downloads", err)
 	}
 	plan.Abort()
-	if _, err = h.store.DB.Exec(`DROP TRIGGER reject_runtime_config`); err != nil {
+	if _, err = h.sql().Exec(`DROP TRIGGER reject_runtime_config`); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := h.request("PATCH", path, body, 200, ifMatchHeader(before.Revision))

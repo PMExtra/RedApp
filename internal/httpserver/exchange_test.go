@@ -146,7 +146,7 @@ func TestExchangeRoundtripTrustReceiptAndSession(t *testing.T) {
 	if response := b.serve(anonymous); response.Code != 401 {
 		t.Fatal("receipt bypassed authentication", response.Code)
 	}
-	if _, err = b.store.DB.Exec(`UPDATE configuration_import_receipts SET created_s=? WHERE id=?`, time.Now().Add(-25*time.Hour).Unix(), preview.ID); err != nil {
+	if _, err = b.sql().Exec(`UPDATE configuration_import_receipts SET created_s=? WHERE id=?`, time.Now().Add(-25*time.Hour).Unix(), preview.ID); err != nil {
 		t.Fatal(err)
 	}
 	expectCode(t, b.executeImport(preview.ID, true, 404), codePreviewNotFound)

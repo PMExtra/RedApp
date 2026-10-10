@@ -78,7 +78,7 @@ func newFixture(t *testing.T, h http.Handler, ttl int) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.DB.Close() })
+	t.Cleanup(func() { db.Close() })
 	vendor, err := db.CreateVendor(store.VendorInput{ID: "vendor", Name: store.LocalizedText{En: "Vendor", ZhCN: "发布者"}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)

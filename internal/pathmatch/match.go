@@ -15,8 +15,8 @@ import (
 
 const MaxPatternBytes = 1024
 
-var ErrInvalidPattern = errors.New("Invalid path pattern")
-var ErrInvalidPath = errors.New("Expected a canonical decoded application path beginning with /")
+var ErrInvalidPattern = errors.New("invalid path pattern")
+var ErrInvalidPath = errors.New("expected a canonical decoded application path beginning with /")
 
 type Spec struct {
 	Type    string `json:"type"`

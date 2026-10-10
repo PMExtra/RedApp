@@ -15,7 +15,7 @@ import (
 // application source, bound to its owner's proxy scope.
 func NewScopedSourceClient(provider, baseURL, defaultBase, appUID, vendorUID string, pool *distributor.Pool) (*distributor.Client, error) {
 	if appUID == "" || vendorUID == "" {
-		return nil, errors.New("Application transport scope required")
+		return nil, errors.New("application transport scope required")
 	}
 	return newSourceClient(provider, baseURL, defaultBase, appUID, vendorUID, pool)
 }
@@ -24,11 +24,11 @@ func newSourceClient(provider, baseURL, defaultBase, appUID, vendorUID string, p
 		return nil, nil
 	}
 	if pool == nil {
-		return nil, errors.New("A shared upstream transport pool is required")
+		return nil, errors.New("a shared upstream transport pool is required")
 	}
 	_, ok := application.ProviderDefinition(provider)
 	if !ok {
-		return nil, errors.New("Unknown provider")
+		return nil, errors.New("unknown provider")
 	}
 	if baseURL == "" {
 		baseURL = defaultBase
@@ -69,7 +69,7 @@ func entriesFromConfiguration(snapshot store.DirectorySnapshot, pool *distributo
 	byVendor := make(map[string]store.Vendor, len(vendors))
 	for _, vendor := range vendors {
 		if _, exists := byVendor[vendor.ID]; exists {
-			return nil, fmt.Errorf("Duplicate vendor %s", vendor.ID)
+			return nil, fmt.Errorf("duplicate vendor %s", vendor.ID)
 		}
 		byVendor[vendor.ID] = vendor
 	}
@@ -77,11 +77,11 @@ func entriesFromConfiguration(snapshot store.DirectorySnapshot, pool *distributo
 	for _, app := range apps {
 		vendor, ok := byVendor[app.VendorID]
 		if !ok || !identity.ValidUID(app.UID) || !identity.ValidUID(vendor.UID) || vendor.UID != app.VendorUID || app.Key != app.VendorID+"/"+app.ID {
-			return nil, fmt.Errorf("Application vendor binding is invalid for %s", app.Key)
+			return nil, fmt.Errorf("application vendor binding is invalid for %s", app.Key)
 		}
 		config, err := application.NormalizeConfig(app.Provider, application.ProviderConfig{BaseURL: app.BaseURL, BaseURLs: app.BaseURLs, SourceStrategy: app.SourceStrategy, CacheTTLSeconds: app.CacheTTLSeconds})
 		if err != nil {
-			return nil, fmt.Errorf("Invalid provider configuration for %s: %w", app.Key, err)
+			return nil, fmt.Errorf("invalid provider configuration for %s: %w", app.Key, err)
 		}
 		defaultBase := snapshot.ProviderDefaults[app.Provider]
 		if defaultBase == "" {
@@ -119,7 +119,7 @@ func entriesFromConfiguration(snapshot store.DirectorySnapshot, pool *distributo
 			}
 			template, ok := templates[key]
 			if !ok {
-				return nil, errors.New("Provider has no reviewed release template")
+				return nil, errors.New("provider has no reviewed release template")
 			}
 			entry, err = releaseEntry(template, client)
 			if err != nil {

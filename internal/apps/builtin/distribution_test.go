@@ -34,14 +34,14 @@ func TestMissingReleaseTemplateRestartsWithTrustedProtocol(t *testing.T) {
 	if !before.TemplateMissing {
 		t.Fatal("missing flag absent")
 	}
-	if err = db.DB.Close(); err != nil {
+	if err = db.Close(); err != nil {
 		t.Fatal(err)
 	}
 	db, err = store.Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.DB.Close()
+	defer db.Close()
 	db.SetDistributionValidation(ValidateDescriptors)
 	if err = db.ReconcileTemplates(missing); err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func TestInvalidTrustedContractsRollbackReconciliation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer db.DB.Close()
+			defer db.Close()
 			db.SetDistributionValidation(ValidateDescriptors)
 			if err = db.EnsureEntityTemplates(); err != nil {
 				t.Fatal(err)

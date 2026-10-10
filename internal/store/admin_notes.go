@@ -27,7 +27,7 @@ func notesEntity(q directoryQuerier, kind, key string) (table, uid string, delet
 	}
 }
 func (s *Store) AdminNotes(kind, key string) (AdminNotes, error) {
-	tx, err := s.DB.Begin()
+	tx, err := s.read.Begin()
 	if err != nil {
 		return AdminNotes{}, err
 	}
@@ -53,7 +53,7 @@ func (s *Store) SaveAdminNotes(kind, key string, expected int64, text string) (A
 	// Notes are part of the configuration CAS state; serialize with its writers.
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return AdminNotes{}, err
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"strings"
 	"sync"
 	"time"
 
@@ -44,17 +43,13 @@ func (a *appWork) signal() {
 	}
 }
 
-// ApplicationWork accepts a stable UID or a source storage ID. Static provider
-// fixtures have no dynamic directory identity and retain their existing lifetime.
+// ApplicationWork accepts a stable UID or a source storage ID.
 func (s *Store) ApplicationWork(ctx context.Context, app string) (context.Context, func(), error) {
 	uid := app
 	if parsed, _, ok := identity.ParseStorageID(app); ok {
 		uid = parsed
 	}
 	if !identity.ValidUID(uid) {
-		if !strings.HasPrefix(app, "app/") && identity.ValidKey(app) {
-			return ctx, func() {}, nil
-		}
 		return nil, nil, ErrInvalidDirectory
 	}
 	s.work.mu.Lock()
@@ -64,7 +59,7 @@ func (s *Store) ApplicationWork(ctx context.Context, app string) (context.Contex
 		return nil, nil, ErrSourceInactive
 	}
 	var live bool
-	if err := s.DB.QueryRow(`SELECT 1 FROM applications WHERE uid=?`, uid).Scan(&live); err != nil {
+	if err := s.read.QueryRow(`SELECT 1 FROM applications WHERE uid=?`, uid).Scan(&live); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil, ErrSourceInactive
 		}
@@ -145,7 +140,7 @@ func (s *Store) FinishApplicationDeletion(uid string, purge func(remove func() e
 	remove := func() error {
 		var key string
 		var revision int64
-		err := s.DB.QueryRow(`SELECT v.id||'/'||a.id,a.revision FROM pending_application_deletes p JOIN applications a ON a.uid=p.app_uid JOIN vendors v ON v.uid=a.vendor_uid WHERE a.uid=?`, uid).Scan(&key, &revision)
+		err := s.read.QueryRow(`SELECT v.id||'/'||a.id,a.revision FROM pending_application_deletes p JOIN applications a ON a.uid=p.app_uid JOIN vendors v ON v.uid=a.vendor_uid WHERE a.uid=?`, uid).Scan(&key, &revision)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
@@ -162,7 +157,7 @@ func (s *Store) FinishApplicationDeletion(uid string, purge func(remove func() e
 
 // Reload admission tombstones before any service can use a reopened store.
 func (s *Store) loadApplicationDeletionGates() error {
-	rows, err := s.DB.Query(`SELECT app_uid FROM pending_application_deletes`)
+	rows, err := s.read.Query(`SELECT app_uid FROM pending_application_deletes`)
 	if err != nil {
 		return err
 	}
@@ -182,7 +177,7 @@ func (s *Store) loadApplicationDeletionGates() error {
 // Called before runtime services start. No previous process can retain a lease
 // under the exclusive data-directory lock. Unrelated soft deletes stay intact.
 func (s *Store) RecoverApplicationDeletions() error {
-	rows, err := s.DB.Query(`SELECT app_uid FROM pending_application_deletes`)
+	rows, err := s.read.Query(`SELECT app_uid FROM pending_application_deletes`)
 	if err != nil {
 		return err
 	}

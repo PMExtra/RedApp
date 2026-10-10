@@ -311,7 +311,7 @@ func TestExchangeWholeBatchDatabaseRollbackAndDictionaryOwnership(t *testing.T) 
 		t.Fatal("partial dictionary")
 	}
 	var count int
-	s.DB.QueryRow(`SELECT count(*) FROM application_admin_notes WHERE text='batch-private-note'`).Scan(&count)
+	s.db.QueryRow(`SELECT count(*) FROM application_admin_notes WHERE text='batch-private-note'`).Scan(&count)
 	if count != 0 || published != 0 || aborted != 1 {
 		t.Fatal("partial notes/publication", count, published, aborted)
 	}

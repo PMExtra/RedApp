@@ -12,7 +12,7 @@ type Instructions struct {
 
 func (s *Store) Instructions(uid string) (Instructions, error) {
 	var out Instructions
-	err := s.DB.QueryRow(`SELECT en,zh_cn,revision FROM application_instructions WHERE app_uid=?`, uid).Scan(&out.En, &out.ZhCN, &out.Revision)
+	err := s.read.QueryRow(`SELECT en,zh_cn,revision FROM application_instructions WHERE app_uid=?`, uid).Scan(&out.En, &out.ZhCN, &out.Revision)
 	if err == sql.ErrNoRows {
 		err = nil
 	}

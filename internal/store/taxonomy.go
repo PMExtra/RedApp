@@ -359,7 +359,7 @@ func (s *Store) TaxonomyPage(q string, page, limit int) (Page[CategoryListItem],
 	if page < 1 || limit < 1 || limit > 100 || !utf8.ValidString(q) || utf8.RuneCountInString(q) > 128 {
 		return Page[CategoryListItem]{}, ErrInvalidDirectory
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.read.Begin()
 	if err != nil {
 		return Page[CategoryListItem]{}, err
 	}
@@ -401,7 +401,7 @@ func (s *Store) PatchTaxonomy(id string, patch ConfigurationPatch) (TaxonomyItem
 	}
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return TaxonomyItem{}, err
 	}
@@ -492,7 +492,7 @@ func uniqueCategoryNames(tx *sql.Tx, item TaxonomyItem) error {
 func (s *Store) Category(id string) (CategoryListItem, error) {
 	var item CategoryListItem
 	var en, zh, oe, oz sql.NullString
-	err := s.DB.QueryRow(`SELECT `+taxonomyColumns+`,(SELECT count(*) FROM application_categories r WHERE r.category_id=categories.id) FROM categories WHERE id=?`, id).Scan(&item.ID, &item.Name.En, &item.Name.ZhCN, &item.Revision, &item.Builtin, &item.Present, &en, &zh, &oe, &oz, &item.Applications)
+	err := s.read.QueryRow(`SELECT `+taxonomyColumns+`,(SELECT count(*) FROM application_categories r WHERE r.category_id=categories.id) FROM categories WHERE id=?`, id).Scan(&item.ID, &item.Name.En, &item.Name.ZhCN, &item.Revision, &item.Builtin, &item.Present, &en, &zh, &oe, &oz, &item.Applications)
 	if err != nil {
 		return item, err
 	}
@@ -530,7 +530,7 @@ const publicApplicationFilter = `a.enabled=1 AND v.enabled=1 AND a.deleted_at_s 
 
 // PublicTaxonomy returns each public App's categories and site-wide counts of public Apps per category.
 func (s *Store) PublicTaxonomy() (map[string][]TaxonomyLabel, []CategoryCount, error) {
-	rows, err := s.DB.Query(`SELECT a.uid,c.id,c.name_en,c.name_zh_cn FROM applications a JOIN vendors v ON v.uid=a.vendor_uid JOIN application_categories r ON r.app_uid=a.uid JOIN categories c ON c.id=r.category_id WHERE ` + publicApplicationFilter + ` ORDER BY a.uid,c.id`)
+	rows, err := s.read.Query(`SELECT a.uid,c.id,c.name_en,c.name_zh_cn FROM applications a JOIN vendors v ON v.uid=a.vendor_uid JOIN application_categories r ON r.app_uid=a.uid JOIN categories c ON c.id=r.category_id WHERE ` + publicApplicationFilter + ` ORDER BY a.uid,c.id`)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -558,6 +558,6 @@ func (s *Store) PublicTaxonomy() (map[string][]TaxonomyLabel, []CategoryCount, e
 }
 func (s *Store) TaxonomyPublicRevision() (int64, error) {
 	var revision int64
-	err := s.DB.QueryRow(`SELECT public_revision FROM category_state WHERE id=1`).Scan(&revision)
+	err := s.read.QueryRow(`SELECT public_revision FROM category_state WHERE id=1`).Scan(&revision)
 	return revision, err
 }

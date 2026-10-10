@@ -14,18 +14,18 @@ type Event struct {
 
 func (s *Store) RecordEvent(e Event) error {
 	if e.AppID != "" && !ValidAppID(e.AppID) || e.Category == "" || e.Code == "" || e.Message == "" || e.UpstreamStatus != nil && (*e.UpstreamStatus < 100 || *e.UpstreamStatus > 599) {
-		return errors.New("Invalid structured event")
+		return errors.New("invalid structured event")
 	}
 	if e.Time.IsZero() {
 		e.Time = time.Now()
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	if e.AppID != "" {
-		exists, err := PrivateApplicationExists(tx, e.AppID)
+		exists, err := applicationNamespaceExists(tx, e.AppID)
 		if err != nil {
 			return err
 		}
@@ -60,7 +60,7 @@ func (s *Store) events(app string) ([]map[string]any, error) {
 		args = append(args, app)
 	}
 	query += " ORDER BY id DESC LIMIT 100"
-	rows, err := s.DB.Query(query, args...)
+	rows, err := s.read.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

@@ -192,7 +192,7 @@ func (s *Service) listRows(storageID string) ([]Row, error) {
 func (s *Service) queryRows(query string, args ...any) ([]Row, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rows, err := s.db.DB.Query(query, args...)
+	rows, err := s.db.HTTPCacheDB().Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +211,7 @@ func (s *Service) queryRows(query string, args ...any) ([]Row, error) {
 func (s *Service) lookup(storageID, path string) (*Row, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	row, err := scan(s.db.DB.QueryRow(`SELECT `+columns+` FROM http_cache_generations WHERE storage_id=? AND path=? AND is_current=1`, storageID, path))
+	row, err := scan(s.db.HTTPCacheDB().QueryRow(`SELECT `+columns+` FROM http_cache_generations WHERE storage_id=? AND path=? AND is_current=1`, storageID, path))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -220,7 +220,7 @@ func (s *Service) lookup(storageID, path string) (*Row, error) {
 	}
 	size, statErr := s.bodies().Size(row.GenerationID)
 	if os.IsNotExist(statErr) || (statErr == nil && size != row.SizeBytes) {
-		if _, err = s.db.DB.Exec(`UPDATE http_cache_generations SET is_current=0,retired_at_s=? WHERE id=?`, s.now().Unix(), row.GenerationID); err != nil {
+		if _, err = s.db.HTTPCacheDB().Exec(`UPDATE http_cache_generations SET is_current=0,retired_at_s=? WHERE id=?`, s.now().Unix(), row.GenerationID); err != nil {
 			return nil, err
 		}
 		if err = s.collectLocked(row.GenerationID); err != nil {
@@ -237,7 +237,7 @@ func (s *Service) lookup(storageID, path string) (*Row, error) {
 func (s *Service) pin(id string) (*Row, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	r, err := scan(s.db.DB.QueryRow(`SELECT `+columns+` FROM http_cache_generations WHERE id=?`, id))
+	r, err := scan(s.db.HTTPCacheDB().QueryRow(`SELECT `+columns+` FROM http_cache_generations WHERE id=?`, id))
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +260,7 @@ func (s *Service) touch(r *Row) error {
 	if bucket <= r.accessBucket {
 		return nil
 	}
-	result, err := s.db.DB.Exec(`UPDATE http_cache_generations SET last_access_bucket_s=MAX(last_access_bucket_s,?) WHERE id=?`, bucket, r.GenerationID)
+	result, err := s.db.HTTPCacheDB().Exec(`UPDATE http_cache_generations SET last_access_bucket_s=MAX(last_access_bucket_s,?) WHERE id=?`, bucket, r.GenerationID)
 	if err != nil {
 		return err
 	}
@@ -282,7 +282,7 @@ func (s *Service) collectLocked(id string) error {
 	var current bool
 	var storageID string
 	var bytes int64
-	err := s.db.DB.QueryRow(`SELECT is_current,storage_id,size_bytes FROM http_cache_generations WHERE id=?`, id).Scan(&current, &storageID, &bytes)
+	err := s.db.HTTPCacheDB().QueryRow(`SELECT is_current,storage_id,size_bytes FROM http_cache_generations WHERE id=?`, id).Scan(&current, &storageID, &bytes)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -293,7 +293,7 @@ func (s *Service) collectLocked(id string) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.DB.Exec(`DELETE FROM http_cache_generations WHERE id=? AND is_current=0`, id)
+	_, err = s.db.HTTPCacheDB().Exec(`DELETE FROM http_cache_generations WHERE id=? AND is_current=0`, id)
 	if err == nil && removed && bytes > 0 {
 		metric := storageID
 		if uid, _, ok := identity.ParseStorageID(storageID); ok {
@@ -309,14 +309,14 @@ func (s *Service) retire(r *Row) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.db.DB.Exec(`UPDATE http_cache_generations SET is_current=0,retired_at_s=COALESCE(retired_at_s,?) WHERE id=?`, s.now().Unix(), r.GenerationID)
+	_, err := s.db.HTTPCacheDB().Exec(`UPDATE http_cache_generations SET is_current=0,retired_at_s=COALESCE(retired_at_s,?) WHERE id=?`, s.now().Unix(), r.GenerationID)
 	if err == nil {
 		err = s.collectLocked(r.GenerationID)
 	}
 	return err
 }
 func (s *Service) recover() error {
-	rows, err := s.db.DB.Query(`SELECT ` + columns + ` FROM http_cache_generations`)
+	rows, err := s.db.HTTPCacheDB().Query(`SELECT ` + columns + ` FROM http_cache_generations`)
 	if err != nil {
 		return err
 	}
@@ -352,7 +352,7 @@ func (s *Service) recover() error {
 			} else if !errors.Is(e, fs.ErrNotExist) {
 				return e
 			}
-			if _, err = s.db.DB.Exec(`UPDATE http_cache_generations SET is_current=0,retired_at_s=? WHERE id=?`, s.now().Unix(), r.GenerationID); err != nil {
+			if _, err = s.db.HTTPCacheDB().Exec(`UPDATE http_cache_generations SET is_current=0,retired_at_s=? WHERE id=?`, s.now().Unix(), r.GenerationID); err != nil {
 				return err
 			}
 		}

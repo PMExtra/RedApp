@@ -188,7 +188,7 @@ func (s *Service) warmCurrent(ctx context.Context, f fill, old *Row) warmplan.It
 func (s *Service) warmCurrentGeneration(entry application.Entry, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tx, err := s.db.DB.Begin()
+	tx, err := s.db.HTTPCacheDB().Begin()
 	if err != nil {
 		return err
 	}

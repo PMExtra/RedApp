@@ -15,7 +15,7 @@ func TestPermanentDeleteIsScopedAndRestartable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.DB.Close()
+	defer s.Close()
 	s.CreateVendor(directoryVendor("acme"))
 	a, err := s.CreateApplication("acme", ApplicationInput{ID: "files", Name: LocalizedText{"Files", "文件"}, Provider: "hosted", Enabled: true})
 	if err != nil {
@@ -34,7 +34,7 @@ func TestPermanentDeleteIsScopedAndRestartable(t *testing.T) {
 	path := filepath.Join(dir, "objects", "hosted", id)
 	os.MkdirAll(filepath.Dir(path), 0700)
 	os.WriteFile(path, []byte("fixture"), 0600)
-	if _, err = s.DB.Exec(`INSERT INTO hosted_files(app_uid,path,id,sha256,size_bytes,created_at_s) VALUES(?,'file',?,'hash',7,1)`, a.UID, id); err != nil {
+	if _, err = s.db.Exec(`INSERT INTO hosted_files(app_uid,path,id,sha256,size_bytes,created_at_s) VALUES(?,'file',?,'hash',7,1)`, a.UID, id); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.PermanentlyDeleteApplication(a.Key, a.Revision+1); !errors.Is(err, ErrConflict) {
@@ -62,7 +62,7 @@ func TestPermanentDeleteIsScopedAndRestartable(t *testing.T) {
 	}
 	for _, table := range []string{"metric_counters", "events"} {
 		var n int
-		if err = s.DB.QueryRow(`SELECT count(*) FROM `+table+` WHERE app_id=?`, a.MetricsID()).Scan(&n); err != nil || n != 0 {
+		if err = s.db.QueryRow(`SELECT count(*) FROM `+table+` WHERE app_id=?`, a.MetricsID()).Scan(&n); err != nil || n != 0 {
 			t.Fatalf("%s: %d private rows recreated after deletion: %v", table, n, err)
 		}
 	}
@@ -73,7 +73,7 @@ func TestPermanentDeleteIsScopedAndRestartable(t *testing.T) {
 			column = "entity_uid"
 		}
 		var n int
-		if err = s.DB.QueryRow(`SELECT count(*) FROM `+table+` WHERE `+column+`=?`, a.UID).Scan(&n); err != nil || n != 0 {
+		if err = s.db.QueryRow(`SELECT count(*) FROM `+table+` WHERE `+column+`=?`, a.UID).Scan(&n); err != nil || n != 0 {
 			t.Fatalf("%s kept %d rows of the deleted application: %v", table, n, err)
 		}
 	}

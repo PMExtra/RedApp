@@ -128,7 +128,7 @@ func TestExhaustedRetriesKeepResumablePart(t *testing.T) {
 	rd.Close()
 	half := int64(len(upstream.data) / 2)
 	views := m.Snapshot()
-	if len(views) != 1 || views[0].State != "interrupted" || views[0].Bytes != half || !views[0].Current || views[0].Error != "Upstream download interrupted" {
+	if len(views) != 1 || views[0].State != "interrupted" || views[0].Bytes != half || !views[0].Current || views[0].Error != "upstream download interrupted" {
 		t.Fatalf("exhausted retries did not keep the resumable part: %+v", views)
 	}
 	if st, err := os.Stat(views[0].Path); err != nil || st.Size() < half {

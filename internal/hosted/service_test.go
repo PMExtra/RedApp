@@ -2,7 +2,6 @@ package hosted
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"io"
 	"os"
@@ -15,6 +14,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
+	"github.com/PMExtra/RedApp/internal/testutil"
 )
 
 type testBudget struct {
@@ -47,22 +47,15 @@ func setup(t *testing.T) (*Service, application.Entry, *testBudget) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	t.Cleanup(func() { db.DB.Close() })
-	v, e := db.CreateVendor(store.VendorInput{ID: "acme", Name: store.LocalizedText{En: "Acme", ZhCN: "示例"}, Enabled: true})
-	if e != nil {
-		t.Fatal(e)
-	}
-	a, e := db.CreateApplication(v.ID, store.ApplicationInput{ID: "files", Name: store.LocalizedText{En: "Files", ZhCN: "文件"}, Provider: application.Hosted, Enabled: true})
-	if e != nil {
-		t.Fatal(e)
-	}
+	t.Cleanup(func() { db.Close() })
+	testutil.App(t, db, "acme/files", store.ApplicationInput{Provider: application.Hosted})
 	budget := &testBudget{make(chan struct{}, 1), make(chan struct{}, 1), 16}
 	s, e := New(dir, db, budget)
 	if e != nil {
 		t.Fatal(e)
 	}
 	t.Cleanup(s.Close)
-	return s, application.Entry{UID: a.UID, Provider: a.Provider, Descriptor: application.Descriptor{ID: a.Key}, Revision: a.Revision, VendorRevision: v.Revision}, budget
+	return s, testutil.Entry(t, db, "acme/files", application.Entry{}), budget
 }
 func transferID(t *testing.T) string {
 	t.Helper()
@@ -94,7 +87,7 @@ func TestHostedAtomicCancellationLimitsAndConflict(t *testing.T) {
 	if _, err := writer.Write([]byte("partial")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.HostedFile(entry.UID, "nested/file.bin"); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := s.db.HostedFile(entry.UID, "nested/file.bin"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("partial file visible", err)
 	}
 	if _, err := s.Put(ctx, entry, "other", "", transferID(t), body("x")); !errors.Is(err, download.ErrWriterLimit) {
@@ -160,7 +153,7 @@ func TestHostedAtomicCancellationLimitsAndConflict(t *testing.T) {
 	if string(oldBytes) != "old" {
 		t.Fatal("existing reader disrupted", string(oldBytes))
 	}
-	if err = s.Delete(entry.UID, first.ID); !errors.Is(err, sql.ErrNoRows) {
+	if err = s.Delete(entry.UID, first.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("stale delete removed replacement", err)
 	}
 	f, row, release, err := s.Open(entry.UID, first.Path)
@@ -235,7 +228,7 @@ func TestHostedDeleteFencesInflightReplacementAndPreservesOpenedReader(t *testin
 	if err = s.Delete(entry.UID, first.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.db.HostedFile(entry.UID, first.Path); !errors.Is(err, sql.ErrNoRows) {
+	if _, err = s.db.HostedFile(entry.UID, first.Path); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal("delete left public row", err)
 	}
 	writer.Close()

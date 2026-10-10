@@ -13,7 +13,7 @@ import (
 // data directory may contain before the database is created.
 const LockName = "instance.lock"
 
-var errLockNotRegular = errors.New("Instance lock must be a regular file")
+var errLockNotRegular = errors.New("instance lock must be a regular file")
 
 type Guard struct {
 	File      *os.File
@@ -43,7 +43,7 @@ func Acquire(dir string) (*Guard, error) {
 	}
 	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
-		return nil, fmt.Errorf("Data directory is already owned by another instance: %w", err)
+		return nil, fmt.Errorf("data directory is already owned by another instance: %w", err)
 	}
 	return &Guard{f, real}, nil
 }
@@ -69,7 +69,7 @@ func Check(dir string) error {
 		return errLockNotRegular
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err != nil {
-		return fmt.Errorf("Data directory is already owned by another instance: %w", err)
+		return fmt.Errorf("data directory is already owned by another instance: %w", err)
 	}
 	return nil
 }

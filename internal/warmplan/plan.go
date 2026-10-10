@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 )
 
-var ErrLimited = errors.New("Prewarm task read limit reached")
+var ErrLimited = errors.New("prewarm task read limit reached")
 
 type Limits struct {
 	MaxFiles           int   `json:"max_files"`

@@ -2,17 +2,17 @@ package history
 
 import (
 	"crypto/rand"
-	"database/sql"
 	"encoding/hex"
 	"errors"
-	"github.com/PMExtra/RedApp/internal/store"
 	"math"
 	"strings"
 	"time"
+
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
 type History struct {
-	db   *sql.DB
+	db   *store.Store
 	boot string
 }
 
@@ -21,11 +21,9 @@ func Open(db *store.Store) (*History, error) {
 	if _, err := rand.Read(boot[:]); err != nil {
 		return nil, err
 	}
-	return &History{db: db.DB, boot: hex.EncodeToString(boot[:])}, nil
+	return &History{db: db, boot: hex.EncodeToString(boot[:])}, nil
 }
 
-// Record and maintenance share a transaction. A failure cannot delete raw
-// observations whose closed-hour aggregates have not been committed.
 // Observation is one bounded global or application metric snapshot.
 type Observation struct {
 	Scope   string
@@ -36,135 +34,46 @@ type Observation struct {
 func (h *History) Record(at time.Time, metrics []Metric) error {
 	return h.RecordScoped(at, []Observation{{Scope: "global", Metrics: metrics}})
 }
+
+// RecordScoped validates every observation before storing any of them.
+// Recording and hourly maintenance share one store transaction.
 func (h *History) RecordScoped(at time.Time, observations []Observation) error {
-	tx, err := h.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	minute := at.UTC().Truncate(time.Minute).Unix()
-	observed := at.Unix()
-	var watermark int64
-	if err = tx.QueryRow("SELECT aggregated_before_s FROM metric_history_state WHERE id=1").Scan(&watermark); err != nil {
-		return err
-	}
-	if minute < watermark {
-		return errors.New("Metrics clock moved behind committed hourly aggregates")
-	}
+	samples := []store.MetricSample{}
 	for _, observation := range observations {
 		if observation.Scope != "global" && observation.Scope != "app" || observation.Scope == "global" && observation.AppID != "" || observation.Scope == "app" && !store.ValidAppID(observation.AppID) {
-			return errors.New("Invalid metric scope")
-		}
-		if observation.AppID != "" {
-			exists, e := store.PrivateApplicationExists(tx, observation.AppID)
-			if e != nil {
-				return e
-			}
-			if !exists {
-				continue
-			}
+			return errors.New("invalid metric scope")
 		}
 		for _, metric := range observation.Metrics {
 			definition, ok := definitionFor(observation.Scope, metric.Key)
 			if !ok {
-				return errors.New("Unknown metric for this scope")
+				return errors.New("unknown metric for this scope")
 			}
 			if metric.Value == nil {
 				continue
 			}
 			value := *metric.Value
 			if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
-				return errors.New("Invalid metric observation")
+				return errors.New("invalid metric observation")
 			}
-			duration := 0.0
-			var delta *float64
-			if definition.Kind == "counter" {
-				var previous float64
-				var previousAt, previousMinute int64
-				var previousBoot string
-				err = tx.QueryRow("SELECT value,observed_at_s,boot,t_s FROM metric_samples WHERE scope=? AND app_id=? AND metric=? ORDER BY t_s DESC LIMIT 1", observation.Scope, observation.AppID, metric.Key).Scan(&previous, &previousAt, &previousBoot, &previousMinute)
-				if err != nil && !errors.Is(err, sql.ErrNoRows) {
-					return err
-				}
-				elapsed := observed - previousAt
-				if err == nil && previousBoot == h.boot && minute-previousMinute == 60 && value >= previous && elapsed > 0 && elapsed <= 90 {
-					difference := value - previous
-					delta = &difference
-					duration = float64(elapsed)
-				}
-			} else if definition.Kind == "rate" {
-				if metric.ObservedSeconds != 5 {
-					return errors.New("Rate observations require a complete five-second window")
-				}
-				duration = 5
+			if definition.Kind == "rate" && metric.ObservedSeconds != 5 {
+				return errors.New("rate observations require a complete five-second window")
 			}
-			if _, err = tx.Exec("INSERT OR IGNORE INTO metric_samples VALUES(?,?,?,?,?,?,?,?,?)", observation.Scope, observation.AppID, metric.Key, minute, observed, h.boot, value, delta, duration); err != nil {
-				return err
-			}
+			samples = append(samples, store.MetricSample{Scope: observation.Scope, AppID: observation.AppID, Key: metric.Key, Kind: store.MetricKind(definition.Kind), Value: value})
 		}
 	}
-	if err = h.maintain(tx, at); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return h.db.RecordMetrics(at, h.boot, samples, storageCatalog())
 }
+
 func (h *History) Maintain(at time.Time) error {
-	tx, err := h.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err = h.maintain(tx, at); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-func (h *History) maintain(tx *sql.Tx, at time.Time) error {
-	hour := at.UTC().Truncate(time.Hour).Unix()
-	var watermark int64
-	if err := tx.QueryRow("SELECT aggregated_before_s FROM metric_history_state WHERE id=1").Scan(&watermark); err != nil {
-		return err
-	}
-	if hour < watermark {
-		return errors.New("Metrics clock moved behind committed hourly aggregates")
-	}
-	if hour > watermark {
-		for _, d := range Definitions() {
-			query := `INSERT INTO metric_hours(scope,app_id,metric,t_s,min,max,avg,last,count,delta,delta_count,duration_s) ` + hourlySelect(d.Kind, false) + `
- ON CONFLICT(scope,app_id,metric,t_s) DO UPDATE SET min=excluded.min,max=excluded.max,avg=excluded.avg,last=excluded.last,count=excluded.count,delta=excluded.delta,delta_count=excluded.delta_count,duration_s=excluded.duration_s`
-
-			if _, err := tx.Exec(query, hour, d.Key, watermark, hour); err != nil {
-				return err
-			}
-		}
-		if _, err := tx.Exec("UPDATE metric_history_state SET aggregated_before_s=? WHERE id=1", hour); err != nil {
-			return err
-		}
-	}
-	// UTC bucket-aligned retention includes the leading partial range bucket.
-	if _, err := tx.Exec("DELETE FROM metric_samples WHERE t_s<?", at.UTC().Truncate(time.Minute).Add(-24*time.Hour).Unix()); err != nil {
-		return err
-	}
-	_, err := tx.Exec("DELETE FROM metric_hours WHERE t_s<?", at.UTC().Truncate(time.Hour).Add(-30*24*time.Hour).Unix())
-	return err
+	return h.db.MaintainMetrics(at, storageCatalog())
 }
 
-// hourlySelect also serves read-only queries before the minute sampler has
-// committed the most recently closed hour. It never averages counters.
-func hourlySelect(kind string, scoped bool) string {
-	minExpr, maxExpr, avgExpr := "MIN(value)", "MAX(value)", "AVG(value)"
-	if kind == "counter" {
-		minExpr, maxExpr, avgExpr = "NULL", "NULL", "NULL"
-	} else if kind == "rate" {
-		avgExpr = "SUM(value*duration_s)/NULLIF(SUM(duration_s),0)"
+func storageCatalog() []store.MetricDefinition {
+	out := []store.MetricDefinition{}
+	for _, d := range Definitions() {
+		out = append(out, store.MetricDefinition{Key: d.Key, Kind: store.MetricKind(d.Kind)})
 	}
-	scopeFilter := ""
-	if scoped {
-		scopeFilter = " AND scope=? AND app_id=?"
-	}
-	return `SELECT scope,app_id,metric,(t_s/3600)*3600,` + minExpr + `,` + maxExpr + `,` + avgExpr + `,
- (SELECT value FROM metric_samples tail WHERE tail.scope=s.scope AND tail.app_id=s.app_id AND tail.metric=s.metric AND tail.t_s>=(s.t_s/3600)*3600 AND tail.t_s<(s.t_s/3600)*3600+3600 AND tail.t_s<? ORDER BY tail.t_s DESC LIMIT 1),
- COUNT(*),SUM(delta),COUNT(delta),SUM(duration_s) FROM metric_samples s WHERE metric=? AND t_s>=? AND t_s<?` + scopeFilter + ` GROUP BY scope,app_id,metric,(t_s/3600)*3600`
+	return out
 }
 
 // AppDefinitions contains only bounded metrics with real application ownership.
@@ -214,26 +123,19 @@ type Series struct {
 	Points            []Point `json:"points"`
 }
 
-func pointer(v sql.NullFloat64) *float64 {
-	if !v.Valid {
-		return nil
-	}
-	n := v.Float64
-	return &n
-}
 func (h *History) Query(key, window string, at time.Time) (Series, error) {
 	return h.query("global", "", key, window, at)
 }
 func (h *History) QueryFor(app, key, window string, at time.Time) (Series, error) {
 	if !store.ValidAppID(app) {
-		return Series{}, errors.New("Canonical application identity is required")
+		return Series{}, errors.New("canonical application identity is required")
 	}
 	return h.query("app", app, key, window, at)
 }
 func (h *History) query(scope, app, key, window string, at time.Time) (Series, error) {
 	d, ok := definitionFor(scope, key)
 	if !ok {
-		return Series{}, errors.New("Unknown metric for this scope")
+		return Series{}, errors.New("unknown metric for this scope")
 	}
 	duration := time.Duration(0)
 	resolution := time.Hour
@@ -246,111 +148,37 @@ func (h *History) query(scope, app, key, window string, at time.Time) (Series, e
 	case "30d":
 		duration = 30 * 24 * time.Hour
 	default:
-		return Series{}, errors.New("History range must be 24h, 7d, or 30d")
+		return Series{}, errors.New("history range must be 24h, 7d, or 30d")
 	}
 	from := at.UTC().Add(-duration).Truncate(resolution).Unix()
 	to := at.UTC().Truncate(resolution).Unix()
 	step := int64(resolution / time.Second)
 	series := Series{Definition: d, Scope: scope, AppID: app, Range: window, ResolutionSeconds: step, From: from, To: at.Unix(), Points: []Point{}}
-	tx, err := h.db.Begin()
+	values := map[int64]Point{}
+	var buckets []store.MetricBucket
+	var err error
+	if resolution == time.Minute {
+		buckets, err = h.db.MetricMinutes(scope, app, key, from, to)
+	} else {
+		buckets, err = h.db.MetricHours(scope, app, key, store.MetricKind(d.Kind), from, to, at)
+	}
 	if err != nil {
 		return Series{}, err
 	}
-	defer tx.Rollback()
-	values := map[int64]Point{}
-	var rows *sql.Rows
-	if resolution == time.Minute {
-		rows, err = tx.Query("SELECT t_s,value,delta,duration_s FROM metric_samples WHERE scope=? AND app_id=? AND metric=? AND t_s>=? AND t_s<=? ORDER BY t_s", scope, app, key, from, to)
-		if err != nil {
-			return Series{}, err
-		}
-		for rows.Next() {
-			var p Point
-			var value, delta sql.NullFloat64
-			if err = rows.Scan(&p.Time, &value, &delta, &p.ObservedSeconds); err != nil {
-				rows.Close()
-				return Series{}, err
-			}
-			p.Last = pointer(value)
+	for _, b := range buckets {
+		p := Point{Time: b.Time, Min: b.Min, Max: b.Max, Avg: b.Avg, Last: b.Last, Count: b.Count, Delta: b.Delta, DeltaCount: b.DeltaCount, ObservedSeconds: b.ObservedSeconds}
+		if resolution == time.Minute {
 			p.Value = p.Last
-			p.Count = 1
-			p.Delta = pointer(delta)
-			if delta.Valid {
-				p.DeltaCount = 1
-			}
 			if d.Kind != "counter" {
-				p.Min = p.Last
-				p.Max = p.Last
-				p.Avg = p.Last
+				p.Min, p.Max, p.Avg = p.Last, p.Last, p.Last
 			}
-			values[p.Time] = p
-		}
-	} else {
-		rows, err = tx.Query("SELECT t_s,min,max,avg,last,count,delta,delta_count,duration_s FROM metric_hours WHERE scope=? AND app_id=? AND metric=? AND t_s>=? AND t_s<? ORDER BY t_s", scope, app, key, from, to)
-		if err != nil {
-			return Series{}, err
-		}
-		for rows.Next() {
-			var p Point
-			var min, max, avg, last, delta sql.NullFloat64
-			if err = rows.Scan(&p.Time, &min, &max, &avg, &last, &p.Count, &delta, &p.DeltaCount, &p.ObservedSeconds); err != nil {
-				rows.Close()
-				return Series{}, err
-			}
-			p.Min = pointer(min)
-			p.Max = pointer(max)
-			p.Avg = pointer(avg)
-			p.Last = pointer(last)
-			p.Delta = pointer(delta)
+		} else {
 			p.Value = p.Avg
 			if d.Kind == "counter" {
 				p.Value = p.Last
 			}
-			values[p.Time] = p
 		}
-	}
-	if err = rows.Err(); err != nil {
-		rows.Close()
-		return Series{}, err
-	}
-	rows.Close()
-	if resolution == time.Hour {
-		var watermark int64
-		if err = tx.QueryRow("SELECT aggregated_before_s FROM metric_history_state WHERE id=1").Scan(&watermark); err != nil {
-			return Series{}, err
-		}
-		start := watermark
-		if start < from {
-			start = from
-		}
-		rows, err = tx.Query(hourlySelect(d.Kind, true), at.Unix()+1, key, start, at.Unix()+1, scope, app)
-		if err != nil {
-			return Series{}, err
-		}
-		for rows.Next() {
-			var p Point
-			var metric, metricScope, metricApp string
-			var min, max, avg, last, delta sql.NullFloat64
-			if err = rows.Scan(&metricScope, &metricApp, &metric, &p.Time, &min, &max, &avg, &last, &p.Count, &delta, &p.DeltaCount, &p.ObservedSeconds); err != nil {
-				rows.Close()
-				return Series{}, err
-			}
-			p.Min = pointer(min)
-			p.Max = pointer(max)
-			p.Avg = pointer(avg)
-			p.Last = pointer(last)
-			p.Delta = pointer(delta)
-			p.Value = p.Avg
-			if d.Kind == "counter" {
-				p.Value = p.Last
-			}
-			values[p.Time] = p
-		}
-		if err = rows.Err(); err != nil {
-			rows.Close()
-			return Series{}, err
-		}
-		rows.Close()
+		values[p.Time] = p
 	}
 
 	for t := from; t <= to; t += step {
@@ -365,9 +193,6 @@ func (h *History) query(scope, app, key, window string, at time.Time) (Series, e
 		}
 		p.Incomplete = p.Count < expected
 		series.Points = append(series.Points, p)
-	}
-	if err = tx.Commit(); err != nil {
-		return Series{}, err
 	}
 	return series, nil
 }

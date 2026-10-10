@@ -63,7 +63,7 @@ func (s *Store) DirectoryPage(page, limit int, q, state string) (Page[VendorCard
 	if !validDirectoryPage(page, limit, state) {
 		return Page[VendorCard]{}, ErrInvalidDirectory
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.read.Begin()
 	if err != nil {
 		return Page[VendorCard]{}, err
 	}
@@ -122,7 +122,7 @@ func (s *Store) ApplicationPage(vendor string, page, limit int, q, state string)
 	if !validDirectoryPage(page, limit, state) {
 		return Page[Application]{}, ErrInvalidDirectory
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.read.Begin()
 	if err != nil {
 		return Page[Application]{}, err
 	}
@@ -186,7 +186,7 @@ func (s *Store) ApplicationsMatching(vendor, q, state string) ([]Application, er
 	if !validDirectoryPage(1, 1, state) {
 		return nil, ErrInvalidDirectory
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.read.Begin()
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +209,7 @@ func (s *Store) ApplicationCategoryPage(vendor string, page, limit int, q, categ
 	if !validDirectoryPage(page, limit, "enabled") {
 		return Page[Application]{}, ErrInvalidDirectory
 	}
-	tx, err := s.DB.Begin()
+	tx, err := s.read.Begin()
 	if err != nil {
 		return Page[Application]{}, err
 	}
@@ -227,7 +227,7 @@ func (s *Store) SearchVendors(q string, limit int) ([]Vendor, error) {
 	if limit < 1 || limit > 100 {
 		return nil, ErrInvalidDirectory
 	}
-	rows, err := s.DB.Query(`SELECT `+vendorColumns+` FROM vendors v WHERE v.enabled=1 AND v.deleted_at_s IS NULL AND `+vendorMatch+` ORDER BY v.id LIMIT ?`, append(vendorMatchArgs(q), limit)...)
+	rows, err := s.read.Query(`SELECT `+vendorColumns+` FROM vendors v WHERE v.enabled=1 AND v.deleted_at_s IS NULL AND `+vendorMatch+` ORDER BY v.id LIMIT ?`, append(vendorMatchArgs(q), limit)...)
 	if err != nil {
 		return nil, err
 	}

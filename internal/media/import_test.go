@@ -93,3 +93,29 @@ func TestStaticExchangeIdentityAndRollbackOnlyNewUnreferenced(t *testing.T) {
 		t.Fatal("static bytes changed")
 	}
 }
+
+// A failed import keeps an image it created when another caller wrote the same
+// content meanwhile: that caller may already hold the path for a reference.
+func TestFailedImportKeepsImageWrittenConcurrently(t *testing.T) {
+	s, _ := testStore(t)
+	raw := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 30"><path d="M0 0L3 3" /></svg>`)
+	path, err := StaticImagePath(raw, ".svg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fail := errors.New("publication failed")
+	err = s.ApplyImages(map[string][]byte{path: raw}, func(string) bool { return false }, func() error {
+		if concurrent, err := s.PutStatic(raw, ".svg"); err != nil || concurrent != path {
+			t.Fatal("concurrent upload", concurrent, err)
+		}
+		return fail
+	})
+	if !errors.Is(err, fail) {
+		t.Fatal(err)
+	}
+	f, _, err := s.Open(path)
+	if err != nil {
+		t.Fatal("image handed to another caller was removed", err)
+	}
+	f.Close()
+}
