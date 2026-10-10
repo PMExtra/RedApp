@@ -89,8 +89,11 @@ describe("hosted files", () => {
     await user.click(screen.getByRole("button", { name: "Save file" }));
 
     await vi.advanceTimersByTimeAsync(TRANSFER_FIRST_POLL_MS + TRANSFER_POLL_MS + 10);
-    expect(await screen.findByText("1.00 MiB of 4.00 MiB")).toBeInTheDocument();
+    const progressText = await screen.findByText("1.00 MiB of 4.00 MiB");
     expect(screen.getByRole("progressbar", { name: "Transfer progress" })).toBeInTheDocument();
+    // Screen readers hear the state, not every progress update.
+    expect(screen.getByText("Transferring the file…")).toHaveAttribute("role", "status");
+    expect(progressText.closest("[role=status], [aria-live]")).toBeNull();
     expect(polls.length).toBeGreaterThanOrEqual(2);
     expect(polls[0]).toBeGreaterThanOrEqual(TRANSFER_FIRST_POLL_MS);
     expect(transferId).toMatch(/^[0-9a-f]{32}$/);
@@ -195,6 +198,70 @@ describe("hosted files", () => {
     await waitFor(() => {
       expect(screen.queryByRole("progressbar", { name: "Transfer progress" })).toBeNull();
     });
+  });
+
+  it("stops offering to cancel once the server stores the file", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    useHandlers(
+      list([]),
+      http.post("*/admin/api/apps/:vendor/:app/files/import", async () => {
+        await new Promise(() => undefined);
+        return HttpResponse.json({});
+      }),
+      mockApi(
+        "get",
+        "/admin/api/apps/{vendor}/{app}/files/transfers/{transfer_id}",
+        ({ params }) => ({
+          id: String(params.transfer_id),
+          path: "tools/setup.exe",
+          bytes: 2048,
+          total_bytes: 2048,
+          state: "committing" as const,
+        }),
+      ),
+    );
+    const user = await render();
+    await user.click(await screen.findByRole("radio", { name: "Import from a URL" }));
+    // Signed links can be long: up to the 8192 characters the server accepts.
+    const longUrl = `https://downloads.example.com/setup.exe?token=${"a".repeat(6000)}`;
+    await user.click(screen.getByRole("textbox", { name: /HTTP\(S\) URL/ }));
+    await user.paste(longUrl);
+    expect(screen.getByRole("textbox", { name: /HTTP\(S\) URL/ })).toHaveValue(longUrl);
+    await user.type(screen.getByRole("textbox", { name: /^Path/ }), "tools/setup.exe");
+    await user.click(screen.getByRole("button", { name: "Save file" }));
+    expect(screen.getByRole("button", { name: "Cancel transfer" })).toBeInTheDocument();
+
+    await vi.advanceTimersByTimeAsync(TRANSFER_FIRST_POLL_MS + 10);
+    expect(await screen.findAllByText("Saving the file…")).not.toHaveLength(0);
+    expect(screen.queryByRole("button", { name: "Cancel transfer" })).toBeNull();
+  });
+
+  it("moves to the new last page when its last file is deleted", async () => {
+    let files = Array.from({ length: 26 }, (_, index) => hostedFile(`file-${String(index)}.bin`));
+    useHandlers(
+      mockApi("get", "/admin/api/apps/{vendor}/{app}/files", ({ request }) => {
+        const page = Number(new URL(request.url).searchParams.get("page") ?? "1");
+        return hostedFilePage({
+          items: files.slice((page - 1) * 25, page * 25),
+          page,
+          total: files.length,
+        });
+      }),
+      mockApi("delete", "/admin/api/apps/{vendor}/{app}/files/{file_id}", ({ params }) => {
+        files = files.filter((file) => file.id !== String(params.file_id));
+        return noContent();
+      }),
+    );
+    const user = await render();
+    const table = await screen.findByRole("table", { name: "Hosted files" });
+    await user.click(await screen.findByRole("button", { name: "Page 2" }));
+    expect(await within(table).findByText("file-25.bin")).toBeInTheDocument();
+    await user.click(within(table).getByRole("button", { name: "Delete file-25.bin" }));
+    await user.click(
+      within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Delete" }),
+    );
+    expect(await within(table).findByText("file-0.bin")).toBeInTheDocument();
+    expect(within(table).queryByText("No files yet.")).toBeNull();
   });
 
   it("shows a failed upload and keeps the form", async () => {
