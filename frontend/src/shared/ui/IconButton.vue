@@ -3,6 +3,9 @@ import Button from "./Button.vue";
 import type { ButtonSize, ButtonVariant } from "./types";
 import Tooltip from "./Tooltip.vue";
 
+// Listeners and attributes go to the button itself: the tooltip root renders
+// no element of its own, so fallthrough attributes (including @click) would be lost.
+defineOptions({ inheritAttrs: false });
 withDefaults(
   defineProps<{
     /** Accessible name; also shown as a tooltip. */
@@ -22,6 +25,7 @@ withDefaults(
 <template>
   <Button
     v-if="noTooltip"
+    v-bind="$attrs"
     icon
     :variant="variant"
     :size="size"
@@ -34,6 +38,7 @@ withDefaults(
   </Button>
   <Tooltip v-else :content="label">
     <Button
+      v-bind="$attrs"
       icon
       :variant="variant"
       :size="size"
