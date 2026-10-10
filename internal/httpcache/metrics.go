@@ -1,88 +1,59 @@
 package httpcache
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"io"
 	"net/http"
-	"sync"
-	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
-	"github.com/PMExtra/RedApp/internal/download"
-	"github.com/PMExtra/RedApp/internal/fsutil"
-	"github.com/PMExtra/RedApp/internal/identity"
+	"github.com/PMExtra/RedApp/internal/spool"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
-// Snapshot maps complete HTTP bodies into the shared resource/disk view without
-// assigning release versions or inventing trusted expected digests.
-func (s *Service) Snapshot() ([]download.View, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	rows, err := s.db.HTTPCacheDB().Query(`SELECT ` + columns + ` FROM http_cache_generations`)
+// Files reports stored entries and the part files of running fills for the
+// shared capacity and disk metrics.
+func (s *Service) Files() ([]spool.FileStatus, error) {
+	entries, err := s.db.AllHTTPCacheEntries()
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []download.View{}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Pins also include short maintenance holds; only as many as there are
+	// public responses for the path count as readers.
 	remaining := map[string]int{}
 	for key, count := range s.readers {
 		remaining[key] = count
 	}
-	for rows.Next() {
-		r, err := scan(rows)
-		if err != nil {
-			return nil, err
-		}
-		metric := r.storageID
-		if uid, _, ok := identity.ParseStorageID(r.storageID); ok {
-			metric = identity.MetricsID(uid)
-		}
-		logical := sha256.Sum256([]byte(r.storageID + "\x00" + r.Path))
-		size := r.SizeBytes
-		resource := download.Resource{Application: r.storageID, MetricsID: metric, Key: r.Path, ID: hex.EncodeToString(logical[:]), Size: &size, Labels: map[string]string{"name": r.Path}}
-		key := r.storageID + "\x00" + r.Path
-		readers := s.pins[r.GenerationID]
-		if readers > remaining[key] {
-			readers = remaining[key]
-		}
+	out := make([]spool.FileStatus, 0, len(entries)+len(s.streams))
+	for _, e := range entries {
+		key := e.StorageID + "\x00" + e.Path
+		readers := min(s.pins[e.ID], remaining[key])
 		remaining[key] -= readers
-		out = append(out, download.View{Generation: download.Generation{ID: r.GenerationID, Resource: resource, State: "complete", Path: s.bodyPath(r.GenerationID), Bytes: r.SizeBytes, Total: r.SizeBytes, Started: r.FetchedAt, Received: r.FetchedAt, Finished: r.FetchedAt, Retired: !r.current}, Readers: readers, Current: r.current, SampledAt: s.now()})
-	}
-	if err = rows.Err(); err != nil {
-		return nil, err
-	}
-	for _, t := range s.transfers {
-		logical := sha256.Sum256([]byte(t.entry.StorageID() + "\x00" + t.path))
-		duration := s.now().Sub(t.started)
-		average := float64(0)
-		if duration > 0 {
-			average = float64(t.bytes) / duration.Seconds()
+		if st := s.streams[e.ID]; st != nil {
+			readers += st.readers
 		}
-		key := t.entry.StorageID() + "\x00" + t.path
-		readers := remaining[key]
-		remaining[key] = 0
-		out = append(out, download.View{Generation: download.Generation{ID: t.id, Resource: download.Resource{Application: t.entry.StorageID(), MetricsID: t.entry.MetricsID(), Key: t.path, ID: hex.EncodeToString(logical[:]), Labels: map[string]string{"name": t.path}}, State: "downloading", Path: t.filePath, Bytes: t.diskBytes, Total: -1, SourceBytes: t.bytes, Started: t.started}, ActiveWriter: true, Readers: readers, Current: true, AverageBPS: average, DownloadNS: int64(duration), SampledAt: s.now()})
+		out = append(out, spool.FileStatus{Scope: metricScope(e.StorageID), Path: s.bodyPath(e.ID), Bytes: e.SizeBytes, State: "complete", Current: e.Current, Retired: !e.Current, Readers: readers})
+	}
+	for _, st := range s.streams {
+		if st.finished {
+			continue
+		}
+		out = append(out, spool.FileStatus{Scope: st.fill.entry.MetricsID(), Path: s.partPath(st.id), Bytes: st.body.Size(), State: "downloading", Current: true, ActiveWriter: true, Readers: st.readers})
 	}
 	return out, nil
 }
 
-type metricBody struct {
-	transferID string
+// upstreamBody counts the bytes of an upstream body that is not streamed into
+// the cache, such as an uncacheable response or a directory listing.
+type upstreamBody struct {
 	io.ReadCloser
 	s   *Service
 	app string
 }
 
-func (b *metricBody) Read(p []byte) (int, error) {
+func (b *upstreamBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
 	if n > 0 {
-		b.s.mu.Lock()
-		if t := b.s.transfers[b.transferID]; t != nil {
-			t.bytes += int64(n)
-		}
-		b.s.mu.Unlock()
 		_ = b.s.db.AddFor(b.app, "upstream_bytes", int64(n)) // Buffered; accounting never fails a transfer.
 	}
 	return n, err
@@ -138,30 +109,4 @@ func (s *Service) finishMetrics(w *metricWriter, entry application.Entry, path s
 		_ = s.db.RecordEvent(store.Event{AppID: entry.MetricsID(), ResourceKey: path, Category: "http", Code: "download_failed", Message: "HTTP download did not complete"})
 	}
 	s.db.SettleCounters()
-}
-
-func (s *Service) startTransfer(entry application.Entry, path string) (string, func(), error) {
-	id, err := fsutil.RandomID()
-	if err != nil {
-		return "", nil, err
-	}
-	s.mu.Lock()
-	s.transfers[id] = &transfer{id: id, path: path, entry: entry, started: time.Now()}
-	s.mu.Unlock()
-	var once sync.Once
-	return id, func() { once.Do(func() { s.mu.Lock(); delete(s.transfers, id); s.mu.Unlock() }) }, nil
-}
-
-type spoolMeter struct {
-	s  *Service
-	id string
-}
-
-func (m *spoolMeter) Write(p []byte) (int, error) {
-	m.s.mu.Lock()
-	if t := m.s.transfers[m.id]; t != nil {
-		t.diskBytes += int64(len(p))
-	}
-	m.s.mu.Unlock()
-	return len(p), nil
 }

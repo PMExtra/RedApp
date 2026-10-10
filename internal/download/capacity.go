@@ -81,9 +81,7 @@ func (m *Manager) PurgeApplication(uid string, remove func() error) error {
 	}
 	for id, g := range m.all {
 		if strings.HasPrefix(g.Resource.Application, prefix) {
-			if g.file != nil {
-				g.file.Close()
-			}
+			g.body.CloseFile()
 			delete(m.current, g.Resource.ID)
 			delete(m.all, id)
 		}

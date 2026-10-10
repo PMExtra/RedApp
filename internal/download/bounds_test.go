@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"testing"
+
+	"github.com/PMExtra/RedApp/internal/spool"
 )
 
 func TestBoundsAndMissingCompleteFile(t *testing.T) {
@@ -19,7 +21,7 @@ func TestBoundsAndMissingCompleteFile(t *testing.T) {
 	collect(t, m, r)
 	m.mu.Lock()
 	g := m.current[r.ID]
-	if g.file != nil {
+	if g.body.File() != nil {
 		t.Error("idle complete cache still holds a file descriptor")
 	}
 	path := g.Path
@@ -78,7 +80,8 @@ func TestSafe416AndWeakValidatorResume(t *testing.T) {
 			if mode == "weak" {
 				prefix = data[:1000]
 			}
-			g.file.WriteAt(prefix, 0)
+			g.body.File().WriteAt(prefix, 0)
+			g.body = spool.NewBody(g.body.File(), int64(len(prefix)))
 			g.Bytes = int64(len(prefix))
 			g.Total = int64(len(data))
 			g.ETag = "W/\"weak\""

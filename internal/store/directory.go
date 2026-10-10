@@ -556,9 +556,9 @@ func checkSourceActive(q directoryQuerier, storageID string, expected []SourceFe
 	return nil
 }
 
-// RequireSourceActive checks within the same transaction as a publication. Callers
+// requireSourceActive checks within the same transaction as a publication. Callers
 // publishing admitted work must supply the captured fence, not a freshly read one.
-func (s *Store) RequireSourceActive(tx *sql.Tx, storageID string, expected ...SourceFence) error {
+func (s *Store) requireSourceActive(tx *sql.Tx, storageID string, expected ...SourceFence) error {
 	if tx == nil {
 		return ErrInvalidDirectory
 	}

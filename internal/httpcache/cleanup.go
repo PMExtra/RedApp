@@ -2,13 +2,12 @@ package httpcache
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/pathmatch"
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
 type CleanupResult struct {
@@ -85,61 +84,22 @@ func (s *Service) ExecuteCleanup(ctx context.Context, entry application.Entry, i
 	return out, nil
 }
 
-func (s *Service) retirePreviewBatch(ctx context.Context, entry application.Entry, preview MaintenancePreview, items []PreviewItem) (out CleanupResult, resultErr error) {
+func (s *Service) retirePreviewBatch(ctx context.Context, entry application.Entry, preview MaintenancePreview, items []PreviewItem) (CleanupResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	tx, err := s.db.HTTPCacheDB().BeginTx(ctx, nil)
-	if err != nil {
-		return out, err
-	}
-	defer tx.Rollback()
-	if preview.criteria.Automatic {
-		err = s.db.RequireSourceActive(tx, entry.StorageID(), preview.fence)
-	} else {
-		err = s.db.RequireCleanupFence(tx, entry.StorageID(), preview.fence)
-	}
-	if err != nil {
-		return out, err
-	}
-	retired := []string{}
+	rows := make([]store.HTTPPreviewItem, 0, len(items))
 	for _, item := range items {
-		if err = ctx.Err(); err != nil {
-			return CleanupResult{}, err
-		}
-		r, err := scan(tx.QueryRowContext(ctx, `SELECT `+columns+` FROM http_cache_generations WHERE id=? AND storage_id=?`, item.GenerationID, entry.StorageID()))
-		status := "retired"
-		if errors.Is(err, sql.ErrNoRows) {
-			status = "skipped_changed"
-		} else if err != nil {
-			return CleanupResult{}, err
-		} else if !r.current || r.Path != item.Path {
-			status = "skipped_changed"
-		} else if item.Basis == "last_access" && r.accessBucket != item.AccessBucket {
-			status = "skipped_accessed"
-		}
-		switch status {
-		case "skipped_changed":
-			out.SkippedChanged++
-		case "skipped_accessed":
-			out.SkippedAccessed++
-		default:
-			if _, err = tx.ExecContext(ctx, `UPDATE http_cache_generations SET is_current=0,retired_at_s=? WHERE id=? AND is_current=1`, s.now().Unix(), r.GenerationID); err != nil {
-				return CleanupResult{}, err
-			}
-			out.RetiredFiles++
-			out.RetiredBytes += r.SizeBytes
-			retired = append(retired, r.GenerationID)
-		}
-		if err = recordPreviewItemTx(tx, preview.ID, item.Ordinal, status, ""); err != nil {
-			return CleanupResult{}, err
-		}
+		rows = append(rows, store.HTTPPreviewItem{Ordinal: item.Ordinal, GenerationID: item.GenerationID, Path: item.Path, AccessBucket: item.AccessBucket, Basis: item.Basis})
 	}
-	if err = tx.Commit(); err != nil {
+	frozen := store.HTTPPreview{ID: preview.ID, StorageID: entry.StorageID(), Fence: preview.fence}
+	retired, err := s.db.RetireHTTPPreviewItems(ctx, frozen, fenceMode(preview.Kind, preview.criteria), rows, s.now())
+	if err != nil {
 		return CleanupResult{}, err
 	}
+	out := CleanupResult{RetiredFiles: len(retired.Retired), RetiredBytes: retired.RetiredBytes, SkippedAccessed: retired.SkippedAccessed, SkippedChanged: retired.SkippedChanged}
 	// The logical result is durable before unlinking. Reader pins defer physical
 	// collection; a failed unlink remains a retired row for later recovery.
-	for _, id := range retired {
+	for _, id := range retired.Retired {
 		if err = s.collectLocked(id); err != nil {
 			return out, err
 		}

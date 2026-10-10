@@ -42,6 +42,7 @@
 | `internal/catalog` | 渠道/元数据缓存与制品授权 |
 | `internal/download` | 发布制品下载引擎（代际、续传、校验、清理、保留） |
 | `internal/httpcache` | `http-cache` 应用的 HTTP 响应缓存 |
+| `internal/spool` | 两个缓存引擎共享的流式文件核心（边下边读、续传与重试、整文件校验） |
 | `internal/hosted` | 管理员上传的托管文件 |
 | `internal/prewarm`、`internal/warmplan` | 预热任务与预热计划上限 |
 | `internal/releasemaintenance` | 定时版本保留与自动预热 |

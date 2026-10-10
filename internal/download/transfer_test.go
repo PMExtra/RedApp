@@ -116,7 +116,7 @@ func TestExhaustedRetriesKeepResumablePart(t *testing.T) {
 	c, _ := testutil.Upstream(t, upstream)
 	m, _, _ := setup(t, c)
 	m.idleTimeout = 100 * time.Millisecond
-	m.retryAttempts = 2
+	m.retry.Attempts = 2
 	r := authorizedResource(t, m, c, upstream.data)
 	rd, _, err := m.Acquire(context.Background(), r)
 	if err != nil {

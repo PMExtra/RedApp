@@ -64,7 +64,7 @@ func (s *Store) PutRelease(m ReleaseMetadata, resources []Resource, expected ...
 		return err
 	}
 	defer tx.Rollback()
-	if err = s.RequireSourceActive(tx, m.AppID, expected...); err != nil {
+	if err = s.requireSourceActive(tx, m.AppID, expected...); err != nil {
 		return err
 	}
 	var oldRaw, oldSig []byte
@@ -170,7 +170,7 @@ func (s *Store) PutChannel(c Channel, expected ...SourceFence) error {
 		return err
 	}
 	defer tx.Rollback()
-	if err = s.RequireSourceActive(tx, c.AppID, expected...); err != nil {
+	if err = s.requireSourceActive(tx, c.AppID, expected...); err != nil {
 		return err
 	}
 	_, err = tx.Exec("INSERT INTO channels(app_id,channel,version,fetched_at_s,expires_at_s) VALUES(?,?,?,?,?) ON CONFLICT(app_id,channel) DO UPDATE SET version=excluded.version,fetched_at_s=excluded.fetched_at_s,expires_at_s=excluded.expires_at_s", c.AppID, c.Name, c.Version, c.FetchedAt.Unix(), c.ExpiresAt.Unix())

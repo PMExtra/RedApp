@@ -82,7 +82,7 @@ Run RedApp behind an HTTPS reverse proxy for anything beyond local testing.
 2. Restrict accepted domain names at the proxy. RedApp accepts any syntactically valid `Host`.
 3. Make the proxy overwrite the forwarding headers sent by clients.
 4. Add the proxy's address range to `trusted_proxies`.
-5. Disable response buffering and allow long transfers, because downloads can be large.
+5. Disable response buffering and allow long transfers, because downloads can be large. RedApp has no total time limit for a download; it ends one only when the client accepts no data for 60 seconds.
 
 Example for nginx:
 

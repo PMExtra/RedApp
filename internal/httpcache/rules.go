@@ -7,23 +7,17 @@ import (
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/cachepolicy"
-	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
 func (s *Service) readPolicy(entry application.Entry) (*cachepolicy.Policy, error) {
-	config := cachepolicy.Empty()
-	if entry.UID != "" {
-		var revision int64
-		var err error
-		config, revision, err = s.db.ReadHTTPPolicy(entry.Descriptor.ID)
-		if err != nil {
-			return nil, err
-		}
-		if revision != entry.Revision {
-			if err := s.db.CheckSourceActive(entry.StorageID(), fence(entry)); err != nil {
-				return nil, store.ErrSourceInactive
-			}
+	config, revision, err := s.db.ReadHTTPPolicy(entry.Descriptor.ID)
+	if err != nil {
+		return nil, err
+	}
+	if revision != entry.Revision {
+		if err := s.db.CheckSourceActive(entry.StorageID(), fence(entry)); err != nil {
+			return nil, store.ErrSourceInactive
 		}
 	}
 	return cachepolicy.Compile(config)
@@ -49,10 +43,6 @@ type fill struct {
 	// attempts, when set, replaces the configured source order; a warm-up
 	// continues from the source whose HEAD response asked for a GET.
 	attempts []sourceAttempt
-	// observe is charged for each body chunk and check is given the declared
-	// length; either may fail this caller's wait without failing the flight.
-	observe func(int64) error
-	check   func(int64) error
 }
 
 func (f fill) decision() CacheDecision { return resolveCacheDecision(f.policy, f.entry, f.path) }
@@ -101,11 +91,15 @@ func (s *Service) ListEntryPage(entry application.Entry, after EntryAfter, limit
 	if err != nil {
 		return nil, err
 	}
-	condition, fetch := "path>?", limit
+	fetch := limit
 	if after.Prefix {
-		condition, fetch = "path>=?", limit+after.Skip
+		fetch = limit + after.Skip
 	}
-	rows, err := s.queryRows(`SELECT `+columns+` FROM http_cache_generations WHERE storage_id=? AND is_current=1 AND `+condition+` ORDER BY path LIMIT ?`, entry.StorageID(), after.Path, fetch)
+	entries, err := s.db.HTTPCacheEntriesAfter(entry.StorageID(), after.Path, after.Prefix, fetch)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := rowsFromEntries(entries)
 	if err != nil {
 		return nil, err
 	}
@@ -133,21 +127,6 @@ func evaluateFreshness(policy *cachepolicy.Policy, entry application.Entry, rows
 			rows[i].FreshUntil = rows[i].ValidatedAt
 		}
 	}
-}
-
-func (s *Service) List(storageID string) ([]Row, error) {
-	uid, epoch, dynamic := identity.ParseStorageID(storageID)
-	if !dynamic {
-		return s.listRows(storageID)
-	}
-	var entry application.Entry
-	entry.UID = uid
-	entry.SourceEpoch = epoch
-	err := s.db.HTTPCacheDB().QueryRow(`SELECT v.id||'/'||a.id,a.cache_ttl_seconds,a.revision FROM applications a JOIN vendors v ON v.uid=a.vendor_uid WHERE a.uid=?`, uid).Scan(&entry.Descriptor.ID, &entry.Descriptor.DefaultChannelTTLSeconds, &entry.Revision)
-	if err != nil {
-		return nil, err
-	}
-	return s.ListEntry(entry)
 }
 
 // CacheDecision is fixed by the request's captured application revision. Source

@@ -30,12 +30,13 @@ func TestDiskFailureDoesNotPoisonVerifiedCache(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	g.file.Close()
-	g.file, e = os.OpenFile("/dev/full", os.O_RDWR, 0600)
+	g.body.CloseFile()
+	full, e := os.OpenFile("/dev/full", os.O_RDWR, 0600)
 	if e != nil {
 		m.mu.Unlock()
 		t.Skip("/dev/full unavailable")
 	}
+	g.body.SetFile(full)
 	m.mu.Unlock()
 	rd, _, e := m.Acquire(context.Background(), bad)
 	if e != nil {

@@ -59,7 +59,6 @@ func (m *Manager) CleanupRetention(ctx context.Context, app, jobID string) (stor
 		if m.current[g.Resource.ID] == g {
 			delete(m.current, g.Resource.ID)
 		}
-		signal(g)
 		if err = m.removeLocked(g); err != nil {
 			return receipt, err
 		}

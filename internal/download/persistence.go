@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/fsutil"
+	"github.com/PMExtra/RedApp/internal/spool"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -153,10 +154,7 @@ func (m *Manager) completeLocked(g *Generation) error {
 }
 func (m *Manager) closeFiles() {
 	for _, g := range m.all {
-		if g.file != nil {
-			g.file.Close()
-			g.file = nil
-		}
+		g.body.CloseFile()
 	}
 }
 
@@ -186,7 +184,7 @@ func (m *Manager) recover() error {
 		if row.ExpectedSHA256 != r.Hash {
 			return errors.New("persisted generation digest differs from authorization")
 		}
-		g := &Generation{ID: row.ID, Resource: r, Path: m.partPath(row.ID), State: "interrupted", Bytes: row.Bytes, Total: -1, SourceBytes: row.SourceBytes, ETag: row.ETag, Resumes: row.Resumes, Started: row.StartedAt, Error: row.LastErrorCode, checkpoint: row.Checkpoint, Retired: row.RetiredAt != nil || !row.IsCurrent, FullRetry: row.FullRetry, downloadNS: row.DownloadNS, changed: make(chan struct{})}
+		g := &Generation{ID: row.ID, Resource: r, Path: m.partPath(row.ID), State: "interrupted", Bytes: row.Bytes, Total: -1, SourceBytes: row.SourceBytes, ETag: row.ETag, Resumes: row.Resumes, Started: row.StartedAt, Error: row.LastErrorCode, checkpoint: row.Checkpoint, Retired: row.RetiredAt != nil || !row.IsCurrent, FullRetry: row.FullRetry, downloadNS: row.DownloadNS, body: spool.NewBody(nil, row.Bytes)}
 		fences := []store.SourceFence{r.SourceFence}
 		if row.Phase == "complete" {
 			fences = nil
@@ -210,6 +208,7 @@ func (m *Manager) recover() error {
 			g.Path = m.blobPath(r)
 			g.State = "complete"
 			g.done = true
+			g.body = spool.NewComplete(nil, g.Bytes)
 		}
 		m.all[g.ID] = g
 		if !g.Retired && row.Phase != "failed" {
@@ -246,6 +245,7 @@ func (m *Manager) recover() error {
 			}
 			if valid {
 				g.Path, g.Bytes, g.Total, g.State, g.done = blobPath, st.Size(), st.Size(), "complete", true
+				g.body = spool.NewComplete(nil, st.Size())
 				if g.Finished.IsZero() {
 					g.Finished = time.Now()
 				}
@@ -286,7 +286,7 @@ func (m *Manager) recover() error {
 			f.Close()
 			return e
 		}
-		g.file, g.Bytes, g.State = f, st.Size(), "interrupted"
+		g.body, g.Bytes, g.State = spool.NewBody(f, st.Size()), st.Size(), "interrupted"
 		if (g.Total >= 0 && g.Bytes > g.Total) || (g.Resource.Size != nil && g.Bytes > *g.Resource.Size) {
 			g.Retired = true
 			delete(m.current, g.Resource.ID)
@@ -326,7 +326,7 @@ func (m *Manager) recover() error {
 
 // publishLocked reuses existing (hashed without mu) when it describes the same
 // unchanged blob inode; only a blob replaced since then is hashed under mu.
-func (m *Manager) publishLocked(g *Generation, existing *fileCheck) error {
+func (m *Manager) publishLocked(g *Generation, existing *spool.FileCheck) error {
 	path := m.blobPath(g.Resource)
 	if e := fsutil.EnsureDir(filepath.Dir(path)); e != nil {
 		return e
@@ -334,8 +334,8 @@ func (m *Manager) publishLocked(g *Generation, existing *fileCheck) error {
 	if f, e := fsutil.OpenRegular(path); e == nil {
 		st, se := f.Stat()
 		valid := se == nil && st.Size() == g.Bytes
-		if valid && existing.matches(st) {
-			valid = existing.valid
+		if valid && existing.Matches(st) {
+			valid = existing.Valid
 		} else if valid {
 			valid = verified(f, g.Bytes, g.Resource.Hash)
 		}
@@ -346,23 +346,21 @@ func (m *Manager) publishLocked(g *Generation, existing *fileCheck) error {
 			if e = m.invalidateBlobLocked(g.Resource, path); e != nil {
 				return e
 			}
-			if e = os.Rename(g.Path, path); e != nil {
-				return errors.New("cache repair publication failed")
+			if e = fsutil.Rename(g.Path, path); e != nil {
+				return fmt.Errorf("publish repaired cache file: %w", e)
 			}
 		} else if e = os.Remove(g.Path); e != nil {
 			return e
+		} else if e = fsutil.SyncDir(filepath.Dir(g.Path)); e != nil {
+			return e
 		}
-
 	} else if !errors.Is(e, fs.ErrNotExist) {
 		return e
-	} else if e = os.Rename(g.Path, path); e != nil {
-		return errors.New("cache publication failed")
+	} else if e = fsutil.Rename(g.Path, path); e != nil {
+		return fmt.Errorf("publish cache file: %w", e)
 	}
 	g.Path = path
-	if e := fsutil.SyncDir(filepath.Dir(path)); e != nil {
-		return e
-	}
-	return fsutil.SyncDir(filepath.Dir(m.partPath(g.ID)))
+	return nil
 }
 func (m *Manager) invalidateBlobLocked(r Resource, path string) error {
 	for _, old := range m.all {
@@ -372,11 +370,11 @@ func (m *Manager) invalidateBlobLocked(r Resource, path string) error {
 		if e := m.db.RetireGeneration(old.Resource.Application, old.ID, time.Now()); e != nil {
 			return e
 		}
-		old.Retired, old.done, old.State, old.Error = true, true, "invalid", "Completed cache blob failed verification"
+		old.Retired, old.done, old.State, old.Error = true, true, "invalid", errBlobReplaced.Error()
 		if m.current[old.Resource.ID] == old {
 			delete(m.current, old.Resource.ID)
 		}
-		signal(old)
+		old.body.Finish(errBlobReplaced)
 		if e := m.save(old); e != nil {
 			return e
 		}

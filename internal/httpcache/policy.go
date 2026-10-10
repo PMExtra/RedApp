@@ -92,17 +92,23 @@ func overrideDirectives(h http.Header) []string {
 	return out
 }
 
+// overrideWarning records a warning when an explicit rule with a TTL above 0
+// stores a response whose source directives forbid shared caching.
+func (s *Service) overrideWarning(f fill, h http.Header) error {
+	decision := f.decision()
+	overrides := overrideDirectives(h)
+	if !decision.Explicit || decision.TTLSeconds == 0 || len(overrides) == 0 {
+		return nil
+	}
+	return s.db.RecordEvent(store.Event{AppID: f.entry.MetricsID(), ResourceKey: f.path, Category: "warning", Code: "cache_rule_override", Message: fmt.Sprintf("Cache rule %q at revision %d overrides source Cache-Control: %s", decision.RuleID, decision.Revision, strings.Join(overrides, ", "))})
+}
+
+// recordOverride records the override warning of a validated stored entry.
 func (s *Service) recordOverride(f fill, h http.Header, result fetchResult, err error) (fetchResult, error) {
 	if err != nil || result.row == nil {
 		return result, err
 	}
-	decision := f.decision()
-	overrides := overrideDirectives(h)
-	if !decision.Explicit || decision.TTLSeconds == 0 || len(overrides) == 0 {
-		return result, nil
-	}
-	err = s.db.RecordEvent(store.Event{AppID: f.entry.MetricsID(), ResourceKey: f.path, Category: "warning", Code: "cache_rule_override", Message: fmt.Sprintf("Cache rule %q at revision %d overrides source Cache-Control: %s", decision.RuleID, decision.Revision, strings.Join(overrides, ", "))})
-	if err != nil {
+	if err = s.overrideWarning(f, h); err != nil {
 		s.unpin(result.row.GenerationID)
 		return fetchResult{}, err
 	}

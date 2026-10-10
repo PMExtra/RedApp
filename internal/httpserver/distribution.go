@@ -109,7 +109,7 @@ func (s *Server) serveHostedFile(w http.ResponseWriter, r *http.Request, entry a
 	h.Set("ETag", `"sha256-`+row.SHA256+`"`)
 	h.Set("Cache-Control", "no-cache")
 	h.Set("Content-Security-Policy", sandboxPolicy)
-	receipt := &downloadReceipt{ResponseWriter: w}
+	receipt := newDownloadReceipt(w, r)
 	http.ServeContent(receipt, r, path.Base(relative), row.CreatedAt, file)
 	s.finishDownload(receipt, r, entry.UID)
 }
@@ -131,7 +131,7 @@ func (s *Server) serveCacheFile(w http.ResponseWriter, r *http.Request, entry ap
 		return
 	}
 	defer finish()
-	receipt := &downloadReceipt{ResponseWriter: w}
+	receipt := newDownloadReceipt(w, r)
 	if err := s.httpCache.Serve(receipt, r, entry, relative); err != nil {
 		s.writeError(w, r, cacheFileError(err))
 		return
@@ -235,7 +235,7 @@ func (s *Server) serveReleasePath(w http.ResponseWriter, r *http.Request, entry 
 			}
 			return
 		}
-		receipt := &downloadReceipt{ResponseWriter: w}
+		receipt := newDownloadReceipt(w, r)
 		s.serveArtifact(receipt, r, resource)
 		s.finishDownload(receipt, r, entry.UID)
 	default:

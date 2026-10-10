@@ -687,7 +687,9 @@ func importReceipt(q querier, id string) (ImportResult, bool, error) {
 	e = json.Unmarshal(raw, &result)
 	return result, e == nil, e
 }
-func (s *Store) ImportReceipt(id string) (ImportResult, bool, error) { return importReceipt(s.read, id) }
+func (s *Store) ImportReceipt(id string) (ImportResult, bool, error) {
+	return importReceipt(s.read, id)
+}
 
 // ExecuteConfigurationImport applies a reviewed plan atomically: every entity
 // it creates or updates, its categories and notes commit in one transaction or

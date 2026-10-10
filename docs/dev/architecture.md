@@ -50,7 +50,7 @@ RedApp 是单进程 Go 服务：一个二进制、一个 SQLite 数据库、一�
 | | `internal/releasemaintenance` | 定时保留最新 N 个版本，并触发自动预热 |
 | 领域 | `internal/catalog` | 渠道/元数据缓存与 TTL、合并重复请求、制品授权 |
 | | `internal/download` | 发布制品的下载引擎：代际、读写限额、续传、校验、清理与保留 |
-| | `internal/httpcache` | `http-cache` 应用的可变 HTTP 响应缓存 |
+| | `internal/httpcache` | `http-cache` 应用的可变 HTTP 响应缓存：按路径的条目、边下边读的回源、刷新与清理 |
 | | `internal/hosted` | 管理员上传的托管文件 |
 | | `internal/history` | 指标采样与按小时 UTC 聚合 |
 | | `internal/auth` | 管理员密码、内存会话、CSRF、登录限速 |
@@ -68,7 +68,8 @@ RedApp 是单进程 Go 服务：一个二进制、一个 SQLite 数据库、一�
 | | `internal/networkproxy` | 代理设置的数据类型与继承解析（不含 transport） |
 | | `internal/pathmatch` | 应用内相对路径匹配 |
 | | `internal/media` | 图标（SVG 白名单、PNG/JPEG 重编码）按内容哈希存储 |
-| | `internal/fsutil` | 持久文件原语：建目录、目录 fsync、拒绝符号链接的只读打开、暂存文件 rename 发布、原子写、删除、随机 ID |
+| | `internal/fsutil` | 持久文件原语：建目录、目录 fsync、拒绝符号链接的只读打开、暂存文件或已写完文件的 rename 发布、原子写、删除、随机 ID |
+| | `internal/spool` | 两个缓存引擎共享的流式文件核心：单写者填充、多读者跟随、有界重试与字节范围续传、整文件校验与并发校验合并、文件状态 |
 | | `internal/jsoncheck` | 拒绝重复键、过深嵌套和尾随数据 |
 | | `internal/yamlconfig` | 严格的单文档 YAML → JSON |
 | | `internal/instance` | 数据目录实例锁与只读的持锁检查 |
@@ -124,10 +125,8 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 
 - **资源身份**：`sha256(app \0 version \0 key)`，并与持久化的 `resources` 行（来源 URL、SHA-256、期望大小）和应用上游核对，其他应用不能借用缓存身份。
 - **代际（generation）**：每次下载是一个代际，状态包括 downloading、resuming、retry_wait、verifying、complete、failed、invalid、interrupted。每个资源最多一个当前代际（部分唯一索引）。
-- **读者与写者**：多个读者跟随同一个写者，边下载边读取。默认上限 16 个写者、512 个读者，单制品 4 GiB；`httpcache` 和 `hosted` 共用这组额度。
-- **续传**：带 `Range: bytes=N-`，强 ETag 时加 `If-Range`。只接受精确的 206、`Content-Range` 和相同 ETag；其他情况放弃续传，新建一个完整重下的代际。每 1 MiB 记录进度。
-- **写入顺序**：进度在 `Manager.mu` 内取快照并分配该代际的下一个 `checkpoint` 序号，释放锁后写库；`SaveGeneration`、`CompleteGeneration` 只在序号比库中新时生效，迟到的旧快照不会覆盖新状态或撤销完成。`mu` 只在改变“当前代际”的写入（创建、退役、完成、删除）和 blob 发布时持有，保证内存与 `generations` 表一致。
-- **超时与重试**：下载流没有总时限，只有空闲读超时（单次读取 60 秒无数据即中断）；连接、TLS、响应头各有独立时限，元数据读取限时 5 分钟。连接错误、读取中断或截断、5xx、408、429 会重试，最多 6 次，退避从 1 秒翻倍、上限 30 秒并加随机抖动；其他 4xx、磁盘、编码和完整性错误不重试。重试耗尽时，如果已有数据且上游支持续传（ETag 或字节范围），保留 part 并标记 interrupted，下次请求从断点续传。
+| 两类清理预览 | 发布制品的清理预览是一行冻结的代际列表，HTTP 缓存是分页冻结的条目；两者的 SQL 都在 store，但生命周期规则各自实现 | 有第三类预览或需要统一回执时再合并 |
+| 锁内 I/O | 下载 `Manager.mu` 仍覆盖改变当前代际的单行写入和 blob 发布；HTTP 缓存的条目查询、发布与回收在 `Service.mu` 内调用 store；配置写入的 `Store.writeMu` 覆盖一次写事务与发布。下载与配置的锁在声明处说明了原因和持锁范围 | 按[约定](conventions.md#并发)调整 |
 - **错误分类**：上游错误为类型化的 `distributor.RequestError`（DNS、TLS、超时、重定向、网络）；本地失败（哈希、长度、磁盘、数据库、续传）是带固定消息和事件类别的类型化错误。失败类别只按错误类型判断，不匹配错误文本。
 - **校验与发布**：写入 `objects/parts/<gen>.part`，完成后校验完整 SHA-256 和大小，fsync 后 rename 到 `objects/blobs/<sha256(app)>/<hash>.blob`，fsync 目录，再在数据库标记完成。校验失败的代际为 invalid。
 - **校验不持锁**：整文件哈希不在 `Manager.mu` 内进行。同一资源的并发请求共享一次校验，校验由管理器自己的 goroutine 和 context 执行，请求方取消只是停止等待，不会让有效缓存被判为无效。校验结束后重新加锁，确认代际仍是当前代际、文件 inode/大小/修改时间未变，才应用结果；校验中的代际视为活跃，不会被清理或清除。
@@ -137,16 +136,16 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 
 ## HTTP 缓存引擎（`internal/httpcache`）
 
-服务 `http-cache` 应用：按 `(storage_id, path)` 缓存上游的可变 HTTP 响应。
+服务 `http-cache` 应用：按 `(storage_id, path)` 缓存上游的可变 HTTP 响应。与下载引擎共享 `internal/spool` 的流式核心和 `internal/fsutil` 的发布原语；按路径的条目生命周期（当前/退役、读者 pin、清理与刷新预览）属于 HTTP 缓存自己，SQL 全部在 `internal/store`（`http_cache.go`）。
 
-- 响应体存于 `objects/http/<id>.body`，临时文件 fsync 后 rename。
-- 回源带 `If-None-Match` 或 `If-Modified-Since` 重新验证；上游无 ETag 时生成 `"sha256-<hex>"`。
-- 新鲜度：上游 `s-maxage`/`max-age` 减去 `Age` 优先；只有完全没有 `Cache-Control` 时才用应用默认 TTL。路径规则（最多 32 条，首个匹配生效）可覆盖 TTL 和 `no-store`/`private`，但不缓存带 Cookie 的响应。可选在回源失败时返回旧内容。
-- 下游条件请求和 Range 由 `http.ServeContent` 处理；支持请求端 `no-cache`、`no-store`、`max-age`、`only-if-cached`。
-- 同一路径的并发回源合并为一次。
+- **回源与合并**：同一路径、同一应用快照（运行时 revision）和同一被替换条目的并发请求合并为一个 flight。来源按策略顺序尝试，只在来源响应前失败（连接错误、超时、5xx）时换下一个来源；全部失败且允许时回退到旧条目。回源带 `If-None-Match`/`If-Modified-Since`，`304` 只更新验证时间和响应头。
+- **流**：可缓存的 `200` 响应成为一个流：一个 `spool.Fill` 写入 `objects/http/<id>.part`，flight 的等待者和之后加入的请求都作为读者跟随同一个 `spool.Body` 边下边读。没有总时限，只有单次读取 60 秒空闲超时。读取失败后只向同一来源续传：`Range` + `If-Range`（非弱 ETag，或比 `Date` 至少早 1 秒的 `Last-Modified`），续传响应必须是同一表示（验证器相同）的精确剩余区间且仍可缓存，否则流失败；没有强验证器的流不续传。重试上限与退避与下载引擎相同。最后一个读者离开时停止填充。
+- **发布**：写入时计算 SHA-256；完整且长度一致后读者即可读到 EOF，随后 fsync、rename 为 `<id>.body`，再在 store 的一个事务中检查来源 fence（替换时还确认旧条目仍为当前）并发布为当前条目。发布与停止接受新读者在同一次持锁中完成，之后清理退役该条目时不会再有读者加入这个流。失败、超限、被放弃或发布被拒绝（来源已变化、旧条目已被清理）的流删除 part，不留条目；已经开始接收的客户端连接被中断。读完整个文件的请求等到发布结束才返回，下一个请求一定能看到条目。
+- **服务**：已存储的条目由 `http.ServeContent` 处理条件请求和单段 Range，读取期间 pin 住条目，退役后最后一个持有者释放时删除文件和行。流上的请求先等待首字节，立即失败的流在发送任何内容之前报错；来源声明了长度时同样经 `http.ServeContent` 处理并等待所需字节，否则返回完整的 `200`。流的响应只带上游 ETag；存储后没有上游 ETag 时生成 `"sha256-<hex>"`。
+- **新鲜度**：上游 `s-maxage`/`max-age` 减去 `Age` 优先；只有完全没有 `Cache-Control` 时才用应用默认 TTL。路径规则（最多 32 条，首个匹配生效）可覆盖 TTL 和 `no-store`/`private`，但不缓存带 `Set-Cookie` 或不支持的 `Vary` 的响应。请求端缓存指令被忽略，只支持 `only-if-cached`。不可缓存的响应由每个读者各自直接传输，受写者额度约束。
+- **恢复**：启动时只删除 part、没有条目的 body 和已退役条目，不计算哈希。每个条目在本进程首次使用前校验一次：`spool.Checks` 合并同一条目的并发校验，校验在服务自己的 context 中运行，等待者取消不会中断它；不一致或缺失的条目被退役并重新回源。本进程写入的条目不再校验。
+- **额度与指标**：读者和写者占用 `download.Budget` 的共享额度，流在整个填充期间持有一个写者额度。`Files()` 以 `spool.FileStatus` 报告条目和正在填充的 part，与下载引擎的 `Files()` 一起用于容量和磁盘指标。
 - 这里的哈希只用于存储完整性，不用于授权。
-
-它与下载引擎各自实现了代际、临时文件发布、清理预览、恢复和指标，只共享读写额度（见[已知问题](#已知问题与重构方向)）。
 
 ## 磁盘布局
 
@@ -157,7 +156,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
   objects/
     parts/               # 下载中的发布制品
     blobs/<sha256(app)>/ # 已校验的发布制品
-    http/                # HTTP 缓存响应体
+    http/                # HTTP 缓存响应体 <id>.body，填充中的 <id>.part
     hosted/              # 托管文件
     icons/               # 上传的图标
 ```
@@ -228,7 +227,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 | 发布保留 + 自动预热 | 15 分钟 | `releasemaintenance.Run` → `prewarm.Automatic` |
 | HTTP 缓存自动清理 | 15 分钟 | `httpcache.RunCleanup` |
 
-另有按需启动的 goroutine：每个下载代际、元数据获取、HTTP 缓存回源与刷新、单个预热任务、托管文件传输。过期会话和登录记录没有清理循环，在访问时惰性清除。
+另有按需启动的 goroutine：每个下载代际、元数据获取、HTTP 缓存回源、流填充、条目校验与刷新、单个预热任务、托管文件传输。过期会话和登录记录没有清理循环，在访问时惰性清除。
 
 ## 安全边界
 
@@ -295,6 +294,8 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 | `error_codes.go` | 规范 `components.x-error-codes` 的 Go 常量与状态/`retryable` 表；`TestErrorCatalogMatchesSpec` 保证两者一致 |
 | `public_dto.go` 等 | 响应文档类型，按规范 schema 显式构造；不直接编码 store 或领域结构体 |
 
+公开文件下载（发布制品、HTTP 缓存与托管文件）经 `download_ranking.go` 的 `downloadReceipt` 写出：每次写入前把写截止时间推后 60 秒，替代服务器 10 分钟的 `WriteTimeout`，因此只有客户端停止接收时才超时；应用工作取消设置的中止截止时间不会被推后。
+
 领域错误到错误码的映射集中在使用它的处理文件中（如 `distribution.go` 的 `releaseError`、`cacheFileError`，`directory.go` 的 `directoryFailure`），按 sentinel 或类型判断，不看错误文本。store 的校验错误是 `store.ValidationError`（匹配 `ErrInvalidDirectory`），其 `Detail()` 指明出错字段、不含已保存的机密，可作为 `VALIDATION_FAILED` 的消息；导入预览和执行仍用通用消息，因为细节可能回显包中的私有 URL 或文本。
 
 ### SPA
@@ -313,8 +314,6 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 
 | 问题 | 现状 | 方向 |
 | --- | --- | --- |
-| 两套缓存引擎 | `download` 与 `httpcache` 各自实现代际、临时文件发布、清理预览、恢复和指标 | 阶段 5：HTTP 缓存复用下载引擎的存储与发布机制 |
-| store 过渡访问器 | `Store.DB` 已不公开，`auth`、`history`、`httpserver` 的 SQL 已收回 store；只有 `httpcache` 仍经 `Store.HTTPCacheDB` 直接写 SQL，其 `readPolicy` 还保留了 UID 为空条目的分支 | 阶段 5：HTTP 缓存重写时把 SQL 迁入 store，删除 `HTTPCacheDB` 和该分支 |
-| HTTP 缓存冷请求 | 冷请求必须先完整落盘才响应，单次下载在全部来源上合计最长 9 分钟；慢速链路上的超大文件会失败，前置反代也可能先超时 | 阶段 5：复用下载引擎边下边读后取消总时限 |
-| 锁内 I/O | 下载 `Manager.mu` 仍覆盖改变当前代际的单行写入和 blob 发布；配置写入的 `Store.writeMu` 覆盖一次写事务与发布。两者都在锁声明处说明了原因和持锁范围 | 按[约定](conventions.md#并发)保持 |
+| 两类清理预览 | 发布制品的清理预览是一行冻结的代际列表，HTTP 缓存是分页冻结的条目；两者的 SQL 都在 store，但生命周期规则各自实现 | 有第三类预览或需要统一回执时再合并 |
+| 锁内 I/O | 下载 `Manager.mu` 仍覆盖改变当前代际的单行写入和 blob 发布；HTTP 缓存的条目查询、发布与回收在 `Service.mu` 内调用 store；配置写入的 `Store.writeMu` 覆盖一次写事务与发布。下载与配置的锁在声明处说明了原因和持锁范围 | 按[约定](conventions.md#并发)调整 |
 | 后台日志 | HTTP 层用 `log/slog` 记录访问与错误日志；`cmd/redapp` 和后台循环的失败仍经标准库 `log` 进入同一个 slog handler，没有结构化字段 | 逐步改为 slog 字段 |

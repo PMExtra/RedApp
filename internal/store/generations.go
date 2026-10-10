@@ -84,7 +84,7 @@ func (s *Store) CreateGeneration(g Generation) error {
 		return err
 	}
 	defer tx.Rollback()
-	if err = s.RequireSourceActive(tx, g.AppID, g.SourceFence); err != nil {
+	if err = s.requireSourceActive(tx, g.AppID, g.SourceFence); err != nil {
 		return err
 	}
 	if _, err = tx.Exec("UPDATE generations SET is_current=0,retired_at_s=? WHERE app_id=? AND version=? AND resource_key=? AND is_current=1", time.Now().Unix(), g.AppID, g.Version, g.ResourceKey); err != nil {
@@ -251,11 +251,11 @@ func (s *Store) CompleteGeneration(c GenerationCompletion, expectedFence ...Sour
 	if err != nil {
 		return err
 	}
-	if err = s.RequireSourceActive(tx, app, admitted); err != nil {
+	if err = s.requireSourceActive(tx, app, admitted); err != nil {
 		return err
 	}
 	if len(expectedFence) > 0 {
-		if err = s.RequireSourceActive(tx, app, expectedFence...); err != nil {
+		if err = s.requireSourceActive(tx, app, expectedFence...); err != nil {
 			return err
 		}
 	}

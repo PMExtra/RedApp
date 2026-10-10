@@ -96,7 +96,7 @@ func newTestManager(dir string, db *store.Store, c *distributor.Client, options 
 	m, err := NewApplications(dir, db, map[string]*distributor.Client{testApp: c}, options...)
 	if err == nil {
 		// Package tests keep the production retry count with short backoff.
-		m.retryBase, m.retryMax = time.Millisecond, 10*time.Millisecond
+		m.retry.Base, m.retry.Max = time.Millisecond, 10*time.Millisecond
 	}
 	return m, err
 }
@@ -463,15 +463,15 @@ func TestCrashRecoveryPartRenameAndTombstone(t *testing.T) {
 				t.Fatal(e)
 			}
 			if mode == "part" {
-				g.file.WriteAt(data[:1234], 0)
+				g.body.File().WriteAt(data[:1234], 0)
 				g.Bytes = 1234
 				g.Total = int64(len(data))
 				g.State = "downloading"
 			} else {
-				g.file.WriteAt(data, 0)
+				g.body.File().WriteAt(data, 0)
 				g.Bytes = int64(len(data))
 				if mode == "bad-blob" {
-					g.file.WriteAt([]byte("bad"), 0)
+					g.body.File().WriteAt([]byte("bad"), 0)
 				}
 				if mode == "retired" {
 					g.Retired = true

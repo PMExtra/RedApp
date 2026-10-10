@@ -291,10 +291,3 @@ func timePointer(t sql.NullInt64) *time.Time {
 	v := time.Unix(t.Int64, 0).UTC()
 	return &v
 }
-
-// HTTPCacheDB returns the writer connection pool for internal/httpcache only.
-//
-// Transitional: it is removed once the HTTP cache SQL lives in this package.
-// No other package may call it. The pool has a single connection, so code
-// holding a transaction from it must not call Store methods that write.
-func (s *Store) HTTPCacheDB() *sql.DB { return s.db }

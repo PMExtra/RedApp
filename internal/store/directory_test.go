@@ -106,7 +106,7 @@ func TestDirectoryIdentityEpochAndEligibilityFences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = s.RequireSourceActive(tx, old.StorageID(), original.Fence())
+	err = s.requireSourceActive(tx, old.StorageID(), original.Fence())
 	tx.Rollback()
 	if !errors.Is(err, ErrSourceInactive) {
 		t.Fatal("old source can publish", err)

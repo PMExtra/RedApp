@@ -194,7 +194,7 @@ func TestBatchRefreshPagesFrozenSelectionAndDurableReceipt(t *testing.T) {
 		t.Fatal(last, err)
 	}
 	seed("batch/late")
-	old, err := f.s.lookup(f.entry.StorageID(), last.Items[0].Path)
+	old, err := f.s.lookup(context.Background(), f.entry.StorageID(), last.Items[0].Path)
 	if err != nil || old == nil {
 		t.Fatal(old, err)
 	}
@@ -323,7 +323,7 @@ func TestManualRefreshCannotRepublishAfterCleanup(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { _, err := f.s.Refresh(context.Background(), f.entry, "/file"); done <- err }()
 	<-entered
-	old, err := f.s.lookup(f.entry.StorageID(), "file")
+	old, err := f.s.lookup(context.Background(), f.entry.StorageID(), "file")
 	if err != nil || old == nil {
 		t.Fatal(old, err)
 	}
