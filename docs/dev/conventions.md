@@ -1,0 +1,161 @@
+# 编码约定
+
+本文是 [AGENTS.md](../../AGENTS.md) 中规则的细化。标注 **【目标】** 的条目描述重构完成后的状态，括号内注明落地阶段；现有代码尚未完全满足，新代码应直接按目标写，修改旧代码时顺手对齐，但不要为此扩大 PR 范围。
+
+## Go
+
+### 包边界
+
+- 包按职责划分，依赖只能指向更底层的包（见 [architecture.md](architecture.md#包与依赖方向)）。叶子包（`identity`、`jsoncheck`、`pathmatch`、`media` 等）不引入其他内部包。
+- `internal/httpserver` 只做 HTTP 协议转换：解析请求、调用领域服务、写响应。业务规则放在领域包里。
+- 所有 SQL 都在 `internal/store` 中。其他包不能拿 `*sql.DB` 直接写 SQL。**【目标】** store 不再对外暴露底层 DB 句柄（阶段 5）。
+- `internal/testutil` 等测试辅助只能被 `_test.go` 引用。
+
+### 错误
+
+- 错误消息用小写开头、不带句末标点，描述“做什么失败了”：`fmt.Errorf("open state database: %w", err)`。**【目标】** 现有不少错误以大写开头，因为它们被直接返回给客户端；阶段 3 改为显式错误码后统一（阶段 2/3）。
+- 包装底层错误一律用 `%w`，保留错误链。
+- 调用方需要区分的错误，定义 sentinel（`var ErrRevisionConflict = errors.New(...)`）或带字段的类型化错误，用 `errors.Is` / `errors.As` 判断。
+- **禁止按错误文本分类**，例如 `strings.Contains(err.Error(), "SHA256")` 或比较已持久化的错误字符串。需要持久化错误类别时，单独存一个稳定的代码字段。
+- 内部错误文本不直接返回给 HTTP 客户端；对外只给稳定的错误码和面向用户的消息（见下文 HTTP API）。
+
+### 并发
+
+- 持有 mutex 时不做 I/O、哈希计算（含 bcrypt）或数据库调用。先在锁内拷贝需要的状态，解锁后做慢操作，再加锁提交结果并检查期间是否被并发修改。
+- 确实需要在锁内做 I/O 的（例如为保证提交顺序），必须在锁的声明处注释说明原因和持锁的最长操作。
+- 每个 goroutine 都要有明确的退出条件（context 取消或 channel 关闭），并在关闭流程中等待其结束。
+
+### context
+
+- `context.Context` 是第一个参数，命名为 `ctx`，不存进结构体。
+- 不用 context 传可选参数或业务数据；只用于取消、截止时间和请求范围的元数据（如 request_id）。
+
+### 可测试性
+
+- 生产结构体里不放测试钩子字段（如 `testFault`、`testConfigurationPrepare`）。需要注入时钟、故障或外部依赖，用构造函数选项或小接口，由测试传入实现。
+- **【目标】** 现有测试钩子在阶段 2 移除。
+
+### 数据库
+
+- SQL 只写在 `internal/store`。
+- `INSERT` 显式列出列名，不依赖表的列顺序。
+- 外键声明 `ON DELETE CASCADE`（或明确说明为什么不级联）；连接上启用外键约束。
+- 多步写入放在一个事务里；配置类写入用 revision 做乐观并发控制，冲突返回 sentinel 错误，由 HTTP 层转换成 409。
+- schema 变化遵守 [ADR 0001](adr/0001-pre-1.0-no-migrations.md)：1.0 前提升 schema 版本并拒绝旧目录，不写迁移。
+- **【目标】** 每个实体独立 CAS，不再用整份配置快照的单一 revision（阶段 5）。
+
+### 文件
+
+- 原子写入：同目录临时文件 → 写入 → `fsync` 文件 → `rename` → `fsync` 目录。不要在各包中重复实现这一流程。
+- **【目标】** 原子写、fsync、安全删除等使用共享的 `fsutil` 包（阶段 5）。在此之前，优先复用同包内已有的辅助函数，不要新增第三份实现。
+- 数据目录权限为 `0700`，文件为 `0600`。
+
+### 日志
+
+- **【目标】** 使用 `log/slog` 结构化日志；HTTP 请求日志和错误日志带 `request_id`，并与错误响应中的 `request_id` 一致（阶段 3）。当前只有 `cmd/redapp` 使用标准库 `log`，`internal/` 下通过回调上报错误。
+- 不记录密码、会话 token、CSRF token、代理凭据或完整的带凭据 URL。
+
+### 注释与格式
+
+- 注释解释“为什么”：约束来源、非显然的取舍、安全理由。不复述代码在做什么，不写版本号或变更历史（这些属于 git 历史）。
+- `gofmt` 覆盖 `cmd internal installers presets`，由 `make check` 检查。
+
+## HTTP API
+
+### 路径与方法
+
+- 公开接口在 `/api/`，管理接口在 `/admin/api/`。分发路径是 `/<vendor>/<app>/<file_path>`，不加 `/api` 前缀。
+- 资源用名词复数路径，应用资源固定以 `/apps/<vendor>/<app>` 定位，不用请求头选择应用。
+- GET 只读、可重试；PUT 整体替换设置；PATCH 用于 `set`/`unset` 形式的稀疏修改；POST 用于创建或动作（如 `.../cleanup/preview`）；DELETE 删除。
+- 查询参数白名单校验，未知或重复的参数返回 400。
+- **【目标】** 使用标准库 `http.ServeMux` 的方法 + 路径模式注册路由，鉴权、CSRF、Origin 检查、request_id 和日志做成中间件（阶段 3）。当前是 `Server.ServeHTTP` 中的手写前缀分发。
+
+### 请求与响应体
+
+- JSON 字段名用 `snake_case`。
+- 请求体必须是 `application/json`，限制大小，拒绝重复键、未知字段和尾随数据（`decodeLimit` + `jsoncheck`）。
+- 时间用 RFC 3339 UTC 字符串；字节数、计数用整数。
+
+### 错误响应
+
+错误响应体：
+
+```json
+{"error": {"code": "SETTINGS_REVISION_CONFLICT", "message": "...", "request_id": "...", "retryable": false}}
+```
+
+- `code` 是稳定的大写蛇形标识，前端按 `code` 而不是 HTTP 状态或消息文本做判断。
+- **【目标】** 每个错误场景显式指定 `code`，不由 HTTP 状态推导（阶段 3）。当前 `fail()` 按状态映射，导致所有 409 都是 `SETTINGS_REVISION_CONFLICT`、所有 403 都是 `CSRF_REJECTED`；新代码应调用带显式 code 的 `problem()`。
+- **【目标】** `request_id` 在请求入口生成一次，写入响应头和日志（阶段 3）。当前只在生成错误响应时随机产生，不可关联日志。
+- `message` 面向用户，不包含内部错误文本、路径或 SQL。
+
+### 并发控制（revision）
+
+- 可编辑资源的 GET 返回 `revision` 字段和 `ETag: "<revision>"`。
+- 修改请求带 `If-Match: "<revision>"`（或请求体中的 `revision`，用于 PATCH 稀疏修改）。缺少时返回 400，不匹配时返回 409，前端保留用户草稿。
+- 成功响应返回新的 revision 和完整的新状态，前端用它替换基线。
+
+### 分页
+
+- 时间序或无限增长的列表（版本、资源、事件）用游标分页：`?limit=&cursor=`，响应 `{"items": [...], "next_cursor": "..." | null}`。默认 50，最大 100。游标对客户端不透明。
+- 需要页码导航的有限列表（目录、分类、托管文件）用 `?page=&limit=`，默认值按页面而定，最大 100。
+- 先过滤、再分页；总数不随页码变化。
+
+## 前端
+
+现有前端将在阶段 4 按 [ADR 0008](adr/0008-frontend-stack.md) 重写。以下为重写后的约定 **【目标】**；在那之前修改现有前端只需保持现有风格和测试通过。
+
+### 目录结构
+
+```text
+frontend/src/
+  app/              # 入口、路由、全局 provider；public 与 admin 各一个入口
+  shared/           # 跨领域复用：api 客户端与生成类型、ui 组件、工具函数、i18n 基础
+  features/<domain>/  # 领域功能：查询/变更 hooks、表单 schema、领域组件
+  pages/            # 路由页面，只组合 features，不直接请求 API
+```
+
+- `features` 之间不互相引用内部文件；需要共享的提升到 `shared`。
+- API 类型由 OpenAPI 规范生成，不手写重复的 DTO 类型。
+- 服务端数据用 TanStack Query 管理，不复制到 Pinia；Pinia 只放纯客户端状态（会话、界面偏好）。
+- 表单用 vee-validate + zod schema；409 冲突保留草稿并提示。
+
+### 国际化
+
+- 所有用户可见文本走 vue-i18n，不在组件里硬编码。
+- 中英文 key 集合必须完全一致，由测试检查；缺 key 视为失败。
+- 新增路由必须同时加入服务端 SPA 深链白名单（`internal/httpserver/server.go` 的 `validUI`）。
+
+### 前端测试
+
+- 组件测试用 Testing Library 按角色和可见文本查询，不依赖组件内部状态或 CSS 类名。
+- 网络用 MSW 模拟，响应形状来自生成的 API 类型。
+- Playwright 冒烟测试覆盖登录、主要导航和一次完整的保存流程，在嵌入了前端的真实 Go 服务上运行。
+
+## 测试
+
+- **按行为命名测试文件**：`revision_conflict_test.go`、`cache_cleanup_test.go`。不要用版本或过程命名，例如 `v072_test.go`、`review_test.go`、`upgrade_v071_test.go`。
+- 测试函数名描述行为：`TestImportRejectsDuplicateApplication`。
+- 不用 `time.Sleep` 做同步。用 channel、`sync.WaitGroup`、可注入时钟或轮询加超时等待明确的条件。
+- 测试数据通过共享工厂函数构造（**【目标】** 每个包一个 `_test.go` 中的工厂，或跨包的测试辅助，阶段 2），不要在每个测试里手写整份配置。
+- 断言可观察行为（HTTP 响应、持久化结果、公开 API 返回值），不断言私有字段、调用次数或实现细节。
+- 不写同义反复的测试：例如把常量和自身比较、只验证 mock 返回了 mock 设定的值。
+- 表驱动测试覆盖同一行为的多个输入；不要为每种参数组合复制一份测试。
+- 失败恢复路径（中断、超时、磁盘错误、并发冲突）与正常路径同等重要。
+
+## 脚本
+
+- Python 只用标准库。
+- 生产脚本（CI、发布、安装器维护）用显式检查并抛出带说明的异常或 `sys.exit(<消息>)`，不要用 `assert` 做校验（`python -O` 会移除 `assert`）。**【目标】** 现有脚本中的 `assert` 在阶段 2 替换。
+- 共享逻辑放在支持模块中（如 `installer_test_support.py`、`installer_manifest.py`），不要在脚本之间复制粘贴。
+- 格式可读：一行一条语句，不用分号拼接多条语句，不写超长单行表达式；函数有简短 docstring 说明目的。
+- Shell 脚本以 `set -eu` 开头，变量加引号。
+
+## 文档
+
+- 用户文档（`README.md`、`docs/guide/*`）中英成对：`x.md` 与 `x.zh-CN.md` 必须在同一 PR 中修改，标题层级、代码块和表格保持一致。`make docs-check` 检查结构和链接，PR 上的 CI 还检查两种语言是否同时修改。
+- 开发者文档（`AGENTS.md`、`docs/dev/`）只用中文。
+- 不带版本号的文档只描述当前行为，不写“v0.x 新增”“从某版本起”之类的历史；历史看 git log。
+- 不新增过程性文档（验收记录、验证日志、测试契约、版本规格、路线图）。验证证据写在 PR 描述里。
+- 有长期影响的决定写 ADR：`docs/dev/adr/NNNN-<主题>.md`，包含“背景 / 决定 / 后果”，不超过 30 行。决定被推翻时新增 ADR 并在旧 ADR 顶部注明被取代。
+- 写法：短段落、列表和表格；一段只讲一件事；避免把多个条件塞进一个长句。
