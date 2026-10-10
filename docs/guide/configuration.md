@@ -168,7 +168,8 @@ RedApp ships built-in presets for vendors, applications and categories. They are
 - A preset-based vendor or application stores only the fields you changed (overrides). All other fields follow the preset and pick up preset updates when you upgrade RedApp.
 - A value equal to the preset, an empty string and an empty list still count as your own override.
 - English and Chinese texts are separate fields. Lists (sources, cache rules, categories, tags) and the proxy, prewarm and retention settings are each replaced as a whole.
-- Built-in applications cannot be deleted. Disable them instead.
+- Built-in vendors and applications cannot be deleted. Disable them instead.
+- A category cannot be renamed to a name that another category already uses in either language (ignoring case).
 
 ### Resetting a field
 
