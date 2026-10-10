@@ -283,7 +283,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 
 ### 测试
 
-- `harness_test.go` 的 `newHarness(t, options...)` 是唯一的 HTTP 测试工厂：真实 store 与全部服务、临时数据目录、`New` 构造的服务器、httptest 监听和带 cookie 的客户端。选项有 `withDir`（重启同一目录）、`withStore`、`withOptions`、`withTrustedProxies`、`keepTemplatesDisabled`。
+- `harness_test.go` 的 `newHarness(t, options...)` 是唯一的 HTTP 测试工厂：真实 store 与全部服务、临时数据目录、`New` 构造的服务器、httptest 监听和带 cookie 的客户端。选项有 `withDir`（重启同一目录）、`withOptions`、`withTrustedProxies`、`withEmbeddedFrontend`。
 - 辅助方法：`login`、`request`/`raw`/`expectError`、`serve`（进程内请求，可指定 `RemoteAddr`/`Host`）、`createVendor`/`createApp`（直接写 store，不依赖被测管理 API）、`publicCatalog`、`upstreamProxy`+`releaseApp`+`codexRelease`（发布类应用经全局代理连到测试上游）、`logs`（服务器结构化日志）。
 - 夹具：`store_fixtures_test.go` 经 store 修改配置（`patchApp`、`setAppEnabled`、`setVendorEnabled`、`markDeleted`），供目录以外领域的测试使用；`directory_helpers_test.go` 经管理 API 操作目录与配置，供目录领域的测试使用。
 - 契约校验：客户端 transport 和 `serve` 对每个响应找到规范操作（ServeMux 优先级，HEAD 回落到 GET），检查状态已声明、`X-Request-Id`、安全头、已声明的响应头、媒体类型、JSON 响应体（JSON Schema 2020-12，`santhosh-tekuri/jsonschema`）；错误响应还检查错误码属于该操作的错误码集合（`x-error-codes` 加适用的组）、状态与 `retryable` 与目录一致、`request_id` 与响应头一致。校验器实现在 `openapi_test.go`，`TestContractValidatorRejectsNonConformingResponses` 确认它确实会拒绝不符合的响应。

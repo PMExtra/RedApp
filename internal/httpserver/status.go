@@ -53,19 +53,6 @@ func publicScope(scope string, scopes map[string]string) string {
 	return scope
 }
 
-// publicViews owns its response copies. Internal source namespaces and metric
-// scopes stay intact in the managers, including retained historical epochs.
-func (s *Server) publicViews(views []download.View) []download.View {
-	scopes := s.publicScopes()
-	out := make([]download.View, len(views))
-	for i, view := range views {
-		view.Resource.Application = publicScope(view.Resource.Application, scopes)
-		view.Resource.MetricsID = publicScope(view.Resource.MetricsID, scopes)
-		out[i] = view
-	}
-	return out
-}
-
 // metricDTO is one Metric of the specification.
 type metricDTO struct {
 	Key             string   `json:"key"`

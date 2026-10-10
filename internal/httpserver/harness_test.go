@@ -55,25 +55,16 @@ type harness struct {
 
 type harnessConfig struct {
 	dir     string
-	store   *store.Store
 	options []Option
 	proxies TrustedProxies
 	// embeddedFrontend serves the committed build instead of frontendFixture.
 	embeddedFrontend bool
-	// keepTemplatesDisabled leaves the embedded templates disabled as in
-	// production; by default the fixture enables them for route coverage.
-	keepTemplatesDisabled bool
 }
 
 type harnessOption func(*harnessConfig)
 
 // withDir reuses a data directory, for example to restart over the same data.
 func withDir(dir string) harnessOption { return func(c *harnessConfig) { c.dir = dir } }
-
-// withStore uses an already opened store in dir.
-func withStore(dir string, db *store.Store) harnessOption {
-	return func(c *harnessConfig) { c.dir, c.store = dir, db }
-}
 
 // withOptions passes construction options to New.
 func withOptions(options ...Option) harnessOption {
@@ -94,10 +85,6 @@ func withEmbeddedFrontend() harnessOption {
 	return func(c *harnessConfig) { c.embeddedFrontend = true }
 }
 
-func keepTemplatesDisabled() harnessOption {
-	return func(c *harnessConfig) { c.keepTemplatesDisabled = true }
-}
-
 // harnessPassword is the administrator password of fixtures created without
 // an account; it is hashed at bcrypt.MinCost so tests do not pay the
 // production work factor (the auth package covers that).
@@ -112,12 +99,9 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 	if cfg.dir == "" {
 		cfg.dir = t.TempDir()
 	}
-	db := cfg.store
-	if db == nil {
-		var err error
-		if db, err = store.Open(cfg.dir); err != nil {
-			t.Fatal(err)
-		}
+	db, err := store.Open(cfg.dir)
+	if err != nil {
+		t.Fatal(err)
 	}
 	must := func(err error) {
 		t.Helper()
@@ -125,11 +109,13 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 			t.Fatal(err)
 		}
 	}
-	// A directory that already has vendors was initialized by an earlier harness.
+	// A directory that already has vendors was initialized by an earlier
+	// harness. The embedded templates start disabled as in production; the
+	// fixture enables them for route coverage.
 	existing, err := db.Vendors(true)
 	must(err)
 	must(db.EnsureEntityTemplates())
-	if len(existing) == 0 && !cfg.keepTemplatesDisabled {
+	if len(existing) == 0 {
 		vendors, err := db.Vendors(false)
 		must(err)
 		for _, v := range vendors {

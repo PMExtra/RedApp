@@ -2,7 +2,6 @@ package httpserver
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -78,16 +77,6 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, e *apiError)
 // fail is the short form for handlers: writeError(newError(...)).
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, code errorCode, cause error, message string) {
 	s.writeError(w, r, newError(code, cause, message))
-}
-
-// failWith writes err when it is an *apiError and otherwise an internal error.
-func (s *Server) failWith(w http.ResponseWriter, r *http.Request, err error) {
-	var e *apiError
-	if errors.As(err, &e) {
-		s.writeError(w, r, e)
-		return
-	}
-	s.fail(w, r, codeInternalError, err, "Internal server error")
 }
 
 // storageError is the response for a database or data directory failure.
