@@ -112,4 +112,15 @@ describe("application settings", () => {
     });
     expect(screen.getByText(/Built-in applications cannot be deleted/)).toBeInTheDocument();
   });
+
+  it.each([
+    ["http-cache", "Cache rules", "Metadata freshness"],
+    ["codex", "Metadata freshness", "Cache rules"],
+  ] as const)("adds the runtime sections of %s applications", async (provider, shown, hidden) => {
+    settingsServer();
+    useHandlers(mockApi("get", "/admin/api/apps/{vendor}/{app}", () => app({ provider })));
+    await renderAdminPage("/admin/vendors/example/apps/tools/settings");
+    expect(await screen.findByRole("heading", { name: shown })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: hidden })).toBeNull();
+  });
 });

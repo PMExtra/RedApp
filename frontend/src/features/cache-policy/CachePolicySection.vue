@@ -6,6 +6,7 @@ import {
   FieldReset,
   useAppConfiguration,
   useAppConfigurationPatch,
+  useOverlayDraft,
 } from "@/features/configuration";
 import { useDirtyGuard } from "@/shared/forms";
 import { toast } from "@/shared/lib";
@@ -23,7 +24,6 @@ import {
 } from "@/shared/ui";
 import DurationInput from "./DurationInput.vue";
 import PathMatchInput from "./PathMatchInput.vue";
-import { useOverlayDraft } from "./overlay";
 import { patternTooLong, type CacheRule, type CleanupRule } from "./queries";
 
 /**
@@ -31,7 +31,7 @@ import { patternTooLong, type CacheRule, type CleanupRule } from "./queries";
  * rules and automatic cleanup rules (`http_policy.*` of the configuration).
  * Rendered by the application settings page.
  */
-const props = defineProps<{ vendor: string; app: string; readonly?: boolean }>();
+const props = defineProps<{ vendor: string; app: string; readOnly?: boolean }>();
 const { t } = useI18n();
 const MAX_RULES = 32;
 
@@ -137,7 +137,7 @@ function setBasis(rule: CleanupRule, value: string | undefined) {
 function submit() {
   submitted.value = true;
   const body = overlay.patch.value;
-  if (!body || invalid.value || props.readonly) return;
+  if (!body || invalid.value || props.readOnly) return;
   save.mutate(body, {
     onSuccess: () => {
       overlay.reset();
@@ -166,7 +166,7 @@ async function reload() {
         </Alert>
         <RevisionConflictAlert v-if="save.hasConflict.value" @reload="reload" />
 
-        <fieldset :disabled="readonly || busy" class="flex flex-col gap-6">
+        <fieldset :disabled="readOnly || busy" class="flex flex-col gap-6">
           <section class="flex items-start gap-3">
             <Switch
               id="cache-policy-stale-fallback"
@@ -211,7 +211,7 @@ async function reload() {
               :item-label="
                 (rule) => ruleLabel('cachePolicy.rules.rule', draft?.['http_policy.rules'], rule)
               "
-              :disabled="readonly || busy"
+              :disabled="readOnly || busy"
             >
               <template #item="{ item: rule, index }">
                 <div class="flex flex-col gap-3 py-1">
@@ -230,7 +230,7 @@ async function reload() {
                   <PathMatchInput
                     v-model="rule.match"
                     :legend="t('cachePolicy.rules.rule', { number: index + 1 })"
-                    :disabled="readonly || busy"
+                    :disabled="readOnly || busy"
                   />
                   <p v-if="patternError(rule.match.pattern)" class="text-xs text-danger">
                     {{ patternError(rule.match.pattern) }}
@@ -241,7 +241,7 @@ async function reload() {
                     :description="t('cachePolicy.rules.ttlHint')"
                     :min="0"
                     :max="86400"
-                    :disabled="readonly || busy"
+                    :disabled="readOnly || busy"
                     required
                   />
                 </div>
@@ -283,7 +283,7 @@ async function reload() {
                 (rule) =>
                   ruleLabel('cachePolicy.cleanup.rule', draft?.['http_policy.auto_cleanup'], rule)
               "
-              :disabled="readonly || busy"
+              :disabled="readOnly || busy"
             >
               <template #item="{ item: rule, index }">
                 <div class="flex flex-col gap-3 py-1">
@@ -302,7 +302,7 @@ async function reload() {
                   <PathMatchInput
                     v-model="rule.match"
                     :legend="t('cachePolicy.cleanup.rule', { number: index + 1 })"
-                    :disabled="readonly || busy"
+                    :disabled="readOnly || busy"
                   />
                   <p v-if="patternError(rule.match.pattern)" class="text-xs text-danger">
                     {{ patternError(rule.match.pattern) }}
@@ -323,7 +323,7 @@ async function reload() {
                     :description="t('cachePolicy.cleanup.ageHint')"
                     :min="60"
                     :max="315360000"
-                    :disabled="readonly || busy"
+                    :disabled="readOnly || busy"
                     required
                   />
                 </div>
@@ -344,7 +344,7 @@ async function reload() {
         </fieldset>
 
         <p class="text-xs text-muted">{{ t("cachePolicy.limit", { max: MAX_RULES }) }}</p>
-        <div v-if="!readonly" class="flex flex-wrap gap-2">
+        <div v-if="!readOnly" class="flex flex-wrap gap-2">
           <Button
             type="submit"
             variant="primary"

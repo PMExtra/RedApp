@@ -68,8 +68,8 @@ const sections = computed<TabItem[]>(() => [
       <Alert v-if="deleted" tone="warning">{{ t("releases.page.deleted") }}</Alert>
 
       <template v-if="hasVersions(provider)">
-        <PrewarmPanel :vendor="vendor" :app="app" :readonly="deleted" />
-        <RetentionPanel :vendor="vendor" :app="app" :readonly="deleted" />
+        <PrewarmPanel :vendor="vendor" :app="app" :read-only="deleted" />
+        <RetentionPanel :vendor="vendor" :app="app" :read-only="deleted" />
         <VersionCleanup :vendor="vendor" :app="app" :disabled="deleted" />
       </template>
 
@@ -99,7 +99,7 @@ const sections = computed<TabItem[]>(() => [
             </div>
           </template>
           <template #prewarm>
-            <PrewarmPanel :vendor="vendor" :app="app" :readonly="deleted" />
+            <PrewarmPanel :vendor="vendor" :app="app" :read-only="deleted" />
           </template>
         </Tabs>
       </template>

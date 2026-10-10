@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, type Component } from "vue";
 import { useRoute } from "vue-router";
+import { CachePolicySection, ChannelTtlSection } from "@/features/cache-policy";
 import {
   AppGeneralForm,
   AppInstructionsForm,
@@ -30,16 +31,15 @@ interface ProviderSection {
 }
 
 /*
- * EXTENSION POINT (package C, cache): add the runtime settings sections here,
- * e.g.
- *   { id: "cache-policy", providers: ["http-cache"], component: HttpPolicySection },
- *   { id: "channel-ttl", providers: ["codex", "claude-code"], component: ChannelTtlSection },
- * They render after the instructions, in this order, and are hidden for
- * deleted applications. `cache_ttl_seconds` of `http-cache` is already edited
- * in the upstream section of AppGeneralForm; the channel TTL section is for
- * the release providers only.
+ * Provider-specific sections render after the instructions, in this order,
+ * and are hidden for deleted applications. `cache_ttl_seconds` of
+ * `http-cache` is edited in the upstream section of AppGeneralForm, so the
+ * channel TTL section is for the release providers only.
  */
-const providerSections: readonly ProviderSection[] = [];
+const providerSections: readonly ProviderSection[] = [
+  { id: "cache-policy", providers: ["http-cache"], component: CachePolicySection },
+  { id: "channel-ttl", providers: ["codex", "claude-code"], component: ChannelTtlSection },
+];
 
 const route = useRoute();
 const vendorId = computed(() => String(route.params.vendor));

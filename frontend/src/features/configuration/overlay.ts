@@ -46,7 +46,8 @@ export function setLeaf(target: Record<string, unknown>, path: string, value: un
   node[last] = value;
 }
 
-function copy<T>(value: T): T {
+/** Deep copy of a JSON value (works on reactive proxies, unlike structuredClone). */
+export function copy<T>(value: T): T {
   return value === undefined ? value : (JSON.parse(JSON.stringify(value)) as T);
 }
 
@@ -60,7 +61,8 @@ function displayValue(value: unknown): string {
   return "";
 }
 
-function same(a: unknown, b: unknown): boolean {
+/** Structural equality of JSON values (configuration leaves). */
+export function same(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 

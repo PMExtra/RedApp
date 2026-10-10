@@ -21,7 +21,7 @@ const props = defineProps<{
   app: string;
   job: PrewarmJob;
   busy?: boolean;
-  readonly?: boolean;
+  readOnly?: boolean;
 }>();
 const emit = defineEmits<{ cancel: []; retry: []; dismiss: [] }>();
 const i18n = useI18n();
@@ -114,7 +114,7 @@ function label(prefix: string, value: string): string {
           {{ label("prewarm.job.reasons", job.reason) }}
         </p>
       </div>
-      <div v-if="!readonly" class="flex flex-wrap gap-2">
+      <div v-if="!readOnly" class="flex flex-wrap gap-2">
         <Button v-if="running" :loading="busy" @click="emit('cancel')">
           {{ t("prewarm.job.cancel") }}
         </Button>

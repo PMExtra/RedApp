@@ -21,7 +21,7 @@ import {
  * follow it (the job ID survives reloads), cancel or retry it, and for release
  * applications the automatic prewarm policy.
  */
-const props = defineProps<{ vendor: string; app: string; readonly?: boolean }>();
+const props = defineProps<{ vendor: string; app: string; readOnly?: boolean }>();
 const { t } = useI18n();
 const options = usePrewarmOptions(
   () => props.vendor,
@@ -89,7 +89,7 @@ function retry() {
     >
       <div v-if="options.data.value" class="flex flex-col gap-6">
         <PrewarmStartForm
-          v-if="!readonly"
+          v-if="!readOnly"
           :key="`${vendor}/${app}`"
           :vendor="vendor"
           :app="app"
@@ -110,7 +110,7 @@ function retry() {
           :app="app"
           :job="current"
           :busy="busy"
-          :readonly="readonly"
+          :read-only="readOnly"
           @cancel="cancel"
           @retry="retry"
           @dismiss="show(null)"
@@ -127,7 +127,7 @@ function retry() {
             :vendor="vendor"
             :app="app"
             :options="options.data.value"
-            :readonly="readonly"
+            :read-only="readOnly"
           />
         </section>
       </div>

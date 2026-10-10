@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { useOverlayDraft } from "@/features/cache-policy";
 import {
   FieldReset,
   useAppConfiguration,
   useAppConfigurationPatch,
+  useOverlayDraft,
 } from "@/features/configuration";
 import type { Schema } from "@/shared/api";
 import { useDirtyGuard } from "@/shared/forms";
@@ -25,7 +25,7 @@ const props = defineProps<{
   vendor: string;
   app: string;
   options: PrewarmOptions;
-  readonly?: boolean;
+  readOnly?: boolean;
 }>();
 const { t } = useI18n();
 const POLICY_CHANNELS: readonly Channel[] = ["latest", "stable"];
@@ -75,7 +75,7 @@ const error = computed(() => {
 
 function submit() {
   const body = overlay.patch.value;
-  if (!body || error.value || props.readonly) return;
+  if (!body || error.value || props.readOnly) return;
   save.mutate(body, {
     onSuccess: () => {
       overlay.reset();
@@ -98,7 +98,7 @@ async function reload() {
   >
     <form v-if="draft" class="flex flex-col gap-4" novalidate @submit.prevent="submit">
       <RevisionConflictAlert v-if="save.hasConflict.value" @reload="reload" />
-      <fieldset class="flex flex-col gap-4" :disabled="readonly || save.isPending.value">
+      <fieldset class="flex flex-col gap-4" :disabled="readOnly || save.isPending.value">
         <div class="flex items-start gap-3">
           <Switch id="prewarm-auto" v-model="enabled" aria-describedby="prewarm-auto-hint" />
           <div class="flex min-w-0 flex-1 flex-col gap-1">
@@ -146,7 +146,7 @@ async function reload() {
         </fieldset>
       </fieldset>
       <Alert v-if="error" tone="warning">{{ error }}</Alert>
-      <div v-if="!readonly" class="flex flex-wrap gap-2">
+      <div v-if="!readOnly" class="flex flex-wrap gap-2">
         <Button
           type="submit"
           variant="primary"

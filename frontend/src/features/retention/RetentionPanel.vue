@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { useOverlayDraft } from "@/features/cache-policy";
 import {
   FieldReset,
   useAppConfiguration,
   useAppConfigurationPatch,
+  useOverlayDraft,
 } from "@/features/configuration";
 import { useExpired } from "@/features/releases";
 import { isApiError, type Schema } from "@/shared/api";
@@ -40,7 +40,7 @@ type Policy = Schema<"RetentionPolicy">;
  * Keep-latest retention of a release application: the saved policy, the last
  * automatic run, and a manual run as preview → review → execute.
  */
-const props = defineProps<{ vendor: string; app: string; readonly?: boolean }>();
+const props = defineProps<{ vendor: string; app: string; readOnly?: boolean }>();
 const i18n = useI18n();
 const { t } = i18n;
 const format = useFormat();
@@ -103,7 +103,7 @@ const keepError = computed(() => {
 
 function submit() {
   const body = overlay.patch.value;
-  if (!body || keepError.value || props.readonly) return;
+  if (!body || keepError.value || props.readOnly) return;
   save.mutate(body, {
     onSuccess: () => {
       overlay.reset();
@@ -228,7 +228,7 @@ const skipped = computed(() => Object.entries(current.value?.result?.skipped ?? 
               id="retention-enabled"
               v-model="enabled"
               aria-describedby="retention-enabled-hint"
-              :disabled="readonly || save.isPending.value"
+              :disabled="readOnly || save.isPending.value"
             />
             <div class="flex min-w-0 flex-1 flex-col gap-1">
               <label for="retention-enabled" class="text-sm font-medium">
@@ -242,7 +242,7 @@ const skipped = computed(() => Object.entries(current.value?.result?.skipped ?? 
               :linked="(configuration.data.value?.template_ref ?? null) !== null"
               :origin="configuration.data.value?.fields.retention"
               :modified="overlay.modified('retention')"
-              :disabled="readonly || save.isPending.value"
+              :disabled="readOnly || save.isPending.value"
               @reset="overlay.restore('retention')"
             />
           </div>
@@ -260,10 +260,10 @@ const skipped = computed(() => Object.entries(current.value?.result?.skipped ?? 
               :min="1"
               :max="1000"
               :step="1"
-              :disabled="readonly || save.isPending.value"
+              :disabled="readOnly || save.isPending.value"
             />
           </Field>
-          <div v-if="!readonly" class="flex flex-wrap gap-2">
+          <div v-if="!readOnly" class="flex flex-wrap gap-2">
             <Button
               type="submit"
               variant="primary"
@@ -331,7 +331,7 @@ const skipped = computed(() => Object.entries(current.value?.result?.skipped ?? 
           <Button
             :loading="actions.preview.isPending.value"
             :disabled="
-              readonly ||
+              readOnly ||
               overlay.dirty.value ||
               !configuration.data.value ||
               actions.execute.isPending.value
@@ -433,7 +433,7 @@ const skipped = computed(() => Object.entries(current.value?.result?.skipped ?? 
               <Button
                 variant="danger"
                 :loading="actions.execute.isPending.value"
-                :disabled="readonly || expired || current.selected_versions === 0"
+                :disabled="readOnly || expired || current.selected_versions === 0"
                 @click="execute"
               >
                 {{ t("retention.execute") }}

@@ -20,6 +20,7 @@ export {
   type OverlayFormOptions,
   type OverlayPatch,
 } from "./overlay";
+export { useOverlayDraft } from "./draft";
 export { default as FieldReset } from "./FieldReset.vue";
 export { default as OverlayFormActions } from "./OverlayFormActions.vue";
 export { default as TemplateMissingAlert } from "./TemplateMissingAlert.vue";

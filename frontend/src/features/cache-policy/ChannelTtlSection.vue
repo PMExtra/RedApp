@@ -5,6 +5,7 @@ import {
   FieldReset,
   useAppConfiguration,
   useAppConfigurationPatch,
+  useOverlayDraft,
 } from "@/features/configuration";
 import { useDirtyGuard } from "@/shared/forms";
 import { useFormat } from "@/shared/i18n";
@@ -18,14 +19,13 @@ import {
   NumberInput,
   RevisionConflictAlert,
 } from "@/shared/ui";
-import { useOverlayDraft } from "./overlay";
 
 /**
  * Metadata freshness (`cache_ttl_seconds`) of a release application: how long
  * channel metadata such as "latest" is reused before it is checked again.
  * Rendered by the application settings page.
  */
-const props = defineProps<{ vendor: string; app: string; readonly?: boolean }>();
+const props = defineProps<{ vendor: string; app: string; readOnly?: boolean }>();
 const { t } = useI18n();
 const format = useFormat();
 const MIN = 1;
@@ -66,7 +66,7 @@ const templateValue = computed(() => {
 
 function submit() {
   const body = overlay.patch.value;
-  if (!body || error.value || props.readonly) return;
+  if (!body || error.value || props.readOnly) return;
   save.mutate(body, {
     onSuccess: () => {
       overlay.reset();
@@ -109,7 +109,7 @@ async function reload() {
               :max="MAX"
               :step="1"
               :unit="t('cachePolicy.ttl.unit')"
-              :disabled="readonly || save.isPending.value"
+              :disabled="readOnly || save.isPending.value"
             />
           </Field>
           <FieldReset
@@ -118,11 +118,11 @@ async function reload() {
             :origin="configuration.data.value?.fields.cache_ttl_seconds"
             :modified="overlay.modified('cache_ttl_seconds')"
             :template-value="templateValue"
-            :disabled="readonly || save.isPending.value"
+            :disabled="readOnly || save.isPending.value"
             @reset="overlay.restore('cache_ttl_seconds')"
           />
         </div>
-        <div v-if="!readonly" class="flex flex-wrap gap-2">
+        <div v-if="!readOnly" class="flex flex-wrap gap-2">
           <Button
             type="submit"
             variant="primary"
