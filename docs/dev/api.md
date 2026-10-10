@@ -62,7 +62,8 @@
 
 ## 阶段 4：前端
 
-- 用 `openapi-typescript` 从规范生成类型，用 `openapi-fetch` 作为客户端；不手写 DTO。生成物与规范一起提交，CI 检查可复现。
+- 用 `openapi-typescript` 从规范生成类型，用 `openapi-fetch` 作为客户端；不手写 DTO。生成物（`frontend/src/shared/api/*.gen.ts`）与规范一起提交，`npm run codegen:check` 检查可复现。
+- **SPA 文档**：前端有两个入口。`x-spa-routes.routes` 中的公开路径（`/`、`/all`、`/{vendor}`、`/{vendor}/{app}`）返回嵌入目录根部的 `index.html`；其中的 `/admin/...` 路径返回 `admin.html`，其余 `/admin/...`（`/admin/api/` 除外）返回 `admin.html` 且状态为 404。`/admin/...` 不能回退到 `index.html`。文件名写在 `x-spa-routes.documents`，CSP 与静态资源规则见 [frontend.md](frontend.md#两个入口与-spa-服务契约)。前端测试要求前端的具名路由与 `x-spa-routes.routes` 完全一致。
 - TanStack Query 的 key 以 operationId 加参数构成；写操作成功后用响应体替换缓存（响应总是完整的新状态和新 `ETag`）。
 - 409 `REVISION_CONFLICT` 保留草稿并提示重新加载；`retryable: true` 的错误可提供重试。
 - MSW 的模拟响应使用生成的类型，示例可直接取自规范。
