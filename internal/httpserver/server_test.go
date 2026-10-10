@@ -79,15 +79,20 @@ func TestRequestIDIsSharedByHeaderErrorAndLogs(t *testing.T) {
 
 func TestPanicsBecomeInternalErrors(t *testing.T) {
 	h := newHarness(t)
-	h.server.mux.HandleFunc("GET /panic-test", func(w http.ResponseWriter, r *http.Request) { panic("handler bug") })
+	// The panic value carries a malformed proxy URL whose password contains "/".
+	h.server.mux.HandleFunc("GET /panic-test", func(w http.ResponseWriter, r *http.Request) { panic("handler bug: socks5://ops:pass/word@proxy:1080") })
 	r := httptest.NewRequest("GET", "http://internal/panic-test", nil)
 	w := httptest.NewRecorder()
 	h.server.ServeHTTP(w, r)
 	if w.Code != 500 || errorCodeOf(t, w.Body.Bytes()) != "INTERNAL_ERROR" || strings.Contains(w.Body.String(), "handler bug") {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	if !strings.Contains(h.logs.String(), "handler bug") {
-		t.Fatal("panic not logged")
+	logs := h.logs.String()
+	if !strings.Contains(logs, "handler bug: socks5://****@proxy:1080") {
+		t.Fatal("panic not logged", logs)
+	}
+	if strings.Contains(logs, "ops:pass") || strings.Contains(logs, "pass/word") {
+		t.Fatal("panic log leaked the proxy password", logs)
 	}
 }
 
