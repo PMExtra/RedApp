@@ -65,14 +65,14 @@
 
 ### 迁移状态
 
-已按规范实现：health、public、pages、assets、distribution、auth 六个标签下的全部 29 个操作。以下差异已落地：错误码与 `request_id`、`Error` 文档（含 404/405）、HEAD（发布制品不触发下载）、认证与会话、公开 API、分发与静态资源、页码超出时返回空页、`PREWARM_BUSY` 改为标准 `Error`。
+已按规范实现：health、public、pages、assets、distribution、auth 六个标签下的全部 29 个操作，以及工作包 2 的 21 个管理操作（发布版本、资源、版本清理、保留、预热、托管文件管理）。以下差异已落地：错误码与 `request_id`、`Error` 文档（含 404/405）、HEAD（发布制品不触发下载）、认证与会话、公开 API、分发与静态资源、页码超出时返回空页、`PREWARM_BUSY` 改为标准 `Error`，以及下文“发布类应用”“预热”“托管文件”三节。
 
-其余 74 个管理操作在路由表中标记为 `legacy`，仍由旧处理器以旧路径和旧响应形状服务（`legacy.go` 的分发骨架与 `legacy_directory.go`、`legacy_releases.go`、`legacy_overview.go` 三个分派函数）；规范已删除的旧路径经 `/admin/api/` 兜底注册到达。它们按三个互不重叠的工作包迁移：
+其余 53 个管理操作在路由表中标记为 `legacy`，仍由旧处理器以旧路径和旧响应形状服务（`legacy.go` 的分发骨架与 `legacy_directory.go`、`legacy_releases.go`、`legacy_overview.go` 三个分派函数）；规范已删除的旧路径经 `/admin/api/` 兜底注册到达。它们按三个互不重叠的工作包迁移：
 
 | 工作包 | 操作 | 主要文件 |
 | --- | --- | --- |
 | 1 目录、配置、导入导出、分类、管理备注（27） | `listProviders`、`listVendors`、`createVendor`、`getVendor`、`updateVendor`、`deleteVendor`、`listApps`、`createApp`、`getApp`、`updateApp`、`deleteApp`、`uploadIcon`、`getVendorConfiguration`、`patchVendorConfiguration`、`getAppConfiguration`、`patchAppConfiguration`、`getVendorNotes`、`replaceVendorNotes`、`getAppNotes`、`replaceAppNotes`、`listCategories`、`getCategory`、`patchCategory`、`exportConfiguration`、`previewImport`、`executeImport`、`copyApp` | `directory.go`、`directory_listing.go`、`directory_table.go`、`configuration.go`、`admin_notes.go`、`taxonomy.go`、`exchange.go`、`proxy_redaction.go`、`application_work.go`、`legacy_directory.go`；测试 `directory_test.go`、`directory_table_test.go`、`configuration_test.go`、`admin_notes_test.go`、`taxonomy_test.go`、`exchange_test.go`、`vendor_icons_test.go`、`proxy_redaction_test.go`、`force_delete_test.go`、`scoped_proxy_test.go`、`v072_test.go` |
-| 2 发布版本、资源、版本清理、保留、预热、托管文件管理（21） | `listVersions`、`listResources`、`previewVersionCleanup`、`executeVersionCleanup`、`getRetentionStatus`、`previewRetention`、`getRetentionPreview`、`listRetentionPreviewItems`、`executeRetention`、`getPrewarmOptions`、`startPrewarm`、`getPrewarmJob`、`listPrewarmItems`、`cancelPrewarmJob`、`retryPrewarmJob`、`listHostedFiles`、`uploadHostedFile`、`importHostedFile`、`deleteHostedFile`、`getHostedTransfer`、`cancelHostedTransfer` | `listing.go`、`numbered_listing.go`、`retention.go`、`prewarm.go`、`hosted.go`、`legacy_releases.go`；测试 `listing_test.go`、`retention_test.go`、`prewarm_test.go`、`content_providers_test.go` |
+| 2 发布版本、资源、版本清理、保留、预热、托管文件管理（21，已完成） | `listVersions`、`listResources`、`previewVersionCleanup`、`executeVersionCleanup`、`getRetentionStatus`、`previewRetention`、`getRetentionPreview`、`listRetentionPreviewItems`、`executeRetention`、`getPrewarmOptions`、`startPrewarm`、`getPrewarmJob`、`listPrewarmItems`、`cancelPrewarmJob`、`retryPrewarmJob`、`listHostedFiles`、`uploadHostedFile`、`importHostedFile`、`deleteHostedFile`、`getHostedTransfer`、`cancelHostedTransfer` | `listing.go`、`numbered_listing.go`、`retention.go`、`prewarm.go`、`hosted.go`、`legacy_releases.go`；测试 `listing_test.go`、`retention_test.go`、`prewarm_test.go`、`content_providers_test.go` |
 | 3 HTTP 缓存管理、概览、事件、历史、站点设置（26） | `listSources`、`listCacheEntries`、`refreshCacheEntry`、`previewCacheRefresh`、`getCacheRefresh`、`listCacheRefreshItems`、`executeCacheRefresh`、`previewCacheCleanup`、`getCacheCleanup`、`listCacheCleanupItems`、`executeCacheCleanup`、`getAutoCleanupStatus`、`testPathMatch`、`getStatus`、`getHistory`、`listEvents`、`getAppStatus`、`getAppHistory`、`getSiteSettings`、`replaceSiteSettings`、`getPublicUrlSettings`、`replacePublicUrlSettings`、`getGlobalProxySettings`、`replaceGlobalProxySettings`、`getHomepageSettings`、`replaceHomepageSettings` | `cache.go`、`status.go`、`history.go`、`homepage_settings.go`、`legacy_overview.go`；`listing.go` 中的 `eventList`；测试 `cache_policy_test.go`、`cache_capacity_test.go`、`general_routes_test.go`（管理部分）、`dynamic_metrics_test.go`、`site_test.go` |
 
 每个工作包的做法：把本包在 `routeTable()` 中的行从 `serve: s.legacyAdmin, …, legacy: true` 改为新处理函数（契约测试随之生效），按规范重写处理器与测试；完成后让本包的 `legacy_*.go` 分派函数直接返回 `false` 并删除不再引用的旧处理器。不要修改 `legacy.go`；三个包都完成后，在一次清理中删除 `legacy.go`、三个 `legacy_*.go`、`legacyCatchAll` 和路由字段 `legacy`。
@@ -187,14 +187,19 @@
 | 现有 | 规范 |
 | --- | --- |
 | 版本、资源列表同时支持 `page` 和 `cursor` | 只用游标；版本总数见应用指标 `versions.total` |
+| 版本按字符串升序 | 按 Provider 的版本顺序从新到旧，无法解析的版本按字符串排在最后；游标绑定 source epoch |
+| 游标用于其他列表、应用、epoch 或过滤条件时 400 `INVALID_REQUEST` | 400 `INVALID_CURSOR`；`version` 过滤不是规范版本时 400 `INVALID_QUERY` |
 | 版本条目 `bytes` | `downstream_bytes` |
 | 资源条目为 PascalCase，含本地文件路径 `Path`、`Resource.{Application,MetricsID,SourceFence,Labels,Source}` 等内部字段 | `Resource` schema，snake_case，删除内部字段 |
 | `POST .../cleanup/preview?source_epoch=`，响应 `{job: {ID, Selected, …}, logical_bytes, reclaimable_blob_bytes, active, unknown_versions}` | `POST .../version-cleanup/preview`，`source_epoch` 在请求体，`201 VersionCleanupPreview`（`reclaimable_bytes`、`active_generations`） |
-| `POST .../cleanup/{id}/execute?source_epoch=` → `{ok}` | `POST .../version-cleanup/{id}/execute` → 已执行的预览；不再需要 `source_epoch` |
-| 保留预览请求体 `{revision}` | `If-Match`；`201` |
+| `POST .../cleanup/{id}/execute?source_epoch=` → `{ok}` | `POST .../version-cleanup/{id}/execute` → 已执行的预览；不再需要 `source_epoch`；重复执行返回同一结果 |
+| 预览只返回一次估算 | 预览持久化 `reclaimable_bytes`、`active_generations`、`unknown_versions`，执行结果中仍可读（schema 13） |
+| 预览、执行失败都是 409 `CLEANUP_INVALID` | 未知或过期 404 `PREVIEW_NOT_FOUND`；来源变化 409 `PREVIEW_STALE`；预览期间来源变化 409 `SOURCE_CHANGED`；不存在的 `source_epoch` 404 `SOURCE_NOT_FOUND`；已删除应用 409 `ENTITY_DELETED` |
+| 保留预览请求体 `{revision}` | `If-Match`；`201`（带 `Location`）；预览生成期间配置被修改也返回 409 `REVISION_CONFLICT` |
+| 保留失败都是 409 `RETENTION_INVALID` | 渠道无法验证 502 `CHANNELS_UNVERIFIED`；读取并发已满 503 `TRANSFER_CAPACITY`；应用已禁用或来源变化 409 `SOURCE_CHANGED`；执行时策略、来源或渠道变化 409 `PREVIEW_STALE`；未知或过期 404 `PREVIEW_NOT_FOUND` |
 | 保留预览 `expires` | `created_at`、`expires_at`、`executed_at`、`result` |
 | 保留条目响应带 `result` | 新增 `GET .../retention/{id}` 读取预览和回执；条目响应只是分页 |
-| 保留执行返回回执 | 返回带 `result` 的预览 |
+| 保留执行返回回执 | 返回带 `result` 的预览；已执行的预览直接返回已有回执，不再改写保留状态 |
 | 保留状态 `{}` 或 `{attempt, success, outcome, reason, …, next_check}` | `{last_run, next_check_at}`，`last_run` 为 `{attempted_at, succeeded_at, …}` 或 `null` |
 | 来源列表 `{sources}` | `{items}` |
 
@@ -218,6 +223,7 @@
 | 取消返回 `{cancel_requested: true}` | `202` 返回任务 |
 | 选项 `release`（布尔）、`limits` | `kind`（`release`/`http_cache`）、`default_limits` |
 | 任务 `created`/`updated`，PascalCase `AppRevision`/`VendorRevision`，可省略的 `reason`/`target`/`platforms` | `created_at`/`updated_at`，删除内部 revision，字段总是存在（可为 `null`/`[]`） |
+| 输入错误 400 `INVALID_REQUEST`，其他失败都是 409 `PREWARM_CONFLICT` | 字段值无效 400 `VALIDATION_FAILED`；`request_id` 冲突或过期 409 `PREWARM_REQUEST_CONFLICT`；重试运行中的任务 409 `OPERATION_IN_PROGRESS`；应用已禁用或来源变化 409 `SOURCE_CHANGED` |
 
 ### 托管文件
 
@@ -225,6 +231,8 @@
 | --- | --- |
 | 删除文件 `{deleted: true}`，取消传输 `{cancelled: true}` | `204` |
 | 传输进度 `total: -1` 表示未知；可能看到 `complete` | `total_bytes: null`；状态只有 `receiving`、`committing` |
+| multipart 中 `path`、`expected_id` 顺序任意 | 固定为 `path`、可选 `expected_id`、`file`，否则 400 `INVALID_REQUEST`；路径或 ID 无效 400 `VALIDATION_FAILED` |
+| 冲突都是 409 `RESOURCE_CONFLICT`；导入 URL 无效与下载失败都是 502 | `FILE_CONFLICT`、`TRANSFER_ID_IN_USE`、`TRANSFER_CANCELLED`，传输期间应用被修改 409 `SOURCE_CHANGED`；URL 无效（凭据、片段、非 http(s)）400 `VALIDATION_FAILED`，下载失败 502 `IMPORT_SOURCE_FAILED`；导入 URL 可带查询串（签名链接） |
 
 ### 分发与静态资源
 
