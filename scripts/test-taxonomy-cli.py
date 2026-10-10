@@ -77,7 +77,7 @@ class TaxonomyCLITest(ServerTestCase):
 
         catalog = self.admin.request("/api/catalog?category=tools&q=two&limit=1")
         self.assertEqual(catalog["total"], 1)
-        self.assertEqual(catalog["items"][0]["id"], "taxonomy/two")
+        self.assertEqual(catalog["items"][0]["key"], "taxonomy/two")
         expected_categories = sorted(
             [
                 {"id": "tools", "name": {"en": "Renamed", "zh-CN": "Tools"}, "count": 2},
@@ -87,7 +87,7 @@ class TaxonomyCLITest(ServerTestCase):
         )
         self.assertEqual(catalog["categories"], expected_categories, "disabled apps were counted")
         tagged = self.admin.request("/api/catalog?q=%23cli")
-        self.assertEqual([item["id"] for item in tagged["items"]], ["taxonomy/one"])
+        self.assertEqual([item["key"] for item in tagged["items"]], ["taxonomy/one"])
         self.assertEqual(tagged["categories"], catalog["categories"])
         public_documents = [catalog, tagged, self.admin.request("/api/bootstrap"), self.admin.request("/api/search?q=cli")]
         for document in public_documents:

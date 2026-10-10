@@ -196,12 +196,13 @@ class Session:
     def login(self, password=None):
         """Sign in as administrator and remember the CSRF token."""
         password = password if password is not None else self.server.initial_password()
-        self.csrf = self.request("/admin/api/login", {"password": password}, method="POST")["csrf"]
+        session = self.request("/admin/api/session", {"password": password}, method="POST", expect=201)
+        self.csrf = session["csrf_token"]
         return self.csrf
 
     def logout(self):
         """Sign out; the CSRF token is kept so the request itself is accepted."""
-        self.request("/admin/api/logout", {}, method="POST")
+        self.fetch("/admin/api/session", method="DELETE", expect=204)
 
 
 class RedAppServer:

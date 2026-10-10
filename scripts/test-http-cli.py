@@ -67,8 +67,8 @@ class HTTPServerCLITest(ServerTestCase):
             self.client.fetch(f"/admin/api/apps/{vendor}/{app}", {"enabled": True}, method="PATCH", if_match=a["revision"])
 
     def public_app_ids(self):
-        """IDs of the publicly listed applications."""
-        return {app["id"] for app in self.read("/api/bootstrap")["apps"]}
+        """Keys of the published applications."""
+        return {app["key"] for app in self.read("/api/catalog?limit=100")["items"]}
 
     def test_version_output_format(self):
         output = subprocess.check_output([str(BINARY), "version"], text=True)
@@ -84,7 +84,7 @@ class HTTPServerCLITest(ServerTestCase):
             with self.subTest(host=host):
                 headers = {"Host": host, "Origin": None}
                 bootstrap = self.client.request("/api/bootstrap", headers=headers)
-                self.assertEqual(bootstrap["public_origin"], PUBLIC_URL)
+                self.assertEqual(bootstrap["public_url"], PUBLIC_URL)
                 self.client.fetch("/admin/api/status", headers=headers, expect=401)
         for host in ["bad_host", "example.com:0", "example.com:65536"]:
             with self.subTest(host=host):
@@ -94,13 +94,14 @@ class HTTPServerCLITest(ServerTestCase):
         version = subprocess.check_output([str(BINARY), "version"], text=True).split()[1]
         bootstrap = self.read("/api/bootstrap")
         self.assertEqual(bootstrap["version"], version)
-        self.assertEqual(bootstrap["public_origin"], PUBLIC_URL)
-        self.assertEqual(bootstrap["apps"], [], "fresh templates must not be publicly enabled")
+        self.assertEqual(bootstrap["public_url"], PUBLIC_URL)
+        self.assertNotIn("apps", bootstrap)
+        self.assertEqual(self.public_app_ids(), set(), "fresh templates must not be publicly enabled")
         for path in ["/api/info", "/apps/codex", "/install.sh"]:
             self.client.fetch(path, expect=404)
         self.client.fetch("/admin/api/status", expect=401)
         csrf = self.client.login()
-        self.assertEqual(self.read("/admin/api/session")["csrf"], csrf)
+        self.assertEqual(self.read("/admin/api/session")["csrf_token"], csrf)
         self.assertEqual(self.read("/admin/api/vendors?page=1&limit=12")["total"], 2)
         self.enable_builtin_templates()
         spa_paths = [
@@ -251,7 +252,7 @@ class HTTPServerCLITest(ServerTestCase):
         public = self.write(public_path, {"override_url": "https://published.example.test"}, public["revision"])
         self.assertEqual(public["effective_url"], "https://published.example.test")
         self.assertEqual(public["source"], "override")
-        self.assertEqual(self.read("/api/bootstrap")["public_origin"], public["effective_url"])
+        self.assertEqual(self.read("/api/bootstrap")["public_url"], public["effective_url"])
         for app in ["openai/codex", "anthropic/claude-code"]:
             for name in ["install.sh", "install.ps1"]:
                 with self.subTest(installer=f"{app}/{name}"):
@@ -282,9 +283,9 @@ class HTTPServerCLITest(ServerTestCase):
         base = self.server.base_url
         bootstrap = self.read("/api/bootstrap")
         self.assertEqual(bootstrap["site"], site)
-        self.assertEqual(bootstrap["public_origin"], base)
+        self.assertEqual(bootstrap["public_url"], base)
         self.assertEqual(
-            {app["id"] for app in bootstrap["apps"]},
+            self.public_app_ids(),
             {"openai/codex", "anthropic/claude-code"},
             "restart reseeded deleted dynamic entries",
         )
@@ -298,13 +299,13 @@ class HTTPServerCLITest(ServerTestCase):
         self.assertEqual(healthcheck.returncode, 0, healthcheck.stderr)
         forwarded = {"Forwarded": "proto=https;host=untrusted.example", "Origin": None}
         self.assertEqual(
-            self.client.request("/api/bootstrap", headers=forwarded)["public_origin"],
+            self.client.request("/api/bootstrap", headers=forwarded)["public_url"],
             base,
             "untrusted proxy header affected origin",
         )
         for host in ["remote.example:9443", "[2001:db8::1]:8080"]:
             bootstrap = self.client.request("/api/bootstrap", headers={"Host": host, "Origin": None})
-            self.assertEqual(bootstrap["public_origin"], "http://" + host)
+            self.assertEqual(bootstrap["public_url"], "http://" + host)
         self.server.stop()
         restart_log = self.server.log_text()[len(first_start_log):]
         self.assertNotIn("Initial admin password", restart_log, "restart regenerated admin credentials")

@@ -76,7 +76,7 @@ async function withTimeout(promise, label) {
     clearTimeout(timer);
   }
 }
-async function request(path, body, method) {
+async function request(path, body, method, status = 200) {
   const response = await fetch(origin + path, {
     method: method || (body ? "POST" : "GET"),
     headers: {
@@ -87,7 +87,7 @@ async function request(path, body, method) {
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  assert.equal(response.status, 200, path);
+  assert.equal(response.status, status, path);
   return response;
 }
 try {
@@ -109,12 +109,12 @@ try {
   assert(ready, "server readiness");
   const password = privateLog.match(/Initial admin password: ([0-9a-f]+)/)?.[1];
   assert(password, "fixture bootstrap credential");
-  const login = await request("/admin/api/login", { password });
+  const login = await request("/admin/api/session", { password }, "POST", 201);
   cookie = login.headers
     .getSetCookie()
     .map((item) => item.split(";")[0])
     .join("; ");
-  csrf = (await login.json()).csrf;
+  csrf = (await login.json()).csrf_token;
   const vendor = (await (await request("/admin/api/vendors/openai")).json())
     .vendor;
   const app = (await (await request("/admin/api/apps/openai/codex")).json())
