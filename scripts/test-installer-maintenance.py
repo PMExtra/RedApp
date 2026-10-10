@@ -163,6 +163,23 @@ class CheckTests(unittest.TestCase):
             m.apply_patch(resigned+b'\r\nWrite-Host injected\r\n',diff)
         shell=(m.ROOT/'installers/openai/codex/upstream/install.sh').read_bytes()
         self.assertEqual(m.unsigned(shell),shell)
+    def test_only_one_trailing_authenticode_block_is_stripped(self):
+        for nl in (b'\r\n',b'\n'):
+            code=b'Write-Host one'+nl+b'Write-Host two'+nl
+            def block(body=b'# QUJD'):return nl.join([b'',m.SIGNATURE_BEGIN,body,m.SIGNATURE_END])+nl
+            self.assertEqual(m.unsigned(code),code)
+            self.assertEqual(m.unsigned(code.rstrip()+block()),code.rstrip())
+            # Code between two blocks or a marker earlier in code must never be silently dropped.
+            for tampered in (code.rstrip()+block()+b'Write-Host hidden'+block(),
+                             b'$m="'+m.SIGNATURE_BEGIN+b'"'+nl+code.rstrip()+block(),
+                             code.rstrip()+block(b'# a'+nl+m.SIGNATURE_END+nl+b'Write-Host hidden'),
+                             code.rstrip()+block()+b'Write-Host hidden'+nl):
+                with self.assertRaisesRegex(ValueError,'maintainer review'):m.unsigned(tampered)
+        def appended(url):
+            body=self.original(url)
+            return body+b'\r\nWrite-Host hidden\r\n'+m.SIGNATURE_BEGIN+b'\r\n# QUJD\r\n'+m.SIGNATURE_END+b'\r\n' if m.SIGNATURE_BEGIN in body else body
+        rows=m.inspect(fetch=appended)
+        self.assertEqual([r['status'] for r in rows if r['application']=='openai/codex' and r['name']=='install.ps1'],['error'])
     def test_isolated_test_failure_does_not_output(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp=Path(tmp);prepared=tmp/'prepared';m.prepare(prepared,fetch=self.original)

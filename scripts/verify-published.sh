@@ -16,9 +16,12 @@ with open(sys.argv[1]) as file:
     manifest = json.load(file)
 variants = [item for item in manifest['manifests'] if item['platform']['os'] != 'unknown']
 platforms = sorted((item['platform']['os'], item['platform']['architecture']) for item in variants)
-assert platforms == [('linux', 'amd64'), ('linux', 'arm64')], platforms
+# Explicit checks: assert would vanish under python -O / PYTHONOPTIMIZE.
+if platforms != [('linux', 'amd64'), ('linux', 'arm64')]:
+    sys.exit(f'Release check failed: unexpected platforms {platforms}')
 for item in variants:
-    assert re.fullmatch(r'sha256:[0-9a-f]{64}', item['digest']), item['digest']
+    if not re.fullmatch(r'sha256:[0-9a-f]{64}', item['digest']):
+        sys.exit(f'Release check failed: invalid variant digest {item["digest"]!r}')
     print('linux/' + item['platform']['architecture'], item['digest'])
 PY
 while read -r platform digest; do
