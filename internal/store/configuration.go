@@ -1895,7 +1895,10 @@ func (s *Store) PatchGlobalProxy(expected int64, c networkproxy.Config) (int64, 
 		st.GlobalProxyRevision++
 		return nil
 	})
-	return expected + 1, err
+	if err != nil {
+		return 0, err
+	}
+	return expected + 1, nil
 }
 
 // SetInitialConfigurationPrepare installs a startup coordinator without replacing

@@ -106,7 +106,10 @@ func command(args []string) error {
 }
 
 func healthcheck(c config.Deployment) error {
-	host, port, _ := net.SplitHostPort(c.Listen)
+	host, port, err := net.SplitHostPort(c.Listen)
+	if err != nil {
+		return fmt.Errorf("healthcheck cannot parse listen address: %w", err)
+	}
 	if host == "" || host == "0.0.0.0" {
 		host = "127.0.0.1"
 	} else if host == "::" {
@@ -152,12 +155,12 @@ func serve(c config.Deployment) error {
 	defer db.Close() // Runs after all transfer services stop, flushing their final counters.
 	defer db.StartCounterFlush(store.CounterFlushInterval, func(err error) { log.Printf("Counter flush failed; increments retained for retry: %v", err) })()
 	db.SetDistributionValidation(builtin.ValidateDescriptors)
-	// Validate/reconcile all authoritative configurations before recovery mutates data.
+	// Add missing entity templates and revalidate every authoritative
+	// configuration before deletion recovery mutates data.
 	if err = db.EnsureEntityTemplates(); err != nil {
 		return err
 	}
-
-	// Add missing entity templates disabled, preserving every existing configuration.
+	// Finish application deletions interrupted by a previous process.
 	if err = db.RecoverApplicationDeletions(); err != nil {
 		return err
 	}

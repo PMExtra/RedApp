@@ -5,9 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
+	"unicode"
 )
 
-// Reject duplicate keys at every object depth; encoding/json otherwise silently accepts the last value.
+// Unique rejects duplicate keys at every object depth; encoding/json otherwise
+// silently accepts the last value. Keys are compared after the same case folding
+// encoding/json uses to match struct fields, so "name" and "NAME" cannot both
+// reach one field.
 func Unique(body []byte) error {
 	d := json.NewDecoder(bytes.NewReader(body))
 	d.UseNumber()
@@ -29,7 +34,11 @@ func Unique(body []byte) error {
 					return e
 				}
 				k, ok := key.(string)
-				if !ok || seen[k] {
+				if !ok {
+					return errors.New("Invalid JSON object key")
+				}
+				k = foldKey(k)
+				if seen[k] {
 					return errors.New("Duplicate JSON field")
 				}
 				seen[k] = true
@@ -58,4 +67,10 @@ func Unique(body []byte) error {
 		return errors.New("Unexpected trailing JSON data")
 	}
 	return nil
+}
+
+// foldKey mirrors encoding/json's field-name folding: every rune maps to
+// upper(lower(r)), which also equates special folds such as the Kelvin sign and K.
+func foldKey(key string) string {
+	return strings.Map(func(r rune) rune { return unicode.ToUpper(unicode.ToLower(r)) }, key)
 }

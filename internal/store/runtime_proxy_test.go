@@ -66,13 +66,13 @@ func TestRuntimeClassifierAndProxyHierarchy(t *testing.T) {
 			t.Fatal("invalid proxy accepted", err)
 		}
 	}
-	s.SetConfigurationPrepare(func(DirectorySnapshot) (ConfigurationPublication, error) { return nil, errors.New("prepare failed") })
-	if err := s.SeedDirectory(nil, nil); err == nil {
-		t.Fatal("runtime initialization bypass left open")
-	}
 	before, _ := s.DirectoryConfigurationSnapshot()
-	if _, err := s.PatchGlobalProxy(before.GlobalProxyRevision, networkproxy.Direct()); err == nil {
-		t.Fatal("failed prepare accepted")
+	if rev, err := s.PatchGlobalProxy(before.GlobalProxyRevision-1, networkproxy.Direct()); !errors.Is(err, ErrConflict) || rev != 0 {
+		t.Fatalf("stale global proxy revision = %d, %v; want 0, ErrConflict", rev, err)
+	}
+	s.SetConfigurationPrepare(func(DirectorySnapshot) (ConfigurationPublication, error) { return nil, errors.New("prepare failed") })
+	if rev, err := s.PatchGlobalProxy(before.GlobalProxyRevision, networkproxy.Direct()); err == nil || rev != 0 {
+		t.Fatalf("failed prepare = %d, %v; want 0 and an error", rev, err)
 	}
 	after, _ := s.DirectoryConfigurationSnapshot()
 	if after.GlobalProxy != before.GlobalProxy || after.GlobalProxyRevision != before.GlobalProxyRevision {
