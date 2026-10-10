@@ -7,7 +7,7 @@ NODE_MODULES := frontend/node_modules/.package-lock.json
 REQUIRE_BINARY := @test -x bin/redapp || { echo 'bin/redapp is missing: run `make binary` or `make build` first' >&2; exit 1; }
 
 .PHONY: build binary check test docs-check toolchain-check frontend frontend-test \
-	runtime-test network-test installers installer-inventory docker
+	runtime-test e2e network-test installers installer-inventory docker
 
 build: frontend
 	@$(MAKE) --no-print-directory binary
@@ -48,6 +48,12 @@ runtime-test: $(NODE_MODULES)
 	python3 scripts/test-prewarm-cli.py
 	python3 scripts/test-taxonomy-cli.py
 	python3 scripts/test-configuration-exchange-cli.py
+
+# Playwright against the existing binary with a fresh data directory; needs the
+# Chromium browser: cd frontend && npx playwright install --with-deps chromium
+e2e: $(NODE_MODULES)
+	$(REQUIRE_BINARY)
+	python3 scripts/test-e2e.py
 
 # Manual, needs Internet access: official signed Claude manifest and one real binary (>200 MB).
 network-test:

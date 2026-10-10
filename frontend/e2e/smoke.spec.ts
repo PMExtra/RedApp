@@ -2,6 +2,8 @@ import { expect, test } from "@playwright/test";
 import { collectConsoleErrors } from "./console";
 
 const password = process.env.REDAPP_E2E_PASSWORD ?? "";
+// An existing `info` application (vendor/app), for example the runner's fixture.
+const infoApp = process.env.REDAPP_E2E_INFO_APP ?? "";
 
 test("public home page renders the shell", async ({ page }) => {
   const errors = collectConsoleErrors(page);
@@ -71,6 +73,20 @@ test.describe("administration", () => {
     await expect(page.getByText(/Site texts saved|站点文本已保存/).first()).toBeVisible();
     await page.reload();
     await expect(subtitle).toHaveValue(original);
+    expect(errors).toEqual([]);
+  });
+
+  test("deep-links to an application without a tab", async ({ page }) => {
+    test.skip(!infoApp, "set REDAPP_E2E_INFO_APP to an info application key");
+    const errors = collectConsoleErrors(page);
+    const [vendor, app] = infoApp.split("/");
+    const response = await page.goto(`/admin/vendors/${vendor}/apps/${app}`);
+    expect(response?.status()).toBe(200);
+    await page.getByLabel(/Password|密码/).fill(password);
+    await page.getByRole("button", { name: /Sign in|登录/ }).click();
+    // The bare path opens the provider's default tab (settings for info).
+    await expect(page).toHaveURL(new RegExp(`/admin/vendors/${vendor}/apps/${app}/settings$`));
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     expect(errors).toEqual([]);
   });
 });
