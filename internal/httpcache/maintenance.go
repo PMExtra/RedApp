@@ -12,6 +12,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/cachepolicy"
 	"github.com/PMExtra/RedApp/internal/fsutil"
+	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/pathmatch"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -123,6 +124,25 @@ func (s *Service) LookupPreview(storageID, kind, id string) (MaintenancePreview,
 		return p, err
 	}
 	return p, s.validatePreview(p, kind)
+}
+
+// LookupAppPreview finds a preview of any source epoch of the application with
+// the stable uid. A preview of another application reads as sql.ErrNoRows.
+func (s *Service) LookupAppPreview(uid, kind, id string) (MaintenancePreview, error) {
+	p, err := scanMaintenance(s.db.DB.QueryRow(`SELECT `+maintenanceColumns+` FROM http_cleanup_previews WHERE id=?`, id))
+	if err != nil {
+		return p, err
+	}
+	if owner, _, ok := identity.ParseStorageID(p.storageID); !ok || owner != uid {
+		return MaintenancePreview{}, sql.ErrNoRows
+	}
+	return p, s.validatePreview(p, kind)
+}
+
+// SourceEpoch is the source epoch the preview was built for.
+func (p MaintenancePreview) SourceEpoch() int64 {
+	_, epoch, _ := identity.ParseStorageID(p.storageID)
+	return epoch
 }
 
 func (s *Service) buildPreview(ctx context.Context, entry application.Entry, kind string, criteria PreviewCriteria, options buildOptions) (out MaintenancePreview, buildErr error) {
