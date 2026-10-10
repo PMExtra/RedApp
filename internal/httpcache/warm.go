@@ -158,6 +158,9 @@ func (s *Service) warmCurrent(ctx context.Context, entry application.Entry, path
 	if errors.Is(err, ErrFetchAgain) {
 		return warmplan.Item{Status: "failed", Reason: "generation_changed"}
 	}
+	if errors.Is(err, errUncacheableFlight) {
+		return warmplan.Item{Status: "not_cacheable", Reason: result.blockReason}
+	}
 	if errors.Is(err, warmplan.ErrLimited) {
 		return warmplan.Item{Status: "skipped", Reason: "read_limit"}
 	}

@@ -16,8 +16,14 @@ var ErrFetchAgain = errors.New("HTTP cache fetch must be retried with current st
 // fetchAgainLimit consecutive attempts.
 var ErrFetchContended = errors.New("HTTP cache storage kept changing; retry the request")
 
-// fetchAgainLimit bounds every ErrFetchAgain retry loop.
+// fetchAgainLimit bounds every ErrFetchAgain retry loop. It is a safety net
+// for generation churn; uncacheable flights never consume it.
 const fetchAgainLimit = 16
+
+// errUncacheableFlight tells a follower that the shared flight produced a
+// direct response already claimed by another reader. A reader that needs the
+// body makes its own unshared transfer under the writer limit.
+var errUncacheableFlight = errors.New("HTTP cache shared fetch produced an uncacheable response")
 
 func flightKey(entry application.Entry, path, generation string) string {
 	return entry.StorageID() + "\x00" + path + "\x00" + strconv.FormatInt(entry.RuntimeRevision, 10) + "/" + strconv.FormatInt(entry.VendorRuntimeRevision, 10) + "\x00" + generation
@@ -92,7 +98,7 @@ func (s *Service) sharedFetch(ctx context.Context, entry application.Entry, path
 	if result.response != nil {
 		if current.claimed {
 			s.mu.Unlock()
-			return fetchResult{}, ErrFetchAgain
+			return fetchResult{blockReason: result.blockReason}, errUncacheableFlight
 		}
 		current.claimed = true
 		s.mu.Unlock()
@@ -139,7 +145,7 @@ func (s *Service) runFetch(ctx context.Context, entry application.Entry, path st
 		err = s.db.AddFor(entry.MetricsID(), "miss_requests", 1)
 	}
 	if err == nil {
-		result, err = s.fetch(ctx, entry, path, old)
+		result, err = s.fetch(ctx, entry, path, old, true)
 	}
 	if result.response != nil {
 		result.response.Body = &finishBody{ReadCloser: result.response.Body, finish: finish}

@@ -117,6 +117,15 @@ func (s *Service) Serve(w http.ResponseWriter, r *http.Request, entry applicatio
 		if old != nil {
 			s.unpin(old.GenerationID)
 		}
+		if errors.Is(fetchErr, errUncacheableFlight) {
+			// The upstream response, never a request header, made this path
+			// uncacheable. Each follower transfers concurrently instead of
+			// retrying one at a time.
+			if err = s.db.AddFor(entry.MetricsID(), "miss_requests", 1); err != nil {
+				return err
+			}
+			result, fetchErr = s.fetch(ctx, entry, relativePath, nil, false)
+		}
 		if errors.Is(fetchErr, ErrFetchAgain) {
 			continue
 		}

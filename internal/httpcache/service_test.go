@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -334,6 +333,55 @@ func TestConcurrentRequestNoStoreSharesOneUpstreamFetch(t *testing.T) {
 	}
 }
 
+// An uncacheable shared result is claimed by one reader; every other waiter
+// makes its own direct transfer instead of consuming the retry bound.
+func TestConcurrentReadersOfUncacheablePathAllSucceed(t *testing.T) {
+	const readers = 32
+	var calls atomic.Int64
+	entered, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	f := newFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		if calls.Add(1) == 1 {
+			close(entered)
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		io.WriteString(w, "body")
+	}), 300)
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	type reply struct {
+		body string
+		err  error
+	}
+	done := make(chan reply, readers)
+	serve := func() {
+		w, err := f.serve(t, "GET", http.Header{})
+		done <- reply{w.Body.String(), err}
+	}
+	go serve()
+	<-entered
+	for i := 1; i < readers; i++ {
+		go serve()
+	}
+	waitForFlightWaiters(t, f.s, readers)
+	releaseOnce.Do(func() { close(release) })
+	for i := 0; i < readers; i++ {
+		if got := <-done; got.err != nil || got.body != "body" {
+			t.Fatal(got)
+		}
+	}
+	if calls.Load() != readers || len(f.rows(t)) != 0 {
+		t.Fatal("uncacheable readers were not served by direct transfers", calls.Load())
+	}
+	if f.budget.readers.Load() != 0 || f.budget.writers.Load() != 0 {
+		t.Fatal("capacity leaked")
+	}
+}
+
 // waitForFlightWaiters observes admission into one shared flight. It polls
 // in-memory state under a deadline; correctness never depends on timing.
 func waitForFlightWaiters(t *testing.T, s *Service, n int) {
@@ -367,13 +415,13 @@ func TestServeBoundsFetchAgainRetries(t *testing.T) {
 		calls.Add(1)
 		io.WriteString(w, "body")
 	}), 300)
-	// A completed direct transfer already claimed by another reader makes
-	// every joining caller retry with current storage state.
+	// A completed flight whose published generation has already disappeared
+	// makes every joining caller retry with current storage state.
 	done := make(chan struct{})
 	close(done)
-	claimed := &flight{done: done, finished: true, claimed: true, waiters: map[*fetchWaiter]bool{}, cancel: func() {}, result: fetchResult{response: &http.Response{Body: io.NopCloser(strings.NewReader(""))}}}
+	churned := &flight{done: done, finished: true, waiters: map[*fetchWaiter]bool{}, cancel: func() {}, result: fetchResult{row: &Row{GenerationID: "collected"}}}
 	f.s.mu.Lock()
-	f.s.flights[flightKey(f.entry, "file", "")] = claimed
+	f.s.flights[flightKey(f.entry, "file", "")] = churned
 	f.s.mu.Unlock()
 	w, err := f.serve(t, "GET", http.Header{})
 	if !errors.Is(err, ErrFetchContended) || w.Code != 200 || w.Body.Len() != 0 || calls.Load() != 0 {

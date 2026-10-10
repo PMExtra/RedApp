@@ -239,12 +239,15 @@ func (s *Service) refreshExisting(ctx context.Context, entry application.Entry, 
 		if errors.Is(err, ErrFetchAgain) {
 			continue
 		}
-		if err != nil {
+		uncacheable := errors.Is(err, errUncacheableFlight)
+		if err != nil && !uncacheable {
 			item.Reason = "refresh_failed"
 			return item, err
 		}
-		if result.response != nil {
-			result.response.Body.Close()
+		if result.response != nil || uncacheable {
+			if result.response != nil {
+				result.response.Body.Close()
+			}
 			item.Status, item.Reason = "skipped", "response_not_cacheable"
 			if result.blockReason != "" {
 				item.Reason = result.blockReason
