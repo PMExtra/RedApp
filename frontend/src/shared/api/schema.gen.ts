@@ -318,7 +318,9 @@ export interface paths {
         };
         /**
          * Serve the SPA document for a published vendor.
-         * @description Reserved vendor IDs (`admin`, `api`, `assets`, `health`, `all`) never reach this route.
+         * @description Any other single segment (unknown, disabled or deleted vendors, or not a vendor ID at all) returns
+         *     `index.html` with status 404. `/admin` and `/all` have their own routes; the reserved IDs `api`, `assets`
+         *     and `health` return the router-level `404 NOT_FOUND` error.
          */
         get: operations["getVendorPage"];
         put?: never;
@@ -343,7 +345,10 @@ export interface paths {
         };
         /**
          * Serve the SPA document for a published application.
-         * @description `/{vendor}/{app}/` (trailing slash) redirects with `308` to `/{vendor}/{app}`.
+         * @description `/{vendor}/{app}/` (trailing slash) redirects with `308` to `/{vendor}/{app}`. Unknown or unpublished
+         *     applications and invalid identities return `index.html` with status 404. Paths below `/admin/` (other
+         *     than `x-spa-routes`) return `admin.html` with status 404 (see `getAdminPage`); paths whose first segment is
+         *     `api`, `assets` or `health` return the router-level `404 NOT_FOUND` error.
          */
         get: operations["getAppPage"];
         put?: never;
@@ -1222,7 +1227,9 @@ export interface paths {
         };
         /**
          * List locally known versions of the current source epoch, newest first.
-         * @description Ordered by the provider's version order (newest first). Available for `codex` and `claude-code`.
+         * @description Ordered by the provider's version order (newest first); versions the provider cannot parse follow in string
+         *     order. A cursor is bound to the source epoch: after a source change it is `400 INVALID_CURSOR`. Available for
+         *     `codex` and `claude-code`.
          */
         get: operations["listVersions"];
         put?: never;
@@ -1356,7 +1363,7 @@ export interface paths {
          *     Channels are verified first; if any channel cannot be verified nothing is selected (`502 CHANNELS_UNVERIFIED`).
          *     Keeps the newest `keep_latest` versions with a complete cached file in the current source epoch, plus versions
          *     a channel points to, versions in use and versions that cannot be compared; at most 100 versions are selected.
-         *     The preview expires after 10 minutes.
+         *     The preview expires after 10 minutes. A disabled application cannot be previewed (`409 APPLICATION_DISABLED`).
          */
         post: operations["previewRetention"];
         delete?: never;
@@ -1437,7 +1444,8 @@ export interface paths {
         put?: never;
         /**
          * Execute a retention preview.
-         * @description Re-checks policy, source and channels; if any changed, nothing is deleted (`409 PREVIEW_STALE`).
+         * @description Re-checks policy, source and channels; if any changed, nothing is deleted (`409 PREVIEW_STALE`). A disabled
+         *     application is not executed (`409 APPLICATION_DISABLED`).
          *     Versions that became protected meanwhile are skipped and reported in `skipped`. The outcome is recorded in
          *     the retention status. Executing an executed preview returns its receipt.
          */
@@ -1517,8 +1525,9 @@ export interface paths {
         put?: never;
         /**
          * Revalidate one cached file now, even if it is fresh.
-         * @description Works on the current, active source epoch only. A failed upstream revalidation is reported as
-         *     `status: failed` (or `stale_fallback`) with `200`; it is not an error response.
+         * @description Works on the current, active source epoch only; a disabled application is refused
+         *     (`409 APPLICATION_DISABLED`). A failed upstream revalidation is reported as `status: failed` (or
+         *     `stale_fallback`) with `200`; it is not an error response.
          */
         post: operations["refreshCacheEntry"];
         delete?: never;
@@ -1544,8 +1553,9 @@ export interface paths {
         /**
          * Preview revalidation of all cached files matching a pattern.
          * @description Builds a frozen list asynchronously: the response is the preview in state `building` or `ready`; poll
-         *     `getCacheRefresh` until `ready`. Current, active source epoch only. At most 8 previews (cleanup and refresh
-         *     together) are built at once. Expires 10 minutes after creation.
+         *     `getCacheRefresh` until `ready`. Current, active source epoch only; a disabled application is refused
+         *     (`409 APPLICATION_DISABLED`). At most 8 previews (cleanup and refresh together) are built at once. Expires
+         *     10 minutes after creation.
          */
         post: operations["previewCacheRefresh"];
         delete?: never;
@@ -1625,6 +1635,7 @@ export interface paths {
          * Start revalidating the files of a ready refresh preview in the background.
          * @description Returns the job in state `running`; poll `getCacheRefresh`. A restart interrupts the run and it is not resumed.
          *     Executing a running or finished preview returns `409 OPERATION_IN_PROGRESS` or the finished job respectively.
+         *     A disabled application is refused (`409 APPLICATION_DISABLED`).
          */
         post: operations["executeCacheRefresh"];
         delete?: never;
@@ -1828,7 +1839,8 @@ export interface paths {
          *     `request_id` is a client-generated idempotency key: repeating the same request returns the existing job with `200`;
          *     reusing it with a different body, or after the job expired, returns `409 PREWARM_REQUEST_CONFLICT`.
          *     Finished jobs are kept for 24 hours; a restart marks a running job `interrupted`. Cancelling never cancels downloads
-         *     that public clients also wait for. Prewarm never counts as public downloads.
+         *     that public clients also wait for. Prewarm never counts as public downloads. A disabled application cannot be
+         *     prewarmed (`409 APPLICATION_DISABLED`).
          */
         post: operations["startPrewarm"];
         delete?: never;
@@ -1991,7 +2003,8 @@ export interface paths {
         put?: never;
         /**
          * Import a file once from an http(s) URL (create or replace).
-         * @description Same create/replace rules as `uploadHostedFile`. The URL must not contain credentials; at most 4 redirects are
+         * @description Same create/replace rules as `uploadHostedFile`. The URL must not contain credentials or a fragment; its query
+         *     (for example a signed download token) is sent but never stored or returned. At most 4 redirects are
          *     followed, never from HTTPS to HTTP, and credentials and cookies are dropped on redirect. Uses the application's
          *     effective outbound proxy. The request returns when the file is stored; poll progress with `transfer_id`.
          */
@@ -2080,7 +2093,7 @@ export interface components {
          * @description Stable error code; see `components.x-error-codes`.
          * @enum {string}
          */
-        ErrorCode: "INVALID_REQUEST" | "VALIDATION_FAILED" | "INVALID_QUERY" | "INVALID_CURSOR" | "INVALID_PATH" | "REQUEST_ORIGIN_INVALID" | "IF_MATCH_REQUIRED" | "CURRENT_PASSWORD_INCORRECT" | "PASSWORD_INVALID" | "PROXY_REDACTED_MISMATCH" | "ICON_INVALID" | "PACKAGE_INVALID" | "INSTRUCTIONS_TRUST_REQUIRED" | "AUTH_REQUIRED" | "LOGIN_FAILED" | "ORIGIN_REJECTED" | "CSRF_REJECTED" | "NOT_FOUND" | "VENDOR_NOT_FOUND" | "APPLICATION_NOT_FOUND" | "CATEGORY_NOT_FOUND" | "FILE_NOT_FOUND" | "SOURCE_NOT_FOUND" | "PREVIEW_NOT_FOUND" | "JOB_NOT_FOUND" | "TRANSFER_NOT_FOUND" | "CACHE_ENTRY_NOT_FOUND" | "CAPABILITY_UNSUPPORTED" | "METHOD_NOT_ALLOWED" | "REVISION_CONFLICT" | "ALREADY_EXISTS" | "VENDOR_NOT_EMPTY" | "BUILTIN_PROTECTED" | "ENTITY_DELETED" | "APPLICATION_DELETE_PENDING" | "CATEGORY_AMBIGUOUS" | "FILE_CONFLICT" | "TRANSFER_ID_IN_USE" | "TRANSFER_CANCELLED" | "PREVIEW_STALE" | "OPERATION_IN_PROGRESS" | "SOURCE_CHANGED" | "IMPORT_NOT_READY" | "PREWARM_BUSY" | "PREWARM_REQUEST_CONFLICT" | "ARTIFACT_TOO_LARGE" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "LOGIN_RATE_LIMITED" | "PREVIEW_LIMIT_EXCEEDED" | "INTERNAL_ERROR" | "UPSTREAM_UNAVAILABLE" | "METADATA_UNTRUSTED" | "CHANNELS_UNVERIFIED" | "IMPORT_SOURCE_FAILED" | "STORAGE_UNAVAILABLE" | "NOT_READY" | "SESSION_LIMIT_EXCEEDED" | "TRANSFER_CAPACITY" | "CACHE_CONTENDED" | "PREVIEW_BUSY" | "INSTALLER_UNAVAILABLE" | "CACHE_MISS";
+        ErrorCode: "INVALID_REQUEST" | "VALIDATION_FAILED" | "INVALID_QUERY" | "INVALID_CURSOR" | "INVALID_PATH" | "REQUEST_ORIGIN_INVALID" | "IF_MATCH_REQUIRED" | "CURRENT_PASSWORD_INCORRECT" | "PASSWORD_INVALID" | "PROXY_REDACTED_MISMATCH" | "ICON_INVALID" | "PACKAGE_INVALID" | "INSTRUCTIONS_TRUST_REQUIRED" | "AUTH_REQUIRED" | "LOGIN_FAILED" | "ORIGIN_REJECTED" | "CSRF_REJECTED" | "NOT_FOUND" | "VENDOR_NOT_FOUND" | "APPLICATION_NOT_FOUND" | "CATEGORY_NOT_FOUND" | "FILE_NOT_FOUND" | "SOURCE_NOT_FOUND" | "PREVIEW_NOT_FOUND" | "JOB_NOT_FOUND" | "TRANSFER_NOT_FOUND" | "CACHE_ENTRY_NOT_FOUND" | "CAPABILITY_UNSUPPORTED" | "METHOD_NOT_ALLOWED" | "REVISION_CONFLICT" | "ALREADY_EXISTS" | "VENDOR_NOT_EMPTY" | "BUILTIN_PROTECTED" | "ENTITY_DELETED" | "APPLICATION_DISABLED" | "APPLICATION_DELETE_PENDING" | "CATEGORY_AMBIGUOUS" | "FILE_CONFLICT" | "TRANSFER_ID_IN_USE" | "TRANSFER_CANCELLED" | "PREVIEW_STALE" | "OPERATION_IN_PROGRESS" | "SOURCE_CHANGED" | "IMPORT_NOT_READY" | "PREWARM_BUSY" | "PREWARM_REQUEST_CONFLICT" | "ARTIFACT_TOO_LARGE" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "LOGIN_RATE_LIMITED" | "PREVIEW_LIMIT_EXCEEDED" | "INTERNAL_ERROR" | "UPSTREAM_UNAVAILABLE" | "METADATA_UNTRUSTED" | "CHANNELS_UNVERIFIED" | "IMPORT_SOURCE_FAILED" | "STORAGE_UNAVAILABLE" | "NOT_READY" | "SESSION_LIMIT_EXCEEDED" | "TRANSFER_CAPACITY" | "CACHE_CONTENDED" | "PREVIEW_BUSY" | "INSTALLER_UNAVAILABLE" | "CACHE_MISS";
         /** @description 32 lowercase hex characters. */
         Uid: string;
         /**
@@ -2471,7 +2484,26 @@ export interface components {
         };
         HomepageSettingsState: {
             pinned_app_keys: components["schemas"]["AppKey"][];
+            /** @description Display data of `pinned_app_keys`, in the same order and length. */
+            pinned_apps: components["schemas"]["HomepagePinnedApp"][];
             revision: components["schemas"]["Revision"];
+        };
+        /**
+         * @description A pinned application as the administrator sees it. Only `published` pins appear on the public homepage;
+         *     the others stay pinned until removed or the application is published again.
+         */
+        HomepagePinnedApp: {
+            key: components["schemas"]["AppKey"];
+            /** @description Application name; `null` when `state` is `missing`. */
+            name: components["schemas"]["LocalizedText"] | null;
+            /** @description Application icon; `null` when `state` is `missing`. */
+            icon: components["schemas"]["IconPath"] | null;
+            /**
+             * @description `published`: the application and its vendor are enabled. `disabled`: the application or its vendor is disabled.
+             *     `deleted`: the application is deleted and its data is being removed. `missing`: the application no longer exists.
+             * @enum {string}
+             */
+            state: "published" | "disabled" | "deleted" | "missing";
         };
         Provider: {
             key: components["schemas"]["ProviderKey"];
@@ -2820,6 +2852,7 @@ export interface components {
              */
             applications: number;
             revision: components["schemas"]["Revision"];
+            /** @description Category ID in the embedded taxonomy for built-in categories, otherwise `null`. */
             template_ref: string | null;
             template_hash: string | null;
             template_missing: boolean;
@@ -2863,7 +2896,10 @@ export interface components {
             kind: "vendor" | "app";
             /** @description Vendor ID or application key. */
             key: string;
-            /** @description Vendors only; also export all applications of the vendor. */
+            /**
+             * @description Vendors only; also export all applications of the vendor. Not allowed for applications.
+             * @default false
+             */
             include_apps?: boolean;
         };
         ImportUpload: {
@@ -2922,7 +2958,10 @@ export interface components {
              * @description Revision of the existing target (`0` when created).
              */
             revision: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Notes revision of the existing target (`1` when it has no notes), `0` when created.
+             */
             notes_revision: number;
             template_hash_mismatch: boolean;
             template_missing: boolean;
@@ -2960,7 +2999,7 @@ export interface components {
             include_notes: boolean;
             /**
              * Format: int64
-             * @description Required with `include_notes`; revision of the source notes the user saw.
+             * @description Required with `include_notes` (ignored otherwise); revision of the source notes the user saw (`1` before the first save).
              */
             notes_revision?: number;
         };
@@ -3182,8 +3221,11 @@ export interface components {
             path: string;
             /** @description Stored generation after the refresh. */
             generation_id: string | null;
-            /** @enum {string} */
-            status: "refreshed" | "not_modified" | "stale_fallback" | "failed";
+            /**
+             * @description `skipped` when the upstream response may not be cached or the file changed meanwhile; `reason` says which.
+             * @enum {string}
+             */
+            status: "refreshed" | "not_modified" | "stale_fallback" | "skipped" | "failed";
             reason: string | null;
         };
         CacheRefreshPreviewRequest: {
@@ -3423,7 +3465,11 @@ export interface components {
         };
         HostedImportRequest: {
             path: string;
-            url: components["schemas"]["HttpUrl"];
+            /**
+             * Format: uri
+             * @description Absolute http(s) URL without credentials or fragment; the query is kept.
+             */
+            url: string;
             expected_id?: components["schemas"]["Uid"];
         };
         HostedTransfer: {
@@ -3475,6 +3521,17 @@ export interface components {
         /** @description The administrator SPA document `admin.html` served with status 404 for unknown admin routes. */
         SpaDocumentNotFound: {
             headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "text/html": string;
+            };
+        };
+        /** @description The public SPA document `index.html` served with status 404 for unknown or unpublished vendors and applications. */
+        PublicSpaDocumentNotFound: {
+            headers: {
+                /** @description Same policy as `SpaDocument`. */
+                "Content-Security-Policy"?: string;
                 [name: string]: unknown;
             };
             content: {
@@ -4162,7 +4219,7 @@ export interface operations {
         responses: {
             200: components["responses"]["SpaDocument"];
             400: components["responses"]["BadRequest"];
-            404: components["responses"]["NotFound"];
+            404: components["responses"]["PublicSpaDocumentNotFound"];
             500: components["responses"]["InternalError"];
             503: components["responses"]["ServiceUnavailable"];
         };
@@ -4183,7 +4240,7 @@ export interface operations {
         responses: {
             200: components["responses"]["SpaDocument"];
             400: components["responses"]["BadRequest"];
-            404: components["responses"]["NotFound"];
+            404: components["responses"]["PublicSpaDocumentNotFound"];
             500: components["responses"]["InternalError"];
             503: components["responses"]["ServiceUnavailable"];
         };

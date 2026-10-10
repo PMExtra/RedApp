@@ -7,6 +7,7 @@ export type SiteSettings = Schema<"SiteSettings">;
 export type SiteSettingsState = Schema<"SiteSettingsState">;
 export type PublicUrlState = Schema<"PublicUrlState">;
 export type HomepageSettingsState = Schema<"HomepageSettingsState">;
+export type HomepagePinnedApp = Schema<"HomepagePinnedApp">;
 export type GlobalProxySettings = Schema<"GlobalProxySettings">;
 export type GlobalProxyState = Schema<"GlobalProxyState">;
 export type AppListItem = Schema<"AppListItem">;

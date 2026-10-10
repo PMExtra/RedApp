@@ -7,14 +7,22 @@ import { useLocalized } from "@/shared/i18n";
 import { toast } from "@/shared/lib";
 import {
   AsyncState,
+  Badge,
   Button,
   Card,
+  EntityIcon,
   IconButton,
   RevisionConflictAlert,
   SortableList,
 } from "@/shared/ui";
 import AppPicker from "./AppPicker.vue";
-import { useHomepageSettings, useSaveHomepage, type AppListItem } from "./queries";
+import {
+  useHomepageSettings,
+  useSaveHomepage,
+  type AppListItem,
+  type HomepagePinnedApp,
+  type HomepageSettingsState,
+} from "./queries";
 
 const MAX_PINS = 100;
 
@@ -26,8 +34,15 @@ const save = useSaveHomepage(settings.data);
 // The saved order the draft was made from; `null` until loaded.
 const base = ref<string[] | null>(null);
 const draft = ref<string[]>([]);
-// Names of applications chosen in this session; saved pins are shown by key.
-const names = ref(new Map<string, string>());
+// Display data by key: saved pins come from the server (`pinned_apps`),
+// applications chosen in this session from the search result.
+type PinState = HomepagePinnedApp["state"];
+interface PinInfo {
+  name: string | null;
+  icon: string;
+  state: PinState;
+}
+const info = ref(new Map<string, PinInfo>());
 const dirty = computed(
   () =>
     base.value !== null &&
@@ -36,26 +51,54 @@ const dirty = computed(
 );
 useDirtyGuard(dirty);
 
-function adopt(keys: readonly string[]) {
-  base.value = [...keys];
-  draft.value = [...keys];
+function remember(apps: readonly HomepagePinnedApp[]) {
+  for (const app of apps) {
+    info.value.set(app.key, {
+      name: app.name ? localized(app.name) : null,
+      icon: app.icon ?? "",
+      state: app.state,
+    });
+  }
 }
 
-// Adopt the server state unless the user has unsaved edits.
+function adopt(state: HomepageSettingsState) {
+  remember(state.pinned_apps);
+  base.value = [...state.pinned_app_keys];
+  draft.value = [...state.pinned_app_keys];
+}
+
+// Adopt the server state unless the user has unsaved edits; display data is
+// refreshed either way.
 watch(
   () => settings.data.value,
   (state) => {
-    if (state && !dirty.value) adopt(state.pinned_app_keys);
+    if (!state) return;
+    if (dirty.value) remember(state.pinned_apps);
+    else adopt(state);
   },
   { immediate: true },
 );
+
+const stateTones = { disabled: "warning", deleted: "danger", missing: "danger" } as const;
+
+// Pins that are not on the public homepage right now.
+function hidden(key: string) {
+  const state = info.value.get(key)?.state;
+  return state && state !== "published"
+    ? { tone: stateTones[state], label: t(`settings.homepage.states.${state}`) }
+    : null;
+}
 
 const full = computed(() => draft.value.length >= MAX_PINS);
 const announcement = ref("");
 
 function add(app: AppListItem) {
   if (draft.value.includes(app.key) || full.value) return;
-  names.value.set(app.key, localized(app.name));
+  info.value.set(app.key, {
+    name: localized(app.name),
+    icon: app.icon,
+    state: app.deleted_at ? "deleted" : app.enabled ? "published" : "disabled",
+  });
   draft.value = [...draft.value, app.key];
   announcement.value = t("settings.homepage.added", { name: itemLabel(app.key) });
 }
@@ -66,14 +109,14 @@ function remove(key: string) {
 }
 
 function itemLabel(key: string) {
-  const name = names.value.get(key);
+  const name = info.value.get(key)?.name;
   return name ? `${name} (${key})` : key;
 }
 
 function submit() {
   save.mutate([...draft.value], {
     onSuccess: (state) => {
-      adopt(state.pinned_app_keys);
+      adopt(state);
       toast({ tone: "success", title: t("settings.homepage.saved") });
     },
   });
@@ -81,7 +124,7 @@ function submit() {
 
 async function reload() {
   await save.reload();
-  if (settings.data.value) adopt(settings.data.value.pinned_app_keys);
+  if (settings.data.value) adopt(settings.data.value);
 }
 
 function discard() {
@@ -117,12 +160,21 @@ function discard() {
           <template #item="{ item, index }">
             <div class="flex items-center gap-3">
               <span class="w-6 text-end text-xs text-muted tabular-nums">{{ index + 1 }}</span>
+              <EntityIcon :src="info.get(item)?.icon ?? ''" size="sm" />
               <span class="flex min-w-0 flex-1 flex-col">
-                <span v-if="names.get(item)" class="truncate text-sm">{{ names.get(item) }}</span>
-                <code class="truncate font-mono text-xs" :class="names.get(item) && 'text-muted'">
+                <span v-if="info.get(item)?.name" class="truncate text-sm">
+                  {{ info.get(item)?.name }}
+                </span>
+                <code
+                  class="truncate font-mono text-xs"
+                  :class="info.get(item)?.name && 'text-muted'"
+                >
                   {{ item }}
                 </code>
               </span>
+              <Badge v-if="hidden(item)" :tone="hidden(item)?.tone">
+                {{ hidden(item)?.label }}
+              </Badge>
               <IconButton
                 size="sm"
                 :label="t('settings.homepage.remove', { name: itemLabel(item) })"

@@ -43,7 +43,7 @@ export default {
     homepage: {
       title: "Pinned applications",
       description:
-        "Applications shown first on the public home page, in this order. Disabled applications stay pinned but are hidden from the public.",
+        "Applications shown first on the public home page, in this order. Disabled or deleted applications stay pinned but are hidden from the public until removed or published again.",
       listLabel: "Pinned applications in display order",
       empty: "No pinned applications. The home page shows only the most downloaded ones.",
       add: "Add an application",
@@ -56,6 +56,11 @@ export default {
       removed: "{name} removed.",
       save: "Save pinned applications",
       saved: "Pinned applications saved.",
+      states: {
+        disabled: "Disabled, hidden",
+        deleted: "Deleted, hidden",
+        missing: "No longer exists",
+      },
     },
     proxy: {
       title: "Global upstream proxy",

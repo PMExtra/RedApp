@@ -5,7 +5,7 @@ import { RouterView } from "vue-router";
 import type { Schema } from "@/shared/api";
 import { bootstrap, localized, session, siteSettingsState } from "@/test/factories";
 import { appListItem, page } from "@/test/factories/directory";
-import { homepageState, publicUrlState } from "@/test/factories/settings";
+import { homepageState, pinnedApp, publicUrlState } from "@/test/factories/settings";
 import { apiError, mockApi, useHandlers } from "@/test/msw";
 import { renderEntry, renderWithApp } from "@/test/render";
 import SiteSettingsPage from "./SiteSettingsPage.vue";
@@ -16,10 +16,10 @@ interface Put {
 }
 
 /** A settings server: GETs return the stored state, PUTs store and bump the revision. */
-function settingsServer() {
+function settingsServer(pins = homepageState()) {
   let site = siteSettingsState();
   let publicUrl = publicUrlState();
-  let homepage = homepageState();
+  let homepage = pins;
   const puts: Record<"site" | "publicUrl" | "homepage", Put[]> = {
     site: [],
     publicUrl: [],
@@ -57,7 +57,14 @@ function settingsServer() {
     mockApi("get", "/admin/api/settings/homepage", () => homepage),
     mockApi("put", "/admin/api/settings/homepage", async ({ request }) => {
       const body = (await record(puts.homepage, request)) as Schema<"HomepageSettings">;
-      homepage = { ...body, revision: homepage.revision + 1 };
+      homepage = homepageState(
+        body.pinned_app_keys.map(
+          (key) =>
+            homepage.pinned_apps.find((app) => app.key === key) ??
+            pinnedApp(key, key === "google/gemini-cli" ? "Gemini CLI" : key),
+        ),
+        homepage.revision + 1,
+      );
       return homepage;
     }),
     mockApi("get", "/admin/api/apps", ({ request }) => {
@@ -242,18 +249,18 @@ describe("homepage pins", () => {
 
     // Keyboard reordering through the drag handle.
     const handle = await within(card).findByRole("button", {
-      name: "Reorder anthropic/claude-code",
+      name: "Reorder Claude Code (anthropic/claude-code)",
     });
     handle.focus();
     await user.keyboard("{ArrowUp}");
     const list = within(card).getByRole("group", { name: "Pinned applications in display order" });
     expect(
       within(list)
-        .getAllByRole("listitem")
-        .map((item) => item.textContent.match(/[a-z-]+\/[a-z-]+/)?.[0]),
-    ).toEqual(["anthropic/claude-code", "openai/codex"]);
+        .getAllByRole("button", { name: /^Remove / })
+        .map((button) => button.getAttribute("aria-label")),
+    ).toEqual(["Remove Claude Code (anthropic/claude-code)", "Remove Codex (openai/codex)"]);
 
-    await user.click(within(card).getByRole("button", { name: "Remove openai/codex" }));
+    await user.click(within(card).getByRole("button", { name: "Remove Codex (openai/codex)" }));
     expect(within(list).queryByText("openai/codex")).toBeNull();
 
     // Add through the application search; already pinned ones are disabled.
@@ -268,5 +275,28 @@ describe("homepage pins", () => {
     expect(server.puts.homepage).toEqual([
       { ifMatch: '"5"', body: { pinned_app_keys: ["anthropic/claude-code", "google/gemini-cli"] } },
     ]);
+  });
+
+  it("names saved pins and flags those hidden from the public", async () => {
+    settingsServer(
+      homepageState([
+        pinnedApp("openai/codex", "Codex"),
+        pinnedApp("google/gemini-cli", "Gemini CLI", { state: "disabled" }),
+        pinnedApp("acme/tool", "Tool", { state: "deleted" }),
+        { key: "acme/gone", name: null, icon: null, state: "missing" },
+      ]),
+    );
+    await renderPage();
+    const list = await screen.findByRole("group", {
+      name: "Pinned applications in display order",
+    });
+    const rows = within(list).getAllByRole("listitem");
+    expect(rows.map((row) => row.textContent.replace(/\s+/g, " ").trim())).toEqual([
+      expect.stringMatching(/1 ?Codex ?openai\/codex$/),
+      expect.stringMatching(/Gemini CLI ?google\/gemini-cli ?Disabled, hidden$/),
+      expect.stringMatching(/Tool ?acme\/tool ?Deleted, hidden$/),
+      expect.stringMatching(/acme\/gone ?No longer exists$/),
+    ]);
+    expect(within(list).getByRole("button", { name: "Remove acme/gone" })).toBeVisible();
   });
 });

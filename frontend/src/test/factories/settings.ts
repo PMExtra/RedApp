@@ -1,4 +1,5 @@
 import type { Schema } from "@/shared/api";
+import { localized } from "./index";
 
 type Overrides<T> = Partial<T>;
 
@@ -15,10 +16,23 @@ export function publicUrlState(
   };
 }
 
+export function pinnedApp(
+  key: string,
+  name: string,
+  overrides: Overrides<Schema<"HomepagePinnedApp">> = {},
+): Schema<"HomepagePinnedApp"> {
+  return { key, name: localized(name), icon: "", state: "published", ...overrides };
+}
+
+/** Homepage pins; `pinned_app_keys` follows `pinned_apps`. */
 export function homepageState(
-  overrides: Overrides<Schema<"HomepageSettingsState">> = {},
+  pinned: Schema<"HomepagePinnedApp">[] = [
+    pinnedApp("openai/codex", "Codex"),
+    pinnedApp("anthropic/claude-code", "Claude Code"),
+  ],
+  revision = 5,
 ): Schema<"HomepageSettingsState"> {
-  return { pinned_app_keys: ["openai/codex", "anthropic/claude-code"], revision: 5, ...overrides };
+  return { pinned_app_keys: pinned.map((app) => app.key), pinned_apps: pinned, revision };
 }
 
 export function globalProxyState(

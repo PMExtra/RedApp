@@ -18,6 +18,7 @@ export const spaRoutes = [
   "/admin/vendors/{vendor}/apps",
   "/admin/vendors/{vendor}/apps/new",
   "/admin/vendors/{vendor}/admin-notes",
+  "/admin/vendors/{vendor}/apps/{app}",
   "/admin/vendors/{vendor}/apps/{app}/settings",
   "/admin/vendors/{vendor}/apps/{app}/admin-notes",
   "/admin/vendors/{vendor}/apps/{app}/versions",
@@ -173,6 +174,10 @@ export const errorCatalog = {
     "retryable": false
   },
   "ENTITY_DELETED": {
+    "status": 409,
+    "retryable": false
+  },
+  "APPLICATION_DISABLED": {
     "status": 409,
     "retryable": false
   },

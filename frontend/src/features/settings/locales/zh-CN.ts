@@ -40,7 +40,8 @@ export default {
     },
     homepage: {
       title: "置顶应用",
-      description: "按此顺序优先显示在公开首页的应用。已停用的应用仍保留置顶，但不会公开显示。",
+      description:
+        "按此顺序优先显示在公开首页的应用。已停用或已删除的应用仍保留置顶，但在移除或重新发布之前不会公开显示。",
       listLabel: "按显示顺序排列的置顶应用",
       empty: "没有置顶应用。首页只显示下载最多的应用。",
       add: "添加应用",
@@ -53,6 +54,11 @@ export default {
       removed: "已移除 {name}。",
       save: "保存置顶应用",
       saved: "置顶应用已保存。",
+      states: {
+        disabled: "已停用，不显示",
+        deleted: "已删除，不显示",
+        missing: "已不存在",
+      },
     },
     proxy: {
       title: "全局上游代理",
