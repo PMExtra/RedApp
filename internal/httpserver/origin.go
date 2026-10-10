@@ -2,17 +2,17 @@ package httpserver
 
 import (
 	"errors"
-	"github.com/PMExtra/RedApp/internal/config"
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/PMExtra/RedApp/internal/config"
 )
 
-func PublicURL(s string) (string, error) { return config.PublicURL(s) }
-func validHost(s string) bool            { return config.ValidHost(s) }
+func validHost(s string) bool { return config.ValidHost(s) }
 
 // origin is request-scoped: it never updates shared state or cached metadata.
-func (s *Server) origin(r *http.Request) (string, error) {
+func (p TrustedProxies) origin(r *http.Request) (string, error) {
 	if !validHost(r.Host) {
 		return "", errors.New("Invalid request Host")
 	}
@@ -21,14 +21,14 @@ func (s *Server) origin(r *http.Request) (string, error) {
 		proto = "https"
 	}
 	peer := parseIP(r.RemoteAddr)
-	if s.Proxy.trusted(peer) {
+	if p.trusted(peer) {
 		if values := r.Header.Values("Forwarded"); len(values) > 0 {
 			fields, err := forwardedFields(strings.Join(values, ","))
 			if err != nil {
 				return "", errors.New("Invalid trusted Forwarded header")
 			}
 			selected := len(fields) - 1
-			for i := len(fields) - 1; i >= 0 && s.Proxy.trusted(peer); i-- {
+			for i := len(fields) - 1; i >= 0 && p.trusted(peer); i-- {
 				selected = i
 				next := parseIP(fields[i]["for"])
 				if next == nil {
@@ -62,7 +62,7 @@ func (s *Server) origin(r *http.Request) (string, error) {
 					}
 				}
 				hops = len(ips)
-				for i := hops - 1; i >= 0 && s.Proxy.trusted(peer); i-- {
+				for i := hops - 1; i >= 0 && p.trusted(peer); i-- {
 					index = i
 					peer = ips[i]
 				}

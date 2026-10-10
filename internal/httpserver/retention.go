@@ -1,111 +1,253 @@
 package httpserver
 
 import (
-	"github.com/PMExtra/RedApp/internal/releasemaintenance"
+	"encoding/json"
+	"errors"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
+
+	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/internal/download"
+	"github.com/PMExtra/RedApp/internal/releasemaintenance"
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
-func (s *Server) ReleaseMaintenance() *releasemaintenance.Service {
-	if service := s.retention.Load(); service != nil {
-		return service
-	}
-	candidate := &releasemaintenance.Service{DB: s.DB, Registry: s.Registry, Catalog: s.Catalog, Downloads: s.Downloads}
-	if s.retention.CompareAndSwap(nil, candidate) {
-		return candidate
-	}
-	return s.retention.Load()
+type retentionRunDTO struct {
+	AttemptedAt     time.Time  `json:"attempted_at"`
+	SucceededAt     *time.Time `json:"succeeded_at"`
+	Outcome         string     `json:"outcome"`
+	Reason          *string    `json:"reason"`
+	RetiredVersions int        `json:"retired_versions"`
+	LogicalBytes    int64      `json:"logical_bytes"`
 }
 
-func (s *Server) retentionAPI(w http.ResponseWriter, r *http.Request, app, endpoint string) bool {
-	if app == "" || !strings.HasPrefix(endpoint, "retention/") {
-		return false
+type retentionStatusDTO struct {
+	LastRun     *retentionRunDTO `json:"last_run"`
+	NextCheckAt *time.Time       `json:"next_check_at"`
+}
+
+func (s *Server) getRetentionStatus(w http.ResponseWriter, r *http.Request) {
+	e, ok := s.maintainedApp(w, r, releaseCapable)
+	if !ok {
+		return
 	}
-	e, ok := s.Registry.LookupAny(app)
-	if !ok || e.Protocol == nil {
-		fail(w, 404, "Release retention is not supported")
-		return true
+	run, err := s.maintenance.Status(e.UID)
+	if err != nil {
+		s.writeError(w, r, storageError(err))
+		return
 	}
-	service := s.ReleaseMaintenance()
-	parts := strings.Split(endpoint, "/")
+	status := retentionStatusDTO{NextCheckAt: s.maintenance.NextCheck()}
+	if run != nil {
+		status.LastRun = &retentionRunDTO{AttemptedAt: run.Attempt.UTC(), SucceededAt: utcPointer(run.Success), Outcome: run.Outcome, RetiredVersions: run.RetiredVersions, LogicalBytes: run.LogicalBytes}
+		if run.Reason != "" {
+			reason := run.Reason
+			status.LastRun.Reason = &reason
+		}
+	}
+	writeOK(w, status)
+}
+
+type retentionReceiptDTO struct {
+	RetiredVersions int                   `json:"retired_versions"`
+	LogicalBytes    int64                 `json:"logical_bytes"`
+	Skipped         map[string]string     `json:"skipped"`
+	Selection       []cleanupSelectionDTO `json:"selection"`
+}
+
+type retentionPreviewDTO struct {
+	ID               string               `json:"id"`
+	CreatedAt        time.Time            `json:"created_at"`
+	ExpiresAt        time.Time            `json:"expires_at"`
+	ExecutedAt       *time.Time           `json:"executed_at"`
+	SelectedVersions int                  `json:"selected_versions"`
+	LogicalBytes     int64                `json:"logical_bytes"`
+	ReclaimableBytes int64                `json:"reclaimable_bytes"`
+	Result           *retentionReceiptDTO `json:"result"`
+}
+
+func retentionPreview(p store.CleanupPreview) (retentionPreviewDTO, error) {
+	_, logical := cleanupSelection(p.Selection)
+	out := retentionPreviewDTO{ID: p.ID, CreatedAt: p.CreatedAt.UTC(), ExpiresAt: p.ExpiresAt.UTC(), ExecutedAt: utcPointer(p.ExecutedAt), LogicalBytes: logical, ReclaimableBytes: p.ReclaimableBytes}
+	for _, v := range p.Retention.Versions {
+		if v.Selected {
+			out.SelectedVersions++
+		}
+	}
+	if p.ExecutedAt != nil && len(p.Result) > 0 {
+		var receipt store.RetentionReceipt
+		if err := json.Unmarshal(p.Result, &receipt); err != nil {
+			return out, err
+		}
+		selection, _ := cleanupSelection(receipt.Selection)
+		skipped := receipt.Skipped
+		if skipped == nil {
+			skipped = map[string]string{}
+		}
+		out.Result = &retentionReceiptDTO{RetiredVersions: receipt.RetiredVersions, LogicalBytes: receipt.LogicalBytes, Skipped: skipped, Selection: selection}
+	}
+	return out, nil
+}
+
+func (s *Server) writeRetentionPreview(w http.ResponseWriter, r *http.Request, status int, e application.Entry, p store.CleanupPreview) {
+	dto, err := retentionPreview(p)
+	if err != nil {
+		s.writeError(w, r, storageError(err))
+		return
+	}
+	if status == http.StatusCreated {
+		writeCreated(w, "/admin/api/apps/"+e.Descriptor.ID+"/retention/"+p.ID, 0, dto)
+		return
+	}
+	writeOK(w, dto)
+}
+
+// retentionRecord reads a retention preview of the application while it is
+// readable: until it expires, and for 24 hours after execution.
+func (s *Server) retentionRecord(w http.ResponseWriter, r *http.Request, e application.Entry, id string) (store.CleanupPreview, bool) {
+	p, err := s.store.ApplicationCleanupPreview(e.UID, id)
+	if err != nil && !isNotFound(err) {
+		s.writeError(w, r, storageError(err))
+		return p, false
+	}
+	now := time.Now()
+	if err != nil || p.Retention == nil || p.ExecutedAt == nil && !now.Before(p.ExpiresAt) || p.ExecutedAt != nil && !now.Before(p.ExecutedAt.Add(24*time.Hour)) {
+		s.fail(w, r, codePreviewNotFound, err, "The retention preview is unknown or expired; build a new preview")
+		return p, false
+	}
+	return p, true
+}
+
+func (s *Server) previewRetention(w http.ResponseWriter, r *http.Request) {
+	e, ok := s.maintainedApp(w, r, releaseCapable)
+	if !ok {
+		return
+	}
+	revision, apiErr := ifMatch(r)
+	if apiErr != nil {
+		s.writeError(w, r, apiErr)
+		return
+	}
+	if s.refuseDeleted(w, r, e) || s.refuseDisabled(w, r, e) {
+		return
+	}
+	// The preview must reflect the policy the administrator saw, not a newer one.
+	if revision != e.Revision {
+		s.writeError(w, r, revisionConflict(nil))
+		return
+	}
+	preview, err := s.maintenance.Preview(r.Context(), e.Descriptor.ID)
+	var row store.CleanupPreview
+	if err == nil {
+		row, err = s.store.ApplicationCleanupPreview(e.UID, preview.ID)
+	}
 	switch {
-	case endpoint == "retention/status" && r.Method == http.MethodGet:
-		raw, err := service.Status(e.UID)
-		if err != nil {
-			fail(w, 503, "Retention status unavailable")
-		} else {
-			reply(w, 200, raw)
+	case err == nil:
+		if current, found := s.registry.LookupAny(e.Descriptor.ID); !found || current.Revision != revision {
+			s.writeError(w, r, revisionConflict(nil))
+			return
 		}
-	case endpoint == "retention/preview" && r.Method == http.MethodPost:
-		var input struct {
-			Revision int64 `json:"revision"`
-		}
-		if decode(w, r, &input) != nil {
-			fail(w, 400, "Invalid retention preview")
-			return true
-		}
-		if input.Revision != e.Revision {
-			problem(w, 409, "RETENTION_INVALID", "Configuration changed; reload before previewing")
-			return true
-		}
-		preview, err := service.Preview(r.Context(), app)
-		if err != nil {
-			problem(w, 409, "RETENTION_INVALID", "Channels could not be verified or the retention source changed; nothing deleted")
-		} else {
-			reply(w, 200, preview)
-		}
-	case len(parts) == 3 && r.Method == http.MethodGet:
-		job, err := s.DB.CleanupPreview(e.StorageID(), parts[1])
-		if err != nil || job.Retention == nil || job.ExecutedAt == nil && !time.Now().Before(job.ExpiresAt) || job.ExecutedAt != nil && !time.Now().Before(job.ExecutedAt.Add(24*time.Hour)) {
-			problem(w, 409, "RETENTION_INVALID", "Preview or receipt expired")
-			return true
-		}
-		if parts[2] == "items" {
-			page, limit := 1, 25
-			var err error
-			if value := r.URL.Query().Get("page"); value != "" {
-				page, err = strconv.Atoi(value)
-			}
-			if err != nil || page < 1 {
-				fail(w, 400, "Invalid page")
-				return true
-			}
-			if value := r.URL.Query().Get("limit"); value != "" {
-				limit, err = strconv.Atoi(value)
-			}
-			if err != nil || limit < 1 || limit > 100 {
-				fail(w, 400, "Invalid limit")
-				return true
-			}
-			items := job.Retention.Versions
-			start := len(items)
-			if page <= max(1, (len(items)+limit-1)/limit) {
-				start = (page - 1) * limit
-			}
-			end := start + limit
-			if end > len(items) {
-				end = len(items)
-			}
-			reply(w, 200, map[string]any{"items": items[start:end], "total": len(items), "page": page, "total_pages": max(1, (len(items)+limit-1)/limit), "result": job.Result})
-		} else {
-			fail(w, 404, "Retention endpoint not found")
-		}
-	case len(parts) == 3 && parts[2] == "execute" && r.Method == http.MethodPost:
-		var input struct{}
-		if decode(w, r, &input) != nil {
-			fail(w, 400, "Invalid retention execution")
-			return true
-		}
-		result, err := service.Execute(r.Context(), app, parts[1])
-		if err != nil {
-			problem(w, 409, "RETENTION_INVALID", "Preview expired or policy, source, or channels changed; rebuild the preview")
-		} else {
-			reply(w, 200, result)
-		}
+		s.writeRetentionPreview(w, r, http.StatusCreated, e, row)
+	case errors.Is(err, releasemaintenance.ErrChannels):
+		s.fail(w, r, codeChannelsUnverified, err, "Release channels could not be verified; nothing was selected")
+	case errors.Is(err, download.ErrReaderLimit):
+		s.fail(w, r, codeTransferCapacity, err, "Transfer capacity is currently full; retry later")
+	case errors.Is(err, store.ErrSourceInactive), errors.Is(err, store.ErrConflict):
+		s.fail(w, r, codeSourceChanged, err, "The application source changed during the preview; retry")
 	default:
-		fail(w, 405, "Retention method not allowed")
+		s.writeError(w, r, storageError(err))
 	}
-	return true
+}
+
+func (s *Server) getRetentionPreview(w http.ResponseWriter, r *http.Request) {
+	e, ok := s.maintainedApp(w, r, releaseCapable)
+	if !ok {
+		return
+	}
+	id, ok := s.pathUID(w, r, "preview_id")
+	if !ok {
+		return
+	}
+	if p, ok := s.retentionRecord(w, r, e, id); ok {
+		s.writeRetentionPreview(w, r, http.StatusOK, e, p)
+	}
+}
+
+type retentionVersionDTO struct {
+	Version  string   `json:"version"`
+	Reasons  []string `json:"reasons"`
+	Bytes    int64    `json:"bytes"`
+	Selected bool     `json:"selected"`
+}
+
+func (s *Server) listRetentionPreviewItems(w http.ResponseWriter, r *http.Request) {
+	e, ok := s.maintainedApp(w, r, releaseCapable)
+	if !ok {
+		return
+	}
+	id, ok := s.pathUID(w, r, "preview_id")
+	if !ok {
+		return
+	}
+	page, limit, apiErr := pageQuery(r, 25)
+	if apiErr != nil {
+		s.writeError(w, r, apiErr)
+		return
+	}
+	p, ok := s.retentionRecord(w, r, e, id)
+	if !ok {
+		return
+	}
+	versions := p.Retention.Versions
+	meta := store.NewPage[retentionVersionDTO](page, limit, int64(len(versions)))
+	out := pageDTO[retentionVersionDTO]{Items: []retentionVersionDTO{}, Page: meta.Page, Limit: meta.Limit, Total: meta.Total, TotalPages: meta.TotalPages}
+	start := min((page-1)*limit, len(versions))
+	for _, v := range versions[start:min(start+limit, len(versions))] {
+		reasons := v.Reasons
+		if reasons == nil {
+			reasons = []string{}
+		}
+		out.Items = append(out.Items, retentionVersionDTO{Version: v.Version, Reasons: reasons, Bytes: v.Bytes, Selected: v.Selected})
+	}
+	writeOK(w, out)
+}
+
+func (s *Server) executeRetention(w http.ResponseWriter, r *http.Request) {
+	e, ok := s.maintainedApp(w, r, releaseCapable)
+	if !ok {
+		return
+	}
+	id, ok := s.pathUID(w, r, "preview_id")
+	if !ok || s.refuseDeleted(w, r, e) {
+		return
+	}
+	p, ok := s.retentionRecord(w, r, e, id)
+	if !ok {
+		return
+	}
+	if p.ExecutedAt != nil {
+		// The preview ID is the idempotency key: repeat the stored receipt.
+		s.writeRetentionPreview(w, r, http.StatusOK, e, p)
+		return
+	}
+	if s.refuseDisabled(w, r, e) {
+		return
+	}
+	if p.AppID != e.StorageID() {
+		s.fail(w, r, codePreviewStale, nil, "The application source changed since the preview; nothing was removed")
+		return
+	}
+	_, err := s.maintenance.Execute(r.Context(), e.Descriptor.ID, id)
+	if err == nil {
+		p, err = s.store.ApplicationCleanupPreview(e.UID, id)
+	}
+	switch {
+	case err == nil:
+		s.writeRetentionPreview(w, r, http.StatusOK, e, p)
+	case isNotFound(err), errors.Is(err, store.ErrExpired):
+		s.fail(w, r, codePreviewNotFound, err, "The retention preview is unknown or expired; build a new preview")
+	case errors.Is(err, store.ErrConflict), errors.Is(err, store.ErrSourceInactive):
+		s.fail(w, r, codePreviewStale, err, "Policy, source or channels changed since the preview; nothing was removed")
+	default:
+		s.writeError(w, r, storageError(err))
+	}
 }

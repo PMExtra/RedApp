@@ -84,30 +84,30 @@ func TestMetadataAtomicityImmutabilityAndApplicationIsolation(t *testing.T) {
 func TestGlobalSettingCASRejectsStaleAndMalformedWrites(t *testing.T) {
 	s := openTest(t)
 	var value map[string]string
-	if rev, err := s.ReadSiteSettings(&value); err != nil || rev != 0 || value != nil {
-		t.Fatalf("missing setting = %v, %d, %v; want nil, 0, nil", value, rev, err)
+	// Every setting exists from creation at revision 1 with an empty document.
+	if rev, err := s.ReadSiteSettings(&value); err != nil || rev != 1 || len(value) != 0 {
+		t.Fatalf("initial setting = %v, %d, %v; want empty at revision 1", value, rev, err)
 	}
-	rev, err := s.SaveSiteSettings(0, map[string]string{"title": "first"})
-	if err != nil || rev != 1 {
-		t.Fatalf("first save = %d, %v; want 1", rev, err)
+	for _, expected := range []int64{0, -1} {
+		if _, err := s.SaveSiteSettings(expected, map[string]string{"title": "invalid"}); err == nil || errors.Is(err, ErrConflict) {
+			t.Fatalf("revision %d accepted: %v", expected, err)
+		}
 	}
-	if _, err = s.SaveSiteSettings(0, map[string]string{"title": "lost"}); !errors.Is(err, ErrConflict) {
-		t.Fatalf("second create = %v; want ErrConflict", err)
-	}
-	if _, err = s.SaveSiteSettings(1, []string{"not an object"}); err == nil {
+	if _, err := s.SaveSiteSettings(1, []string{"not an object"}); err == nil {
 		t.Fatal("non-object setting accepted")
 	}
-	if rev, err = s.SaveSiteSettings(1, map[string]string{"title": "second"}); err != nil || rev != 2 {
-		t.Fatalf("update = %d, %v; want 2", rev, err)
+	rev, err := s.SaveSiteSettings(1, map[string]string{"title": "first"})
+	if err != nil || rev != 2 {
+		t.Fatalf("first save = %d, %v; want 2", rev, err)
 	}
 	if _, err = s.SaveSiteSettings(1, map[string]string{"title": "stale"}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("stale update = %v; want ErrConflict", err)
 	}
-	var publicURL map[string]string
-	if rev, err = s.ReadPublicURLSetting(&publicURL); err != nil || rev != 0 {
+	var publicURL map[string]any
+	if rev, err = s.ReadPublicURLSetting(&publicURL); err != nil || rev != 1 {
 		t.Fatalf("site setting leaked into public URL: %d, %v", rev, err)
 	}
-	if rev, err = s.ReadSiteSettings(&value); err != nil || rev != 2 || value["title"] != "second" {
+	if rev, err = s.ReadSiteSettings(&value); err != nil || rev != 2 || value["title"] != "first" {
 		t.Fatalf("stored setting = %v at %d, %v", value, rev, err)
 	}
 }
@@ -167,7 +167,7 @@ func TestWALDataSurvivesAbruptProcessExit(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err = s.SaveSiteSettings(0, map[string]string{"title": "kept"}); err != nil {
+		if _, err = s.SaveSiteSettings(1, map[string]string{"title": "kept"}); err != nil {
 			t.Fatal(err)
 		}
 		if err = s.AddFor("openai/codex", "upstream_bytes", 13); err != nil {
@@ -204,7 +204,7 @@ func TestWALDataSurvivesAbruptProcessExit(t *testing.T) {
 	}
 	defer s.DB.Close()
 	var site map[string]string
-	if rev, err := s.ReadSiteSettings(&site); err != nil || rev != 1 || site["title"] != "kept" {
+	if rev, err := s.ReadSiteSettings(&site); err != nil || rev != 2 || site["title"] != "kept" {
 		t.Fatal("committed WAL setting lost", site, rev, err)
 	}
 	counts, err := s.CountersFor("openai/codex")

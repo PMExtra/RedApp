@@ -79,8 +79,6 @@ func cacheBlockReason(h http.Header, decision CacheDecision) string {
 	return ""
 }
 
-func eligible(h http.Header) bool { return cacheBlockReason(h, CacheDecision{}) == "" }
-
 // Only directive names enter events. Field-name arguments (private="...") and
 // all other response header values can contain source-specific sensitive data.
 func overrideDirectives(h http.Header) []string {

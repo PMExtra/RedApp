@@ -88,6 +88,10 @@ type Protocol interface {
 
 var ErrNotFound = errors.New("Application resource not found")
 var ErrUpstream = errors.New("Trusted upstream metadata unavailable")
+
+// ErrUntrusted marks upstream metadata that was fetched but failed verification
+// (digest, signature, URL or immutability rules). It also matches ErrUpstream.
+var ErrUntrusted = fmt.Errorf("%w: metadata failed verification", ErrUpstream)
 var ErrBusy = errors.New("Metadata concurrency limit exceeded")
 
 // MetadataTimeout bounds one whole metadata request, including its body.

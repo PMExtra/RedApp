@@ -1,1 +1,0 @@
-import{t as e}from"./DirectoryEditor-S67lRXgH.js";import{E as t,M as n,U as r}from"./bootstrap-DzKjujs5.js";var i=n({__name:`VendorSettingsPage`,props:{vendor:{}},emits:[`updated`],setup(n,{emit:i}){let a=i;return(i,o)=>(r(),t(e,{key:n.vendor.uid,kind:`vendor`,onUpdated:o[0]||=e=>a(`updated`,e)}))}});export{i as default};

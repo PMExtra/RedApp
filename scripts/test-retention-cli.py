@@ -44,14 +44,9 @@ class RetentionCLITest(ServerTestCase):
     """Retention keeps the newest versions, records a receipt and is idempotent after restart."""
 
     def patch_retention(self, admin, enabled):
-        """Set retention to keep one version, enabled or not; return the configuration."""
-        configuration = admin.request(APP + "/configuration")
-        body = {
-            "revision": configuration["revision"],
-            "set": {"retention": {"enabled": enabled, "keep_latest": 1}},
-            "unset": [],
-        }
-        return admin.request(APP + "/configuration", body, method="PATCH")
+        """Set retention to keep one version, enabled or not; return the new revision."""
+        values = {"retention": {"enabled": enabled, "keep_latest": 1}}
+        return admin.patch_app_configuration("retention/binary", values)["revision"]
 
     def test_retention_execution_receipt_survives_restart(self):
         fixture = self.start_fixture(RetentionFixture)
@@ -64,36 +59,25 @@ class RetentionCLITest(ServerTestCase):
             method="PUT",
             if_match=proxy["revision"],
         )
-        admin.request(
-            "/admin/api/vendors",
-            {"id": "retention", "name": {"en": "Retention", "zh-CN": "保留"}, "enabled": True},
-            method="POST",
-            expect=201,
-        )
-        admin.request(
-            "/admin/api/vendors/retention/apps",
-            {
-                "id": "binary",
-                "provider": "codex",
-                "name": {"en": "Binary", "zh-CN": "二进制"},
-                "base_url": "http://retention.example",
-                "cache_ttl_seconds": 60,
-                "enabled": True,
-            },
-            method="POST",
-            expect=201,
-        )
+        admin.create_vendor("retention", {"en": "Retention", "zh-CN": "保留"})
+        admin.create_app("retention", "binary", "codex", "http://retention.example")
         for version in ["1.0.0", "2.0.0", "10.0.0"]:
             body = admin.request(f"/retention/binary/releases/{version}/asset.tgz")
             self.assertEqual(body, ("binary:" + version).encode(), version)
 
-        configuration = self.patch_retention(admin, enabled=False)
-        preview = admin.request(APP + "/retention/preview", {"revision": configuration["revision"]}, method="POST")
+        self.assertIsNone(admin.request(APP + "/retention/status")["last_run"])
+        revision = self.patch_retention(admin, enabled=False)
+        admin.fetch(APP + "/retention/preview", method="POST", if_match=revision - 1, expect=409)
+        preview = admin.request(APP + "/retention/preview", method="POST", if_match=revision, expect=201)
         self.assertEqual(preview["selected_versions"], 1, preview)
-        result = admin.request(f"{APP}/retention/{preview['id']}/execute", {}, method="POST")
-        self.assertEqual(result["retired_versions"], 1, result)
-        self.assertEqual(result["logical_bytes"], len("binary:1.0.0"), result)
-        self.assertEqual(admin.request(APP + "/retention/status")["outcome"], "success")
+        self.assertIsNone(preview["result"], preview)
+        items = admin.request(f"{APP}/retention/{preview['id']}/items")
+        self.assertEqual([item["version"] for item in items["items"]], ["10.0.0", "2.0.0", "1.0.0"])
+        self.assertEqual([item["selected"] for item in items["items"]], [False, False, True])
+        result = admin.request(f"{APP}/retention/{preview['id']}/execute", method="POST")
+        self.assertEqual(result["result"]["retired_versions"], 1, result)
+        self.assertEqual(result["result"]["logical_bytes"], len("binary:1.0.0"), result)
+        self.assertEqual(admin.request(APP + "/retention/status")["last_run"]["outcome"], "success")
 
         database = server.state_database()
         current_complete = "SELECT count(*) FROM generations WHERE phase='complete' AND is_current=1"
@@ -107,9 +91,10 @@ class RetentionCLITest(ServerTestCase):
 
         server.restart()
         admin.login()
-        repeated = admin.request(f"{APP}/retention/{preview['id']}/execute", {}, method="POST")
+        repeated = admin.request(f"{APP}/retention/{preview['id']}/execute", method="POST")
         self.assertEqual(repeated, result, "repeated execution returned a different receipt")
-        self.assertEqual(admin.request(APP + "/retention/status")["outcome"], "success")
+        self.assertEqual(admin.request(f"{APP}/retention/{preview['id']}"), result)
+        self.assertEqual(admin.request(APP + "/retention/status")["last_run"]["outcome"], "success")
         self.assertEqual(count(database, receipt_sql, preview["id"]), receipt)
         self.assertEqual(count(database, "SELECT count(*) FROM cleanup_previews"), 1, "startup ran an immediate cleanup")
         self.assertEqual(count(database, current_complete), 2)

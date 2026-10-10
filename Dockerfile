@@ -15,6 +15,8 @@ WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY frontend/ ./
+# The build fails when a bundled npm package is missing from this record.
+COPY third_party/README.md /third_party/README.md
 # Vite writes to ../internal/httpserver/web, i.e. /internal/httpserver/web.
 RUN npm run build
 

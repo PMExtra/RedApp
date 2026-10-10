@@ -9,54 +9,65 @@ import (
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
-type applicationTableRow struct {
-	store.Application
-	LatestVersion       string     `json:"latest_version"`
-	VersionDiscoveredAt *time.Time `json:"version_discovered_at"`
-	SuccessfulDownloads *int64     `json:"successful_downloads"`
+// tableOrder is the sort of listApps.
+type tableOrder struct{ key, direction, lang string }
+
+func tableOrderQuery(r *http.Request) (tableOrder, *apiError) {
+	query := r.URL.Query()
+	o := tableOrder{key: query.Get("sort"), direction: query.Get("order"), lang: query.Get("lang")}
+	if o.key == "" {
+		o.key = "name"
+	}
+	if o.direction == "" {
+		o.direction = "asc"
+	}
+	if o.lang == "" {
+		o.lang = "en"
+	}
+	switch {
+	case o.key != "name" && o.key != "version" && o.key != "updated" && o.key != "downloads":
+		return o, newError(codeInvalidQuery, nil, "sort must be name, version, updated or downloads")
+	case o.direction != "asc" && o.direction != "desc":
+		return o, newError(codeInvalidQuery, nil, "order must be asc or desc")
+	case o.lang != "en" && o.lang != "zh-CN":
+		return o, newError(codeInvalidQuery, nil, "lang must be en or zh-CN")
+	}
+	return o, nil
 }
 
-// The table orders all matching records before slicing. Version metadata uses
-// the current source epoch; lifetime counters use the stable application UID.
-func (s *Server) applicationTable(w http.ResponseWriter, r *http.Request, vendor string, page, limit int, q, state string) {
-	key, direction, lang := r.URL.Query().Get("sort"), r.URL.Query().Get("order"), r.URL.Query().Get("lang")
-	if key == "" {
-		key = "name"
-	}
-	if direction == "" {
-		direction = "asc"
-	}
-	if lang == "" {
-		lang = "en"
-	}
-	if (key != "name" && key != "version" && key != "updated" && key != "downloads") || (direction != "asc" && direction != "desc") || (lang != "en" && lang != "zh-CN") {
-		fail(w, 400, "Invalid application table sort")
-		return
-	}
-	apps, err := s.DB.ApplicationsMatching(vendor, q, state)
+// applicationTable returns every matching application, sorted. Version
+// metadata uses the current source epoch; lifetime counters use the stable
+// application UID. Missing values sort last in both directions.
+func (s *Server) applicationTable(vendor, q, state string, o tableOrder) ([]appListItemDTO, error) {
+	apps, err := s.store.ApplicationsMatching(vendor, q, state)
 	if err != nil {
-		directoryError(w, err)
-		return
+		return nil, err
 	}
-	rows := make([]applicationTableRow, 0, len(apps))
+	rows := make([]appListItemDTO, 0, len(apps))
+	names := make(map[string]string, len(apps))
 	for _, app := range apps {
-		row := applicationTableRow{Application: app}
-		if entry, ok := s.Registry.LookupAny(app.Key); ok && entry.UID == app.UID && entry.SourceEpoch == app.SourceEpoch {
-			row.LatestVersion, row.VersionDiscoveredAt, err = s.latestKnownVersion(entry)
+		row := appListItemDTO{appDTO: appDocument(app)}
+		if entry, ok := s.registry.LookupAny(app.Key); ok && entry.UID == app.UID && entry.SourceEpoch == app.SourceEpoch {
+			latest, discovered, err := s.latestKnownVersion(entry)
 			if err != nil {
-				directoryError(w, err)
-				return
+				return nil, err
+			}
+			if latest != "" {
+				row.LatestVersion, row.VersionDiscoveredAt = &latest, discovered
 			}
 		}
 		// Hosted files and information pages do not record this counter.
-		if app.Provider == "codex" || app.Provider == "claude-code" || app.Provider == "http-cache" {
-			counters, e := s.DB.CountersFor(app.MetricsID())
-			if e != nil {
-				directoryError(w, e)
-				return
+		if store.AppPathApplies(app.Provider, "cache_ttl_seconds") {
+			counters, err := s.store.CountersFor(app.MetricsID())
+			if err != nil {
+				return nil, err
 			}
 			n := counters["download_success"]
 			row.SuccessfulDownloads = &n
+		}
+		names[app.Key] = strings.ToLower(app.Name.En)
+		if o.lang == "zh-CN" {
+			names[app.Key] = strings.ToLower(app.Name.ZhCN)
 		}
 		rows = append(rows, row)
 	}
@@ -64,31 +75,23 @@ func (s *Server) applicationTable(w http.ResponseWriter, r *http.Request, vendor
 		a, b := rows[i], rows[j]
 		order := 0
 		missingA, missingB := false, false
-		switch key {
+		switch o.key {
 		case "name":
-			order = strings.Compare(strings.ToLower(tableName(a.Application, lang)), strings.ToLower(tableName(b.Application, lang)))
+			order = strings.Compare(names[a.Key], names[b.Key])
 		case "version":
-			missingA, missingB = a.LatestVersion == "", b.LatestVersion == ""
-			order = strings.Compare(a.LatestVersion, b.LatestVersion)
-			if entry, ok := s.Registry.LookupAny(a.Key); ok && entry.Protocol != nil && !missingA && !missingB {
-				if n, e := entry.Protocol.CompareVersions(a.LatestVersion, b.LatestVersion); e == nil {
-					order = n
-				}
+			missingA, missingB = a.LatestVersion == nil, b.LatestVersion == nil
+			if !missingA && !missingB {
+				order = s.compareVersions(a.Key, *a.LatestVersion, *b.LatestVersion)
 			}
 		case "updated":
 			missingA, missingB = a.VersionDiscoveredAt == nil, b.VersionDiscoveredAt == nil
 			if !missingA && !missingB {
-				order = a.VersionDiscoveredAt.Compare(*b.VersionDiscoveredAt)
+				order = compareTimes(*a.VersionDiscoveredAt, *b.VersionDiscoveredAt)
 			}
 		case "downloads":
 			missingA, missingB = a.SuccessfulDownloads == nil, b.SuccessfulDownloads == nil
 			if !missingA && !missingB {
-				if *a.SuccessfulDownloads < *b.SuccessfulDownloads {
-					order = -1
-				}
-				if *a.SuccessfulDownloads > *b.SuccessfulDownloads {
-					order = 1
-				}
+				order = compareInts(*a.SuccessfulDownloads, *b.SuccessfulDownloads)
 			}
 		}
 		if missingA != missingB {
@@ -97,21 +100,33 @@ func (s *Server) applicationTable(w http.ResponseWriter, r *http.Request, vendor
 		if order == 0 {
 			return a.Key < b.Key
 		}
-		if direction == "desc" {
+		if o.direction == "desc" {
 			return order > 0
 		}
 		return order < 0
 	})
-	result := store.NewPage[applicationTableRow](page, limit, int64(len(rows)))
-	start := (result.Page - 1) * limit
-	end := min(start+limit, len(rows))
-	result.Items = rows[start:end]
-	reply(w, 200, result)
+	return rows, nil
 }
 
-func tableName(a store.Application, lang string) string {
-	if lang == "zh-CN" {
-		return a.Name.ZhCN
+// compareVersions orders two versions of one application by its protocol,
+// falling back to text order.
+func (s *Server) compareVersions(key, a, b string) int {
+	if entry, ok := s.registry.LookupAny(key); ok && entry.Protocol != nil {
+		if n, err := entry.Protocol.CompareVersions(a, b); err == nil {
+			return n
+		}
 	}
-	return a.Name.En
+	return strings.Compare(a, b)
+}
+
+func compareTimes(a, b time.Time) int { return a.Compare(b) }
+
+func compareInts(a, b int64) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	}
+	return 0
 }

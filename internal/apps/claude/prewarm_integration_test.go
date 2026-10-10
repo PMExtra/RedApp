@@ -132,7 +132,7 @@ func TestSignedClaudePrewarmRealComponentPipeline(t *testing.T) {
 			start := func(requestID string) store.PrewarmJob {
 				limits := warmplan.DefaultLimits()
 				limits.MaxDownloadBytes = int64(len(payload))
-				job, err := worker.Start(context.Background(), app.Key, warmplan.Input{RequestID: requestID, Target: "1.2.3", Platforms: []string{"linux-x64"}, Limits: limits}, false)
+				job, _, err := worker.Start(context.Background(), app.Key, warmplan.Input{RequestID: requestID, Target: "1.2.3", Platforms: []string{"linux-x64"}, Limits: limits}, false)
 				if err != nil {
 					t.Fatal(err)
 				}

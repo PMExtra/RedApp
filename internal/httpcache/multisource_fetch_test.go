@@ -103,7 +103,8 @@ func TestMultipleSourceFailuresRestartWholeBodyAndTerminalStatus(t *testing.T) {
 				}
 			case "not-found", "gone", "forbidden":
 				want := map[string]int{"not-found": 404, "gone": 410, "forbidden": 403}[mode]
-				if err != nil || w.Code != want || nextCalls.Load() != 0 || len(f.rows(t)) != 0 {
+				var status *UpstreamStatusError
+				if !errors.As(err, &status) || status.Status != want || w.Body.Len() != 0 || nextCalls.Load() != 0 || len(f.rows(t)) != 0 {
 					t.Fatal(w.Code, err, nextCalls.Load())
 				}
 			case "unsafe-encoding", "direct-partial":

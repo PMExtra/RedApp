@@ -166,6 +166,7 @@ On the cache page you can force a revalidation:
 
 - **Refresh one file** revalidates a single cached path, even if it is still fresh.
 - **Refresh by pattern** builds a preview of the matching cached files. Executing it revalidates all of them in the background.
+- Refreshing works only on the current source of an enabled application whose vendor is enabled. A file whose new response may not be cached, or that changed meanwhile, is reported as skipped.
 
 Refresh only touches files already in the cache. It does not discover new upstream files; use prewarm for that.
 
@@ -235,6 +236,11 @@ Each application provides `install.sh` and `install.ps1` at `/<vendor>/<app>/`. 
 
 On the cache page, choose a minimum version. The preview lists cached versions below it; executing removes them. Version metadata and metric history are kept.
 
+- Versions that RedApp cannot compare are listed in the preview and kept.
+- Executing removes exactly the previewed files. Files being downloaded or read are removed when their transfers finish.
+- A preview expires after 10 minutes. If the source changed meanwhile, nothing is removed; create a new preview.
+- Earlier source epochs can be cleaned the same way.
+
 ### Version retention
 
 Retention keeps only the newest cached versions. It is off by default.
@@ -244,7 +250,8 @@ Retention keeps only the newest cached versions. It is off by default.
 - Besides the newest N, RedApp always keeps versions that a channel currently points to, versions being downloaded or read, and versions it cannot compare.
 - If a channel cannot be verified, the whole pass is skipped.
 - Retention runs every 15 minutes and removes at most 100 versions per application per pass. You can also preview and run it manually.
-- Old source epochs are not touched.
+- A manual preview uses the saved setting, so save changes first. It expires after 10 minutes; after execution, its result stays available for 24 hours.
+- Old source epochs and disabled applications are not touched. A manual preview or run of a disabled application, or of one whose vendor is disabled, is refused; enable both first.
 
 ### Prewarm
 
@@ -266,6 +273,7 @@ Prewarm downloads files before clients ask for them.
 | Duration | 1 hour | 24 hours |
 
 - Only one prewarm task runs at a time in the whole service. There is no queue; a second start is refused while one runs.
+- Applications that are disabled, or whose vendor is disabled, cannot be prewarmed; their cache page asks you to enable them first. The prewarm settings stay editable.
 - Each directory listing may be up to 2 MiB.
 - Cancelling a task does not cancel downloads that public clients also wait for.
 - A restart marks a running task as interrupted. It is not resumed.
@@ -280,6 +288,9 @@ Hosted applications serve files that administrators provide.
 - Each file has a path inside the application, for example `tools/setup.exe`, and is served at `/<vendor>/<app>/tools/setup.exe`.
 - The size limit per file is `max_artifact_bytes` (4 GiB by default).
 - Files are kept until an administrator deletes them. To change a file, use **Replace** on it; a conflicting change made meanwhile is rejected.
+- Uploads and imports show their progress and can be cancelled while they run.
+- An import URL may contain a query string, for example a signed download link. RedApp uses it once and never stores or shows it. URLs with credentials or a fragment (`#...`) are refused.
+- Files of a deleted hosted application can still be downloaded and deleted, but not added or replaced.
 - Downloads support byte ranges and conditional requests.
 
 ## App info and usage instructions

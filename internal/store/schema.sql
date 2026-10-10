@@ -292,6 +292,9 @@ CREATE TABLE cleanup_previews(
   created_at_s INTEGER NOT NULL,
   expires_at_s INTEGER NOT NULL,
   selection_json BLOB NOT NULL,
+  reclaimable_bytes INTEGER NOT NULL CHECK(reclaimable_bytes>=0),
+  active_generations INTEGER NOT NULL CHECK(active_generations>=0),
+  unknown_versions_json BLOB NOT NULL,
   retention_json BLOB,
   executed_at_s INTEGER,
   result_json BLOB
@@ -487,5 +490,7 @@ CREATE TABLE pending_object_deletes(
 );
 
 INSERT INTO category_state(id,public_revision) VALUES(1,1);
-INSERT INTO catalog_state(id,revision,ranking_salt) VALUES(1,0,randomblob(32));
+INSERT INTO catalog_state(id,revision,ranking_salt) VALUES(1,1,randomblob(32));
+-- Settings documents exist from creation so that every editable revision is at least 1.
+INSERT INTO settings(key,revision,payload) VALUES('site',1,'{}'),('public_url',1,'{"override_url":null}'),('upstream_proxy',1,'{"mode":"direct"}');
 INSERT INTO metric_history_state(id,aggregated_before_s) VALUES(1,0);

@@ -13,7 +13,7 @@
 
 ### 错误
 
-- 错误消息用小写开头、不带句末标点，描述“做什么失败了”：`fmt.Errorf("open state database: %w", err)`。**【目标】** 现有不少错误以大写开头，因为它们被直接返回给客户端；阶段 3 改为显式错误码后统一（阶段 2/3）。
+- 错误消息用小写开头、不带句末标点，描述“做什么失败了”：`fmt.Errorf("open state database: %w", err)`。**【目标】** 现有不少错误以大写开头，因为它们曾被直接返回给客户端；HTTP 层已改为显式错误码，错误文本只进日志，修改相关代码时统一为小写（阶段 5）。
 - 包装底层错误一律用 `%w`，保留错误链。
 - 调用方需要区分的错误，定义 sentinel（`var ErrConflict = errors.New(...)`）或带字段的类型化错误，用 `errors.Is` / `errors.As` 判断。
 - **禁止按错误文本分类**，例如 `strings.Contains(err.Error(), "SHA256")` 或比较已持久化的错误字符串。需要持久化错误类别时，单独存一个稳定的代码字段。
@@ -33,7 +33,6 @@
 ### 可测试性
 
 - 生产结构体里不放测试钩子字段（如 `testFault`、`testConfigurationPrepare`）。需要注入时钟、故障或外部依赖，用构造函数选项或小接口，由测试传入实现。
-- **【目标】** 现有测试钩子在阶段 2 移除。
 
 ### 数据库
 
@@ -52,7 +51,7 @@
 
 ### 日志
 
-- **【目标】** 使用 `log/slog` 结构化日志；HTTP 请求日志和错误日志带 `request_id`，并与错误响应中的 `request_id` 一致（阶段 3）。当前只有 `cmd/redapp` 使用标准库 `log`，`internal/` 下通过回调上报错误。
+- HTTP 层使用 `log/slog` 结构化日志：每个请求一行访问日志，错误日志带错误码和底层错误，都带 `request_id`，与 `X-Request-Id` 和错误响应中的 `request_id` 一致。`internal/` 其他包通过回调上报错误，由调用方记录。
 - 不记录密码、会话 token、CSRF token、代理凭据或完整的带凭据 URL。
 
 ### 注释与格式
@@ -62,7 +61,7 @@
 
 ## HTTP API
 
-全部路由以 [`api/openapi.yaml`](../../api/openapi.yaml) 为准，改接口先改规范（[ADR 0009](adr/0009-openapi-contract.md)）；组织方式、错误码目录用法和与旧实现的差异见 [api.md](api.md)。
+全部路由以 [`api/openapi.yaml`](../../api/openapi.yaml) 为准，改接口先改规范（[ADR 0009](adr/0009-openapi-contract.md)）；组织方式与错误码目录用法见 [api.md](api.md)。
 
 ### 路径与方法
 
@@ -71,12 +70,12 @@
 - GET 只读、可重试；PUT 整体替换设置；PATCH 用于稀疏修改（配置用 `set`/`unset`）；POST 用于创建或动作（如 `.../cleanup/preview`）；DELETE 删除。
 - 创建返回 `201`，没有响应体的成功返回 `204`；成功响应直接返回资源对象，不再包一层 `{"app": ...}`。
 - 查询参数白名单校验，未知或重复的参数返回 400。
-- **【目标】** 使用标准库 `http.ServeMux` 的方法 + 路径模式注册路由，鉴权、CSRF、Origin 检查、request_id 和日志做成中间件（阶段 3）。当前是 `Server.ServeHTTP` 中的手写前缀分发。
+- 路由用标准库 `http.ServeMux` 的方法 + 路径模式注册（`internal/httpserver/routes.go` 的路由表，每个规范操作一行）；鉴权、CSRF、Origin 检查、request_id、日志、查询白名单和请求体上限是中间件（见 [architecture.md](architecture.md#http-层)）。
 
 ### 请求与响应体
 
 - JSON 字段名用 `snake_case`。
-- 请求体必须是 `application/json`（否则 415），限制大小，拒绝重复键、未知字段和尾随数据（`decodeLimit` + `jsoncheck`）。
+- 请求体必须是 `application/json`（否则 415），限制大小，拒绝重复键、未知字段和尾随数据、无效 UTF-8 和 `null`（`decodeJSON`，基于 `jsoncheck.Strict`；接受 `null` 的请求用 `decodeJSONNullable`）。
 - 时间用 RFC 3339 UTC 字符串；字节数、计数用整数。
 - 不返回内部字段（本地文件路径、存储命名空间、内部 revision），不保留重复或兼容字段。
 
@@ -89,8 +88,8 @@
 ```
 
 - `code` 是稳定的大写蛇形标识，前端按 `code` 而不是 HTTP 状态或消息文本做判断。错误码、状态和 `retryable` 由规范中的错误码目录（`components.x-error-codes`）定义，新增错误码先加入目录。
-- **【目标】** 每个错误场景显式指定 `code`，不由 HTTP 状态推导（阶段 3）。当前 `fail()` 按状态映射，导致所有 409 都是 `SETTINGS_REVISION_CONFLICT`、所有 403 都是 `CSRF_REJECTED`；新代码应调用带显式 code 的 `problem()`。
-- **【目标】** `request_id` 在请求入口生成一次，写入 `X-Request-Id` 响应头和日志（阶段 3）。当前只在生成错误响应时随机产生，不可关联日志。
+- 每个错误场景显式指定 `code`（`s.fail(w, r, code, cause, message)` 或 `newError`），不由 HTTP 状态推导；底层错误只进日志。
+- `request_id` 在请求入口生成一次，写入 `X-Request-Id` 响应头、错误响应和日志。
 - `message` 面向用户，不包含内部错误文本、路径或 SQL。
 
 ### 并发控制（revision）
@@ -109,41 +108,44 @@
 
 ## 前端
 
-现有前端将在阶段 4 按 [ADR 0008](adr/0008-frontend-stack.md) 重写。以下为重写后的约定 **【目标】**；在那之前修改现有前端只需保持现有风格和测试通过。
+前端按 [ADR 0008](adr/0008-frontend-stack.md) 构建，架构与扩展方式见 [frontend.md](frontend.md)。
 
 ### 目录结构
 
 ```text
 frontend/src/
   app/              # 入口、路由、全局 provider；public 与 admin 各一个入口
-  shared/           # 跨领域复用：api 客户端与生成类型、ui 组件、工具函数、i18n 基础
-  features/<domain>/  # 领域功能：查询/变更 hooks、表单 schema、领域组件
+  shared/           # 跨领域复用：api、ui、forms、i18n、lib、styles
+  features/<domain>/  # 领域功能：查询/变更 hooks、表单 schema、领域组件、文本
   pages/            # 路由页面，只组合 features，不直接请求 API
 ```
 
-- `features` 之间不互相引用内部文件；需要共享的提升到 `shared`。
+- `features` 之间只通过 `index.ts` 引用；需要共享的提升到 `shared`。`shared` 不引用 `features`/`pages`/`app`。这些由 ESLint 检查。
 - API 类型由 OpenAPI 规范生成，不手写重复的 DTO 类型。
 - 服务端数据用 TanStack Query 管理，不复制到 Pinia；Pinia 只放纯客户端状态（会话、界面偏好）。
-- 表单用 vee-validate + zod schema；409 冲突保留草稿并提示。
+- 可编辑资源的写操作用 `useRevisionedMutation`（`If-Match`）；409 冲突保留草稿并提示重新加载。
+- 表单用 vee-validate + zod（`@/shared/forms`）；离开未保存的页面要确认，确认框不用 `window.confirm`。
+- 样式只用设计令牌对应的 Tailwind 工具类，不写颜色字面量、内联 `<style>` 或静态 `style` 属性（SPA 的 CSP 禁止）。
 
 ### 国际化
 
-- 所有用户可见文本走 vue-i18n，不在组件里硬编码。
-- 中英文 key 集合必须完全一致，由测试检查；缺 key 视为失败。
-- 新增路由必须同时加入服务端 SPA 深链白名单（`internal/httpserver/server.go` 的 `validUI`）。
+- 所有用户可见文本走 vue-i18n，不在组件里硬编码；key 是语义化路径，不用英文原文当 key。
+- 文本放在所属模块的 `locales/en.ts` 与 `locales/zh-CN.ts` 中；中英文 key 集合与占位符必须完全一致，由测试检查；缺 key 视为失败。
+- 错误按 `code` 显示 `errors.codes.*` 的本地化文本；规范新增错误码时同时补译文。
+- 新增路由必须同时加入规范的 `x-spa-routes` 和服务端 `internal/httpserver/spa.go` 的 `adminSPARoutes`（`spaRoutes.test.ts` 与 `TestSPARoutesMatchSpec` 检查）。
 
 ### 前端测试
 
 - 组件测试用 Testing Library 按角色和可见文本查询，不依赖组件内部状态或 CSS 类名。
-- 网络用 MSW 模拟，响应形状来自生成的 API 类型。
-- Playwright 冒烟测试覆盖登录、主要导航和一次完整的保存流程，在嵌入了前端的真实 Go 服务上运行。
+- 网络用 MSW 模拟（`mockApi`、`apiError`），响应形状来自生成的 API 类型，夹具来自 `src/test/factories`。
+- Playwright 测试覆盖公开浏览、登录、主要导航和一次完整的保存流程，由 `make e2e` 在嵌入了前端的真实 Go 服务上运行，CI 的 `e2e` 任务执行。
 
 ## 测试
 
 - **按行为命名测试文件**：`revision_conflict_test.go`、`cache_cleanup_test.go`。不要用版本或过程命名，例如 `v072_test.go`、`review_test.go`、`upgrade_v071_test.go`。
 - 测试函数名描述行为：`TestImportRejectsDuplicateApplication`。
 - 不用 `time.Sleep` 做同步。用 channel、`sync.WaitGroup`、可注入时钟或轮询加超时等待明确的条件。
-- 测试数据通过共享工厂函数构造（**【目标】** 每个包一个 `_test.go` 中的工厂，或跨包的测试辅助，阶段 2），不要在每个测试里手写整份配置。
+- 测试数据通过共享工厂函数构造（**【目标】** 每个包一个 `_test.go` 中的工厂，或跨包的测试辅助，阶段 2），不要在每个测试里手写整份配置。HTTP 测试统一用 `internal/httpserver/harness_test.go` 的 `newHarness`，它还按规范校验每个响应。
 - 断言可观察行为（HTTP 响应、持久化结果、公开 API 返回值），不断言私有字段、调用次数或实现细节。
 - 不写同义反复的测试：例如把常量和自身比较、只验证 mock 返回了 mock 设定的值。
 - 表驱动测试覆盖同一行为的多个输入；不要为每种参数组合复制一份测试。

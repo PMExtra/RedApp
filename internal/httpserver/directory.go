@@ -3,10 +3,11 @@ package httpserver
 import (
 	"bytes"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"strings"
 
@@ -14,21 +15,20 @@ import (
 	"github.com/PMExtra/RedApp/internal/apps/builtin"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/download"
+	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/media"
+	"github.com/PMExtra/RedApp/internal/networkproxy"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
 // ReloadDirectory publishes one complete runtime snapshot. Callers serialize
 // mutations with directoryMu; source fences reject work from replaced snapshots.
 func (s *Server) ReloadDirectory() error {
-	if s.Pool == nil {
-		return errors.New("Application transport unavailable")
-	}
-	snapshot, err := s.DB.DirectoryConfigurationSnapshot()
+	snapshot, err := s.store.DirectoryConfigurationSnapshot()
 	if err != nil {
 		return err
 	}
-	entries, err := builtin.EntriesFromConfiguration(snapshot, s.Pool)
+	entries, err := builtin.EntriesFromConfiguration(snapshot, s.pool)
 	if err != nil {
 		return err
 	}
@@ -36,476 +36,441 @@ func (s *Server) ReloadDirectory() error {
 	if err != nil {
 		return err
 	}
-	sources := snapshot.Sources
-	clients := make(map[string]*distributor.Client, len(sources))
-	for _, source := range sources {
-		client, e := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, snapshot.ProviderDefaults[source.Provider], source.AppUID, snapshot.ProxyScopes[source.AppUID].VendorUID, s.Pool)
+	clients := make(map[string]*distributor.Client, len(snapshot.Sources))
+	for _, source := range snapshot.Sources {
+		client, e := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, snapshot.ProviderDefaults[source.Provider], source.AppUID, snapshot.ProxyScopes[source.AppUID].VendorUID, s.pool)
 		if e != nil {
 			return e
 		}
 		clients[source.StorageID()] = client
 	}
-	if s.Downloads != nil {
-		if err = s.Downloads.RegisterUpstreams(clients); err != nil {
-			return err
-		}
+	if err = s.downloads.RegisterUpstreams(clients); err != nil {
+		return err
 	}
-	return s.Registry.Replace(next.AllEntries())
+	return s.registry.Replace(next.AllEntries())
 }
 
-func (s *Server) setDirectoryTTL(key string, expected int64, seconds int) (int64, error) {
-	s.directoryMu.Lock()
-	defer s.directoryMu.Unlock()
-	row, err := s.DB.Application(key)
+// directoryFailure maps a store error of a directory, configuration or notes
+// operation to its response. notFound is the code for a missing object
+// addressed by the path (VENDOR_NOT_FOUND or APPLICATION_NOT_FOUND).
+func directoryFailure(err error, notFound errorCode) *apiError {
+	var invalid *store.ValidationError
+	switch {
+	case errors.Is(err, store.ErrVendorNotFound):
+		return newError(codeVendorNotFound, nil, "Vendor not found")
+	case errors.Is(err, store.ErrApplicationNotFound):
+		return newError(codeApplicationNotFound, nil, "Application not found")
+	case errors.Is(err, sql.ErrNoRows) && notFound == codeVendorNotFound:
+		return newError(codeVendorNotFound, nil, "Vendor not found")
+	case errors.Is(err, sql.ErrNoRows) && notFound == codeApplicationNotFound:
+		return newError(codeApplicationNotFound, nil, "Application not found")
+	case errors.Is(err, sql.ErrNoRows) && notFound == codeCategoryNotFound:
+		return newError(codeCategoryNotFound, nil, "Category not found")
+	case errors.Is(err, errDeletePending), errors.Is(err, download.ErrTransfersActive):
+		return newError(codeApplicationDeletePending, err, "Deletion is not complete; the application stays read-only while its work stops. Retry the deletion")
+	case errors.Is(err, store.ErrConflict):
+		return revisionConflict(err)
+	case errors.Is(err, store.ErrDirectoryDeleted):
+		return newError(codeEntityDeleted, nil, "The vendor or application is deleted and read-only")
+	case errors.Is(err, store.ErrDirectoryExists):
+		return newError(codeAlreadyExists, nil, "This ID is already taken")
+	case errors.Is(err, store.ErrVendorHasApplications):
+		return newError(codeVendorNotEmpty, nil, "Delete the vendor's applications first")
+	case errors.Is(err, store.ErrBuiltinTemplate):
+		return newError(codeBuiltinProtected, nil, "Built-in vendors and applications cannot be deleted; disable them instead")
+	case errors.Is(err, store.ErrCategoryAmbiguous):
+		return newError(codeCategoryAmbiguous, nil, "A category name matches more than one existing category; choose one from the list")
+	case errors.Is(err, networkproxy.ErrRedactedMismatch):
+		return newError(codeProxyRedactedMismatch, nil, "The saved proxy password can only be kept for the same proxy scheme, user and host; enter the password again")
+	case errors.As(err, &invalid):
+		return newError(codeValidationFailed, err, sentence(invalid.Detail()))
+	case errors.Is(err, store.ErrInvalidDirectory):
+		return newError(codeValidationFailed, err, "Invalid vendor or application configuration")
+	}
+	return storageError(err)
+}
+
+// sentence capitalizes a validation detail for the response message.
+func sentence(detail string) string {
+	if detail == "" {
+		return "Invalid value"
+	}
+	return strings.ToUpper(detail[:1]) + detail[1:]
+}
+
+// vendorParam is the validated {vendor} path segment.
+func vendorParam(r *http.Request) (string, *apiError) {
+	id := r.PathValue("vendor")
+	if !identity.ValidVendor(id) {
+		return "", newError(codeInvalidPath, nil, "Invalid vendor ID")
+	}
+	return id, nil
+}
+
+// appParam is the validated application key of the {vendor}/{app} segments.
+func appParam(r *http.Request) (string, *apiError) {
+	key := r.PathValue("vendor") + "/" + r.PathValue("app")
+	if !identity.ValidKey(key) {
+		return "", newError(codeInvalidPath, nil, "Invalid application identity")
+	}
+	return key, nil
+}
+
+// validateIcon accepts "", an embedded preset image or an uploaded icon that
+// exists in icon storage.
+func (s *Server) validateIcon(field, path string) *apiError {
+	if _, ok := builtin.BrandAsset(path); path == "" || ok {
+		return nil
+	}
+	f, _, err := s.icons.Open(path)
 	if err != nil {
-		return 0, err
+		return newError(codeValidationFailed, err, field+" must be an uploaded icon or a preset image; upload the icon before selecting it")
 	}
-	row, err = s.DB.PatchApplicationFields(key, expected, map[string]json.RawMessage{"cache_ttl_seconds": encodeJSON(seconds)}, nil)
+	_ = f.Close()
+	return nil
+}
+
+func (s *Server) listProviders(w http.ResponseWriter, r *http.Request) {
+	writeOK(w, providerList())
+}
+
+func (s *Server) getVendor(w http.ResponseWriter, r *http.Request) {
+	id, e := vendorParam(r)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	v, err := s.store.Vendor(id)
 	if err != nil {
-		return 0, err
+		s.writeError(w, r, directoryFailure(err, codeVendorNotFound))
+		return
 	}
-	return row.Revision, nil
+	writeRevision(w, http.StatusOK, v.Revision, vendorDocument(v))
 }
 
-type directoryInput struct {
-	Categories      *[]string `json:"categories"`
-	Tags            *[]string `json:"tags"`
-	explicit        map[string]json.RawMessage
-	ConfirmUID      string               `json:"confirm_uid"`
-	ConfirmKey      string               `json:"confirm_key"`
-	Revision        int64                `json:"revision"`
-	ID              string               `json:"id"`
-	Name            *store.LocalizedText `json:"name"`
-	Description     *store.LocalizedText `json:"description"`
-	LocalizedIcons  *store.LocalizedText `json:"localized_icons"`
-	Icon            *string              `json:"icon"`
-	Enabled         *bool                `json:"enabled"`
-	Provider        string               `json:"provider"`
-	BaseURL         *string              `json:"base_url"`
-	BaseURLs        *[]string            `json:"base_urls"`
-	SourceStrategy  *string              `json:"source_strategy"`
-	CacheTTLSeconds *int                 `json:"cache_ttl_seconds"`
+type vendorCreateRequest struct {
+	ID             *string        `json:"id"`
+	Name           *localizedText `json:"name"`
+	Description    *localizedText `json:"description"`
+	Icon           *string        `json:"icon"`
+	LocalizedIcons *localizedText `json:"localized_icons"`
+	Enabled        *bool          `json:"enabled"`
 }
 
-func (in directoryInput) vendorInput() store.VendorInput {
-	v := store.VendorInput{ID: in.ID, Enabled: true}
-	if in.LocalizedIcons != nil {
-		v.LocalizedIcons = *in.LocalizedIcons
+func (s *Server) createVendor(w http.ResponseWriter, r *http.Request) {
+	var in vendorCreateRequest
+	if e := decodeJSON(r, &in); e != nil {
+		s.writeError(w, r, e)
+		return
 	}
-	if in.Name != nil {
-		v.Name = *in.Name
+	if in.ID == nil || in.Name == nil || in.Enabled == nil {
+		s.fail(w, r, codeInvalidRequest, nil, "id, name and enabled are required")
+		return
 	}
+	v := store.VendorInput{ID: *in.ID, Name: store.LocalizedText(*in.Name), Enabled: *in.Enabled}
 	if in.Description != nil {
-		v.Description = *in.Description
+		v.Description = store.LocalizedText(*in.Description)
 	}
 	if in.Icon != nil {
 		v.Icon = *in.Icon
 	}
-	if in.Enabled != nil {
-		v.Enabled = *in.Enabled
-	}
-	return v
-}
-
-func (in directoryInput) applicationInput() (store.ApplicationInput, error) {
 	if in.LocalizedIcons != nil {
-		return store.ApplicationInput{}, store.ErrInvalidDirectory
+		v.LocalizedIcons = store.LocalizedText(*in.LocalizedIcons)
 	}
-	d, ok := application.ProviderDefinition(in.Provider)
-	if !ok {
-		return store.ApplicationInput{}, store.ErrInvalidDirectory
-	}
-	v := in.vendorInput()
-	a := store.ApplicationInput{ID: v.ID, Name: v.Name, Description: v.Description, Icon: v.Icon, Enabled: v.Enabled, Provider: in.Provider, CacheTTLSeconds: d.DefaultCacheTTLSeconds}
-	if in.Categories != nil {
-		a.Categories = append([]string{}, (*in.Categories)...)
-	}
-	if in.Tags != nil {
-		a.Tags = append([]string{}, (*in.Tags)...)
-	}
-	if in.BaseURL != nil {
-		a.BaseURL = *in.BaseURL
-	}
-	if in.BaseURLs != nil {
-		a.BaseURLs = append([]string{}, (*in.BaseURLs)...)
-	}
-	if in.SourceStrategy != nil {
-		a.SourceStrategy = *in.SourceStrategy
-	}
-	if in.BaseURL != nil && in.BaseURLs != nil {
-		return a, fmt.Errorf("%w: provide base_urls or base_url, not both", store.ErrInvalidDirectory)
-	}
-	if in.CacheTTLSeconds != nil {
-		a.CacheTTLSeconds = *in.CacheTTLSeconds
-	}
-	return normalizedApplication(a)
-}
-
-func normalizedApplication(in store.ApplicationInput) (store.ApplicationInput, error) {
-	conf, err := application.NormalizeConfig(in.Provider, application.ProviderConfig{BaseURL: in.BaseURL, BaseURLs: in.BaseURLs, SourceStrategy: in.SourceStrategy, CacheTTLSeconds: in.CacheTTLSeconds})
-	if err != nil {
-		return in, fmt.Errorf("%w: %v", store.ErrInvalidDirectory, err)
-	}
-	in.BaseURL, in.CacheTTLSeconds = conf.BaseURL, conf.CacheTTLSeconds
-	in.BaseURLs, in.SourceStrategy = conf.BaseURLs, conf.SourceStrategy
-	return in, nil
-}
-
-func (s *Server) validateDirectoryIcon(path string) error {
-	_, builtinIcon := builtin.BrandAsset(path)
-	if path == "" || builtinIcon {
-		return nil
-	}
-	if s.Icons == nil {
-		return store.ErrInvalidDirectory
-	}
-	f, _, err := s.Icons.Open(path)
-	if err != nil {
-		return fmt.Errorf("%w: upload the icon before selecting it", store.ErrInvalidDirectory)
-	}
-	return f.Close()
-}
-
-func directoryError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, errDeletePending), errors.Is(err, download.ErrTransfersActive):
-		problem(w, 409, "DIRECTORY_DELETE_PENDING", "Deletion is not complete. This application is blocked while its tasks stop. Retry deletion; restarting also resumes it.")
-	case errors.Is(err, store.ErrConflict):
-		problem(w, 409, "DIRECTORY_REVISION_CONFLICT", "Configuration changed; reload before saving")
-	case errors.Is(err, store.ErrCategoryAmbiguous):
-		problem(w, 409, "CATEGORY_AMBIGUOUS", err.Error())
-	case errors.Is(err, sql.ErrNoRows):
-		problem(w, 404, "DIRECTORY_NOT_FOUND", "Vendor or application not found")
-	case errors.Is(err, store.ErrBuiltinTemplate), errors.Is(err, store.ErrDirectoryExists), errors.Is(err, store.ErrDirectoryDeleted), errors.Is(err, store.ErrVendorHasApplications):
-		problem(w, 409, "DIRECTORY_CONFLICT", err.Error())
-	case errors.Is(err, store.ErrInvalidDirectory):
-		problem(w, 400, "INVALID_DIRECTORY", err.Error())
-	default:
-		problem(w, 503, "DIRECTORY_UNAVAILABLE", "Unable to persist or load the application directory")
-	}
-}
-
-// directoryAPI runs only after the existing session, Origin and CSRF checks.
-func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
-	endpoint := strings.TrimPrefix(r.URL.Path, "/admin/api/")
-	parts := strings.Split(endpoint, "/")
-	if len(parts) == 3 && parts[0] == "vendors" && parts[2] == "configuration" {
-		s.configurationAPI(w, r, "Vendor", parts[1])
-		return true
-	}
-	if len(parts) == 4 && parts[0] == "apps" && parts[3] == "configuration" {
-		s.configurationAPI(w, r, "App", parts[1]+"/"+parts[2])
-		return true
-	}
-	if endpoint == "assets/builtin-icon" {
-		if r.Method != http.MethodGet || !queryAllowed(r, "path") {
-			fail(w, 400, "Invalid icon request")
-			return true
-		}
-		asset, ok := builtin.BrandAsset(r.URL.Query().Get("path"))
-		if !ok {
-			fail(w, 404, "Icon not found")
-			return true
-		}
-		w.Header().Set("Content-Type", asset.ContentType)
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
-		w.Write(asset.Body)
-		return true
-	}
-	if endpoint == "settings/homepage" {
-		s.homepageAPI(w, r)
-		return true
-	}
-	if len(parts) == 3 && parts[0] == "vendors" && parts[2] == "admin-notes" {
-		s.adminNotesAPI(w, r, "vendor", parts[1])
-		return true
-	}
-	if len(parts) == 4 && parts[0] == "apps" && parts[3] == "admin-notes" {
-		s.adminNotesAPI(w, r, "app", parts[1]+"/"+parts[2])
-		return true
-	}
-	if len(parts) == 4 && parts[0] == "apps" && parts[3] == "instructions" {
-		s.instructionsAPI(w, r, parts[1]+"/"+parts[2])
-		return true
-	}
-	if r.Method == http.MethodGet && (endpoint == "vendors" || endpoint == "apps" || len(parts) == 3 && parts[0] == "vendors" && parts[2] == "apps") {
-		s.directoryList(w, r, parts)
-		return true
-	}
-
-	isVendor := parts[0] == "vendors" && (len(parts) == 1 || len(parts) == 2 || len(parts) == 3 && parts[2] == "apps")
-	isApp := parts[0] == "apps" && (len(parts) == 1 || len(parts) == 3)
-	if endpoint != "providers" && endpoint != "assets/icons" && !isVendor && !isApp {
-		return false
-	}
-	if !queryAllowed(r) {
-		fail(w, 400, "Unexpected query parameters")
-		return true
-	}
-	if endpoint == "providers" {
-		if r.Method != http.MethodGet {
-			fail(w, 405, "Method not allowed")
-			return true
-		}
-		reply(w, 200, map[string]any{"providers": application.Definitions()})
-		return true
-	}
-	if endpoint == "assets/icons" {
-		s.uploadIcon(w, r)
-		return true
-	}
-	if r.Method == http.MethodGet {
-		var result any
-		var err error
-		switch {
-		case isVendor && len(parts) == 2:
-			var row store.Vendor
-			row, err = s.DB.Vendor(parts[1])
-			result = map[string]any{"vendor": row}
-		case isApp && len(parts) == 3:
-			var row store.Application
-			row, err = s.DB.Application(parts[1] + "/" + parts[2])
-			result = map[string]any{"app": row}
-		default:
-			fail(w, 405, "Method not allowed")
-			return true
-		}
-		if err != nil {
-			directoryError(w, err)
-		} else {
-			reply(w, 200, result)
-		}
-		return true
-	}
-	if s.Pool == nil {
-		fail(w, 503, "Application directory is unavailable")
-		return true
-	}
-	if r.Method != http.MethodPost && r.Method != http.MethodPatch && r.Method != http.MethodDelete {
-		fail(w, 405, "Method not allowed")
-		return true
-	}
-	var in directoryInput
-	if err := decodeLimit(w, r, &in, 64<<10); err != nil {
-		fail(w, 400, "Invalid directory input")
-		return true
-	}
-	create := r.Method == http.MethodPost && (endpoint == "vendors" || isVendor && len(parts) == 3)
-	if !create && (in.ID != "" || in.Provider != "") {
-		fail(w, 400, "ID, parent and provider cannot be changed")
-		return true
-	}
-	if r.Header.Get("If-Match") != "" {
-		rev, err := expectedRevision(r)
-		if err != nil || in.Revision != 0 && in.Revision != rev {
-			fail(w, 400, "Invalid revision")
-			return true
-		}
-		in.Revision = rev
-	}
-	if !create && in.Revision < 1 {
-		fail(w, 400, "Revision is required")
-		return true
-	}
-	if in.Icon != nil {
-		if err := s.validateDirectoryIcon(*in.Icon); err != nil {
-			directoryError(w, err)
-			return true
-		}
-	}
-	if in.LocalizedIcons != nil {
-		if isApp || (create && endpoint != "vendors") {
-			fail(w, 400, "Unexpected application fields")
-			return true
-		}
-		for _, icon := range []string{in.LocalizedIcons.En, in.LocalizedIcons.ZhCN} {
-			if err := s.validateDirectoryIcon(icon); err != nil {
-				directoryError(w, err)
-				return true
-			}
+	for field, icon := range map[string]string{"icon": v.Icon, "localized_icons.en": v.LocalizedIcons.En, "localized_icons.zh-CN": v.LocalizedIcons.ZhCN} {
+		if e := s.validateIcon(field, icon); e != nil {
+			s.writeError(w, r, e)
+			return
 		}
 	}
 	s.directoryMu.Lock()
 	defer s.directoryMu.Unlock()
-	var result any
-	var err error
-	status := 200
-	switch {
-	case create && endpoint == "vendors":
-		if in.Categories != nil || in.Tags != nil || in.Provider != "" || in.BaseURL != nil || in.BaseURLs != nil || in.SourceStrategy != nil || in.CacheTTLSeconds != nil {
-			fail(w, 400, "Unexpected vendor fields")
-			return true
-		}
-		var row store.Vendor
-		row, err = s.DB.CreateVendor(in.vendorInput())
-		result = map[string]any{"vendor": row}
-		status = 201
-	case create:
-		var input store.ApplicationInput
-		input, err = in.applicationInput()
-		if err == nil {
-			var row store.Application
-			row, err = s.DB.CreateApplication(parts[1], input)
-			result = map[string]any{"app": row}
-			status = 201
-		}
-	case isVendor && len(parts) == 2:
-		if in.Categories != nil || in.Tags != nil || in.BaseURL != nil || in.BaseURLs != nil || in.SourceStrategy != nil || in.CacheTTLSeconds != nil {
-			fail(w, 400, "Unexpected vendor fields")
-			return true
-		}
-		var row store.Vendor
-		row, err = s.DB.Vendor(parts[1])
-		if err != nil {
-			break
-		}
-		if r.Method == http.MethodDelete {
-			if in.ConfirmKey != parts[1] {
-				fail(w, 400, "Confirm the exact vendor ID for permanent deletion")
-				return true
-			}
-			err = s.DB.PermanentlyDeleteVendor(parts[1], in.Revision)
-		} else if r.Method == http.MethodPatch {
-			set, e := in.configurationFields("Vendor")
-			if e != nil {
-				err = e
-				break
-			}
-			row, err = s.DB.PatchVendorFields(parts[1], in.Revision, set, in.Enabled)
-		} else {
-			fail(w, 405, "Method not allowed")
-			return true
-		}
-		result = map[string]any{"vendor": row}
-	case isApp && len(parts) == 3:
-		key := parts[1] + "/" + parts[2]
-		var row store.Application
-		row, err = s.DB.Application(key)
-		if errors.Is(err, sql.ErrNoRows) && r.Method == http.MethodDelete && in.ConfirmKey == key && in.ConfirmUID != "" {
-			reply(w, 200, map[string]any{"deleted": true})
-			return true
-		}
-		if err != nil {
-			break
-		}
-		if r.Method == http.MethodDelete {
-			if in.ConfirmKey != key {
-				fail(w, 400, "Confirm the exact application key for permanent deletion")
-				return true
-			}
-			if in.ConfirmUID != row.UID {
-				err = store.ErrConflict
-				break
-			}
-			err = s.deleteApplication(r.Context(), key, in.Revision)
-		} else if r.Method == http.MethodPatch {
-			set, e := in.configurationFields("App")
-			if e != nil {
-				err = e
-				break
-			}
-			if in.BaseURL != nil && in.BaseURLs != nil {
-				err = store.ErrInvalidDirectory
-				break
-			}
-			if row.Provider == application.HttpCache && in.BaseURL != nil {
-				base, e := distributor.NormalizeBase(*in.BaseURL, distributor.GeneralHTTP)
-				if e != nil {
-					err = e
-					break
-				}
-				if base != row.BaseURL {
-					set["base_urls"] = encodeJSON([]string{base})
-				}
-			}
-			row, err = s.DB.PatchApplicationFields(key, in.Revision, set, in.Enabled)
-		} else {
-			fail(w, 405, "Method not allowed")
-			return true
-		}
-		result = map[string]any{"app": row}
-	default:
-		fail(w, 405, "Method not allowed")
-		return true
-	}
+	created, err := s.store.CreateVendor(v)
 	if err != nil {
-		directoryError(w, err)
-	} else {
-		if r.Method == http.MethodDelete {
-			cleanupPending := s.DB.ProcessPendingDeletes(s.Dir) != nil
-			result = map[string]any{"deleted": true, "cleanup_pending": cleanupPending}
-		}
-		reply(w, status, result)
+		s.writeError(w, r, directoryFailure(err, codeVendorNotFound))
+		return
 	}
-	return true
+	writeCreated(w, "/admin/api/vendors/"+created.ID, created.Revision, vendorDocument(created))
+}
+
+type entityStateRequest struct {
+	Enabled *bool `json:"enabled"`
+}
+
+// decodeEntityState reads the If-Match revision and the EntityStateUpdate body.
+func decodeEntityState(r *http.Request) (int64, bool, *apiError) {
+	revision, e := ifMatch(r)
+	if e != nil {
+		return 0, false, e
+	}
+	var in entityStateRequest
+	if e = decodeJSON(r, &in); e != nil {
+		return 0, false, e
+	}
+	if in.Enabled == nil {
+		return 0, false, newError(codeInvalidRequest, nil, "enabled is required")
+	}
+	return revision, *in.Enabled, nil
+}
+
+func (s *Server) updateVendor(w http.ResponseWriter, r *http.Request) {
+	id, e := vendorParam(r)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	revision, enabled, e := decodeEntityState(r)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	s.directoryMu.Lock()
+	defer s.directoryMu.Unlock()
+	v, err := s.store.PatchVendorFields(id, revision, nil, &enabled)
+	if err != nil {
+		s.writeError(w, r, directoryFailure(err, codeVendorNotFound))
+		return
+	}
+	writeRevision(w, http.StatusOK, v.Revision, vendorDocument(v))
+}
+
+func (s *Server) deleteVendor(w http.ResponseWriter, r *http.Request) {
+	id, e := vendorParam(r)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	revision, e := ifMatch(r)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	s.directoryMu.Lock()
+	defer s.directoryMu.Unlock()
+	if err := s.store.PermanentlyDeleteVendor(id, revision); err != nil {
+		s.writeError(w, r, directoryFailure(err, codeVendorNotFound))
+		return
+	}
+	writeNoContent(w)
+}
+
+func (s *Server) getApp(w http.ResponseWriter, r *http.Request) {
+	key, e := appParam(r)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	a, err := s.store.Application(key)
+	if err != nil {
+		s.writeError(w, r, directoryFailure(err, codeApplicationNotFound))
+		return
+	}
+	writeRevision(w, http.StatusOK, a.Revision, appDocument(a))
+}
+
+type appCreateRequest struct {
+	Vendor          *string        `json:"vendor"`
+	ID              *string        `json:"id"`
+	Provider        *string        `json:"provider"`
+	Name            *localizedText `json:"name"`
+	Description     *localizedText `json:"description"`
+	Icon            *string        `json:"icon"`
+	Enabled         *bool          `json:"enabled"`
+	Categories      []string       `json:"categories"`
+	Tags            []string       `json:"tags"`
+	BaseURL         *string        `json:"base_url"`
+	BaseURLs        []string       `json:"base_urls"`
+	SourceStrategy  *string        `json:"source_strategy"`
+	CacheTTLSeconds *int           `json:"cache_ttl_seconds"`
+}
+
+// applicationInput validates the provider-specific fields of a create request.
+func (in appCreateRequest) applicationInput() (store.ApplicationInput, *apiError) {
+	if in.Vendor == nil || in.ID == nil || in.Provider == nil || in.Name == nil || in.Enabled == nil {
+		return store.ApplicationInput{}, newError(codeInvalidRequest, nil, "vendor, id, provider, name and enabled are required")
+	}
+	definition, ok := application.ProviderDefinition(*in.Provider)
+	if !ok {
+		return store.ApplicationInput{}, newError(codeValidationFailed, nil, "Unknown provider")
+	}
+	provider := definition.Key
+	for path, present := range map[string]bool{"base_url": in.BaseURL != nil, "base_urls": in.BaseURLs != nil, "source_strategy": in.SourceStrategy != nil, "cache_ttl_seconds": in.CacheTTLSeconds != nil} {
+		if present && !store.AppPathApplies(provider, path) {
+			return store.ApplicationInput{}, newError(codeValidationFailed, nil, fmt.Sprintf("%s does not apply to the %s provider", path, provider))
+		}
+	}
+	if provider == application.HttpCache && len(in.BaseURLs) == 0 {
+		return store.ApplicationInput{}, newError(codeValidationFailed, nil, "base_urls requires 1..16 URLs for the http-cache provider")
+	}
+	a := store.ApplicationInput{ID: *in.ID, Name: store.LocalizedText(*in.Name), Provider: provider, Enabled: *in.Enabled, CacheTTLSeconds: definition.DefaultCacheTTLSeconds,
+		Categories: nonNil(in.Categories), Tags: nonNil(in.Tags), BaseURLs: in.BaseURLs}
+	if in.Description != nil {
+		a.Description = store.LocalizedText(*in.Description)
+	}
+	if in.Icon != nil {
+		a.Icon = *in.Icon
+	}
+	if in.BaseURL != nil {
+		a.BaseURL = *in.BaseURL
+	}
+	if in.SourceStrategy != nil {
+		a.SourceStrategy = *in.SourceStrategy
+	}
+	if in.CacheTTLSeconds != nil {
+		a.CacheTTLSeconds = *in.CacheTTLSeconds
+	}
+	config, err := application.NormalizeConfig(provider, application.ProviderConfig{BaseURL: a.BaseURL, BaseURLs: a.BaseURLs, SourceStrategy: a.SourceStrategy, CacheTTLSeconds: a.CacheTTLSeconds})
+	if err != nil {
+		return a, newError(codeValidationFailed, err, sentence(err.Error()))
+	}
+	a.BaseURL, a.BaseURLs, a.SourceStrategy, a.CacheTTLSeconds = config.BaseURL, config.BaseURLs, config.SourceStrategy, config.CacheTTLSeconds
+	return a, nil
+}
+
+func (s *Server) createApp(w http.ResponseWriter, r *http.Request) {
+	var in appCreateRequest
+	if e := decodeJSON(r, &in); e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	input, e := in.applicationInput()
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	if e = s.validateIcon("icon", input.Icon); e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	s.directoryMu.Lock()
+	defer s.directoryMu.Unlock()
+	a, err := s.store.CreateApplication(*in.Vendor, input)
+	if err != nil {
+		s.writeError(w, r, directoryFailure(err, codeVendorNotFound))
+		return
+	}
+	writeCreated(w, "/admin/api/apps/"+a.Key, a.Revision, appDocument(a))
+}
+
+func (s *Server) updateApp(w http.ResponseWriter, r *http.Request) {
+	key, e := appParam(r)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	revision, enabled, e := decodeEntityState(r)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	s.directoryMu.Lock()
+	defer s.directoryMu.Unlock()
+	a, err := s.store.PatchApplicationFields(key, revision, nil, &enabled)
+	if err != nil {
+		s.writeError(w, r, directoryFailure(err, codeApplicationNotFound))
+		return
+	}
+	writeRevision(w, http.StatusOK, a.Revision, appDocument(a))
+}
+
+// deleteApp permanently deletes an application. confirm_uid guards against
+// deleting a different application recreated under the same key.
+func (s *Server) deleteApp(w http.ResponseWriter, r *http.Request) {
+	key, e := appParam(r)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	uid := r.URL.Query().Get("confirm_uid")
+	if !identity.ValidUID(uid) {
+		s.fail(w, r, codeInvalidQuery, nil, "confirm_uid must be the application UID")
+		return
+	}
+	revision, e := ifMatch(r)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	s.directoryMu.Lock()
+	defer s.directoryMu.Unlock()
+	a, err := s.store.Application(key)
+	if err != nil {
+		s.writeError(w, r, directoryFailure(err, codeApplicationNotFound))
+		return
+	}
+	if a.UID != uid {
+		s.writeError(w, r, revisionConflict(nil))
+		return
+	}
+	if err = s.deleteApplication(r.Context(), key, revision); err != nil {
+		s.writeError(w, r, directoryFailure(err, codeApplicationNotFound))
+		return
+	}
+	writeOK(w, appDeletionDTO{CleanupPending: s.store.ProcessPendingDeletes(s.dataDir) != nil})
+}
+
+// multipartBody opens a multipart/form-data request body.
+func multipartBody(r *http.Request) (*multipart.Reader, *apiError) {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "multipart/form-data" {
+		return nil, newError(codeUnsupportedMediaType, nil, "Content-Type must be multipart/form-data")
+	}
+	reader, err := r.MultipartReader()
+	if err != nil {
+		return nil, newError(codeInvalidRequest, err, "Malformed multipart body")
+	}
+	return reader, nil
+}
+
+// readPart reads one part of at most limit bytes. Exceeding the route's body
+// limit is PAYLOAD_TOO_LARGE; exceeding limit reports tooLarge.
+func readPart(part *multipart.Part, limit int64) (body []byte, tooLarge bool, e *apiError) {
+	body, err := io.ReadAll(io.LimitReader(part, limit+1))
+	if err != nil {
+		var maxBytes *http.MaxBytesError
+		if errors.As(err, &maxBytes) {
+			return nil, false, newError(codePayloadTooLarge, nil, "Request body exceeds the operation limit")
+		}
+		return nil, false, newError(codeInvalidRequest, err, "Malformed multipart body")
+	}
+	return body, int64(len(body)) > limit, nil
 }
 
 func (s *Server) uploadIcon(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		fail(w, 405, "Method not allowed")
+	reader, e := multipartBody(r)
+	if e != nil {
+		s.writeError(w, r, e)
 		return
 	}
-	if s.Icons == nil {
-		fail(w, 503, "Icon storage unavailable")
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, media.MaxBytes+(64<<10))
-	mr, err := r.MultipartReader()
-	if err != nil {
-		fail(w, 400, "Multipart file required")
-		return
-	}
-	part, err := mr.NextPart()
+	part, err := reader.NextPart()
 	if err != nil || part.FormName() != "file" {
-		fail(w, 400, "One icon file is required")
+		s.fail(w, r, codeInvalidRequest, err, "Exactly one part named file is required")
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(part, media.MaxBytes+1))
+	body, tooLarge, e := readPart(part, media.MaxBytes)
 	part.Close()
-	if err != nil || int64(len(body)) > media.MaxBytes {
-		fail(w, 413, "Icon exceeds the size limit")
+	if e != nil {
+		s.writeError(w, r, e)
 		return
 	}
-	if next, e := mr.NextPart(); e != io.EOF {
+	if tooLarge {
+		s.fail(w, r, codePayloadTooLarge, nil, "Icons are limited to 2 MiB")
+		return
+	}
+	if next, err := reader.NextPart(); err != io.EOF {
 		if next != nil {
 			next.Close()
 		}
-		fail(w, 400, "Only one icon file is allowed")
+		s.fail(w, r, codeInvalidRequest, err, "Exactly one part named file is required")
 		return
 	}
-	path, err := s.Icons.Put(bytes.NewReader(body))
-	if err != nil {
-		if errors.Is(err, media.ErrTooLarge) {
-			fail(w, 413, "Icon exceeds the size limit")
-		} else if errors.Is(err, media.ErrInvalidIcon) {
-			fail(w, 400, "Unsupported or unsafe icon")
-		} else {
-			fail(w, 503, "Unable to save icon")
-		}
-		return
+	path, err := s.icons.Put(bytes.NewReader(body))
+	switch {
+	case errors.Is(err, media.ErrInvalidIcon), errors.Is(err, media.ErrTooLarge):
+		s.fail(w, r, codeIconInvalid, err, "Unsupported or unsafe image, or raster dimensions over the limit")
+	case err != nil:
+		s.writeError(w, r, storageError(err))
+	default:
+		writeCreated(w, "", 0, storedIconDTO{Icon: path})
 	}
-	reply(w, 201, map[string]string{"icon": path})
-}
-
-func (s *Server) icon(w http.ResponseWriter, r *http.Request) {
-	if s.Icons == nil {
-		fail(w, 404, "Icon not found")
-		return
-	}
-	f, mime, err := s.Icons.Open(r.URL.Path)
-	if err != nil {
-		fail(w, 404, "Icon not found")
-		return
-	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		fail(w, 503, "Icon unavailable")
-		return
-	}
-	w.Header().Set("Content-Type", mime)
-	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
 }

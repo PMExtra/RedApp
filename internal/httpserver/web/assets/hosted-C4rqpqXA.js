@@ -1,1 +1,0 @@
-function e(e,t){return`/${e}/${t.split(`/`).map(encodeURIComponent).join(`/`)}`}export{e as t};

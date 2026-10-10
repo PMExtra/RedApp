@@ -3,17 +3,10 @@ package httpserver
 import (
 	"bytes"
 	"compress/gzip"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
-
-	"crypto/sha256"
-	"encoding/hex"
-	app "github.com/PMExtra/RedApp/internal/apps/codex"
-	"github.com/PMExtra/RedApp/internal/testutil"
 )
 
 type compressedResponse struct {
@@ -29,17 +22,10 @@ func (w compressedResponse) Write(p []byte) (int, error) { return w.zip.Write(p)
 func (w compressedResponse) Flush()                      { w.zip.Flush(); w.ResponseWriter.(http.Flusher).Flush() }
 func TestDownstreamCountersPrecedeExternalHTTPCompression(t *testing.T) {
 	data := bytes.Repeat([]byte("repeated fixture payload\n"), 5000)
-	hash := sha256.Sum256(data)
-	var base string
-	upstream, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "release.json") {
-			json.NewEncoder(w).Encode(app.Release{Tag: "rust-v0.159.2", Assets: []app.Asset{{Name: "asset.tgz", Digest: "sha256:" + hex.EncodeToString(hash[:]), URL: base + "/releases/0.159.2/asset.tgz"}}})
-			return
-		}
-		w.Write(data)
-	}))
-	base = upstream.Base.String()
-	handler, db, _ := newTestServer(t, upstream)
+	h := newHarness(t)
+	h.upstreamProxy(codexRelease("0.159.2", map[string][]byte{"asset.tgz": data}, nil))
+	key := h.releaseApp("fixture", "codex", "codex")
+	handler, db := h.server, h.store
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Encoding", "gzip")
 		zip := gzip.NewWriter(w)
@@ -51,7 +37,7 @@ func TestDownstreamCountersPrecedeExternalHTTPCompression(t *testing.T) {
 	defer client.CloseIdleConnections()
 	var transferred int
 	for range 2 {
-		response, err := client.Get(server.URL + "/openai/codex/releases/0.159.2/asset.tgz")
+		response, err := client.Get(server.URL + "/" + key + "/releases/0.159.2/asset.tgz")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -76,7 +62,7 @@ func TestDownstreamCountersPrecedeExternalHTTPCompression(t *testing.T) {
 		t.Fatal(counters, transferred)
 	}
 	// A client-side write failure counts only bytes accepted by ResponseWriter.
-	handler.ServeHTTP(failedResponse{httptest.NewRecorder()}, httptest.NewRequest("GET", "http://internal/openai/codex/releases/0.159.2/asset.tgz", nil))
+	handler.ServeHTTP(failedResponse{httptest.NewRecorder()}, httptest.NewRequest("GET", "http://internal/"+key+"/releases/0.159.2/asset.tgz", nil))
 	counters, err := db.Counters()
 	if err != nil || counters["downstream_bytes"] != int64(2*len(data)+3) || counters["download_errors"] != 1 || counters["upstream_bytes"] != int64(len(data)) {
 		t.Fatal(counters, err)

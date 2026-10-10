@@ -1,0 +1,198 @@
+import type { LocaleModule } from "@/shared/i18n";
+
+export default {
+  directory: {
+    builtin: "Built-in",
+    backToList: "Back to vendors",
+    state: {
+      label: "Availability",
+      all: "All",
+      enabled: "Enabled",
+      disabled: "Disabled",
+      deleted: "Deleted",
+      enabledOne: "Enabled",
+      disabledOne: "Disabled",
+      deletedOne: "Deleted",
+      disabledByVendor: "Disabled by vendor",
+      published: "Published",
+    },
+    actions: {
+      addVendor: "Add vendor",
+      addApp: "Add application",
+      conflict: "This item was changed elsewhere. The latest state was loaded; try again.",
+    },
+    list: {
+      description: "Manage vendors, their applications, providers and availability.",
+      categories: "Categories",
+      search: "Search vendors and applications",
+      total: "{count} vendor | {count} vendors",
+      cleanupPending:
+        "Deleted. Some stored files are still awaiting cleanup; they are removed later or when the server restarts.",
+      empty: "No vendors yet",
+      emptyHint:
+        "Add a vendor, then create applications under it and choose their providers. Built-in applications start disabled.",
+      emptyFiltered: "No vendors in this view",
+      emptyFilteredHint: "Try another search or availability filter.",
+    },
+    vendorCard: {
+      count: "{count} application | {count} applications",
+      matching: "{count} matching application | {count} matching applications",
+      strip: "Applications of {vendor}",
+      scrollLeft: "Scroll applications left",
+      scrollRight: "Scroll applications right",
+      loadingApps: "Loading all applications…",
+      appsFailed: "Not all applications could be loaded.",
+    },
+    vendor: {
+      notFound: "Vendor not found",
+      notFoundHint: "It may have been deleted. Check the address or go back to the list.",
+    },
+    app: {
+      notFound: "Application not found",
+      notFoundHint:
+        "It may have been deleted. Check the address or open the vendor's applications.",
+      backToVendor: "Applications of this vendor",
+      publicPage: "Public page",
+      copyUrl: "Copy download URL",
+      tabUnavailable: "Not available for this application",
+      tabUnavailableHint: "Applications of the {provider} provider do not have this section.",
+      openSettings: "Open settings",
+    },
+    sections: {
+      details: "Details",
+      logos: "Logos",
+      source: "Upstream",
+      network: "Network",
+    },
+    fields: {
+      vendorId: "Vendor ID",
+      appId: "Application ID",
+      appKey: "Key",
+      idHint: "Lowercase letters, digits and single hyphens. It cannot be changed later.",
+      fixedAfterCreate: "ID, vendor and provider are fixed after creation.",
+      provider: "Provider",
+      nameIn: "Name ({language})",
+      descriptionIn: "Description ({language})",
+      enabled: "Enabled",
+    },
+    enabledHint: {
+      vendor:
+        "Saves immediately. Disabling a vendor hides all its applications; stored data is kept.",
+      app: "Saves immediately. Disabled applications stay manageable here; stored data is kept.",
+    },
+    icon: {
+      appIcon: "Icon",
+      defaultLogo: "Default logo",
+      englishLogo: "English logo",
+      chineseLogo: "Chinese logo",
+      vendorHint: "The logo of the current language is used when set, otherwise the default logo.",
+      none: "No image",
+      usesDefault: "Uses the default logo",
+      choose: "Upload image",
+      replace: "Replace image",
+      remove: "Remove",
+      uploading: "Uploading image",
+      hint: "PNG, JPEG or SVG, at most 2 MiB. Saved with the form.",
+    },
+    source: {
+      urls: "Source URLs",
+      urlsHint:
+        "1 to 16 HTTP(S) directory URLs without credentials, query or fragment. Drag the handle or use the arrow keys on it to reorder.",
+      url: "Source URL {number}",
+      removeUrl: "Remove source URL {number}",
+      addUrl: "Add source",
+      strategy: "Source selection",
+      strategyHint: "How requests choose among the sources.",
+      strategies: {
+        ordered: "In order",
+        round_robin: "Round robin",
+        random: "Random",
+      },
+      ttl: "Default freshness",
+      ttlHint:
+        "Seconds a response stays fresh when no cache rule matches and the upstream sends no Cache-Control. 0 revalidates every time.",
+      baseUrl: "Base URL",
+      baseUrlHint: "The provider's default upstream. Replace it to use a mirror.",
+      epochHint:
+        "Changing the upstream starts a new source epoch: new requests only use the new source; old cached files stay until cleaned up.",
+    },
+    inactive: {
+      title: "Enable the application first",
+      app: "This application is disabled. Prewarming, retention runs and cache refresh only work for an enabled application; policies can still be edited.",
+      vendor:
+        "The vendor of this application is disabled. Prewarming, retention runs and cache refresh only work when the vendor and the application are enabled; policies can still be edited.",
+      openApp: "Open application settings",
+      openVendor: "Open vendor settings",
+    },
+    readOnly: {
+      vendor: "This vendor is deleted. Its stored data is kept; it can no longer be edited.",
+      app: "This application is deleted. Its stored data is kept; it can no longer be edited.",
+    },
+    delete: {
+      title: "Delete",
+      vendorAction: "Delete vendor",
+      appAction: "Delete application",
+      vendorTitle: "Delete vendor {key}?",
+      appTitle: "Delete application {key}?",
+      vendorWarning:
+        "Permanently deletes this vendor. Delete or move its applications first. This cannot be undone.",
+      appWarning:
+        "Permanently deletes this application with its cached and hosted files, settings and history. Running downloads, uploads and tasks are interrupted. This cannot be undone.",
+      builtinVendor: "Built-in vendors cannot be deleted. Disable the vendor instead.",
+      builtinApp: "Built-in applications cannot be deleted. Disable the application instead.",
+      done: "{key} deleted.",
+      cleanupPending: "Some files are still being removed in the background.",
+    },
+    create: {
+      vendorDescription: "A custom vendor groups applications under its own ID and logo.",
+      vendorSubmit: "Create vendor",
+      vendorCreated: "Vendor {id} created.",
+      appDescription: "A custom application under {vendor}.",
+      appSubmit: "Create application",
+      appCreated: "Application {key} created.",
+      providerHint:
+        "The provider decides how the application is served. It cannot be changed later.",
+      vendorDeleted: "Applications cannot be added to a deleted vendor.",
+    },
+    instructions: {
+      title: "Usage instructions",
+      description:
+        "Markdown with HTML and JavaScript, shown in a sandbox on the public application page. Only administrators can edit them.",
+      variables:
+        "Variables: {baseUrl} public address, {appPath} /vendor/application, {latest} latest known version, {name} application name.",
+      label: "Instructions ({language})",
+      count: "{count} of {max} characters",
+      tooLong: "At most {max} characters.",
+      control: "Remove control characters (only tabs and line breaks are allowed).",
+    },
+    table: {
+      caption: "Applications of {vendor}",
+      search: "Search applications",
+      name: "Application",
+      version: "Latest version",
+      discovered: "Version discovered",
+      downloads: "Successful downloads",
+      actions: "Actions",
+      enableApp: "Enable {name}",
+      edit: "Edit {name}",
+      delete: "Delete {name}",
+      empty: "No applications yet.",
+      noMatches: "No applications match this view.",
+    },
+    validation: {
+      nameRequired: "Enter a name.",
+      nameTooLong: "At most 256 bytes.",
+      descriptionTooLong: "At most 16384 bytes.",
+      url: "Enter an http or https URL without credentials, query or fragment.",
+      urlsCount: "Add 1 to 16 source URLs.",
+      urlsUnique: "Each source URL may appear only once.",
+      ttl: "Enter whole seconds from 0 to 86400.",
+      proxyUrl: "Enter the proxy URL.",
+      vendorId:
+        "Use lowercase letters, digits and single hyphens (not admin, api, assets, health or all).",
+      appId: "Use lowercase letters, digits and single hyphens.",
+      vendorExists: "A vendor with this ID already exists.",
+      appExists: "This vendor already has an application with this ID.",
+    },
+  },
+} satisfies LocaleModule;

@@ -131,15 +131,17 @@ Sign in at `/admin/login`. Pages that you can open directly or bookmark:
 | --- | --- |
 | `/admin/overview` | Overview: service status and metrics with history charts |
 | `/admin/events` | Events: recent warnings and failures |
-| `/admin/settings/site` | Site appearance: titles, subtitles, disclaimers, public address, homepage pins |
+| `/admin/settings/site` | Site settings: titles, subtitles, disclaimers, public address, homepage pins |
 | `/admin/settings/proxy` | Upstream proxy: global outbound proxy |
 | `/admin/vendors` | Vendors and applications: list, search, import |
 | `/admin/vendors/new` | Create a vendor |
 | `/admin/categories` | Rename categories |
+| `/admin/vendors/<vendor>` | Opens the vendor settings |
 | `/admin/vendors/<vendor>/settings` | Vendor settings, export |
 | `/admin/vendors/<vendor>/apps` | Applications of a vendor |
 | `/admin/vendors/<vendor>/apps/new` | Create an application |
 | `/admin/vendors/<vendor>/admin-notes` | Private notes for a vendor |
+| `/admin/vendors/<vendor>/apps/<app>` | Opens the application's main tab: versions (Codex, Claude Code), cache (HTTP cache), files (Hosted) or settings |
 | `/admin/vendors/<vendor>/apps/<app>/settings` | Application settings, usage instructions, export, copy |
 | `/admin/vendors/<vendor>/apps/<app>/admin-notes` | Private notes for an application |
 | `/admin/vendors/<vendor>/apps/<app>/versions` | Versions and resources (Codex, Claude Code) |
@@ -155,6 +157,8 @@ Public pages:
 | `/<vendor>` | Vendor page with its published applications |
 | `/<vendor>/<app>` | Application page with usage instructions |
 | `/<vendor>/<app>/<path>` | Files, installers and release downloads |
+
+The home page shows the pinned applications in the order set on the site settings page (up to 100). Only published applications appear there. Pins of disabled or deleted applications stay listed and labelled in the admin console until you remove them.
 
 The vendor IDs `all`, `admin`, `api`, `assets` and `health` are reserved.
 
@@ -173,12 +177,16 @@ Metric sampling runs once at startup and then every minute.
 
 ## Logs and events
 
-RedApp writes few log lines to standard error:
+RedApp writes structured log lines (`key=value` text) to standard error:
 
 - The initial admin password, once, on the first start
 - `RedApp started: listener ..., data directory ...`
+- One `http request` line per request with `request_id`, method, path (without the query string), status, bytes, duration, client address and the API operation
+- One `request failed` line for every server error and for client errors with a cause, with the error code and the underlying error; credentials in URLs are masked
 - Failures of metric sampling and automatic cache cleanup
 - The fatal error when startup fails
+
+Every response carries an `X-Request-Id` header, and error responses repeat it as `error.request_id`. Search the log for that value when a user reports an error.
 
 Operational warnings go to the **Events** page instead of the log. Examples are stale cache fallback, cache rules that override upstream `no-store`, upstream errors, failed downloads and failed automatic cleanup. RedApp keeps the newest 1,000 events for up to 30 days.
 

@@ -11,21 +11,6 @@ import (
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
-func Definitions() []application.Definition { return application.Definitions() }
-
-// NormalizeApplication applies provider BaseURL defaults. The API supplies the
-// default TTL only when its input field was omitted, so an explicit GeneralHttp
-// TTL of zero remains meaningful (always revalidate).
-func NormalizeApplication(input store.ApplicationInput) (store.ApplicationInput, error) {
-	config, err := application.NormalizeConfig(input.Provider, application.ProviderConfig{BaseURL: input.BaseURL, BaseURLs: input.BaseURLs, SourceStrategy: input.SourceStrategy, CacheTTLSeconds: input.CacheTTLSeconds})
-	if err != nil {
-		return store.ApplicationInput{}, err
-	}
-	input.BaseURL, input.CacheTTLSeconds = config.BaseURL, config.CacheTTLSeconds
-	input.BaseURLs, input.SourceStrategy = config.BaseURLs, config.SourceStrategy
-	return input, nil
-}
-
 // NewScopedSourceClient builds the upstream client of a current or historical
 // application source, bound to its owner's proxy scope.
 func NewScopedSourceClient(provider, baseURL, defaultBase, appUID, vendorUID string, pool *distributor.Pool) (*distributor.Client, error) {
@@ -65,23 +50,6 @@ func newSourceClient(provider, baseURL, defaultBase, appUID, vendorUID string, p
 	return pool.NewClient(normalized, mode)
 }
 
-func NewDynamic(vendors []store.Vendor, apps []store.Application, pool *distributor.Pool) (*application.Registry, error) {
-	entries, err := EntriesFromRecords(vendors, apps, pool)
-	if err != nil {
-		return nil, err
-	}
-	return application.NewRegistry(entries)
-}
-
-// EntriesFromRecords builds before publication: callers can persist a directory
-// mutation and atomically Replace the registry while holding admission fencing.
-func EntriesFromRecords(vendors []store.Vendor, apps []store.Application, pool *distributor.Pool) ([]application.Entry, error) {
-	descriptors, err := reviewedDescriptors()
-	if err != nil {
-		return nil, err
-	}
-	return entriesFromConfiguration(store.DirectorySnapshot{Vendors: vendors, Applications: apps, ReviewedDescriptors: descriptors}, pool)
-}
 func EntriesFromConfiguration(snapshot store.DirectorySnapshot, pool *distributor.Pool) ([]application.Entry, error) {
 	if err := ValidateDescriptors(snapshot.ReviewedDescriptors); err != nil {
 		return nil, err
@@ -217,8 +185,4 @@ func canonicalTemplates(descriptors []application.Descriptor) (map[string]string
 
 func localized(value store.LocalizedText) application.Localized {
 	return application.Localized{"en": value.En, "zh-CN": value.ZhCN}
-}
-
-func localizedRecord(value application.Localized) store.LocalizedText {
-	return store.LocalizedText{En: value["en"], ZhCN: value["zh-CN"]}
 }

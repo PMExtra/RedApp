@@ -2,6 +2,7 @@ package httpcache
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
@@ -79,13 +80,59 @@ func (s *Service) ListEntry(entry application.Entry) ([]Row, error) {
 	if err != nil {
 		return nil, err
 	}
+	evaluateFreshness(policy, entry, rows)
+	return rows, nil
+}
+
+// EntryAfter positions a path-ordered page. Path is the last listed path; when
+// Prefix is set it is only a prefix of that path and the first Skip current
+// rows starting with it were already listed. Prefixes keep continuation tokens
+// bounded for paths of up to 4096 bytes.
+type EntryAfter struct {
+	Path   string
+	Prefix bool
+	Skip   int
+}
+
+// ListEntryPage returns up to limit current files of entry's source epoch in
+// path order after the given position, with freshness evaluated like ListEntry.
+func (s *Service) ListEntryPage(entry application.Entry, after EntryAfter, limit int) ([]Row, error) {
+	policy, err := s.readPolicy(entry)
+	if err != nil {
+		return nil, err
+	}
+	condition, fetch := "path>?", limit
+	if after.Prefix {
+		condition, fetch = "path>=?", limit+after.Skip
+	}
+	rows, err := s.queryRows(`SELECT `+columns+` FROM http_cache_generations WHERE storage_id=? AND is_current=1 AND `+condition+` ORDER BY path LIMIT ?`, entry.StorageID(), after.Path, fetch)
+	if err != nil {
+		return nil, err
+	}
+	if after.Prefix {
+		// Rows sharing a prefix sort contiguously before every other row >= prefix.
+		skipped := 0
+		for skipped < after.Skip && skipped < len(rows) && strings.HasPrefix(rows[skipped].Path, after.Path) {
+			skipped++
+		}
+		rows = rows[skipped:]
+		if len(rows) > limit {
+			rows = rows[:limit]
+		}
+	}
+	evaluateFreshness(policy, entry, rows)
+	return rows, nil
+}
+
+// evaluateFreshness applies the current policy to listed rows: a blocked
+// response is never fresh.
+func evaluateFreshness(policy *cachepolicy.Policy, entry application.Entry, rows []Row) {
 	for i := range rows {
 		rows[i].FreshUntil = evaluatedFreshness(policy, entry, rows[i].Path, rows[i].headers, rows[i].ValidatedAt)
 		if cacheBlockReason(rows[i].headers, resolveCacheDecision(policy, entry, rows[i].Path)) != "" {
 			rows[i].FreshUntil = rows[i].ValidatedAt
 		}
 	}
-	return rows, nil
 }
 
 func (s *Service) List(storageID string) ([]Row, error) {

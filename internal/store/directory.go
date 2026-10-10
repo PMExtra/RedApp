@@ -25,7 +25,23 @@ var (
 	ErrDirectoryDeleted      = errors.New("Vendor or application is deleted")
 	ErrVendorHasApplications = errors.New("Delete the vendor's applications first")
 	ErrSourceInactive        = errors.New("Application source is no longer active")
+	// ErrVendorNotFound and ErrApplicationNotFound name the missing object when
+	// an operation involves both kinds; both match sql.ErrNoRows.
+	ErrVendorNotFound      = fmt.Errorf("vendor not found: %w", sql.ErrNoRows)
+	ErrApplicationNotFound = fmt.Errorf("application not found: %w", sql.ErrNoRows)
 )
+
+// ValidationError is an ErrInvalidDirectory with a detail that names the
+// invalid field. The detail never contains stored secrets, so the HTTP layer
+// may show it to the administrator.
+type ValidationError struct{ err error }
+
+func invalidf(format string, args ...any) error {
+	return &ValidationError{fmt.Errorf(format, args...)}
+}
+func (e *ValidationError) Error() string   { return ErrInvalidDirectory.Error() + ": " + e.err.Error() }
+func (e *ValidationError) Detail() string  { return e.err.Error() }
+func (e *ValidationError) Unwrap() []error { return []error{ErrInvalidDirectory, e.err} }
 
 type LocalizedText struct {
 	En   string `json:"en"`
@@ -149,30 +165,30 @@ var iconPath = regexp.MustCompile(`^/assets/icons/[0-9a-f]{64}\.(?:png|jpg|svg)$
 func validatePresentation(name, description LocalizedText, icon string) error {
 	for _, value := range []string{name.En, name.ZhCN} {
 		if strings.TrimSpace(value) == "" || len(value) > 256 || strings.ContainsRune(value, 0) {
-			return fmt.Errorf("%w: both localized names are required (at most 256 bytes each)", ErrInvalidDirectory)
+			return invalidf("both localized names are required (at most 256 bytes each)")
 		}
 	}
 	for _, value := range []string{description.En, description.ZhCN} {
 		if len(value) > 16384 || strings.ContainsRune(value, 0) {
-			return fmt.Errorf("%w: description is too long or contains NUL", ErrInvalidDirectory)
+			return invalidf("description is too long or contains NUL")
 		}
 	}
 	if icon != "" && !builtinTemplateIcon(icon) && !iconPath.MatchString(icon) && !frozenPresetIcon(icon) {
-		return fmt.Errorf("%w: icon must reference a stored image or reviewed seed asset", ErrInvalidDirectory)
+		return invalidf("icon must reference a stored image or reviewed seed asset")
 	}
 	return nil
 }
 
 func validateVendor(v VendorInput) error {
 	if !identity.ValidVendor(v.ID) {
-		return fmt.Errorf("%w: invalid or reserved vendor ID", ErrInvalidDirectory)
+		return invalidf("invalid or reserved vendor ID")
 	}
 	return validateVendorPresentation(v.Name, v.Description, v.Icon, v.LocalizedIcons)
 }
 
 func validateApplication(a *ApplicationInput) error {
 	if !identity.ValidSlug(a.ID) {
-		return fmt.Errorf("%w: invalid application ID", ErrInvalidDirectory)
+		return invalidf("invalid application ID")
 	}
 	if err := validatePresentation(a.Name, a.Description, a.Icon); err != nil {
 		return err
@@ -180,19 +196,19 @@ func validateApplication(a *ApplicationInput) error {
 	switch a.Provider {
 	case "info", "hosted":
 		if a.BaseURL != "" || len(a.BaseURLs) != 0 || a.SourceStrategy != "" || a.CacheTTLSeconds != 0 {
-			return fmt.Errorf("%w: Content applications cannot configure upstream caching", ErrInvalidDirectory)
+			return invalidf("Content applications cannot configure upstream caching")
 		}
 		return nil
 	case "http-cache", "codex", "claude-code":
 	default:
-		return fmt.Errorf("%w: unknown provider", ErrInvalidDirectory)
+		return invalidf("unknown provider")
 	}
 	if a.CacheTTLSeconds < 0 || a.CacheTTLSeconds > 86400 || (a.Provider != "http-cache" && a.CacheTTLSeconds == 0) {
-		return fmt.Errorf("%w: cache TTL must be 0..86400 seconds (release providers require at least 1)", ErrInvalidDirectory)
+		return invalidf("cache TTL must be 0..86400 seconds (release providers require at least 1)")
 	}
 	if a.Provider != "http-cache" {
 		if len(a.BaseURLs) != 0 || a.SourceStrategy != "" {
-			return fmt.Errorf("%w: multiple sources are supported only by GeneralHttp", ErrInvalidDirectory)
+			return invalidf("multiple sources are supported only by GeneralHttp")
 		}
 		base, err := normalizeDirectoryBase(a.BaseURL)
 		a.BaseURL, a.BaseURLs = base, nil
@@ -203,13 +219,13 @@ func validateApplication(a *ApplicationInput) error {
 		bases = []string{a.BaseURL}
 	}
 	if len(bases) < 1 || len(bases) > 16 {
-		return fmt.Errorf("%w: GeneralHttp requires 1..16 base URLs", ErrInvalidDirectory)
+		return invalidf("GeneralHttp requires 1..16 base URLs")
 	}
 	if a.SourceStrategy == "" {
 		a.SourceStrategy = "ordered"
 	}
 	if a.SourceStrategy != "ordered" && a.SourceStrategy != "round_robin" && a.SourceStrategy != "random" {
-		return fmt.Errorf("%w: invalid source strategy", ErrInvalidDirectory)
+		return invalidf("invalid source strategy")
 	}
 	normalized := make([]string, len(bases))
 	seen := make(map[string]bool, len(bases))
@@ -219,7 +235,7 @@ func validateApplication(a *ApplicationInput) error {
 			return err
 		}
 		if seen[base] {
-			return fmt.Errorf("%w: duplicate source URL", ErrInvalidDirectory)
+			return invalidf("duplicate source URL")
 		}
 		seen[base], normalized[i] = true, base
 	}
@@ -232,28 +248,28 @@ func validateApplication(a *ApplicationInput) error {
 func normalizeDirectoryBase(value string) (string, error) {
 	u, err := url.Parse(value)
 	if err != nil || len(value) > 4096 || u == nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.Opaque != "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.ContainsAny(value, "\r\n\t#") {
-		return "", fmt.Errorf("%w: BaseURL requires an HTTP(S) origin and optional path without credentials, query, or fragment", ErrInvalidDirectory)
+		return "", invalidf("BaseURL requires an HTTP(S) origin and optional path without credentials, query, or fragment")
 	}
 	if port := u.Port(); port != "" {
 		n, err := strconv.Atoi(port)
 		if err != nil || n < 1 || n > 65535 {
-			return "", fmt.Errorf("%w: invalid BaseURL port", ErrInvalidDirectory)
+			return "", invalidf("invalid BaseURL port")
 		}
 	} else if strings.HasSuffix(u.Host, ":") {
-		return "", fmt.Errorf("%w: invalid BaseURL port", ErrInvalidDirectory)
+		return "", invalidf("invalid BaseURL port")
 	}
 	if !utf8.ValidString(u.Path) || strings.ContainsAny(u.Path, "\\%") || strings.Contains(u.Path, "//") {
-		return "", fmt.Errorf("%w: invalid BaseURL path", ErrInvalidDirectory)
+		return "", invalidf("invalid BaseURL path")
 	}
 	for _, ch := range u.Path {
 		if unicode.IsControl(ch) {
-			return "", fmt.Errorf("%w: invalid BaseURL path", ErrInvalidDirectory)
+			return "", invalidf("invalid BaseURL path")
 		}
 	}
 	for _, segment := range strings.Split(u.EscapedPath(), "/") {
 		decoded, err := url.PathUnescape(segment)
 		if err != nil || decoded == "." || decoded == ".." || strings.ContainsAny(decoded, "/\\\x00\r\n") {
-			return "", fmt.Errorf("%w: invalid BaseURL path", ErrInvalidDirectory)
+			return "", invalidf("invalid BaseURL path")
 		}
 	}
 	// Directory-prefix spelling is stable so adding a trailing slash alone does not

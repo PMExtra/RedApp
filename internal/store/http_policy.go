@@ -20,7 +20,7 @@ func policyApplication(q directoryQuerier, key string, allowDeleted bool) (Appli
 		return a, ErrDirectoryDeleted
 	}
 	if a.Provider != "http-cache" {
-		return a, fmt.Errorf("%w: HTTP policy requires the GeneralHttp provider", ErrInvalidDirectory)
+		return a, invalidf("HTTP policy requires the GeneralHttp provider")
 	}
 	return a, nil
 }

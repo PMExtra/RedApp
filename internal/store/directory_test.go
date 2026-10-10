@@ -1,7 +1,6 @@
 package store
 
 import (
-	"database/sql"
 	"errors"
 	"sync"
 	"testing"
@@ -223,24 +222,4 @@ func TestDirectoryInputBoundaries(t *testing.T) {
 	if apps, err := s.Applications(true); err != nil || len(apps) != 0 {
 		t.Fatal("invalid record persisted", apps, err)
 	}
-}
-
-// Legacy fixtures use published columns, never current writers against old DDL.
-func legacyVendor(t *testing.T, db *sql.DB, in VendorInput) (Vendor, error) {
-	t.Helper()
-	uid, err := identity.NewUID()
-	if err != nil {
-		return Vendor{}, err
-	}
-	_, err = db.Exec(`INSERT INTO vendors(uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,enabled,revision,deleted_at_s) VALUES(?,?,?,?,?,?,?,?,1,NULL)`, uid, in.ID, in.Name.En, in.Name.ZhCN, in.Description.En, in.Description.ZhCN, in.Icon, in.Enabled)
-	if err != nil {
-		return Vendor{}, err
-	}
-	return readLegacyVendor(db, in.ID)
-}
-func readLegacyVendor(db *sql.DB, id string) (Vendor, error) {
-	var v Vendor
-	err := db.QueryRow(`SELECT uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,enabled,revision FROM vendors WHERE id=?`, id).Scan(&v.UID, &v.ID, &v.Name.En, &v.Name.ZhCN, &v.Description.En, &v.Description.ZhCN, &v.Icon, &v.Enabled, &v.Revision)
-	_, v.HasTemplate = BuiltinVendorTemplate(v.ID)
-	return v, err
 }

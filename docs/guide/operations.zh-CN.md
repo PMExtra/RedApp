@@ -131,15 +131,17 @@ RedApp 读取转发头的方式：
 | --- | --- |
 | `/admin/overview` | 概览：服务状态和带历史图表的指标 |
 | `/admin/events` | 事件：近期警告和失败 |
-| `/admin/settings/site` | 站点外观：标题、副标题、声明、公共地址、首页置顶 |
-| `/admin/settings/proxy` | 回源代理：全局出口代理 |
+| `/admin/settings/site` | 站点设置：标题、副标题、声明、公共地址、首页置顶 |
+| `/admin/settings/proxy` | 上游代理：全局出口代理 |
 | `/admin/vendors` | 厂商与应用：列表、搜索、导入 |
 | `/admin/vendors/new` | 创建厂商 |
 | `/admin/categories` | 重命名分类 |
+| `/admin/vendors/<vendor>` | 打开厂商设置 |
 | `/admin/vendors/<vendor>/settings` | 厂商设置、导出 |
 | `/admin/vendors/<vendor>/apps` | 厂商下的应用 |
 | `/admin/vendors/<vendor>/apps/new` | 创建应用 |
 | `/admin/vendors/<vendor>/admin-notes` | 厂商的私有备注 |
+| `/admin/vendors/<vendor>/apps/<app>` | 打开应用的主标签页：版本（Codex、Claude Code）、缓存（HTTP 缓存）、文件（Hosted）或设置 |
 | `/admin/vendors/<vendor>/apps/<app>/settings` | 应用设置、使用说明、导出、复制 |
 | `/admin/vendors/<vendor>/apps/<app>/admin-notes` | 应用的私有备注 |
 | `/admin/vendors/<vendor>/apps/<app>/versions` | 版本与资源（Codex、Claude Code） |
@@ -155,6 +157,8 @@ RedApp 读取转发头的方式：
 | `/<vendor>` | 厂商页面及其已发布应用 |
 | `/<vendor>/<app>` | 应用页面及使用说明 |
 | `/<vendor>/<app>/<path>` | 文件、安装器和发布下载 |
+
+首页按站点设置页设定的顺序显示置顶应用（最多 100 个）。只有已发布的应用会出现在首页。已停用或已删除应用的置顶项仍在管理后台中列出并标注状态，直到你移除它们。
 
 厂商 ID `all`、`admin`、`api`、`assets` 和 `health` 为保留名称。
 
@@ -173,12 +177,16 @@ RedApp 读取转发头的方式：
 
 ## 日志与事件
 
-RedApp 只向标准错误输出少量日志：
+RedApp 向标准错误输出结构化日志（`key=value` 文本）：
 
 - 首次启动时打印一次初始管理员密码
 - `RedApp started: listener ..., data directory ...`
+- 每个请求一行 `http request`，含 `request_id`、方法、路径（不含查询字符串）、状态、字节数、耗时、客户端地址和 API 操作
+- 每个服务端错误以及带原因的客户端错误一行 `request failed`，含错误码和底层错误；URL 中的凭据会被遮盖
 - 指标采样和自动缓存清理的失败
 - 启动失败时的致命错误
+
+每个响应都带 `X-Request-Id` 头，错误响应在 `error.request_id` 中重复该值。用户报告错误时，用这个值检索日志。
 
 运行警告记录在 **事件** 页面而不是日志中，例如旧缓存回退、覆盖上游 `no-store` 的缓存规则、上游错误、下载失败和自动清理失败。RedApp 保留最新 1,000 条事件，最长 30 天。
 

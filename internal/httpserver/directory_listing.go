@@ -1,114 +1,94 @@
 package httpserver
 
 import (
-	"github.com/PMExtra/RedApp/internal/store"
 	"net/http"
-	"strconv"
-	"strings"
-	"unicode/utf8"
+	"slices"
+
+	"github.com/PMExtra/RedApp/internal/identity"
 )
 
-func positivePage(raw string, fallback int) (int, bool) {
-	if raw == "" {
-		return fallback, true
-	}
-	n, e := strconv.Atoi(raw)
-	return n, e == nil && n >= 1 && n <= 1000000000 && strconv.Itoa(n) == raw
-}
-func (s *Server) directoryList(w http.ResponseWriter, r *http.Request, parts []string) {
-	table := len(parts) == 3 && r.URL.Query().Get("view") == "table"
-	allowed := []string{"page", "limit", "q", "state"}
-	if table {
-		allowed = append(allowed, "view", "sort", "order", "lang")
-	}
-	if !queryAllowed(r, allowed...) {
-		fail(w, 400, "Invalid directory query")
+// directoryQuery reads the q and state filters shared by listVendors and listApps.
+func directoryQuery(r *http.Request) (q, state string, e *apiError) {
+	if q, e = queryText(r, "q", 128); e != nil {
 		return
 	}
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	state := r.URL.Query().Get("state")
+	state = r.URL.Query().Get("state")
 	if state == "" {
 		state = "current"
 	}
-	page, ok := positivePage(r.URL.Query().Get("page"), 1)
-	limit, okLimit := positivePage(r.URL.Query().Get("limit"), 12)
-	if !ok || !okLimit || limit > 100 || !utf8.ValidString(q) || utf8.RuneCountInString(q) > 128 || (state != "enabled" && state != "current" && state != "disabled" && state != "deleted") {
-		fail(w, 400, "Invalid directory page or search")
-		return
+	if !slices.Contains([]string{"current", "enabled", "disabled", "deleted"}, state) {
+		return "", "", newError(codeInvalidQuery, nil, "state must be current, enabled, disabled or deleted")
 	}
-	if len(parts) == 1 && parts[0] == "vendors" {
-		value, err := s.DB.DirectoryPage(page, limit, q, state)
-		if err != nil {
-			directoryError(w, err)
-			return
-		}
-		reply(w, 200, value)
-		return
-	}
-	vendor := ""
-	if len(parts) == 3 {
-		vendor = parts[1]
-		if _, err := s.DB.Vendor(vendor); err != nil {
-			directoryError(w, err)
-			return
-		}
-	}
-	if table {
-		s.applicationTable(w, r, vendor, page, limit, q, state)
-		return
-	}
-	value, err := s.DB.ApplicationPage(vendor, page, limit, q, state)
-	if err != nil {
-		directoryError(w, err)
-		return
-	}
-	reply(w, 200, value)
+	return q, state, nil
 }
-func (s *Server) instructionsAPI(w http.ResponseWriter, r *http.Request, key string) {
-	if !queryAllowed(r) {
-		fail(w, 400, "Unexpected query parameters")
+
+// listVendors returns one page of vendors, each with a preview of at most five
+// matching applications.
+func (s *Server) listVendors(w http.ResponseWriter, r *http.Request) {
+	q, state, e := directoryQuery(r)
+	if e != nil {
+		s.writeError(w, r, e)
 		return
 	}
-	app, err := s.DB.Application(key)
+	page, limit, e := pageQuery(r, 12)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	result, err := s.store.DirectoryPage(page, limit, q, state)
 	if err != nil {
-		directoryError(w, err)
+		s.writeError(w, r, storageError(err))
 		return
 	}
-	if r.Method == http.MethodGet {
-		value, err := s.DB.Instructions(app.UID)
-		if err != nil {
-			directoryError(w, err)
+	out := pageDTO[vendorListItemDTO]{Items: make([]vendorListItemDTO, 0, len(result.Items)), Page: result.Page, Limit: result.Limit, Total: result.Total, TotalPages: result.TotalPages}
+	for _, card := range result.Items {
+		item := vendorListItemDTO{vendorDTO: vendorDocument(card.Vendor), Apps: make([]appDTO, 0, len(card.Apps)), AppTotal: card.AppTotal}
+		for _, a := range card.Apps {
+			item.Apps = append(item.Apps, appDocument(a))
+		}
+		out.Items = append(out.Items, item)
+	}
+	writeOK(w, out)
+}
+
+// listApps returns one page of applications, optionally of one vendor, sorted
+// over all matching applications before paging (see directory_table.go).
+func (s *Server) listApps(w http.ResponseWriter, r *http.Request) {
+	q, state, e := directoryQuery(r)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	page, limit, e := pageQuery(r, 20)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	order, e := tableOrderQuery(r)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	vendor := r.URL.Query().Get("vendor")
+	if vendor != "" {
+		if !identity.ValidVendor(vendor) {
+			s.fail(w, r, codeInvalidQuery, nil, "vendor must be a vendor ID")
 			return
 		}
-		revisionReply(w, value.Revision, value)
-		return
-	}
-	if r.Method != http.MethodPut {
-		fail(w, 405, "Method not allowed")
-		return
-	}
-	var value store.Instructions
-	if err = decodeLimit(w, r, &value, 128<<10); err != nil {
-		fail(w, 400, "Invalid instructions")
-		return
-	}
-	if r.Header.Get("If-Match") != "" {
-		value.Revision, err = expectedRevision(r)
-		if err != nil {
-			fail(w, 400, "Invalid revision")
+		if _, err := s.store.Vendor(vendor); err != nil {
+			s.writeError(w, r, directoryFailure(err, codeVendorNotFound))
 			return
 		}
 	}
-	s.directoryMu.Lock()
-	defer s.directoryMu.Unlock()
-	value, err = s.DB.SaveInstructions(key, value.Revision, value.LocalizedText)
+	rows, err := s.applicationTable(vendor, q, state, order)
 	if err != nil {
-		directoryError(w, err)
+		s.writeError(w, r, storageError(err))
 		return
 	}
-	entry, _ := s.Registry.LookupAny(key)
-	revisionReply(w, value.Revision, struct {
-		store.Instructions
-		EntityRevision int64 `json:"entity_revision"`
-	}{value, entry.Revision})
+	out := pageDTO[appListItemDTO]{Items: []appListItemDTO{}, Page: page, Limit: limit, Total: int64(len(rows))}
+	out.TotalPages = max(1, (len(rows)+limit-1)/limit)
+	start := min((page-1)*limit, len(rows))
+	end := min(start+limit, len(rows))
+	out.Items = append(out.Items, rows[start:end]...)
+	writeOK(w, out)
 }

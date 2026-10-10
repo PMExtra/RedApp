@@ -37,6 +37,8 @@ type Preview struct {
 	ReclaimableBytes int64                    `json:"reclaimable_bytes"`
 	Expires          time.Time                `json:"expires"`
 }
+
+// Status is the persisted record of the last retention run of an application.
 type Status struct {
 	Attempt         time.Time  `json:"attempt"`
 	Success         *time.Time `json:"success,omitempty"`
@@ -44,7 +46,6 @@ type Status struct {
 	Reason          string     `json:"reason,omitempty"`
 	RetiredVersions int        `json:"retired_versions"`
 	LogicalBytes    int64      `json:"logical_bytes"`
-	NextCheck       *time.Time `json:"next_check,omitempty"`
 }
 
 // Select counts only complete current binary versions. Unknown comparisons retain
@@ -232,7 +233,7 @@ func (s *Service) Execute(ctx context.Context, key, id string) (store.RetentionR
 }
 func (s *Service) record(e application.Entry, receipt store.RetentionReceipt, err error) {
 	now := time.Now().UTC()
-	status := Status{Attempt: now, Outcome: "success", RetiredVersions: receipt.RetiredVersions, LogicalBytes: receipt.LogicalBytes, NextCheck: s.nextCheck()}
+	status := Status{Attempt: now, Outcome: "success", RetiredVersions: receipt.RetiredVersions, LogicalBytes: receipt.LogicalBytes}
 	old, _ := s.DB.RetentionStatus(e.UID)
 	var prev Status
 	_ = json.Unmarshal(old, &prev)
@@ -255,7 +256,9 @@ func (s *Service) record(e application.Entry, receipt store.RetentionReceipt, er
 	raw, _ := json.Marshal(status)
 	_ = s.DB.SaveRetentionStatus(e.UID, raw)
 }
-func (s *Service) nextCheck() *time.Time {
+
+// NextCheck is the time of the next scheduled pass, nil while Run is not active.
+func (s *Service) NextCheck() *time.Time {
 	n := s.next.Load()
 	if n == 0 {
 		return nil
@@ -263,21 +266,21 @@ func (s *Service) nextCheck() *time.Time {
 	value := time.Unix(0, n).UTC()
 	return &value
 }
-func (s *Service) Status(uid string) (json.RawMessage, error) {
+
+// Status returns the last recorded run of the application, nil before the first.
+func (s *Service) Status(uid string) (*Status, error) {
 	raw, err := s.DB.RetentionStatus(uid)
 	if err != nil {
 		return nil, err
 	}
-	var value map[string]any
+	var value Status
 	if err = json.Unmarshal(raw, &value); err != nil {
 		return nil, err
 	}
-	if next := s.nextCheck(); next != nil {
-		value["next_check"] = next
-	} else {
-		delete(value, "next_check")
+	if value.Attempt.IsZero() {
+		return nil, nil
 	}
-	return json.Marshal(value)
+	return &value, nil
 }
 func (s *Service) Run(ctx context.Context) {
 	if !s.running.CompareAndSwap(false, true) {

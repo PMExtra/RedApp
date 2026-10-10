@@ -1,143 +1,219 @@
 package httpserver
 
 import (
-	"bytes"
 	"errors"
+	"net/http"
+	"time"
+
 	"github.com/PMExtra/RedApp/internal/application"
-	"github.com/PMExtra/RedApp/internal/identity"
+	"github.com/PMExtra/RedApp/internal/pathmatch"
 	"github.com/PMExtra/RedApp/internal/prewarm"
 	"github.com/PMExtra/RedApp/internal/store"
 	"github.com/PMExtra/RedApp/internal/warmplan"
-	"io"
-	"net/http"
-	"strconv"
-	"strings"
-	"unicode/utf8"
 )
 
-func (s *Server) Prewarmer() (*prewarm.Service, error) {
-	s.prewarmOnce.Do(func() { s.prewarmer, s.prewarmErr = prewarm.New(s.DB, s.Registry, s.Catalog, s.Downloads, s.HTTPCache) })
-	return s.prewarmer, s.prewarmErr
-}
-func (s *Server) prewarmAPI(w http.ResponseWriter, r *http.Request, app, endpoint string) bool {
-	if app == "" || !strings.HasPrefix(endpoint, "prewarm/") {
-		return false
-	}
-	entry, ok := s.Registry.LookupAny(app)
-	if !ok {
-		fail(w, 404, "Application not found")
+// prewarmCapable: release providers with platforms, and the HTTP cache.
+func prewarmCapable(e application.Entry) bool {
+	if _, release := e.Protocol.(application.PlatformProtocol); release {
 		return true
 	}
-	capability, release := entry.Protocol.(application.PlatformProtocol)
-	if entry.Protocol != nil && !release || entry.Protocol == nil && entry.Provider != application.HttpCache {
-		fail(w, 404, "Prewarm is not supported")
-		return true
-	}
-	if endpoint == "prewarm/options" && r.Method == http.MethodGet {
-		var platforms []application.Platform
-		if release {
-			platforms = capability.Platforms()
-		}
-		reply(w, 200, map[string]any{"release": release, "platforms": platforms, "channels": entry.Descriptor.Channels, "limits": warmplan.DefaultLimits()})
-		return true
-	}
-	service, err := s.Prewarmer()
-	if err != nil {
-		fail(w, 503, "Prewarm unavailable")
-		return true
-	}
-	respond := func(job store.PrewarmJob, err error) {
-		switch {
-		case errors.Is(err, prewarm.ErrBusy):
-			reply(w, 409, map[string]any{"error": map[string]string{"code": "PREWARM_BUSY", "message": "Prewarm worker busy"}, "job": job})
-		case errors.Is(err, prewarm.ErrInvalid):
-			fail(w, 400, "Invalid prewarm input")
-		case err != nil:
-			problem(w, 409, "PREWARM_CONFLICT", "Prewarm input or application changed")
-		default:
-			reply(w, 200, job)
-		}
-	}
-	if endpoint == "prewarm/start" && r.Method == http.MethodPost {
-		var input warmplan.Input
-		if decodePrewarmInput(w, r, &input) != nil || len(input.RetrySkip) > 0 {
-			fail(w, 400, "Invalid prewarm input")
-			return true
-		}
-		job, err := service.Start(r.Context(), app, input, false)
-		respond(job, err)
-		return true
-	}
-	parts := strings.Split(endpoint, "/")
-	if len(parts) < 2 || !identity.ValidUID(parts[1]) {
-		fail(w, 404, "Prewarm job not found")
-		return true
-	}
-	job, err := service.Status(entry.UID, parts[1])
-	if err != nil {
-		fail(w, 404, "Prewarm job not found")
-		return true
-	}
-	switch {
-	case len(parts) == 2 && r.Method == http.MethodGet:
-		reply(w, 200, job)
-	case len(parts) == 3 && parts[2] == "items" && r.Method == http.MethodGet:
-		page, limit := 1, 25
-		if v := r.URL.Query().Get("page"); v != "" {
-			page, err = strconv.Atoi(v)
-		}
-		if err != nil || page < 1 {
-			fail(w, 400, "Invalid page")
-			return true
-		}
-		if v := r.URL.Query().Get("limit"); v != "" {
-			limit, err = strconv.Atoi(v)
-		}
-		if err != nil || limit < 1 || limit > 100 {
-			fail(w, 400, "Invalid limit")
-			return true
-		}
-		items, total, err := s.DB.PrewarmItems(entry.UID, job.ID, page, limit)
-		if err != nil {
-			fail(w, 503, "Prewarm items unavailable")
-		} else {
-			reply(w, 200, map[string]any{"items": items, "total": total, "page": page, "total_pages": max(1, (total+limit-1)/limit)})
-		}
-	case len(parts) == 3 && parts[2] == "cancel" && r.Method == http.MethodPost:
-		var input struct{}
-		if decode(w, r, &input) != nil {
-			fail(w, 400, "Invalid cancellation")
-			return true
-		}
-		if service.Cancel(entry.UID, job.ID) != nil {
-			fail(w, 404, "Prewarm job not found")
-		} else {
-			reply(w, 200, map[string]bool{"cancel_requested": true})
-		}
-	case len(parts) == 3 && parts[2] == "retry" && r.Method == http.MethodPost:
-		var input struct {
-			RequestID string `json:"request_id"`
-		}
-		if decode(w, r, &input) != nil {
-			fail(w, 400, "Invalid retry")
-			return true
-		}
-		next, err := service.Retry(r.Context(), app, job.ID, input.RequestID)
-		respond(next, err)
-	default:
-		fail(w, 405, "Prewarm method not allowed")
-	}
-	return true
+	return e.Protocol == nil && e.Provider == application.HttpCache
 }
 
-func decodePrewarmInput(w http.ResponseWriter, r *http.Request, input *warmplan.Input) error {
-	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8<<20))
+type prewarmOptionsDTO struct {
+	Kind          string                 `json:"kind"`
+	Channels      []string               `json:"channels"`
+	Platforms     []application.Platform `json:"platforms"`
+	DefaultLimits warmplan.Limits        `json:"default_limits"`
+}
+
+func (s *Server) getPrewarmOptions(w http.ResponseWriter, r *http.Request) {
+	e, ok := s.maintainedApp(w, r, prewarmCapable)
+	if !ok {
+		return
+	}
+	options := prewarmOptionsDTO{Kind: "http_cache", Channels: []string{}, Platforms: []application.Platform{}, DefaultLimits: warmplan.DefaultLimits()}
+	if release, ok := e.Protocol.(application.PlatformProtocol); ok {
+		options.Kind = "release"
+		options.Channels = append(options.Channels, e.Descriptor.Channels...)
+		options.Platforms = append(options.Platforms, release.Platforms()...)
+	}
+	writeOK(w, options)
+}
+
+type prewarmJobDTO struct {
+	ID              string          `json:"id"`
+	State           string          `json:"state"`
+	Reason          *string         `json:"reason"`
+	Automatic       bool            `json:"automatic"`
+	Target          *string         `json:"target"`
+	ResolvedVersion *string         `json:"resolved_version"`
+	Platforms       []string        `json:"platforms"`
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
+	Completed       int             `json:"completed"`
+	Succeeded       int             `json:"succeeded"`
+	Bytes           int64           `json:"bytes"`
+	Ignored         map[string]int  `json:"ignored"`
+	Limits          warmplan.Limits `json:"limits"`
+}
+
+func prewarmJob(job store.PrewarmJob) prewarmJobDTO {
+	out := prewarmJobDTO{
+		ID: job.ID, State: job.State, Reason: optionalText(job.Reason), Automatic: job.Automatic, Target: optionalText(job.Target),
+		ResolvedVersion: optionalText(job.ResolvedVersion), Platforms: append([]string{}, job.Platforms...), CreatedAt: job.Created.UTC(),
+		UpdatedAt: job.Updated.UTC(), Completed: job.Completed, Succeeded: job.Succeeded, Bytes: job.Bytes, Ignored: map[string]int{}, Limits: job.Limits,
+	}
+	for reason, n := range job.Ignored {
+		out.Ignored[reason] = n
+	}
+	return out
+}
+
+// writePrewarmStart answers startPrewarm and retryPrewarmJob.
+func (s *Server) writePrewarmStart(w http.ResponseWriter, r *http.Request, e application.Entry, job store.PrewarmJob, created bool, err error) {
+	switch {
+	case err == nil && created:
+		writeCreated(w, "/admin/api/apps/"+e.Descriptor.ID+"/prewarm/jobs/"+job.ID, 0, prewarmJob(job))
+	case err == nil:
+		writeOK(w, prewarmJob(job))
+	case errors.Is(err, prewarm.ErrInvalid):
+		s.fail(w, r, codeValidationFailed, err, "Invalid prewarm request: check request_id, target, platforms, paths, indexes, match and limits")
+	case errors.Is(err, prewarm.ErrBusy):
+		s.fail(w, r, codePrewarmBusy, err, "Another prewarm task is running; retry later")
+	case errors.Is(err, prewarm.ErrRunning):
+		s.fail(w, r, codeOperationInProgress, err, "The job is still running")
+	case isNotFound(err):
+		s.fail(w, r, codeJobNotFound, err, "Prewarm job not found")
+	case errors.Is(err, store.ErrConflict), errors.Is(err, store.ErrExpired):
+		s.fail(w, r, codePrewarmRequestConflict, err, "request_id was used with a different request or its job expired; generate a new ID")
+	case errors.Is(err, store.ErrSourceInactive):
+		s.fail(w, r, codeSourceChanged, err, "The application source changed; retry")
+	default:
+		s.writeError(w, r, storageError(err))
+	}
+}
+
+func (s *Server) startPrewarm(w http.ResponseWriter, r *http.Request) {
+	e, ok := s.maintainedApp(w, r, prewarmCapable)
+	if !ok || s.refuseDeleted(w, r, e) || s.refuseDisabled(w, r, e) {
+		return
+	}
+	var input struct {
+		RequestID string           `json:"request_id"`
+		Target    string           `json:"target"`
+		Platforms []string         `json:"platforms"`
+		Paths     []string         `json:"paths"`
+		Indexes   []string         `json:"indexes"`
+		Manifest  string           `json:"manifest"`
+		Match     *pathmatch.Spec  `json:"match"`
+		Limits    *warmplan.Limits `json:"limits"`
+	}
+	if apiErr := decodeJSON(r, &input); apiErr != nil {
+		s.writeError(w, r, apiErr)
+		return
+	}
+	in := warmplan.Input{RequestID: input.RequestID, Target: input.Target, Platforms: input.Platforms, Paths: input.Paths, Indexes: input.Indexes, Manifest: input.Manifest, Match: input.Match}
+	if input.Limits != nil {
+		if !input.Limits.Valid() {
+			s.fail(w, r, codeValidationFailed, nil, "limits are out of range")
+			return
+		}
+		in.Limits = *input.Limits
+	}
+	job, created, err := s.prewarmer.Start(r.Context(), e.Descriptor.ID, in, false)
+	s.writePrewarmStart(w, r, e, job, created, err)
+}
+
+// prewarmJobOf reads a retained job of the application or writes JOB_NOT_FOUND.
+func (s *Server) prewarmJobOf(w http.ResponseWriter, r *http.Request) (application.Entry, store.PrewarmJob, bool) {
+	e, ok := s.maintainedApp(w, r, prewarmCapable)
+	if !ok {
+		return e, store.PrewarmJob{}, false
+	}
+	id, ok := s.pathUID(w, r, "job_id")
+	if !ok {
+		return e, store.PrewarmJob{}, false
+	}
+	job, err := s.prewarmer.Status(e.UID, id)
+	switch {
+	case err == nil:
+		return e, job, true
+	case isNotFound(err):
+		s.fail(w, r, codeJobNotFound, nil, "Prewarm job not found")
+	default:
+		s.writeError(w, r, storageError(err))
+	}
+	return e, job, false
+}
+
+func (s *Server) getPrewarmJob(w http.ResponseWriter, r *http.Request) {
+	if _, job, ok := s.prewarmJobOf(w, r); ok {
+		writeOK(w, prewarmJob(job))
+	}
+}
+
+type prewarmItemDTO struct {
+	Key    string  `json:"key"`
+	Status string  `json:"status"`
+	Reason *string `json:"reason"`
+	Bytes  int64   `json:"bytes"`
+}
+
+func (s *Server) listPrewarmItems(w http.ResponseWriter, r *http.Request) {
+	page, limit, apiErr := pageQuery(r, 25)
+	e, job, ok := s.prewarmJobOf(w, r)
+	if !ok {
+		return
+	}
+	if apiErr != nil {
+		s.writeError(w, r, apiErr)
+		return
+	}
+	items, total, err := s.store.PrewarmItems(e.UID, job.ID, page, limit)
 	if err != nil {
-		return err
+		s.writeError(w, r, storageError(err))
+		return
 	}
-	if !utf8.Valid(raw) {
-		return prewarm.ErrInvalid
+	meta := store.NewPage[prewarmItemDTO](page, limit, int64(total))
+	out := pageDTO[prewarmItemDTO]{Items: make([]prewarmItemDTO, 0, len(items)), Page: meta.Page, Limit: meta.Limit, Total: meta.Total, TotalPages: meta.TotalPages}
+	for _, item := range items {
+		out.Items = append(out.Items, prewarmItemDTO{Key: item.Key, Status: item.Status, Reason: optionalText(item.Reason), Bytes: item.Bytes})
 	}
-	r.Body = io.NopCloser(bytes.NewReader(raw))
-	return decodeLimit(w, r, input, 8<<20)
+	writeOK(w, out)
+}
+
+func (s *Server) cancelPrewarmJob(w http.ResponseWriter, r *http.Request) {
+	e, job, ok := s.prewarmJobOf(w, r)
+	if !ok {
+		return
+	}
+	if err := s.prewarmer.Cancel(e.UID, job.ID); err != nil {
+		if isNotFound(err) {
+			s.fail(w, r, codeJobNotFound, nil, "Prewarm job not found")
+		} else {
+			s.writeError(w, r, storageError(err))
+		}
+		return
+	}
+	if current, err := s.prewarmer.Status(e.UID, job.ID); err == nil {
+		job = current
+	}
+	writeJSON(w, http.StatusAccepted, prewarmJob(job))
+}
+
+func (s *Server) retryPrewarmJob(w http.ResponseWriter, r *http.Request) {
+	e, job, ok := s.prewarmJobOf(w, r)
+	if !ok || s.refuseDeleted(w, r, e) || s.refuseDisabled(w, r, e) {
+		return
+	}
+	var input struct {
+		RequestID string `json:"request_id"`
+	}
+	if apiErr := decodeJSON(r, &input); apiErr != nil {
+		s.writeError(w, r, apiErr)
+		return
+	}
+	next, created, err := s.prewarmer.Retry(r.Context(), e.Descriptor.ID, job.ID, input.RequestID)
+	s.writePrewarmStart(w, r, e, next, created, err)
 }

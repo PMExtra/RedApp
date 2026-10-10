@@ -135,8 +135,6 @@ func NormalizeBase(base string, mode ClientMode) (string, error) {
 	return u.String(), nil
 }
 
-func New(base string) (*Client, error) { return NewPool().NewClient(base, PublicRelease) }
-
 // NewClient creates a fixed initial origin/root boundary sharing this pool's proxy.
 // Its construction performs no network I/O.
 func (p *Pool) NewClient(base string, mode ClientMode) (*Client, error) {

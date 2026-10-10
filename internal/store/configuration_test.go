@@ -423,7 +423,7 @@ func TestConfigurationChangeCannotDropPersistedEntries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.SaveAdminNotes("app", a.Key, 0, "private"); err != nil {
+	if _, err = s.SaveAdminNotes("app", a.Key, 1, "private"); err != nil {
 		t.Fatal(err)
 	}
 	for name, drop := range map[string]func(*configurationState){

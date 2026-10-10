@@ -46,9 +46,9 @@ class Instance:
         return self.request(f"/admin/api/apps/{key}/configuration")
 
     def patch_configuration(self, path, revision, values, **extra):
-        """PATCH a sparse configuration change."""
-        body = {"revision": revision, "set": values, "unset": [], **extra}
-        return self.request(path, body, method="PATCH")
+        """PATCH a sparse configuration change at ``revision`` (If-Match)."""
+        body = {"set": values, "unset": [], **extra}
+        return self.request(path, body, method="PATCH", if_match=revision)
 
     def preview(self, package, choices=None):
         """Upload a package as multipart form data and return the import preview."""
@@ -76,7 +76,7 @@ class Instance:
         """Execute a previewed import."""
         return self.request(
             f"/admin/api/configuration/import/{preview['id']}/execute",
-            {"confirm": True, "trust_instructions": trust},
+            {"trust_instructions": trust},
             method="POST",
             expect=expect,
         )
@@ -93,7 +93,7 @@ class ConfigurationExchangeCLITest(ServerTestCase):
         """Create a vendor with a credentialed proxy and a linked Codex copy with overrides on A."""
         a.request(
             "/admin/api/vendors",
-            {"id": "portable", "name": NAME, "icon": "/assets/presets/builtin/openai.svg"},
+            {"id": "portable", "name": NAME, "icon": "/assets/presets/builtin/openai.svg", "enabled": True},
             method="POST",
             expect=201,
         )
@@ -103,19 +103,20 @@ class ConfigurationExchangeCLITest(ServerTestCase):
             vendor["revision"],
             {"proxy": {"mode": "url", "url": PRIVATE_PROXY}},
         )
-        original = a.request("/admin/api/apps/openai/codex")["app"]
+        original = a.request("/admin/api/apps/openai/codex")
         source = a.request(
             "/admin/api/apps/openai/codex/copy",
             {
                 "source_uid": original["uid"],
-                "source_revision": original["revision"],
                 "target_vendor": "portable",
                 "target_id": "source",
                 "mode": "linked",
+                "include_notes": False,
             },
             method="POST",
+            if_match=original["revision"],
             expect=201,
-        )["app"]
+        )
         configuration = a.configuration("portable/source")
         a.patch_configuration(
             "/admin/api/apps/portable/source/configuration",
@@ -134,17 +135,19 @@ class ConfigurationExchangeCLITest(ServerTestCase):
         )
         configuration = a.configuration("portable/source")
         self.assertEqual(configuration["effective"]["categories"], ["tools"])
+        notes = a.request("/admin/api/apps/portable/source/admin-notes")
         a.request(
             "/admin/api/apps/portable/source/admin-notes",
-            {"revision": 0, "text": NOTES_SENTINEL},
+            {"text": NOTES_SENTINEL},
             method="PUT",
+            if_match=notes["revision"],
         )
         return source, configuration
 
     def export(self, a, mode, **options):
         """Export the portable/source application as a ZIP package."""
         body = {
-            "selection": [{"kind": "App", "key": "portable/source"}],
+            "selection": [{"kind": "app", "key": "portable/source"}],
             "mode": mode,
             "include_notes": False,
             "include_proxy_credentials": False,
@@ -178,15 +181,16 @@ class ConfigurationExchangeCLITest(ServerTestCase):
         b = Instance(self.start_server("b"))
         # The omitted vendor proxy must be resolved, and instructions explicitly trusted.
         unresolved = b.preview(linked)
-        self.assertFalse(unresolved["preview"]["ready"])
-        b.execute(unresolved, expect=400)
-        preview = b.preview(linked, [{"kind": "Vendor", "key": "portable", "proxy": {"mode": "direct"}}])
-        self.assertTrue(preview["preview"]["ready"])
-        b.execute(preview, trust=False, expect=400)
+        self.assertFalse(unresolved["ready"])
+        self.assertEqual(b.execute(unresolved, expect=409)["error"]["code"], "IMPORT_NOT_READY")
+        preview = b.preview(linked, [{"kind": "vendor", "key": "portable", "proxy": {"mode": "direct"}}])
+        self.assertTrue(preview["ready"])
+        self.assertTrue(preview["needs_instructions_trust"])
+        self.assertEqual(b.execute(preview, trust=False, expect=400)["error"]["code"], "INSTRUCTIONS_TRUST_REQUIRED")
         result = b.execute(preview)
         self.assertEqual(b.execute(preview, trust=False), result, "replayed receipt differs")
 
-        destination = b.request("/admin/api/apps/portable/source")["app"]
+        destination = b.request("/admin/api/apps/portable/source")
         self.assertFalse(destination["enabled"])
         self.assertNotEqual(destination["uid"], source["uid"])
         self.assertEqual(destination["source_epoch"], 1)
@@ -196,13 +200,13 @@ class ConfigurationExchangeCLITest(ServerTestCase):
         self.assertEqual(destination_configuration["effective"], source_configuration["effective"])
         categories = [(c["id"], c["name"]["en"]) for c in b.request("/admin/api/categories")["items"]]
         self.assertEqual(categories, [("tools", "Tools")])
-        vendor = b.request("/admin/api/vendors/portable")["vendor"]
+        vendor = b.request("/admin/api/vendors/portable")
         self.assertIn(hashlib.sha256(b.request(vendor["icon"])).hexdigest(), vendor["icon"])
 
         independent_preview = b.preview(
-            independent, [{"kind": "App", "key": "portable/source", "target_id": "independent"}]
+            independent, [{"kind": "app", "key": "portable/source", "target_id": "independent"}]
         )
-        self.assertTrue(independent_preview["preview"]["ready"])
+        self.assertTrue(independent_preview["ready"])
         b.execute(independent_preview)
         independent_configuration = b.configuration("portable/independent")
         self.assertIsNone(independent_configuration["template_ref"])
@@ -214,7 +218,7 @@ class ConfigurationExchangeCLITest(ServerTestCase):
         self.assertEqual(b.request(independent_configuration["effective"]["icon"]), source_icon)
 
         # Cross-vendor copies inherit the target vendor proxy and start without runtime state.
-        b.request("/admin/api/vendors", {"id": "target", "name": NAME}, method="POST", expect=201)
+        b.request("/admin/api/vendors", {"id": "target", "name": NAME, "enabled": True}, method="POST", expect=201)
         target = b.request("/admin/api/vendors/target/configuration")
         b.patch_configuration(
             "/admin/api/vendors/target/configuration",
@@ -224,26 +228,29 @@ class ConfigurationExchangeCLITest(ServerTestCase):
         note = b.request("/admin/api/apps/portable/source/admin-notes")
         b.request(
             "/admin/api/apps/portable/source/admin-notes",
-            {"revision": note["revision"], "text": "copy-note"},
+            {"text": "copy-note"},
             method="PUT",
+            if_match=note["revision"],
         )
         note = b.request("/admin/api/apps/portable/source/admin-notes")
         for mode in ["linked", "independent"]:
             with self.subTest(copy_mode=mode):
+                body = {
+                    "source_uid": destination["uid"],
+                    "target_vendor": "target",
+                    "target_id": mode,
+                    "mode": mode,
+                    "include_notes": mode == "independent",
+                }
+                if body["include_notes"]:
+                    body["notes_revision"] = note["revision"]
                 copied = b.request(
                     "/admin/api/apps/portable/source/copy",
-                    {
-                        "source_uid": destination["uid"],
-                        "source_revision": destination_configuration["revision"],
-                        "target_vendor": "target",
-                        "target_id": mode,
-                        "mode": mode,
-                        "include_notes": mode == "independent",
-                        "notes_revision": note["revision"],
-                    },
+                    body,
                     method="POST",
+                    if_match=destination_configuration["revision"],
                     expect=201,
-                )["app"]
+                )
                 self.assertNotEqual(copied["uid"], destination["uid"])
                 self.assertFalse(copied["enabled"])
                 self.assertEqual(copied["source_epoch"], 1)
@@ -259,11 +266,11 @@ class ConfigurationExchangeCLITest(ServerTestCase):
                     rows = count(b.database(), f"SELECT count(*) FROM {table} WHERE app_uid=?", copied["uid"])
                     self.assertEqual(rows, 0, f"copy carried runtime state in {table}")
 
-        # A preview created before restart is stale afterwards; executed receipts replay unchanged.
+        # Previews live in memory and are gone after a restart; executed receipts replay unchanged.
         pending = b.preview(linked)
         b.server.restart()
         b.admin.login()
-        b.execute(pending, expect=409)
+        self.assertEqual(b.execute(pending, expect=404)["error"]["code"], "PREVIEW_NOT_FOUND")
         current = b.configuration("portable/source")
         applications = count(b.database(), "SELECT count(*) FROM applications")
         self.assertEqual(b.execute(preview, trust=False), result)

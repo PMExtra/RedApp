@@ -58,8 +58,8 @@ class HTTPServerCLITest(ServerTestCase):
     def enable_builtin_templates(self):
         """Enable the built-in vendors and apps, which start disabled."""
         for vendor, app in BUILTIN_TEMPLATES:
-            v = self.read(f"/admin/api/vendors/{vendor}")["vendor"]
-            a = self.read(f"/admin/api/apps/{vendor}/{app}")["app"]
+            v = self.read(f"/admin/api/vendors/{vendor}")
+            a = self.read(f"/admin/api/apps/{vendor}/{app}")
             self.assertFalse(v["enabled"])
             self.assertFalse(a["enabled"])
             self.assertTrue(a["builtin_template"])
@@ -67,8 +67,8 @@ class HTTPServerCLITest(ServerTestCase):
             self.client.fetch(f"/admin/api/apps/{vendor}/{app}", {"enabled": True}, method="PATCH", if_match=a["revision"])
 
     def public_app_ids(self):
-        """IDs of the publicly listed applications."""
-        return {app["id"] for app in self.read("/api/bootstrap")["apps"]}
+        """Keys of the published applications."""
+        return {app["key"] for app in self.read("/api/catalog?limit=100")["items"]}
 
     def test_version_output_format(self):
         output = subprocess.check_output([str(BINARY), "version"], text=True)
@@ -84,7 +84,7 @@ class HTTPServerCLITest(ServerTestCase):
             with self.subTest(host=host):
                 headers = {"Host": host, "Origin": None}
                 bootstrap = self.client.request("/api/bootstrap", headers=headers)
-                self.assertEqual(bootstrap["public_origin"], PUBLIC_URL)
+                self.assertEqual(bootstrap["public_url"], PUBLIC_URL)
                 self.client.fetch("/admin/api/status", headers=headers, expect=401)
         for host in ["bad_host", "example.com:0", "example.com:65536"]:
             with self.subTest(host=host):
@@ -94,20 +94,23 @@ class HTTPServerCLITest(ServerTestCase):
         version = subprocess.check_output([str(BINARY), "version"], text=True).split()[1]
         bootstrap = self.read("/api/bootstrap")
         self.assertEqual(bootstrap["version"], version)
-        self.assertEqual(bootstrap["public_origin"], PUBLIC_URL)
-        self.assertEqual(bootstrap["apps"], [], "fresh templates must not be publicly enabled")
+        self.assertEqual(bootstrap["public_url"], PUBLIC_URL)
+        self.assertNotIn("apps", bootstrap)
+        self.assertEqual(self.public_app_ids(), set(), "fresh templates must not be publicly enabled")
         for path in ["/api/info", "/apps/codex", "/install.sh"]:
             self.client.fetch(path, expect=404)
         self.client.fetch("/admin/api/status", expect=401)
         csrf = self.client.login()
-        self.assertEqual(self.read("/admin/api/session")["csrf"], csrf)
+        self.assertEqual(self.read("/admin/api/session")["csrf_token"], csrf)
         self.assertEqual(self.read("/admin/api/vendors?page=1&limit=12")["total"], 2)
         self.enable_builtin_templates()
         spa_paths = [
             "/",
             "/openai/codex",
             "/anthropic/claude-code",
+            "/admin/overview",
             "/admin/settings/site",
+            "/admin/vendors/openai/apps/codex",
             "/admin/vendors/openai/apps/codex/settings",
         ]
         for path in spa_paths:
@@ -117,7 +120,10 @@ class HTTPServerCLITest(ServerTestCase):
                 self.assertIn("script-src 'self'", response.headers["Content-Security-Policy"])
                 self.assertEqual(response.headers["Cache-Control"], "no-store")
                 self.assertIn("/assets/", response.text())
-        page = self.client.fetch("/admin/overview").text()
+        # Public pages and admin pages use separate entry documents.
+        public, admin = self.client.fetch("/").text(), self.client.fetch("/admin/overview").text()
+        self.assertNotEqual(public, admin)
+        page = public + admin
         assets = re.findall(r'(?:src|href)="(/assets/[^" ]+)"', page)
         self.assertTrue(assets, "SPA shell references no assets")
         for asset in assets:
@@ -126,64 +132,82 @@ class HTTPServerCLITest(ServerTestCase):
     def test_dynamic_vendor_and_app_lifecycle(self):
         # Management-only fixtures; they never contact the configured upstream.
         self.client.login()
-        providers = {provider["key"] for provider in self.read("/admin/api/providers")["providers"]}
+        providers = {provider["key"] for provider in self.read("/admin/api/providers")["items"]}
         self.assertEqual(providers, {"info", "hosted", "http-cache", "codex", "claude-code"})
-        vendor = self.client.request(
+        created = self.client.fetch(
             "/admin/api/vendors",
-            {"id": "cli-example", "name": {"en": "CLI fixture", "zh-CN": "CLI 测试"}},
+            {"id": "cli-example", "name": {"en": "CLI fixture", "zh-CN": "CLI 测试"}, "enabled": True},
             method="POST",
             expect=201,
-        )["vendor"]
+        )
+        vendor = created.json()
         self.assertEqual(vendor["revision"], 1)
+        self.assertEqual(created.headers["ETag"], '"1"')
+        self.assertEqual(created.headers["Location"], "/admin/api/vendors/cli-example")
         self.assertTrue(vendor["enabled"])
-        app_create = "/admin/api/vendors/cli-example/apps"
-        app_input = {"id": "files", "name": {"en": "Files", "zh-CN": "文件"}, "provider": "http-cache"}
+        app_create = "/admin/api/apps"
+        app_input = {
+            "vendor": "cli-example",
+            "id": "files",
+            "name": {"en": "Files", "zh-CN": "文件"},
+            "provider": "http-cache",
+            "enabled": True,
+        }
         # HTTP Cache has no implicit base URL.
-        self.client.fetch(app_create, app_input, method="POST", expect=400)
-        app_input["base_url"] = "http://127.0.0.1:9/files"
-        app = self.client.request(app_create, app_input, method="POST", expect=201)["app"]
+        error = self.client.request(app_create, app_input, method="POST", expect=400)
+        self.assertEqual(error["error"]["code"], "VALIDATION_FAILED")
+        app_input["base_urls"] = ["http://127.0.0.1:9/files"]
+        app = self.client.request(app_create, app_input, method="POST", expect=201)
         app_path = "/admin/api/apps/cli-example/files"
         self.assertEqual(app["source_epoch"], 1)
         self.assertEqual(app["cache_ttl_seconds"], 300)
         self.assertIn("cli-example/files", self.public_app_ids())
-        self.assertEqual(self.read(app_path + "/cache"), {"items": []})
+        self.assertEqual(self.read(app_path + "/cache/entries"), {"items": [], "next_cursor": None})
+        # The entity only toggles its state; everything else is configuration.
         self.client.fetch(app_path, {"id": "renamed"}, method="PATCH", if_match=app["revision"], expect=400)
-        self.client.fetch(app_path, {"provider": "codex"}, method="PATCH", if_match=app["revision"], expect=400)
-        app = self.client.request(
-            app_path, {"base_url": "http://127.0.0.1:9/replacement"}, method="PATCH", if_match=app["revision"]
-        )["app"]
+        self.client.fetch(app_path, {"enabled": False}, method="PATCH", expect=400)
+        configuration = self.client.request(
+            app_path + "/configuration",
+            {"set": {"base_urls": ["http://127.0.0.1:9/replacement"]}},
+            method="PATCH",
+            if_match=app["revision"],
+        )
+        app = self.read(app_path)
         self.assertEqual(app["source_epoch"], 2)
+        self.assertEqual(configuration["revision"], app["revision"])
         self.client.fetch(app_path, {"enabled": False}, method="PATCH", if_match=app["revision"] - 1, expect=409)
-        sources = self.read(app_path + "/sources")["sources"]
+        sources = self.read(app_path + "/sources")["items"]
         self.assertEqual({source["epoch"] for source in sources}, {1, 2})
         self.assertEqual([source["epoch"] for source in sources if source["current"]], [2])
 
         vendor_path = "/admin/api/vendors/cli-example"
-        self.client.fetch(vendor_path, {"confirm_key": "cli-example"}, method="DELETE", if_match=vendor["revision"], expect=409)
-        vendor = self.client.request(vendor_path, {"enabled": False}, method="PATCH", if_match=vendor["revision"])["vendor"]
+        not_empty = self.client.request(vendor_path, method="DELETE", if_match=vendor["revision"], expect=409)
+        self.assertEqual(not_empty["error"]["code"], "VENDOR_NOT_EMPTY")
+        vendor = self.client.request(vendor_path, {"enabled": False}, method="PATCH", if_match=vendor["revision"])
         self.assertNotIn("cli-example/files", self.public_app_ids())
-        self.assertTrue(self.read(app_path)["app"]["enabled"], "vendor disable overwrote application state")
+        self.assertTrue(self.read(app_path)["enabled"], "vendor disable overwrote application state")
         self.client.fetch("/cli-example/files", expect=404)
-        vendor = self.client.request(vendor_path, {"enabled": True}, method="PATCH", if_match=vendor["revision"])["vendor"]
+        vendor = self.client.request(vendor_path, {"enabled": True}, method="PATCH", if_match=vendor["revision"])
         self.assertIn("cli-example/files", self.public_app_ids())
-        deleted = self.client.request(
-            app_path,
-            {"confirm_key": "cli-example/files", "confirm_uid": app["uid"]},
-            method="DELETE",
-            if_match=app["revision"],
-        )
-        self.assertTrue(deleted["deleted"])
+        delete_app = app_path + "?" + urllib.parse.urlencode({"confirm_uid": app["uid"]})
+        self.assertEqual(self.client.request(delete_app, method="DELETE", if_match=app["revision"]), {"cleanup_pending": False})
+        self.client.fetch(delete_app, method="DELETE", if_match=app["revision"], expect=404)
         self.client.fetch(app_path + "/sources", expect=404)
-        deleted = self.client.request(vendor_path, {"confirm_key": "cli-example"}, method="DELETE", if_match=vendor["revision"])
-        self.assertTrue(deleted["deleted"])
+        self.client.fetch(vendor_path, method="DELETE", if_match=vendor["revision"], expect=204)
+        self.client.fetch(vendor_path, expect=404)
 
     def test_status_pagination_and_history(self):
         self.client.login()
         status = self.read("/admin/api/status")
-        self.assertEqual(status["name"], "RedApp")
-        self.assertGreater(status["disk"]["free_bytes"], 0)
+        self.assertEqual(set(status), {"sampled_at", "started_at", "metrics"})
         self.assertEqual(len(status["metrics"]), 41)
-        self.assertFalse({"resources", "versions", "application_versions", "events"}.intersection(status))
+        metrics = {metric["key"]: metric for metric in status["metrics"]}
+        self.assertGreater(metrics["disk.free_bytes"]["value"], 0)
+        self.assertEqual(metrics["disk.free_bytes"]["group"], "disk")
+        self.assertEqual(
+            {metric["group"] for metric in status["metrics"]},
+            {"disk", "traffic", "speed", "runtime", "resources"},
+        )
         for path in [
             "/admin/api/events",
             "/admin/api/apps/openai/codex/versions",
@@ -193,51 +217,62 @@ class HTTPServerCLITest(ServerTestCase):
                 self.assertEqual(self.read(path + "?limit=50"), {"items": [], "next_cursor": None})
                 self.client.fetch(path + "?limit=101", expect=400)
         for window, resolution in [("24h", 60), ("7d", 3600), ("30d", 3600)]:
-            query = urllib.parse.urlencode({"scope": "global", "metric": "disk.cache_bytes", "range": window})
-            self.assertEqual(self.read("/admin/api/history?" + query)["resolution_seconds"], resolution)
+            query = urllib.parse.urlencode({"metric": "disk.cache_bytes", "range": window})
+            series = self.read("/admin/api/history?" + query)
+            self.assertEqual(series["resolution_seconds"], resolution)
+            self.assertRegex(series["from"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+            self.assertIsNone(series["app_key"])
+        legacy = urllib.parse.urlencode({"scope": "global", "metric": "disk.cache_bytes", "range": "24h"})
+        error = self.client.fetch("/admin/api/history?" + legacy, expect=400).json()["error"]
+        self.assertEqual(error["code"], "INVALID_QUERY")
 
     def test_settings_persist_across_yaml_selected_restart(self):
         password = self.server.initial_password()
         self.client.login()
         self.enable_builtin_templates()
         # Deleted dynamic entries must not be reseeded on restart.
-        vendor = self.client.request(
+        self.client.request(
             "/admin/api/vendors",
-            {"id": "cli-example", "name": {"en": "CLI fixture", "zh-CN": "CLI 测试"}},
+            {"id": "cli-example", "name": {"en": "CLI fixture", "zh-CN": "CLI 测试"}, "enabled": True},
             method="POST",
             expect=201,
-        )["vendor"]
+        )
         app = self.client.request(
-            "/admin/api/vendors/cli-example/apps",
+            "/admin/api/apps",
             {
+                "vendor": "cli-example",
                 "id": "files",
                 "name": {"en": "Files", "zh-CN": "文件"},
                 "provider": "http-cache",
-                "base_url": "http://127.0.0.1:9/files",
+                "base_urls": ["http://127.0.0.1:9/files"],
+                "enabled": True,
             },
             method="POST",
             expect=201,
-        )["app"]
+        )
         self.client.request(
-            "/admin/api/apps/cli-example/files",
-            {"confirm_key": "cli-example/files", "confirm_uid": app["uid"]},
+            "/admin/api/apps/cli-example/files?confirm_uid=" + app["uid"],
             method="DELETE",
             if_match=app["revision"],
         )
-        vendor = self.read("/admin/api/vendors/cli-example")["vendor"]
-        self.client.request(
-            "/admin/api/vendors/cli-example", {"confirm_key": "cli-example"}, method="DELETE", if_match=vendor["revision"]
-        )
+        vendor = self.read("/admin/api/vendors/cli-example")
+        self.client.fetch("/admin/api/vendors/cli-example", method="DELETE", if_match=vendor["revision"], expect=204)
+        # The release channel TTL is the configuration path cache_ttl_seconds.
         ttls = [("openai/codex", 120), ("anthropic/claude-code", 180)]
         for app, ttl in ttls:
-            path = "/admin/api/apps/" + app + "/settings"
+            path = "/admin/api/apps/" + app + "/configuration"
             previous = self.read(path)
-            saved = self.write(path, {"channel_ttl_seconds": ttl}, previous["revision"])
-            self.assertEqual(saved["channel_ttl_seconds"], ttl)
-            self.client.fetch(path, {"channel_ttl_seconds": 300}, method="PUT", if_match=previous["revision"], expect=409)
-        self.assertEqual(self.read("/admin/api/apps/openai/codex/settings")["channel_ttl_seconds"], 120)
+            response = self.client.fetch(
+                path, {"set": {"cache_ttl_seconds": ttl}}, method="PATCH", if_match=previous["revision"]
+            )
+            saved = response.json()
+            self.assertEqual(response.headers["ETag"], f'"{saved["revision"]}"')
+            self.assertEqual(saved["effective"]["cache_ttl_seconds"], ttl)
+            stale = {"set": {"cache_ttl_seconds": 300}}
+            self.client.fetch(path, stale, method="PATCH", if_match=previous["revision"], expect=409)
+        self.assertEqual(self.read("/admin/api/apps/openai/codex")["cache_ttl_seconds"], 120)
         self.client.fetch("/admin/api/settings", expect=404)
-        self.client.fetch("/admin/api/apps/unknown/tool/settings", expect=404)
+        self.client.fetch("/admin/api/apps/unknown/tool/configuration", expect=404)
 
         site_path = "/admin/api/settings/site"
         site = self.read(site_path)
@@ -251,7 +286,7 @@ class HTTPServerCLITest(ServerTestCase):
         public = self.write(public_path, {"override_url": "https://published.example.test"}, public["revision"])
         self.assertEqual(public["effective_url"], "https://published.example.test")
         self.assertEqual(public["source"], "override")
-        self.assertEqual(self.read("/api/bootstrap")["public_origin"], public["effective_url"])
+        self.assertEqual(self.read("/api/bootstrap")["public_url"], public["effective_url"])
         for app in ["openai/codex", "anthropic/claude-code"]:
             for name in ["install.sh", "install.ps1"]:
                 with self.subTest(installer=f"{app}/{name}"):
@@ -282,9 +317,9 @@ class HTTPServerCLITest(ServerTestCase):
         base = self.server.base_url
         bootstrap = self.read("/api/bootstrap")
         self.assertEqual(bootstrap["site"], site)
-        self.assertEqual(bootstrap["public_origin"], base)
+        self.assertEqual(bootstrap["public_url"], base)
         self.assertEqual(
-            {app["id"] for app in bootstrap["apps"]},
+            self.public_app_ids(),
             {"openai/codex", "anthropic/claude-code"},
             "restart reseeded deleted dynamic entries",
         )
@@ -293,18 +328,18 @@ class HTTPServerCLITest(ServerTestCase):
         self.client.fetch("/admin/api/apps/cli-example/files", expect=404)
         self.client.fetch("/admin/api/apps/cli-example/files/sources", expect=404)
         for app, ttl in ttls:
-            self.assertEqual(self.read("/admin/api/apps/" + app + "/settings")["channel_ttl_seconds"], ttl)
+            self.assertEqual(self.read("/admin/api/apps/" + app)["cache_ttl_seconds"], ttl)
         healthcheck = run_cli(["healthcheck"], self.server.directory, self.server.environment)
         self.assertEqual(healthcheck.returncode, 0, healthcheck.stderr)
         forwarded = {"Forwarded": "proto=https;host=untrusted.example", "Origin": None}
         self.assertEqual(
-            self.client.request("/api/bootstrap", headers=forwarded)["public_origin"],
+            self.client.request("/api/bootstrap", headers=forwarded)["public_url"],
             base,
             "untrusted proxy header affected origin",
         )
         for host in ["remote.example:9443", "[2001:db8::1]:8080"]:
             bootstrap = self.client.request("/api/bootstrap", headers={"Host": host, "Origin": None})
-            self.assertEqual(bootstrap["public_origin"], "http://" + host)
+            self.assertEqual(bootstrap["public_url"], "http://" + host)
         self.server.stop()
         restart_log = self.server.log_text()[len(first_start_log):]
         self.assertNotIn("Initial admin password", restart_log, "restart regenerated admin credentials")

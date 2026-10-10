@@ -18,7 +18,10 @@ func TestDefaultsPartialRecordsAndRestart(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(initial.Settings, Defaults()) {
 		t.Fatal(initial, err)
 	}
-	if _, err = db.SaveSiteSettings(0, map[string]any{"title": map[string]string{"en": "Company tools"}}); err != nil {
+	if initial.Revision != 1 {
+		t.Fatal("initial revision", initial.Revision)
+	}
+	if _, err = db.SaveSiteSettings(initial.Revision, map[string]any{"title": map[string]string{"en": "Company tools"}}); err != nil {
 		t.Fatal(err)
 	}
 	partial, err := LoadSnapshot(db)

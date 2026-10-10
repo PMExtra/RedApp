@@ -58,3 +58,20 @@ func TestUniqueFoldingMatchesStructFieldMatching(t *testing.T) {
 		}
 	}
 }
+
+func TestStrictRejectsWhatRequestBodiesMustNotContain(t *testing.T) {
+	for name, body := range map[string]string{
+		"null value":    `{"a":null}`,
+		"null in array": `[1,null]`,
+		"invalid utf-8": "{\"a\":\"\xff\"}",
+		"duplicate key": `{"a":1,"A":2}`,
+		"too deep":      strings.Repeat("[", 66) + strings.Repeat("]", 66),
+	} {
+		if err := Strict([]byte(body)); err == nil {
+			t.Errorf("%s: Strict(%q) accepted the document", name, body)
+		}
+	}
+	if err := Strict([]byte(strings.Repeat("[", 64) + strings.Repeat("]", 64))); err != nil {
+		t.Fatalf("Strict rejected nesting of 64: %v", err)
+	}
+}

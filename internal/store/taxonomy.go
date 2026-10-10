@@ -173,7 +173,7 @@ func (st *configurationState) reconcileTaxonomy(spec presets.TaxonomySpec) error
 func (st *configurationState) validateCategories(ids []string) error {
 	for _, id := range ids {
 		if _, ok := st.Taxonomy[categoryKey(id)]; !ok {
-			return fmt.Errorf("%w: unknown category %s", ErrInvalidDirectory, id)
+			return invalidf("unknown category %s", id)
 		}
 	}
 	return nil
@@ -186,7 +186,7 @@ func (st *configurationState) resolveNewCategories(names []string) ([]string, er
 	for _, raw := range names {
 		name := strings.TrimSpace(norm.NFC.String(raw))
 		if !presets.ValidTaxonomyName(presets.Text{En: name, ZhCN: name}) || utf8.RuneCountInString(name) > 64 {
-			return nil, fmt.Errorf("%w: invalid category name", ErrInvalidDirectory)
+			return nil, invalidf("invalid category name")
 		}
 		folded := presets.FoldText(name)
 		matches := map[string]bool{}
@@ -383,18 +383,7 @@ func (s *Store) TaxonomyPage(q string, page, limit int) (Page[CategoryListItem],
 			rows.Close()
 			return out, err
 		}
-		item.Kind = categoryKind
-		item.Override = Object{}
-		if en.Valid && zh.Valid {
-			item.Default = &LocalizedText{en.String, zh.String}
-		}
-		if oe.Valid {
-			setLeaf(item.Override, "name.en", oe.String)
-		}
-		if oz.Valid {
-			setLeaf(item.Override, "name.zh-CN", oz.String)
-		}
-		item.decorate()
+		item.TaxonomyItem = taxonomyItem(item.TaxonomyItem, en, zh, oe, oz)
 		out.Items = append(out.Items, item)
 	}
 	err = rows.Err()
@@ -427,11 +416,11 @@ func (s *Store) PatchTaxonomy(id string, patch ConfigurationPatch) (TaxonomyItem
 	used := map[string]bool{}
 	for p, raw := range patch.Set {
 		if p != "name.en" && p != "name.zh-CN" {
-			return item, ErrInvalidDirectory
+			return item, invalidf("%s cannot be set", p)
 		}
 		var text string
 		if json.Unmarshal(raw, &text) != nil || string(raw) == "null" {
-			return item, ErrInvalidDirectory
+			return item, invalidf("%s must be a string", p)
 		}
 		used[p] = true
 		if item.Builtin {
@@ -444,7 +433,7 @@ func (s *Store) PatchTaxonomy(id string, patch ConfigurationPatch) (TaxonomyItem
 	}
 	for _, p := range patch.Unset {
 		if !item.Builtin || used[p] || p != "name.en" && p != "name.zh-CN" {
-			return item, ErrInvalidDirectory
+			return item, invalidf("%s cannot be reset (only names of built-in categories, not also set)", p)
 		}
 		used[p] = true
 		unsetLeaf(item.Override, p)
@@ -459,10 +448,13 @@ func (s *Store) PatchTaxonomy(id string, patch ConfigurationPatch) (TaxonomyItem
 		item.Name = effective.Name
 	}
 	if !presets.ValidTaxonomyName(presets.Text{En: item.Name.En, ZhCN: item.Name.ZhCN}) {
-		return item, ErrInvalidDirectory
+		return item, invalidf("category names must be 1..64 characters")
 	}
 	if len(used) == 0 {
 		return item, nil
+	}
+	if err = uniqueCategoryNames(tx, item); err != nil {
+		return item, err
 	}
 	item.Revision++
 	item.decorate()
@@ -473,6 +465,55 @@ func (s *Store) PatchTaxonomy(id string, patch ConfigurationPatch) (TaxonomyItem
 		return item, err
 	}
 	return item, tx.Commit()
+}
+
+// uniqueCategoryNames rejects a rename whose name (either language, case-folded)
+// is already used by another category, so typed names stay unambiguous.
+func uniqueCategoryNames(tx *sql.Tx, item TaxonomyItem) error {
+	rows, err := tx.Query(`SELECT id,name_en,name_zh_cn FROM categories WHERE id<>?`, item.ID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	names := map[string]bool{presets.FoldText(item.Name.En): true, presets.FoldText(item.Name.ZhCN): true}
+	for rows.Next() {
+		var id, en, zh string
+		if err = rows.Scan(&id, &en, &zh); err != nil {
+			return err
+		}
+		if names[presets.FoldText(en)] || names[presets.FoldText(zh)] {
+			return invalidf("category %s already uses this name", id)
+		}
+	}
+	return rows.Err()
+}
+
+// Category reads one category with its application count.
+func (s *Store) Category(id string) (CategoryListItem, error) {
+	var item CategoryListItem
+	var en, zh, oe, oz sql.NullString
+	err := s.DB.QueryRow(`SELECT `+taxonomyColumns+`,(SELECT count(*) FROM application_categories r WHERE r.category_id=categories.id) FROM categories WHERE id=?`, id).Scan(&item.ID, &item.Name.En, &item.Name.ZhCN, &item.Revision, &item.Builtin, &item.Present, &en, &zh, &oe, &oz, &item.Applications)
+	if err != nil {
+		return item, err
+	}
+	item.TaxonomyItem = taxonomyItem(item.TaxonomyItem, en, zh, oe, oz)
+	return item, nil
+}
+
+func taxonomyItem(item TaxonomyItem, en, zh, oe, oz sql.NullString) TaxonomyItem {
+	item.Kind = categoryKind
+	item.Override = Object{}
+	if en.Valid && zh.Valid {
+		item.Default = &LocalizedText{en.String, zh.String}
+	}
+	if oe.Valid {
+		setLeaf(item.Override, "name.en", oe.String)
+	}
+	if oz.Valid {
+		setLeaf(item.Override, "name.zh-CN", oz.String)
+	}
+	item.decorate()
+	return item
 }
 
 // Public projection contains IDs and localized names only, with one batch query.

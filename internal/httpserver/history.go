@@ -2,79 +2,12 @@ package httpserver
 
 import (
 	"context"
-	"github.com/PMExtra/RedApp/internal/application"
-	"github.com/PMExtra/RedApp/internal/download"
-	"github.com/PMExtra/RedApp/internal/history"
+	"net/http"
 	"time"
-)
 
-func globalMetrics(status map[string]any, started time.Time) []history.Metric {
-	values := map[string]float64{}
-	switchNumber := func(value any) float64 {
-		switch n := value.(type) {
-		case int:
-			return float64(n)
-		case int64:
-			return float64(n)
-		case uint64:
-			return float64(n)
-		case float64:
-			return n
-		}
-		return 0
-	}
-	for key, value := range status["disk"].(map[string]any) {
-		values["disk."+key] = switchNumber(value)
-	}
-	for key, value := range status["counters"].(map[string]int64) {
-		if _, ok := history.Find("counters." + key); ok {
-			values["counters."+key] = float64(value)
-		}
-	}
-	rates := status["rates"].(map[string]any)
-	for _, key := range []string{"upstream_bytes_per_second", "downstream_bytes_per_second"} {
-		values["rates."+key] = switchNumber(rates[key])
-	}
-	values["runtime.memory_bytes"] = switchNumber(status["memory_bytes"])
-	values["runtime.goroutines"] = switchNumber(status["goroutines"])
-	if !started.IsZero() {
-		values["runtime.uptime_seconds"] = time.Since(started).Seconds()
-	}
-	for _, view := range status["resources"].([]download.View) {
-		values["resources.total"]++
-		values["resources.readers"] += float64(view.Readers)
-		if view.Current {
-			values["resources.current"]++
-		}
-		if view.Retired {
-			values["resources.retired"]++
-		}
-		if view.ActiveWriter {
-			values["resources.active_writers"]++
-		}
-		if _, ok := history.Find("resources." + view.State); ok {
-			values["resources."+view.State]++
-		}
-	}
-	for _, count := range status["application_version_counts"].(map[string]int64) {
-		values["versions.total"] += float64(count)
-	}
-	metrics := []history.Metric{}
-	validRate, _ := rates["valid"].(bool)
-	for _, definition := range history.Definitions() {
-		value := values[definition.Key]
-		metric := history.Metric{Definition: definition, Value: &value}
-		if definition.Kind == "rate" {
-			if validRate {
-				metric.ObservedSeconds = 5
-			} else {
-				metric.Value = nil
-			}
-		}
-		metrics = append(metrics, metric)
-	}
-	return metrics
-}
+	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/internal/history"
+)
 
 // SampleHistory records immediately, then once per minute. The same owner
 // performs closed-hour aggregation and retention, independent of admin traffic.
@@ -82,29 +15,27 @@ func (s *Server) SampleHistory(ctx context.Context, onError func(error)) {
 	tick := time.NewTicker(time.Minute)
 	defer tick.Stop()
 	sample := func() {
-		at := time.Now().UTC()
-		status, err := s.status("")
-		if err == nil {
-			at = status["sampled_at"].(time.Time)
-			observations := []history.Observation{{Scope: "global", Metrics: status["metrics"].([]history.Metric)}}
-			for _, entry := range s.Registry.Entries() {
-				if entry.Provider == application.Info || entry.Provider == application.Hosted {
-					continue
-				}
-				appStatus, e := s.appStatus(entry.Descriptor.ID, "")
-				if e != nil {
-					err = e
-					break
-				}
-				observations = append(observations, history.Observation{Scope: "app", AppID: entry.MetricsID(), Metrics: appStatus["metrics"].([]history.Metric)})
-			}
-			if err == nil {
-				err = s.History.RecordScoped(at, observations)
-			}
-		} else if maintenanceErr := s.History.Maintain(at); maintenanceErr != nil {
-			onError(maintenanceErr)
-		}
+		at, metrics, err := s.globalMetrics()
 		if err != nil {
+			if maintenanceErr := s.history.Maintain(time.Now().UTC()); maintenanceErr != nil {
+				onError(maintenanceErr)
+			}
+			onError(err)
+			return
+		}
+		observations := []history.Observation{{Scope: "global", Metrics: metrics}}
+		for _, entry := range s.registry.Entries() {
+			if entry.Provider == application.Info || entry.Provider == application.Hosted {
+				continue
+			}
+			appMetrics, err := s.appMetrics(entry)
+			if err != nil {
+				onError(err)
+				return
+			}
+			observations = append(observations, history.Observation{Scope: "app", AppID: entry.MetricsID(), Metrics: appMetrics})
+		}
+		if err = s.history.RecordScoped(at, observations); err != nil {
 			onError(err)
 		}
 	}
@@ -119,37 +50,92 @@ func (s *Server) SampleHistory(ctx context.Context, onError func(error)) {
 	}
 }
 
-func applicationMetrics(status map[string]any) []history.Metric {
-	values := map[string]float64{}
-	for key, value := range status["counters"].(map[string]int64) {
-		values["counters."+key] = float64(value)
-	}
-	for _, v := range status["resources"].([]download.View) {
-		values["resources.total"]++
-		values["resources.readers"] += float64(v.Readers)
-		if v.Current {
-			values["resources.current"]++
+type historyPointDTO struct {
+	Time            time.Time `json:"time"`
+	Value           *float64  `json:"value"`
+	Min             *float64  `json:"min"`
+	Max             *float64  `json:"max"`
+	Avg             *float64  `json:"avg"`
+	Last            *float64  `json:"last"`
+	Count           int       `json:"count"`
+	Delta           *float64  `json:"delta"`
+	DeltaCount      int       `json:"delta_count"`
+	ObservedSeconds float64   `json:"observed_seconds"`
+	Partial         bool      `json:"partial"`
+	Incomplete      bool      `json:"incomplete"`
+}
+
+type historySeriesDTO struct {
+	Key               string            `json:"key"`
+	Label             string            `json:"label"`
+	Kind              string            `json:"kind"`
+	Unit              string            `json:"unit"`
+	Group             string            `json:"group"`
+	Scope             string            `json:"scope"`
+	AppKey            *string           `json:"app_key"`
+	Range             string            `json:"range"`
+	ResolutionSeconds int64             `json:"resolution_seconds"`
+	From              time.Time         `json:"from"`
+	To                time.Time         `json:"to"`
+	Points            []historyPointDTO `json:"points"`
+}
+
+func historyDocument(series history.Series, appKey *string) historySeriesDTO {
+	out := historySeriesDTO{Key: series.Key, Label: series.Label, Kind: series.Kind, Unit: series.Unit, Group: series.Group, Scope: series.Scope, AppKey: appKey, Range: series.Range, ResolutionSeconds: series.ResolutionSeconds, From: time.Unix(series.From, 0).UTC(), To: time.Unix(series.To, 0).UTC(), Points: make([]historyPointDTO, 0, len(series.Points))}
+	for _, p := range series.Points {
+		if p.Count == 0 {
+			continue // Buckets without samples are gaps, not points.
 		}
-		if v.Retired {
-			values["resources.retired"]++
-		}
-		if v.ActiveWriter {
-			values["resources.active_writers"]++
-		}
-		values["resources."+v.State]++
-	}
-	versionCount, hasVersions := status["version_count"].(int64)
-	if hasVersions {
-		values["versions.total"] = float64(versionCount)
-	}
-	out := []history.Metric{}
-	for _, d := range history.AppDefinitions() {
-		value := values[d.Key]
-		metric := history.Metric{Definition: d, Value: &value}
-		if d.Key == "versions.total" && !hasVersions {
-			metric.Value = nil
-		}
-		out = append(out, metric)
+		out.Points = append(out.Points, historyPointDTO{Time: time.Unix(p.Time, 0).UTC(), Value: p.Value, Min: p.Min, Max: p.Max, Avg: p.Avg, Last: p.Last, Count: p.Count, Delta: p.Delta, DeltaCount: p.DeltaCount, ObservedSeconds: p.ObservedSeconds, Partial: p.Partial, Incomplete: p.Incomplete})
 	}
 	return out
+}
+
+// historyQuery reads the required metric and range parameters; metric must be
+// one of definitions.
+func historyQuery(r *http.Request, definitions []history.Definition) (string, string, *apiError) {
+	q := r.URL.Query()
+	metric, window := q.Get("metric"), q.Get("range")
+	if window != "24h" && window != "7d" && window != "30d" {
+		return "", "", newError(codeInvalidQuery, nil, "range must be 24h, 7d or 30d")
+	}
+	for _, d := range definitions {
+		if d.Key == metric {
+			return metric, window, nil
+		}
+	}
+	return "", "", newError(codeInvalidQuery, nil, "metric is not a metric of this scope")
+}
+
+func (s *Server) getHistory(w http.ResponseWriter, r *http.Request) {
+	metric, window, e := historyQuery(r, history.Definitions())
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	series, err := s.history.Query(metric, window, time.Now().UTC())
+	if err != nil {
+		s.writeError(w, r, storageError(err))
+		return
+	}
+	writeOK(w, historyDocument(series, nil))
+}
+
+func (s *Server) getAppHistory(w http.ResponseWriter, r *http.Request) {
+	entry, ok := s.metricsApp(w, r)
+	if !ok {
+		return
+	}
+	metric, window, e := historyQuery(r, history.AppDefinitions())
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	series, err := s.history.QueryFor(entry.MetricsID(), metric, window, time.Now().UTC())
+	if err != nil {
+		s.writeError(w, r, storageError(err))
+		return
+	}
+	key := entry.Descriptor.ID
+	writeOK(w, historyDocument(series, &key))
 }

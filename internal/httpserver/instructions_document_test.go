@@ -7,7 +7,7 @@ import (
 )
 
 func TestInstructionsDocumentRunsInOpaqueOriginSandbox(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	data, headers := h.request("GET", "/api/apps/openai/codex/instructions/document?lang=en", nil, 200, nil)
 	policy := strings.Split(headers.Get("Content-Security-Policy"), ";")
 	if strings.TrimSpace(policy[0]) != "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation" {

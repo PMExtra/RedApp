@@ -341,7 +341,7 @@ func TestCleanupOldWriterDrainsNewGenerationSurvives(t *testing.T) {
 		t.Fatal(e)
 	}
 	await(t, firstStarted)
-	job, e := m.Preview(testApp, map[string]bool{r.ID: true})
+	job, e := m.Preview(testApp, map[string]bool{r.ID: true}, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -380,11 +380,11 @@ func TestCleanupPreviewCannotDeleteLaterGeneration(t *testing.T) {
 	m, _, _ := setup(t, c)
 	r := authorizedResource(t, m, c, data)
 	collect(t, m, r)
-	preview, e := m.Preview(testApp, map[string]bool{r.ID: true})
+	preview, e := m.Preview(testApp, map[string]bool{r.ID: true}, nil)
 	if e != nil {
 		t.Fatal(e)
 	}
-	other, e := m.Preview(testApp, map[string]bool{r.ID: true})
+	other, e := m.Preview(testApp, map[string]bool{r.ID: true}, nil)
 	if e != nil {
 		t.Fatal(e)
 	}

@@ -1,0 +1,1 @@
+import{Qn as e,Vn as t,Yn as n}from"./ui-zFFKZo7B.js";function r(r,i){let a=e(r.value),o;return t(r,e=>{clearTimeout(o),o=setTimeout(()=>{a.value=e},i)}),n(()=>clearTimeout(o)),a}export{r as t};

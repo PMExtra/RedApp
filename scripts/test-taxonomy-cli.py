@@ -19,10 +19,10 @@ class TaxonomyCLITest(ServerTestCase):
         self.admin = self.server.admin()
 
     def save(self, app, body, expect=200):
-        """PATCH an application configuration with its current revision."""
+        """PATCH an application configuration at its current revision (If-Match)."""
         path = f"/admin/api/apps/taxonomy/{app}/configuration"
         revision = self.admin.request(path)["revision"]
-        return self.admin.request(path, {"revision": revision, "unset": [], **body}, method="PATCH", expect=expect)
+        return self.admin.request(path, {"unset": [], **body}, method="PATCH", if_match=revision, expect=expect)
 
     def categories(self):
         """Admin category list keyed by ID."""
@@ -40,8 +40,8 @@ class TaxonomyCLITest(ServerTestCase):
         )
         for app in ["one", "two", "disabled"]:
             self.admin.request(
-                "/admin/api/vendors/taxonomy/apps",
-                {"id": app, "name": NAME, "provider": "info", "enabled": app != "disabled"},
+                "/admin/api/apps",
+                {"vendor": "taxonomy", "id": app, "name": NAME, "provider": "info", "enabled": app != "disabled"},
                 method="POST",
                 expect=201,
             )
@@ -67,17 +67,20 @@ class TaxonomyCLITest(ServerTestCase):
         configuration = self.admin.request(OWN)
         public_revision = self.admin.request("/api/bootstrap")["revision"]
         tools = self.categories()["tools"]
-        self.admin.request(
-            "/admin/api/categories/tools",
-            {"revision": tools["revision"], "set": {"name.en": "Renamed"}, "unset": []},
-            method="PATCH",
+        stale = self.admin.request(
+            "/admin/api/categories/tools", {"set": {"name.en": "Renamed"}}, method="PATCH", if_match=tools["revision"]
         )
+        self.assertEqual(stale["revision"], tools["revision"] + 1)
+        self.admin.fetch(
+            "/admin/api/categories/tools", {"set": {"name.en": "Again"}}, method="PATCH", if_match=tools["revision"], expect=409
+        )
+        self.assertEqual(self.admin.request("/admin/api/categories/tools")["name"]["en"], "Renamed")
         self.assertEqual(self.admin.request(OWN)["revision"], configuration["revision"])
         self.assertNotEqual(self.admin.request("/api/bootstrap")["revision"], public_revision)
 
         catalog = self.admin.request("/api/catalog?category=tools&q=two&limit=1")
         self.assertEqual(catalog["total"], 1)
-        self.assertEqual(catalog["items"][0]["id"], "taxonomy/two")
+        self.assertEqual(catalog["items"][0]["key"], "taxonomy/two")
         expected_categories = sorted(
             [
                 {"id": "tools", "name": {"en": "Renamed", "zh-CN": "Tools"}, "count": 2},
@@ -87,7 +90,7 @@ class TaxonomyCLITest(ServerTestCase):
         )
         self.assertEqual(catalog["categories"], expected_categories, "disabled apps were counted")
         tagged = self.admin.request("/api/catalog?q=%23cli")
-        self.assertEqual([item["id"] for item in tagged["items"]], ["taxonomy/one"])
+        self.assertEqual([item["key"] for item in tagged["items"]], ["taxonomy/one"])
         self.assertEqual(tagged["categories"], catalog["categories"])
         public_documents = [catalog, tagged, self.admin.request("/api/bootstrap"), self.admin.request("/api/search?q=cli")]
         for document in public_documents:
@@ -97,7 +100,8 @@ class TaxonomyCLITest(ServerTestCase):
             for private in ["private-only", "taxonomy/disabled", "命令行"]:
                 self.assertNotIn(private, text, "private data in public response")
         self.admin.fetch("/api/apps/taxonomy/one/related", expect=404)
-        self.admin.fetch("/admin/api/categories", {"id": "x"}, method="POST", expect=405)
+        created = self.admin.fetch("/admin/api/categories", {"id": "x"}, method="POST", expect=None)
+        self.assertIn(created.status, (404, 405), "categories are only created through applications")
 
         # Removing the last reference deletes the category; restart keeps the rest.
         self.save("one", {"set": {"categories": ["tools"]}})
@@ -118,20 +122,23 @@ class TaxonomyCLITest(ServerTestCase):
         first = self.admin.request(CODEX)
         self.admin.request(
             CODEX,
-            {"revision": first["revision"], "set": {"name.en": "First session", "tags": ["first"]}, "unset": []},
+            {"set": {"name.en": "First session", "tags": ["first"]}, "unset": []},
             method="PATCH",
+            if_match=first["revision"],
         )
-        second.fetch(
+        conflict = second.fetch(
             CODEX,
-            {"revision": stale["revision"], "set": {"name.zh-CN": "第二会话"}, "unset": []},
+            {"set": {"name.zh-CN": "第二会话"}, "unset": []},
             method="PATCH",
+            if_match=stale["revision"],
             expect=409,
         )
+        self.assertEqual(conflict.value()["error"]["code"], "REVISION_CONFLICT")
         current = self.admin.request(CODEX)
         self.assertEqual(current["effective"]["name"]["en"], "First session")
         self.assertEqual(current["fields"]["name.zh-CN"]["source"], "inherited")
         # Field reset is an unset: after restart the field follows the template, others keep overrides.
-        self.admin.request(CODEX, {"revision": current["revision"], "set": {}, "unset": ["name.en"]}, method="PATCH")
+        self.admin.request(CODEX, {"set": {}, "unset": ["name.en"]}, method="PATCH", if_match=current["revision"])
         self.restart()
         restarted = self.admin.request(CODEX)
         self.assertEqual(restarted["fields"]["name.en"]["source"], "inherited")

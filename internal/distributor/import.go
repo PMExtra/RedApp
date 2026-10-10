@@ -15,6 +15,13 @@ var ErrImport = errors.New("Import source could not be downloaded")
 // shared client deadline used to provide.
 const importTimeout = 5 * time.Minute
 
+// ValidImportURL reports whether raw is acceptable as an import source: an
+// absolute http(s) URL without credentials or fragment. The query is kept.
+func ValidImportURL(raw string) bool {
+	_, err := importURL(raw)
+	return err == nil
+}
+
 func importURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil || len(raw) > 8192 || u == nil || u.User != nil || u.Opaque != "" || u.Fragment != "" || strings.ContainsAny(raw, "\r\n\t") {

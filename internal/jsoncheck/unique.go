@@ -7,18 +7,31 @@ import (
 	"io"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Unique rejects duplicate keys at every object depth; encoding/json otherwise
 // silently accepts the last value. Keys are compared after the same case folding
 // encoding/json uses to match struct fields, so "name" and "NAME" cannot both
 // reach one field.
-func Unique(body []byte) error {
+func Unique(body []byte) error { return check(body, 32, false) }
+
+// Strict is the request-body check of the HTTP contract: Unique plus invalid
+// UTF-8 (which encoding/json would silently replace), nesting deeper than 64
+// and every JSON null. Bodies whose schema accepts null must use Unique.
+func Strict(body []byte) error {
+	if !utf8.Valid(body) {
+		return errors.New("JSON is not valid UTF-8")
+	}
+	return check(body, 64, true)
+}
+
+func check(body []byte, maxDepth int, rejectNull bool) error {
 	d := json.NewDecoder(bytes.NewReader(body))
 	d.UseNumber()
 	var value func(int) error
 	value = func(depth int) error {
-		if depth > 32 {
+		if depth > maxDepth {
 			return errors.New("JSON nesting limit exceeded")
 		}
 		t, e := d.Token()
@@ -56,6 +69,11 @@ func Unique(body []byte) error {
 			}
 			_, e = d.Token()
 			return e
+		case nil:
+			if rejectNull {
+				return errors.New("JSON null is not allowed")
+			}
+			return nil
 		default:
 			return nil
 		}

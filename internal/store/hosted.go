@@ -17,6 +17,10 @@ type HostedFile struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// ErrHostedFileChanged reports that the file at a hosted path is not the one the
+// caller expected: creation found a file, or a replacement named a stale ID.
+var ErrHostedFileChanged = errors.New("hosted file at the path changed")
+
 const hostedColumns = `app_uid,path,id,sha256,size_bytes,created_at_s`
 
 func scanHosted(row scanner) (HostedFile, error) {
@@ -90,7 +94,7 @@ func (s *Store) CommitHosted(key string, appRevision, vendorRevision int64, expe
 		return old, err
 	}
 	if old.ID != expected {
-		return old, ErrConflict
+		return old, ErrHostedFileChanged
 	}
 	_, err = tx.Exec(`INSERT INTO hosted_files(app_uid,path,id,sha256,size_bytes,created_at_s) VALUES(?,?,?,?,?,?) ON CONFLICT(app_uid,path) DO UPDATE SET id=excluded.id,sha256=excluded.sha256,size_bytes=excluded.size_bytes,created_at_s=excluded.created_at_s`, file.AppUID, file.Path, file.ID, file.SHA256, file.SizeBytes, file.CreatedAt.Unix())
 	if err != nil {

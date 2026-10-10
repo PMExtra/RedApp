@@ -12,17 +12,17 @@
 | --- | --- |
 | 服务端状态 | TanStack Query |
 | 客户端状态 | Pinia |
-| 国际化 | vue-i18n（中英文 key 完全一致） |
-| 组件与样式 | Reka UI + Tailwind CSS |
-| 表单校验 | vee-validate + zod |
-| API 类型 | 由 OpenAPI 规范生成（阶段 3 产出） |
-| 测试 | Vitest + Testing Library + MSW；Playwright 冒烟测试 |
-| 代码规范 | ESLint + Prettier |
+| 国际化 | vue-i18n（中英文 key 完全一致；各模块自带 locale 文件） |
+| 组件与样式 | Reka UI + Tailwind CSS v4，颜色等取自设计令牌，浅色与深色主题 |
+| 表单校验 | vee-validate + zod（自带适配器；官方 `@vee-validate/zod` 不支持 zod 4） |
+| API 类型 | openapi-typescript 生成并提交，openapi-fetch 调用；CI 检查生成物与规范一致 |
+| 测试 | Vitest + happy-dom + Testing Library + MSW；Playwright 冒烟测试 |
+| 代码规范 | ESLint（typescript-eslint 类型检查规则）+ Prettier |
 
-公开站点和后台使用独立入口，公开页不加载后台代码。
+公开站点和后台是两个 Vite 入口（`index.html`、`admin.html`），公开页不加载后台代码，构建时检查。服务端按规范 `x-spa-routes` 为公开路由返回 `index.html`、为 `/admin/...` 返回 `admin.html`。
 
 ## 后果
 
-- 新增依赖要更新 `third_party/README.md` 和许可证原文。
-- API 类型依赖阶段 3 的 OpenAPI 规范，所以前端重写排在其后。
-- 重写完成之前，现有前端只做必要修复。
+- 随产物分发的 npm 包要记录在 `third_party/README.md` 并附许可证原文；构建会检查遗漏。
+- 规范变化后必须重新生成前端类型，否则门禁失败。
+- 服务端的 SPA 白名单与前端路由由 `x-spa-routes` 统一，前端测试检查一致。

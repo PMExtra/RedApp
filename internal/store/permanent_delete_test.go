@@ -29,7 +29,7 @@ func TestPermanentDeleteIsScopedAndRestartable(t *testing.T) {
 	s.AddFor(sibling.MetricsID(), "artifact_requests", 7)
 	s.SaveInstructions(a.Key, 0, LocalizedText{"remove me", "移除"})
 	a, _ = s.Application(a.Key)
-	s.SaveHomepagePins(HomepagePins{Keys: []string{a.Key, sibling.Key}})
+	s.SaveHomepagePins(HomepagePins{Keys: []string{a.Key, sibling.Key}, Revision: 1})
 	id := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	path := filepath.Join(dir, "objects", "hosted", id)
 	os.MkdirAll(filepath.Dir(path), 0700)

@@ -2,12 +2,14 @@ VERSION ?= $(shell cat VERSION)
 REVISION ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 
 NODE_MODULES := frontend/node_modules/.package-lock.json
+# Explicit roots keep Go tooling out of frontend/node_modules (some npm packages ship Go files).
+GO_PACKAGES := ./cmd/... ./installers/... ./internal/... ./presets/...
 # runtime-test and network-test exercise the existing binary on purpose (CI builds
 # it in the pinned native container); they never rebuild it.
 REQUIRE_BINARY := @test -x bin/redapp || { echo 'bin/redapp is missing: run `make binary` or `make build` first' >&2; exit 1; }
 
 .PHONY: build binary check test docs-check toolchain-check frontend frontend-test \
-	runtime-test network-test installers installer-inventory docker
+	runtime-test e2e network-test installers installer-inventory docker
 
 build: frontend
 	@$(MAKE) --no-print-directory binary
@@ -16,7 +18,7 @@ binary:
 
 check: docs-check toolchain-check
 	test -z "$$(gofmt -l cmd internal installers presets)"
-	go vet ./...
+	go vet $(GO_PACKAGES)
 docs-check:
 	python3 scripts/check-docs.py
 toolchain-check:
@@ -26,7 +28,7 @@ test: installer-inventory
 	python3 scripts/test-ci-release.py
 	python3 scripts/test-check-docs.py
 	python3 scripts/test-check-toolchain.py
-	go test -race ./... -count=1 -timeout=180s
+	go test -race $(GO_PACKAGES) -count=1 -timeout=180s
 	python3 scripts/test-installers.py --platform shell
 	python3 scripts/test-update-installers.py
 	python3 scripts/test-installer-maintenance.py
@@ -36,7 +38,7 @@ $(NODE_MODULES): frontend/package.json frontend/package-lock.json
 frontend: $(NODE_MODULES)
 	cd frontend && npm run build
 frontend-test: $(NODE_MODULES)
-	cd frontend && npm run typecheck && npm test
+	cd frontend && npm run codegen:check && npm run lint && npm run format:check && npm run typecheck && npm test
 
 # Real processes on loopback ports; the instructions test needs frontend/node_modules (Happy DOM).
 runtime-test: $(NODE_MODULES)
@@ -48,6 +50,12 @@ runtime-test: $(NODE_MODULES)
 	python3 scripts/test-prewarm-cli.py
 	python3 scripts/test-taxonomy-cli.py
 	python3 scripts/test-configuration-exchange-cli.py
+
+# Playwright against the existing binary with a fresh data directory; needs the
+# Chromium browser: cd frontend && npx playwright install --with-deps chromium
+e2e: $(NODE_MODULES)
+	$(REQUIRE_BINARY)
+	python3 scripts/test-e2e.py
 
 # Manual, needs Internet access: official signed Claude manifest and one real binary (>200 MB).
 network-test:

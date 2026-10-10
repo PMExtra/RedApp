@@ -49,6 +49,7 @@ The request origin comes from TLS or from a trusted proxy's forwarded scheme. Be
 - Each client may make 10 sign-in attempts per 5 minutes. A client is an IPv4 address or an IPv6 /64 prefix. A successful sign-in clears that client's count.
 - All clients together get a burst of 20 password checks, refilled at one per second. This bounds CPU use when many addresses try at once; while such an attack continues, sign-in may be refused for everyone.
 - A wrong password returns `401 LOGIN_FAILED`; a rate-limited attempt returns `429 LOGIN_RATE_LIMITED`.
+- Changing the password checks the current password against the same per-client limit, so a stolen session cannot be used to guess it. A wrong current password returns `400 CURRENT_PASSWORD_INCORRECT`. A successful change signs out every session.
 - Signing out expires the session cookie in the browser and deletes the session on the server.
 - The client IP comes from trusted proxy headers when `trusted_proxies` is set; otherwise it is the direct peer address.
 

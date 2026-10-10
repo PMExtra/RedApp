@@ -15,15 +15,18 @@
 | 命令 | 用途 |
 | --- | --- |
 | `make check` | 文档检查、工具链版本与 CI 固定检查、`gofmt`、`go vet` |
-| `make test` | 脚本单测、`go test -race ./...`、Shell 安装器与维护回归 |
-| `make frontend-test` | 前端类型检查与 Vitest |
+| `make test` | 脚本单测、`go test -race`（`cmd`、`installers`、`internal`、`presets`）、Shell 安装器与维护回归 |
+| `make frontend-test` | 前端生成物检查（`codegen:check`）、ESLint、Prettier、类型检查与 Vitest |
 | `make frontend` | 构建前端到 `internal/httpserver/web` |
+| `cd frontend && npm run codegen` | 由 `api/openapi.yaml` 重新生成前端 API 类型 |
+| `cd frontend && npm run format` | Prettier 格式化前端代码 |
 | `make build` / `make binary` | 前端 + 二进制 / 只编译二进制 |
 | `make runtime-test` | 用现有 `bin/redapp`（不重新编译）跑真实进程的 CLI/HTTP 集成测试；缺二进制时直接失败 |
+| `make e2e` | 用现有 `bin/redapp` 和全新数据目录跑 Playwright 浏览器测试；需要先安装 Chromium（见 [frontend.md](docs/dev/frontend.md#测试)） |
 | `make network-test` | 手动联网测试：官方 Claude 签名清单与一个真实二进制，不在门禁中 |
 | `make docs-check` | 双语文档结构与 Markdown 链接 |
 
-提交前至少运行与改动相关的门禁；改 Go 代码必须通过 `make check test`，改前端必须通过 `make frontend-test` 并重新构建。
+提交前至少运行与改动相关的门禁；改 Go 代码必须通过 `make check test`，改前端必须通过 `make frontend-test` 并重新构建；改 `api/openapi.yaml` 必须重新生成前端类型。
 
 ## 目录职责
 
@@ -57,7 +60,7 @@
 | `internal/testutil` | 测试辅助，只能被测试引用 |
 | `presets/` | 内置厂商/应用/分类的 YAML 模板与图标（嵌入） |
 | `installers/` | 官方安装器原文、patch、生成结果与来源记录 |
-| `frontend/` | Vue 前端源码 |
+| `frontend/` | Vue 前端源码：`index.html`（公开）与 `admin.html`（后台）两个入口，结构见 [frontend.md](docs/dev/frontend.md) |
 | `scripts/` | 构建、发布、安装器维护与集成测试脚本（Python 标准库 / sh） |
 | `config/` | 部署配置示例 |
 | `third_party/` | 第三方许可证原文与清单 |
@@ -70,7 +73,7 @@
 - **Schema**：1.0 前不写数据迁移。任何 schema 变化都提升 `store.SchemaVersion`，旧数据目录被拒绝。1.0 起每次 schema 变化必须附带迁移和 golden fixture 测试（[ADR 0001](docs/dev/adr/0001-pre-1.0-no-migrations.md)）。
 - **安装器**：禁止编辑 `installers/*/*/upstream/`。只改 `patches/`，用 `scripts/update-installers.py` 重新生成 `generated/`；patch 不允许 fuzz（[installers.md](docs/dev/installers.md)）。
 - **前端产物**：`internal/httpserver/web` 是提交的构建产物。前端源码或依赖变化必须重新构建并提交，且必须能由锁定的工具链逐字节复现。
-- **SPA 路由**：新增前端路由必须同时加入 `internal/httpserver/server.go` 中 `validUI` 的深链白名单和规范的 `x-spa-routes`，否则直接访问会 404。
+- **SPA 路由**：新增前端路由必须同时加入规范的 `x-spa-routes` 和 `internal/httpserver/spa.go` 的 `adminSPARoutes`（后台）或对应的公开页面操作（前后端测试分别检查与规范一致）；服务端按它返回 `index.html` 或 `admin.html`，否则直接访问会 404。
 - **依赖**：新增或升级 Go/npm 依赖必须同步更新 `third_party/README.md` 和对应许可证原文。
 - **HTTP 契约**：路由、字段和错误码以 `api/openapi.yaml` 为准，改接口先改规范并在同一 PR 中改实现（[ADR 0009](docs/dev/adr/0009-openapi-contract.md)）。
 - **并发写**：后台写操作使用 revision（`If-Match`）做 CAS，冲突返回 409，不允许静默覆盖。

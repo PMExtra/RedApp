@@ -1,203 +1,218 @@
 package httpserver
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
-	"github.com/PMExtra/RedApp/internal/application"
-	"github.com/PMExtra/RedApp/internal/apps/builtin"
-	"github.com/PMExtra/RedApp/internal/distributor"
-	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
-type preparedDirectory struct {
-	server    *Server
-	registry  *application.PreparedRegistry
-	downloads *download.UpstreamPublication
-	proxy     *distributor.ProxyPublication
+type fieldOriginDTO struct {
+	Source  string `json:"source"`
+	Differs *bool  `json:"differs_from_template"`
 }
 
-func (p *preparedDirectory) Abort() {
-	if p.downloads != nil {
-		p.downloads.Abort()
-	}
-	if p.proxy != nil {
-		p.proxy.Abort()
-	}
-}
-func (p *preparedDirectory) Publish() {
-	publish := func() {
-		if p.proxy != nil {
-			p.proxy.Publish()
-		}
-		p.server.Registry.Publish(p.registry)
-	}
-	if p.downloads != nil {
-		p.downloads.PublishWith(publish)
-	} else {
-		publish()
-	}
+type proxyEffectiveDTO struct {
+	Mode        string `json:"mode"`
+	URL         string `json:"url,omitempty"`
+	SourceScope string `json:"source_scope"`
+	SourceID    string `json:"source_id"`
+	DNS         string `json:"dns"`
 }
 
-// ConfigurePublication installs the same prepare/CAS/publish coordinator for API
-// and direct Store writers. Client construction performs local validation only.
-func (s *Server) ConfigurePublication() {
-	s.configurationOnce.Do(func() {
-		if s.DB == nil || s.Registry == nil || s.Pool == nil {
-			return
-		}
-		s.DB.SetDistributionValidation(builtin.ValidateDescriptors)
-		s.DB.SetConfigurationPrepare(func(candidate store.DirectorySnapshot) (store.ConfigurationPublication, error) {
-			proxy, err := s.Pool.PrepareConfiguration(candidate)
-			if err != nil {
-				return nil, err
-			}
-			prepared := false
-			defer func() {
-				if !prepared {
-					proxy.Abort()
-				}
-			}()
-			entries, err := builtin.EntriesFromConfiguration(candidate, s.Pool)
-			if err != nil {
-				return nil, err
-			}
-			registry, err := application.PrepareRegistry(entries)
-			if err != nil {
-				return nil, err
-			}
-			clients := map[string]*distributor.Client{}
-			for _, source := range candidate.Sources {
-				client, err := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, candidate.ProviderDefaults[source.Provider], source.AppUID, candidate.ProxyScopes[source.AppUID].VendorUID, s.Pool)
-				if err != nil {
-					return nil, err
-				}
-				clients[source.StorageID()] = client
-			}
-			result := &preparedDirectory{server: s, registry: registry, proxy: proxy}
-			if s.Downloads != nil {
-				result.downloads, err = s.Downloads.PrepareUpstreams(clients)
-				if err != nil {
-					return nil, err
-				}
-			}
-			if s.testConfigurationPrepare != nil {
-				if err = s.testConfigurationPrepare(candidate); err != nil {
-					prepared = true
-					result.Abort()
-					return nil, err
-				}
-			}
-			prepared = true
-			return result, nil
-		})
-	})
+// configurationDTO is VendorConfiguration or AppConfiguration. defaults,
+// overrides and effective are spec documents projected to the fields of the
+// entity kind and provider, with proxy passwords redacted.
+type configurationDTO struct {
+	Revision        int64                     `json:"revision"`
+	TemplateRef     *string                   `json:"template_ref"`
+	TemplateHash    *string                   `json:"template_hash"`
+	TemplateMissing bool                      `json:"template_missing"`
+	Defaults        map[string]any            `json:"defaults"`
+	Overrides       map[string]any            `json:"overrides"`
+	Effective       map[string]any            `json:"effective"`
+	Fields          map[string]fieldOriginDTO `json:"fields"`
+	ProxyEffective  proxyEffectiveDTO         `json:"proxy_effective"`
 }
 
-func (s *Server) configurationAPI(w http.ResponseWriter, r *http.Request, kind, key string) {
-	if !queryAllowed(r) {
-		fail(w, 400, "Unexpected query")
-		return
-	}
-	if r.Method != http.MethodGet && r.Method != http.MethodPatch {
-		fail(w, 405, "Method not allowed")
-		return
-	}
-	var value store.Configuration
-	var err error
-	if r.Method == http.MethodPatch {
-		var patch store.ConfigurationPatch
-		if decodeLimit(w, r, &patch, 256<<10) != nil {
-			fail(w, 400, "Invalid configuration patch")
-			return
-		}
-		if r.Header.Get("If-Match") != "" {
-			revision, e := expectedRevision(r)
-			if e != nil || revision != patch.Revision {
-				fail(w, 400, "If-Match and body revision must match")
-				return
-			}
-		}
-		s.directoryMu.Lock()
-		defer s.directoryMu.Unlock()
-		for path, raw := range patch.Set {
-			if path == "icon" || strings.HasPrefix(path, "localized_icons.") {
-				var icon string
-				if json.Unmarshal(raw, &icon) != nil || s.validateDirectoryIcon(icon) != nil {
-					fail(w, 400, "Invalid stored icon")
-					return
-				}
-			}
-		}
-		if kind == "Vendor" {
-			value, err = s.DB.PatchVendorConfiguration(key, patch)
-		} else {
-			value, err = s.DB.PatchApplicationConfiguration(key, patch)
-		}
-	} else {
-		if kind == "Vendor" {
-			value, err = s.DB.VendorConfiguration(key)
-		} else {
-			value, err = s.DB.ApplicationConfiguration(key)
-		}
-	}
-	if err != nil {
-		directoryError(w, err)
-		return
-	}
-	revisionReply(w, value.Revision, redactConfiguration(value))
-}
+var vendorSpecFields = []string{"name", "description", "icon", "localized_icons", "proxy"}
+var appSpecFields = []string{"name", "description", "icon", "provider", "proxy", "categories", "tags", "instructions", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy", "retention", "prewarm"}
 
-// UnmarshalJSON retains which leaves the legacy request explicitly supplied.
-// DisallowUnknownFields is preserved even though this type has a custom decoder.
-func (in *directoryInput) UnmarshalJSON(raw []byte) error {
-	type plain directoryInput
-	d := json.NewDecoder(bytes.NewReader(raw))
-	d.DisallowUnknownFields()
-	if err := d.Decode((*plain)(in)); err != nil {
-		return err
+// specDocument keeps the spec fields of the kind that apply to provider
+// ("" for vendors). Lists that are absent or null become []. A nil spec
+// (no template) stays nil.
+func specDocument(spec store.Object, provider string, sparse bool) map[string]any {
+	if spec == nil {
+		return nil
 	}
-	if err := json.Unmarshal(raw, &in.explicit); err != nil {
-		return err
+	fields := vendorSpecFields
+	if provider != "" {
+		fields = appSpecFields
 	}
-	for _, value := range in.explicit {
-		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
-			return errors.New("null directory fields are unsupported")
-		}
-	}
-	return nil
-}
-func (in directoryInput) configurationFields(kind string) (map[string]json.RawMessage, error) {
-	out := map[string]json.RawMessage{}
-	allowed := map[string]bool{"name": true, "description": true, "icon": true, "categories": kind == "App", "tags": kind == "App", "base_url": kind == "App", "base_urls": kind == "App", "source_strategy": kind == "App", "cache_ttl_seconds": kind == "App", "localized_icons": kind == "Vendor"}
-	for key, raw := range in.explicit {
-		if key == "revision" || key == "enabled" {
+	out := map[string]any{}
+	for _, field := range fields {
+		value, ok := spec[field]
+		if provider != "" && !store.AppPathApplies(provider, field) {
 			continue
 		}
-		if !allowed[key] {
-			return nil, fmt.Errorf("%w: field %s cannot be edited", store.ErrInvalidDirectory, key)
+		if !sparse && (field == "categories" || field == "tags" || field == "base_urls") && value == nil {
+			value, ok = []any{}, true
 		}
-		if key == "name" || key == "description" || key == "localized_icons" {
-			var langs map[string]json.RawMessage
-			if json.Unmarshal(raw, &langs) != nil {
-				return nil, store.ErrInvalidDirectory
-			}
-			for lang, value := range langs {
-				if lang != "en" && lang != "zh-CN" {
-					return nil, store.ErrInvalidDirectory
-				}
-				out[key+"."+lang] = value
-			}
-		} else {
-			out[key] = raw
+		if ok && value != nil {
+			out[field] = value
 		}
 	}
-	return out, nil
+	if proxy, ok := out["proxy"]; ok {
+		out["proxy"] = redactProxyValue(proxy)
+	}
+	return out
 }
 
-func encodeJSON(value any) json.RawMessage { raw, _ := json.Marshal(value); return raw }
+func configurationDocument(c store.Configuration, provider string) configurationDTO {
+	out := configurationDTO{Revision: c.Revision, TemplateRef: c.TemplateRef, TemplateHash: c.TemplateHash, TemplateMissing: c.TemplateMissing,
+		Defaults: specDocument(c.Defaults, provider, false), Overrides: specDocument(c.Overrides, provider, true), Effective: specDocument(c.Effective, provider, false),
+		Fields: map[string]fieldOriginDTO{}}
+	if out.Overrides == nil {
+		out.Overrides = map[string]any{}
+	}
+	for path, origin := range c.Fields {
+		if provider == "" || store.AppPathApplies(provider, path) {
+			out.Fields[path] = fieldOriginDTO{Source: origin.Source, Differs: origin.Differs}
+		}
+	}
+	proxy := c.ProxyEffective.Config.Redacted()
+	out.ProxyEffective = proxyEffectiveDTO{Mode: proxy.Mode, URL: proxy.URL, SourceScope: c.ProxyEffective.SourceScope, SourceID: c.ProxyEffective.SourceID, DNS: c.ProxyEffective.DNS}
+	return out
+}
+
+func (s *Server) getVendorConfiguration(w http.ResponseWriter, r *http.Request) {
+	id, e := vendorParam(r)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	c, err := s.store.VendorConfiguration(id)
+	if err != nil {
+		s.writeError(w, r, directoryFailure(err, codeVendorNotFound))
+		return
+	}
+	writeRevision(w, http.StatusOK, c.Revision, configurationDocument(c, ""))
+}
+
+func (s *Server) getAppConfiguration(w http.ResponseWriter, r *http.Request) {
+	key, e := appParam(r)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	a, err := s.store.Application(key)
+	if err != nil {
+		s.writeError(w, r, directoryFailure(err, codeApplicationNotFound))
+		return
+	}
+	c, err := s.store.ApplicationConfiguration(key)
+	if err != nil {
+		s.writeError(w, r, directoryFailure(err, codeApplicationNotFound))
+		return
+	}
+	writeRevision(w, http.StatusOK, c.Revision, configurationDocument(c, a.Provider))
+}
+
+type configurationPatchRequest struct {
+	Set           map[string]json.RawMessage `json:"set"`
+	Unset         []string                   `json:"unset"`
+	NewCategories []string                   `json:"new_categories"`
+}
+
+// configurationPatch reads If-Match and a VendorConfigurationPatch or
+// AppConfigurationPatch body with the given set paths.
+func (s *Server) configurationPatch(r *http.Request, paths []string, app bool) (store.ConfigurationPatch, *apiError) {
+	revision, e := ifMatch(r)
+	if e != nil {
+		return store.ConfigurationPatch{}, e
+	}
+	var in configurationPatchRequest
+	if e = decodeJSON(r, &in); e != nil {
+		return store.ConfigurationPatch{}, e
+	}
+	if !app && in.NewCategories != nil {
+		return store.ConfigurationPatch{}, newError(codeInvalidRequest, nil, "Unknown field new_categories")
+	}
+	for path, raw := range in.Set {
+		if !slices.Contains(paths, path) {
+			return store.ConfigurationPatch{}, newError(codeInvalidRequest, nil, "Unknown configuration path "+path)
+		}
+		if path == "icon" || strings.HasPrefix(path, "localized_icons.") {
+			var icon string
+			if json.Unmarshal(raw, &icon) != nil {
+				return store.ConfigurationPatch{}, newError(codeValidationFailed, nil, path+" must be an icon path")
+			}
+			if e = s.validateIcon(path, icon); e != nil {
+				return store.ConfigurationPatch{}, e
+			}
+		}
+	}
+	seen := map[string]bool{}
+	for _, path := range in.Unset {
+		if !slices.Contains(paths, path) || seen[path] {
+			return store.ConfigurationPatch{}, newError(codeValidationFailed, nil, "unset contains an unknown or repeated path "+path)
+		}
+		if _, ok := in.Set[path]; ok {
+			return store.ConfigurationPatch{}, newError(codeValidationFailed, nil, path+" cannot be both set and unset")
+		}
+		seen[path] = true
+	}
+	return store.ConfigurationPatch{Revision: revision, Set: in.Set, Unset: in.Unset, NewCategories: in.NewCategories}, nil
+}
+
+var vendorConfigurationPaths = []string{"name.en", "name.zh-CN", "description.en", "description.zh-CN", "icon", "localized_icons.en", "localized_icons.zh-CN", "proxy"}
+var appConfigurationPaths = []string{"name.en", "name.zh-CN", "description.en", "description.zh-CN", "icon", "proxy", "instructions.en", "instructions.zh-CN", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "retention", "prewarm", "categories", "tags"}
+
+func (s *Server) patchVendorConfiguration(w http.ResponseWriter, r *http.Request) {
+	id, e := vendorParam(r)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	patch, e := s.configurationPatch(r, vendorConfigurationPaths, false)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	s.directoryMu.Lock()
+	defer s.directoryMu.Unlock()
+	c, err := s.store.PatchVendorConfiguration(id, patch)
+	if err != nil {
+		s.writeError(w, r, directoryFailure(err, codeVendorNotFound))
+		return
+	}
+	writeRevision(w, http.StatusOK, c.Revision, configurationDocument(c, ""))
+}
+
+func (s *Server) patchAppConfiguration(w http.ResponseWriter, r *http.Request) {
+	key, e := appParam(r)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	patch, e := s.configurationPatch(r, appConfigurationPaths, true)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	s.directoryMu.Lock()
+	defer s.directoryMu.Unlock()
+	a, err := s.store.Application(key)
+	if err != nil {
+		s.writeError(w, r, directoryFailure(err, codeApplicationNotFound))
+		return
+	}
+	c, err := s.store.PatchApplicationConfiguration(key, patch)
+	if err != nil {
+		s.writeError(w, r, directoryFailure(err, codeApplicationNotFound))
+		return
+	}
+	writeRevision(w, http.StatusOK, c.Revision, configurationDocument(c, a.Provider))
+}
