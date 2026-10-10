@@ -95,7 +95,7 @@ func await(t *testing.T, ch <-chan struct{}) {
 	select {
 	case <-ch:
 	case <-time.After(10 * time.Second):
-		t.Fatal("barrier 超时")
+		t.Fatal("barrier timed out")
 	}
 }
 func TestSharedStreaming100LateSlowAndCancelled(t *testing.T) {
@@ -122,20 +122,20 @@ func TestSharedStreaming100LateSlowAndCancelled(t *testing.T) {
 	await(t, started)
 	got := make([]byte, len(prefix))
 	if _, e = io.ReadFull(first, got); e != nil || !bytes.Equal(got, prefix) {
-		t.Fatal("第一客户端未流式取得前缀", e)
+		t.Fatal("first client did not stream the prefix", e)
 	}
 	readers := []*Reader{first}
 	for i := 1; i < 100; i++ {
 		rd, hit, e := m.Acquire(context.Background(), r)
 		if e != nil || !hit {
-			t.Fatal("未共享同代", e)
+			t.Fatal("readers did not share one generation", e)
 		}
 		readers = append(readers, rd)
 	}
 	late := readers[1]
 	got = make([]byte, len(prefix))
 	if _, e = io.ReadFull(late, got); e != nil || !bytes.Equal(got, prefix) {
-		t.Fatal("晚到读者不能从零读取", e)
+		t.Fatal("late reader could not read from the start", e)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancelled, _, e := m.Acquire(ctx, r)
@@ -175,13 +175,13 @@ func TestSharedStreaming100LateSlowAndCancelled(t *testing.T) {
 	b, e := io.ReadAll(slow)
 	slow.Close()
 	if e != nil || !bytes.Equal(b, data) {
-		t.Fatal("慢读者结果不完整", e)
+		t.Fatal("slow reader received incomplete content", e)
 	}
 	if requests.Load() != 1 {
-		t.Fatalf("上游任务 %d", requests.Load())
+		t.Fatalf("upstream transfers: %d", requests.Load())
 	}
 	if !bytes.Equal(collect(t, m, r), data) || requests.Load() != 1 {
-		t.Fatal("永久缓存未复用")
+		t.Fatal("complete cache was not reused")
 	}
 	counters, err := db.Counters()
 	if err != nil || counters["upstream_bytes"] != int64(len(data)) {
@@ -210,18 +210,18 @@ func TestHashInvalidStartsNewGeneration(t *testing.T) {
 	old := rd.g.ID
 	_, e = io.ReadAll(rd)
 	if e == nil {
-		t.Fatal("坏 hash 被接受")
+		t.Fatal("bad hash accepted")
 	}
 	rd.Close()
 	bad.Store(false)
 	if !bytes.Equal(collect(t, m, r), data) {
-		t.Fatal("新代失败")
+		t.Fatal("new generation failed")
 	}
 	m.mu.Lock()
 	g := m.current[r.ID]
 	m.mu.Unlock()
 	if g.ID == old || count.Load() != 2 {
-		t.Fatal("未建立新代")
+		t.Fatal("no new generation was created")
 	}
 	counters, err := db.Counters()
 	if err != nil || counters["upstream_bytes"] != int64(len("invalid-data")+len(data)) {
@@ -249,7 +249,7 @@ func TestValidatedResumeAndRejectedBranches(t *testing.T) {
 				}
 				if n == 2 {
 					if r.Header.Get("Range") != fmt.Sprintf("bytes=%d-", cut) || r.Header.Get("If-Range") != "\"stable\"" {
-						t.Error("缺少续传请求头")
+						t.Error("resume request headers missing")
 					}
 					switch mode {
 					case "200":
@@ -288,20 +288,20 @@ func TestValidatedResumeAndRejectedBranches(t *testing.T) {
 			rd.Close()
 			if mode == "valid" {
 				if e != nil || !bytes.Equal(b, data) || count.Load() != 2 {
-					t.Fatalf("安全续传失败: %v, count=%d", e, count.Load())
+					t.Fatalf("safe resume failed: %v, count=%d", e, count.Load())
 				}
 			} else {
 				if e == nil {
-					t.Fatal("不安全续传未失败")
+					t.Fatal("unsafe resume did not fail")
 				}
 				if !bytes.Equal(collect(t, m, r), data) {
-					t.Fatal("完整重试失败")
+					t.Fatal("full retry failed")
 				}
 				mu.Lock()
 				last := ranges[len(ranges)-1]
 				mu.Unlock()
 				if last != "" {
-					t.Fatal("新代不是完整重下")
+					t.Fatal("new generation was not a full download")
 				}
 			}
 			want := int64(len(data))
@@ -349,7 +349,7 @@ func TestCleanupOldWriterDrainsNewGenerationSurvives(t *testing.T) {
 		t.Fatal(e)
 	}
 	if !bytes.Equal(collect(t, m, r), data) {
-		t.Fatal("新代失败")
+		t.Fatal("new generation failed")
 	}
 	m.mu.Lock()
 	fresh := m.current[r.ID].ID
@@ -358,20 +358,20 @@ func TestCleanupOldWriterDrainsNewGenerationSurvives(t *testing.T) {
 	close(finishOld)
 	b, e := io.ReadAll(old)
 	if e != nil || !bytes.Equal(b, data) {
-		t.Fatal("旧租约不能排空", e)
+		t.Fatal("old lease could not drain", e)
 	}
 	if _, e = os.Stat(oldPath); e != nil {
-		t.Fatal("旧文件提前删除")
+		t.Fatal("old file deleted early")
 	}
 	old.Close()
 	if _, e = os.Stat(oldPath); !os.IsNotExist(e) {
-		t.Fatal("旧文件未回收")
+		t.Fatal("old file not reclaimed")
 	}
 	m.mu.Lock()
 	got := m.current[r.ID].ID
 	m.mu.Unlock()
 	if got != fresh || count.Load() != 2 {
-		t.Fatal("旧 writer 发布覆盖了新代")
+		t.Fatal("old writer publication replaced the new generation")
 	}
 }
 func TestCleanupPreviewCannotDeleteLaterGeneration(t *testing.T) {
@@ -396,7 +396,7 @@ func TestCleanupPreviewCannotDeleteLaterGeneration(t *testing.T) {
 		t.Fatal(e)
 	}
 	if len(m.Snapshot()) != 1 {
-		t.Fatal("过期快照删了新代")
+		t.Fatal("stale snapshot deleted the new generation")
 	}
 }
 func TestCrashRecoveryPartRenameAndTombstone(t *testing.T) {
@@ -459,17 +459,17 @@ func TestCrashRecoveryPartRenameAndTombstone(t *testing.T) {
 			}
 			defer restored.Close()
 			if !bytes.Equal(collect(t, restored, r), data) {
-				t.Fatal("恢复字节不匹配")
+				t.Fatal("recovered bytes do not match")
 			}
 			if mode == "part" && !rangeSeen.Load() {
-				t.Fatal("遗留 part 未续传")
+				t.Fatal("retained part did not resume")
 			}
 			if mode != "part" && rangeSeen.Load() {
-				t.Fatal("错误恢复范围")
+				t.Fatal("wrong recovery range")
 			}
 			if mode == "retired" {
 				if _, e = os.Stat(m.partPath(g.ID)); !os.IsNotExist(e) {
-					t.Fatal("tombstone 未恢复删除")
+					t.Fatal("tombstone deletion not recovered")
 				}
 			}
 		})

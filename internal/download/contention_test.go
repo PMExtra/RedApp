@@ -37,7 +37,7 @@ func Test100SimultaneousFirstAcquisitionsCreateOneWriter(t *testing.T) {
 			defer rd.Close()
 			b, e := io.ReadAll(rd)
 			if e != nil || !bytes.Equal(b, data) {
-				failures <- fmt.Errorf("并发请求数据错误: %v", e)
+				failures <- fmt.Errorf("concurrent request returned wrong data: %v", e)
 			}
 		}()
 	}
@@ -52,6 +52,6 @@ func Test100SimultaneousFirstAcquisitionsCreateOneWriter(t *testing.T) {
 		t.Error(e)
 	}
 	if upstream.Load() != 1 {
-		t.Fatalf("首次请求竞争创建了 %d 个上游任务", upstream.Load())
+		t.Fatalf("concurrent first requests created %d upstream transfers", upstream.Load())
 	}
 }

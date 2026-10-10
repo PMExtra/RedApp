@@ -406,6 +406,20 @@ func (s *Service) warmRelease(ctx context.Context, entry application.Entry, vers
 	item.Status = "downloaded"
 	return item
 }
+
+// Wait blocks until the job is no longer running, or ctx ends, and returns its
+// final status.
+func (s *Service) Wait(ctx context.Context, uid, id string) (store.PrewarmJob, error) {
+	if current := s.active.Load(); current != nil && current.UID == uid && current.ID == id {
+		select {
+		case <-current.Done:
+		case <-ctx.Done():
+			return store.PrewarmJob{}, ctx.Err()
+		}
+	}
+	return s.Status(uid, id)
+}
+
 func (s *Service) Status(uid, id string) (store.PrewarmJob, error) {
 	job, err := s.DB.PrewarmJob(uid, id)
 	if err == nil && job.State != "running" && time.Now().After(job.Updated.Add(24*time.Hour)) {

@@ -136,18 +136,11 @@ func TestSignedClaudePrewarmRealComponentPipeline(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				deadline := time.Now().Add(5 * time.Second)
-				for time.Now().Before(deadline) {
-					job, err = worker.Status(app.UID, job.ID)
-					if err != nil {
-						t.Fatal(err)
-					}
-					if job.State != "running" {
-						return job
-					}
-					time.Sleep(time.Millisecond)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if job, err = worker.Wait(ctx, app.UID, job.ID); err != nil {
+					t.Fatal("prewarm did not finish", err)
 				}
-				t.Fatal("prewarm did not finish")
 				return job
 			}
 			job := start(strings.Repeat("a", 32))

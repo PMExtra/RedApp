@@ -20,7 +20,7 @@ func TestBoundsAndMissingCompleteFile(t *testing.T) {
 	m.mu.Lock()
 	g := m.current[r.ID]
 	if g.file != nil {
-		t.Error("空闲完成缓存仍持有描述符")
+		t.Error("idle complete cache still holds a file descriptor")
 	}
 	path := g.Path
 	m.maxReaders = 1
@@ -30,14 +30,14 @@ func TestBoundsAndMissingCompleteFile(t *testing.T) {
 		t.Fatal(e)
 	}
 	if _, _, e = m.Acquire(context.Background(), r); e == nil {
-		t.Fatal("读者上限不生效")
+		t.Fatal("reader limit not enforced")
 	}
 	rd.Close()
 	if e = os.Remove(path); e != nil {
 		t.Fatal(e)
 	}
 	if !bytes.Equal(collect(t, m, r), data) {
-		t.Fatal("缺失 complete 未重新获取")
+		t.Fatal("missing complete file was not fetched again")
 	}
 	m.mu.Lock()
 	m.maxWriters = 0
@@ -47,7 +47,7 @@ func TestBoundsAndMissingCompleteFile(t *testing.T) {
 	r.ID = LogicalIdentity(r.Application, r.Version, r.Key)
 	authorize(t, m, r)
 	if _, _, e = m.Acquire(context.Background(), r); e == nil {
-		t.Fatal("writer 上限未生效")
+		t.Fatal("writer limit not enforced")
 	}
 }
 func TestSafe416AndWeakValidatorResume(t *testing.T) {
@@ -56,7 +56,7 @@ func TestSafe416AndWeakValidatorResume(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("If-Range") != "" {
-					t.Error("弱 validator 不应发 If-Range")
+					t.Error("weak validator must not send If-Range")
 				}
 				if mode == "416" {
 					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", len(data)))

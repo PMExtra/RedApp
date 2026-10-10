@@ -89,7 +89,7 @@ func TestCleanupCrashHelper(t *testing.T) {
 
 		rd.Close()
 	}
-	t.Fatalf("故障点未触发: %s", point)
+	t.Fatalf("fault point not reached: %s", point)
 }
 func TestCleanupProcessCrashWindows(t *testing.T) {
 	data := []byte("durable cleanup generation")
@@ -114,11 +114,11 @@ func TestCleanupProcessCrashWindows(t *testing.T) {
 			out, e := cmd.CombinedOutput()
 			exit, ok := e.(*exec.ExitError)
 			if !ok || exit.ExitCode() != 91 {
-				t.Fatalf("退出非故障点: %v %s", e, out)
+				t.Fatalf("helper exited outside the fault point: %v %s", e, out)
 			}
 			var ev crashEvidence
 			if e = json.Unmarshal(bytes.TrimSpace(out), &ev); e != nil {
-				t.Fatalf("证据 %v %s", e, out)
+				t.Fatalf("unreadable crash evidence: %v %s", e, out)
 			}
 			for restart := 0; restart < 2; restart++ {
 				guard, e := instance.Acquire(dir)
@@ -135,7 +135,7 @@ func TestCleanupProcessCrashWindows(t *testing.T) {
 				}
 				versions, _ := db.VersionsFor(testApp)
 				if versions["0.1.0"] != ev.FirstSeen {
-					t.Fatal("first_seen 被改写")
+					t.Fatal("first_seen was rewritten")
 				}
 				want := ev.New
 				if stage.point == "preview.after_job_save" && restart == 0 {
@@ -144,11 +144,11 @@ func TestCleanupProcessCrashWindows(t *testing.T) {
 				current := m.current[r.ID]
 				if want == "" {
 					if current != nil {
-						t.Fatal("遗留 current")
+						t.Fatal("a current generation was left behind")
 					}
 				} else {
 					if current == nil || current.ID != want || !bytes.Equal(collect(t, m, r), data) {
-						t.Fatalf("当前代损坏: %s %+v", want, current)
+						t.Fatalf("current generation damaged: %s %+v", want, current)
 					}
 				}
 				if stage.point != "preview.after_job_save" || restart > 0 {
@@ -162,7 +162,7 @@ func TestCleanupProcessCrashWindows(t *testing.T) {
 					}
 
 					if m.all[ev.Old] != nil {
-						t.Fatal("旧代记录残留")
+						t.Fatal("old generation record left behind")
 					}
 				}
 				if e = m.Cleanup(testApp, ev.Job); e != nil {
@@ -170,7 +170,7 @@ func TestCleanupProcessCrashWindows(t *testing.T) {
 				}
 
 				if ev.New != "" && m.current[r.ID].ID != ev.New {
-					t.Fatal("旧 job 误删新代")
+					t.Fatal("old cleanup job deleted the new generation")
 				}
 				m.Close()
 				db.DB.Close()
@@ -195,7 +195,7 @@ func TestPublishedPrefixShortReadFails(t *testing.T) {
 	}
 	_, e = io.ReadAll(rd)
 	if e != io.ErrUnexpectedEOF {
-		t.Fatalf("短读伪装成功: %v", e)
+		t.Fatalf("short read reported as success: %v", e)
 	}
 }
 func TestCleanupTombstoneFailureDoesNotRetireCurrent(t *testing.T) {
@@ -213,14 +213,14 @@ func TestCleanupTombstoneFailureDoesNotRetireCurrent(t *testing.T) {
 		t.Fatal(e)
 	}
 	if e = m.Cleanup(testApp, job.ID); e == nil {
-		t.Fatal("提交失败未返回")
+		t.Fatal("commit failure not returned")
 	}
 	if m.current[r.ID].Retired {
-		t.Fatal("失败 tombstone 污染内存")
+		t.Fatal("failed tombstone changed in-memory state")
 	}
 	db.DB.Exec("DROP TRIGGER reject_retire")
 	if !bytes.Equal(collect(t, m, r), data) {
-		t.Fatal("现有缓存受影响")
+		t.Fatal("existing cache was affected")
 	}
 	if e = m.Cleanup(testApp, job.ID); e != nil {
 		t.Fatal(e)
@@ -243,16 +243,16 @@ func TestCleanupDatabaseDeleteFailureRetainsRetryableGeneration(t *testing.T) {
 		t.Fatal(e)
 	}
 	if e = m.Cleanup(testApp, job.ID); e == nil {
-		t.Fatal("删除失败未返回")
+		t.Fatal("delete failure not returned")
 	}
 	if m.all[old.ID] != old || !old.Retired {
-		t.Fatal("删除失败失去可重试旧代")
+		t.Fatal("delete failure lost the retryable old generation")
 	}
 	db.DB.Exec("DROP TRIGGER reject_delete")
 	if e = m.Cleanup(testApp, job.ID); e != nil {
 		t.Fatal(e)
 	}
 	if m.all[old.ID] != nil {
-		t.Fatal("重试未删除旧代")
+		t.Fatal("retry did not delete the old generation")
 	}
 }

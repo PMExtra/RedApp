@@ -38,13 +38,13 @@ func TestEffectiveAverageExcludesVerificationAndRecentSnapshot(t *testing.T) {
 	m.mu.Unlock()
 	v := m.Snapshot()[0]
 	if v.AverageBPS != 25000 || v.DownloadNS != 2*time.Second.Nanoseconds() {
-		t.Fatalf("平均速度包含验证耗时: %+v", v)
+		t.Fatalf("average speed includes verification time: %+v", v)
 	}
 	if math.Abs(v.RecentBPS-25000) > 200 {
-		t.Fatal("近期快照速度错误", v.RecentBPS)
+		t.Fatal("wrong recent speed in snapshot", v.RecentBPS)
 	}
 	if v.SampledAt.IsZero() {
-		t.Fatal("缺采样时间")
+		t.Fatal("sample time missing")
 	}
 	if e := m.Close(); e != nil {
 		t.Fatal(e)
@@ -73,7 +73,7 @@ func TestHangingUpstreamHasBoundedFailure(t *testing.T) {
 	defer rd.Close()
 	_, e = io.ReadAll(rd)
 	if e == nil || ctx.Err() != nil {
-		t.Fatal("挂起上游未按请求重试边界终止", e)
+		t.Fatal("hanging upstream did not stop at the retry bound", e)
 	}
 }
 

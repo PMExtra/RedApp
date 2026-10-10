@@ -25,10 +25,18 @@ import (
 type testBudget struct {
 	readers, writers atomic.Int64
 	limit            int64
+	// readerAcquired, when set, is signalled for every reader lease.
+	readerAcquired atomic.Pointer[chan struct{}]
 }
 
 func (b *testBudget) AcquireHTTPReader() (func(), error) {
 	b.readers.Add(1)
+	if acquired := b.readerAcquired.Load(); acquired != nil {
+		select {
+		case *acquired <- struct{}{}:
+		default:
+		}
+	}
 	var once sync.Once
 	return func() { once.Do(func() { b.readers.Add(-1) }) }, nil
 }
