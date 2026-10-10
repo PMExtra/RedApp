@@ -8,7 +8,7 @@ GO_PACKAGES := ./cmd/... ./installers/... ./internal/... ./presets/...
 # it in the pinned native container); they never rebuild it.
 REQUIRE_BINARY := @test -x bin/redapp || { echo 'bin/redapp is missing: run `make binary` or `make build` first' >&2; exit 1; }
 
-.PHONY: build binary check test docs-check toolchain-check frontend frontend-test \
+.PHONY: build binary check test docs-check toolchain-check frontend frontend-check frontend-test \
 	runtime-test e2e network-test installers installer-inventory docker
 
 build: frontend
@@ -37,6 +37,10 @@ $(NODE_MODULES): frontend/package.json frontend/package-lock.json
 	cd frontend && npm ci --no-audit --no-fund
 frontend: $(NODE_MODULES)
 	cd frontend && npm run build
+# Rebuild and require the committed bundle byte for byte; untracked files fail too.
+frontend-check: frontend
+	git diff --exit-code -- internal/httpserver/web
+	test -z "$$(git status --porcelain -- internal/httpserver/web)"
 frontend-test: $(NODE_MODULES)
 	cd frontend && npm run codegen:check && npm run lint && npm run format:check && npm run typecheck && npm test
 

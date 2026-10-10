@@ -27,11 +27,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Test and build frontend once
         run: |
-          make frontend-test
-          (cd frontend && npm exec -- vite build)
-          # Also fails on new, uncommitted files (git diff ignores untracked ones).
-          git diff --exit-code -- internal/httpserver/web
-          test -z "$(git status --porcelain -- internal/httpserver/web)"
+          make frontend-test frontend-check
           mkdir frontend-artifact
           tar -czf frontend-artifact/web.tar.gz -C internal/httpserver web
           cd frontend-artifact

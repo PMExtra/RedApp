@@ -18,6 +18,7 @@
 | `make test` | 脚本单测、`go test -race`（`cmd`、`installers`、`internal`、`presets`）、Shell 安装器与维护回归 |
 | `make frontend-test` | 前端生成物检查（`codegen:check`）、ESLint、Prettier、类型检查与 Vitest |
 | `make frontend` | 构建前端到 `internal/httpserver/web` |
+| `make frontend-check` | 重新构建前端，要求 `internal/httpserver/web` 与提交逐字节一致（CI 同一入口） |
 | `cd frontend && npm run codegen` | 由 `api/openapi.yaml` 重新生成前端 API 类型 |
 | `cd frontend && npm run format` | Prettier 格式化前端代码 |
 | `make build` / `make binary` | 前端 + 二进制 / 只编译二进制 |
@@ -26,7 +27,7 @@
 | `make network-test` | 手动联网测试：官方 Claude 签名清单与一个真实二进制，不在门禁中 |
 | `make docs-check` | 双语文档结构与 Markdown 链接 |
 
-提交前至少运行与改动相关的门禁；改 Go 代码必须通过 `make check test`，改前端必须通过 `make frontend-test` 并重新构建；改 `api/openapi.yaml` 必须重新生成前端类型。
+提交前至少运行与改动相关的门禁；改 Go 代码必须通过 `make check test`，改前端必须通过 `make frontend-test`，重新构建并提交产物，提交后 `make frontend-check` 必须通过；改 `api/openapi.yaml` 必须重新生成前端类型。
 
 ## 目录职责
 
