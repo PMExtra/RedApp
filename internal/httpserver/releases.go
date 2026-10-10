@@ -207,7 +207,7 @@ func (s *Server) listResources(w http.ResponseWriter, r *http.Request) {
 			item.FinishedAt = &finished
 		}
 		if v.Error != "" {
-			message := v.Error
+			message := displayText(v.Error)
 			item.Error = &message
 		}
 		page.Items = append(page.Items, item)

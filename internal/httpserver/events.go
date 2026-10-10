@@ -24,7 +24,7 @@ type eventDTO struct {
 // eventDocument maps a stored event. Internal application scopes become the
 // public application key, or null once the application no longer exists.
 func eventDocument(e store.ListedEvent, scopes map[string]string) eventDTO {
-	out := eventDTO{ID: e.ID, Time: e.Time.UTC(), Category: e.Category, Code: e.Code, Message: e.Message, AppKey: optionalText(publicScope(e.AppID, scopes)), Version: optionalText(e.Version), ResourceKey: optionalText(e.ResourceKey), GenerationID: optionalText(e.GenerationID)}
+	out := eventDTO{ID: e.ID, Time: e.Time.UTC(), Category: e.Category, Code: e.Code, Message: displayText(e.Message), AppKey: optionalText(publicScope(e.AppID, scopes)), Version: optionalText(e.Version), ResourceKey: optionalText(e.ResourceKey), GenerationID: optionalText(e.GenerationID)}
 	if e.StatusCode >= 100 && e.StatusCode <= 599 {
 		status := e.StatusCode
 		out.StatusCode = &status

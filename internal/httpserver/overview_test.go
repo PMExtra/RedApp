@@ -135,8 +135,12 @@ func TestEventsPaginateNewestFirstWithPublicKeys(t *testing.T) {
 		t.Fatal("events skipped or repeated", events)
 	}
 	for i, event := range events {
-		if i > 0 && event.ID >= events[i-1].ID || event.Message != fmt.Sprint("event ", 4-i) {
+		if i > 0 && event.ID >= events[i-1].ID {
 			t.Fatal("events are not newest first", events)
+		}
+		// Recorded messages are internal lower-case texts shown as sentences.
+		if event.Message != fmt.Sprint("Event ", 4-i) {
+			t.Fatal("event message", event.Message)
 		}
 		owned := (4-i)%2 == 0
 		if owned && (event.AppKey == nil || *event.AppKey != files.Key || *event.StatusCode != 503 || *event.Version != "1.0.0" || *event.ResourceKey != "artifact" || event.GenerationID != nil) {

@@ -8,7 +8,6 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
-	"strings"
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/apps/builtin"
@@ -68,7 +67,7 @@ func sentence(detail string) string {
 	if detail == "" {
 		return "Invalid value"
 	}
-	return strings.ToUpper(detail[:1]) + detail[1:]
+	return displayText(detail)
 }
 
 // vendorParam is the validated {vendor} path segment.
