@@ -51,8 +51,35 @@ test.describe("administration", () => {
     expect(errors).toEqual([]);
   });
 
-  // Enable once package D implements the site settings page.
-  test.fixme("saves the site subtitle and restores it", async ({ page }) => {
+  test("saves the site subtitle and restores it", async ({ page }) => {
+    const errors = collectConsoleErrors(page);
     await page.goto("/admin/settings/site");
+    await page.getByLabel(/Password|密码/).fill(password);
+    await page.getByRole("button", { name: /Sign in|登录/ }).click();
+    await expect(page).toHaveURL(/\/admin\/settings\/site$/);
+
+    const card = page.locator("section", {
+      has: page.getByRole("heading", { name: /^(Site texts|站点文本)$/ }),
+    });
+    const subtitle = card.getByLabel(/^(Subtitle|副标题)/).first();
+    const save = card.getByRole("button", { name: /Save site texts|保存站点文本/ });
+    await expect(subtitle).toBeEditable();
+    const original = await subtitle.inputValue();
+    const changed = `Smoke test ${String(Date.now())}`;
+
+    await subtitle.fill(changed);
+    await save.click();
+    await expect(page.getByText(/Site texts saved|站点文本已保存/)).toBeVisible();
+
+    // The saved value survives a reload (fresh GET with a new revision).
+    await page.reload();
+    await expect(subtitle).toHaveValue(changed);
+
+    await subtitle.fill(original);
+    await save.click();
+    await expect(page.getByText(/Site texts saved|站点文本已保存/).first()).toBeVisible();
+    await page.reload();
+    await expect(subtitle).toHaveValue(original);
+    expect(errors).toEqual([]);
   });
 });
