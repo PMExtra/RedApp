@@ -12,9 +12,16 @@ on:
       - '.github/workflows/windows-installers.yml'
       - 'scripts/installer*.py'
       - 'scripts/test-installer*.py'
-      - 'presets/**'
-      - 'internal/yamlconfig/**'
+      - 'scripts/update-installers.py'
+      - 'scripts/publish-installer-update.py'
+      - 'installers/**'
+      - 'Makefile'
+      # make installer-inventory builds cmd/preset-inventory and the internal packages it imports.
       - 'cmd/preset-inventory/**'
+      - 'presets/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
 
 permissions:
   contents: read
