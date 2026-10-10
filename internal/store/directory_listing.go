@@ -15,13 +15,12 @@ type Page[T any] struct {
 	TotalPages int   `json:"total_pages"`
 }
 
+// NewPage starts a page-style result. A page beyond the last one stays as
+// requested and returns no items.
 func NewPage[T any](page, limit int, total int64) Page[T] {
 	pages := int((total + int64(limit) - 1) / int64(limit))
 	if pages < 1 {
 		pages = 1
-	}
-	if page > pages {
-		page = pages
 	}
 	return Page[T]{Items: []T{}, Page: page, Limit: limit, Total: total, TotalPages: pages}
 }
@@ -220,4 +219,26 @@ func (s *Store) ApplicationCategoryPage(vendor string, page, limit int, q, categ
 		return result, err
 	}
 	return result, tx.Commit()
+}
+
+// SearchVendors returns at most limit published vendors whose ID or a
+// localized name contains q (case-insensitive), ordered by ID.
+func (s *Store) SearchVendors(q string, limit int) ([]Vendor, error) {
+	if limit < 1 || limit > 100 {
+		return nil, ErrInvalidDirectory
+	}
+	rows, err := s.DB.Query(`SELECT `+vendorColumns+` FROM vendors v WHERE v.enabled=1 AND v.deleted_at_s IS NULL AND `+vendorMatch+` ORDER BY v.id LIMIT ?`, append(vendorMatchArgs(q), limit)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Vendor{}
+	for rows.Next() {
+		v, err := scanVendor(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
 }

@@ -2,313 +2,21 @@ package httpserver
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
-	"github.com/PMExtra/RedApp/presets"
 	"io"
 	"mime/multipart"
-	"net/http"
-	"net/http/cookiejar"
-	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
-	"time"
+
+	"github.com/PMExtra/RedApp/presets"
 
 	"github.com/PMExtra/RedApp/internal/application"
-	"github.com/PMExtra/RedApp/internal/apps/builtin"
-	"github.com/PMExtra/RedApp/internal/auth"
-	"github.com/PMExtra/RedApp/internal/catalog"
-	"github.com/PMExtra/RedApp/internal/config"
-	"github.com/PMExtra/RedApp/internal/distributor"
-	"github.com/PMExtra/RedApp/internal/download"
-	"github.com/PMExtra/RedApp/internal/history"
-	"github.com/PMExtra/RedApp/internal/hosted"
-	"github.com/PMExtra/RedApp/internal/httpcache"
 	"github.com/PMExtra/RedApp/internal/media"
 	"github.com/PMExtra/RedApp/internal/store"
-	"golang.org/x/crypto/bcrypt"
 )
 
-type directoryHarness struct {
-	t        *testing.T
-	server   *Server
-	http     *httptest.Server
-	client   *http.Client
-	password string
-	csrf     string
-	close    func()
-}
-
-// This fixture explicitly installs release examples for route coverage.
-// Production initializes disabled entity templates; this fixture enables them explicitly.
-func newDirectoryHarness(t *testing.T, dir string, configure ...func(*Server)) *directoryHarness {
-	t.Helper()
-	db, err := store.Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return newDirectoryHarnessWithStore(t, dir, db, configure...)
-}
-
-// A pre-opened current-schema store preserves real login/CSRF/restart coverage.
-func newDirectoryHarnessWithStore(t *testing.T, dir string, db *store.Store, configure ...func(*Server)) *directoryHarness {
-	t.Helper()
-	// A directory that already has vendors was initialized by an earlier harness.
-	existing, err := db.Vendors(true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	initialized := len(existing) != 0
-	if err := db.EnsureEntityTemplates(); err != nil {
-		t.Fatal(err)
-	}
-	vendors, err := db.Vendors(false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !initialized {
-		for _, v := range vendors {
-			if !v.Enabled {
-				enabled := true
-				if _, err = db.PatchVendorFields(v.ID, v.Revision, nil, &enabled); err != nil {
-					t.Fatal(err)
-				}
-			}
-		}
-	}
-	apps, err := db.Applications(false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !initialized {
-		for _, a := range apps {
-			if !a.Enabled {
-				enabled := true
-				if _, err = db.PatchApplicationFields(a.Key, a.Revision, nil, &enabled); err != nil {
-					t.Fatal(err)
-				}
-			}
-		}
-
-	}
-	pool := distributor.NewPool()
-	if err = pool.LoadProxy(db); err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := db.DirectoryConfigurationSnapshot()
-	if err != nil {
-		t.Fatal(err)
-	}
-	entries, err := builtin.EntriesFromConfiguration(snapshot, pool)
-	if err != nil {
-		t.Fatal(err)
-	}
-	registry, err := application.NewRegistry(entries)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sources, err := db.Sources()
-	if err != nil {
-		t.Fatal(err)
-	}
-	clients := make(map[string]*distributor.Client, len(sources))
-	for _, source := range sources {
-		client, err := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, snapshot.ProviderDefaults[source.Provider], source.AppUID, snapshot.ProxyScopes[source.AppUID].VendorUID, pool)
-		if err != nil {
-			t.Fatal(err)
-		}
-		clients[source.StorageID()] = client
-	}
-	manager, err := download.NewApplications(dir, db, clients)
-	if err != nil {
-		t.Fatal(err)
-	}
-	icons, err := media.New(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	httpCache, err := httpcache.New(dir, db, manager)
-	if err != nil {
-		t.Fatal(err)
-	}
-	hostedFiles, err := hosted.New(dir, db, manager)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h := &directoryHarness{t: t}
-	// Seed only absent accounts; authentication and restart tests keep real login/CSRF.
-	var admins int
-	if err := db.DB.QueryRow("SELECT COUNT(*) FROM admin").Scan(&admins); err != nil {
-		t.Fatal(err)
-	}
-	if admins == 0 {
-		h.password = "isolated-directory-test-password"
-		hash, err := bcrypt.GenerateFromPassword([]byte(h.password), bcrypt.MinCost)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := db.DB.Exec("INSERT INTO admin VALUES(1,?,1)", hash); err != nil {
-			t.Fatal(err)
-		}
-	}
-	a, err := auth.New(db, func(password string) { h.password = password })
-	if err != nil {
-		t.Fatal(err)
-	}
-	metricHistory, err := history.Open(db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	public, err := config.LoadPublicSettings(db, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.server = &Server{Version: "directory-test", DB: db, Registry: registry, Catalog: catalog.New(db, registry), Downloads: manager, HTTPCache: httpCache, Hosted: hostedFiles, Auth: a, Pool: pool, Upstream: pool, Icons: icons, History: metricHistory, PublicConfig: public, Dir: dir, Started: time.Now()}
-	for _, apply := range configure {
-		apply(h.server)
-	}
-	h.server.ConfigurePublication()
-	h.http = httptest.NewServer(h.server)
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h.client = &http.Client{Jar: jar, Timeout: 10 * time.Second}
-	var once sync.Once
-	h.close = func() {
-		once.Do(func() {
-			h.http.Close()
-			if h.server.prewarmer != nil {
-				h.server.prewarmer.Close()
-			}
-			hostedFiles.Close()
-			httpCache.Close()
-			manager.Close()
-			icons.Close()
-			pool.CloseIdleConnections()
-			db.DB.Close()
-		})
-	}
-	t.Cleanup(h.close)
-	return h
-}
-
-func (h *directoryHarness) raw(method, path string, body io.Reader, contentType string, headers map[string]string) (int, []byte, http.Header) {
-	h.t.Helper()
-	r, err := http.NewRequest(method, h.http.URL+path, body)
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	if contentType != "" {
-		r.Header.Set("Content-Type", contentType)
-	}
-	if h.csrf != "" {
-		r.Header.Set("X-CSRF-Token", h.csrf)
-	}
-	for key, value := range headers {
-		r.Header.Set(key, value)
-	}
-	response, err := h.client.Do(r)
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	defer response.Body.Close()
-	data, err := io.ReadAll(response.Body)
-	if err != nil {
-		h.t.Fatal(err)
-	}
-	return response.StatusCode, data, response.Header
-}
-
-func (h *directoryHarness) request(method, path string, body any, status int, headers map[string]string) ([]byte, http.Header) {
-	h.t.Helper()
-	var reader io.Reader
-	if body != nil {
-		data, err := json.Marshal(body)
-		if err != nil {
-			h.t.Fatal(err)
-		}
-		reader = bytes.NewReader(data)
-	}
-	code, data, responseHeaders := h.raw(method, path, reader, "application/json", headers)
-	if code != status {
-		h.t.Fatalf("%s %s: got %d, want %d: %s", method, path, code, status, data)
-	}
-	return data, responseHeaders
-}
-
-func (h *directoryHarness) login(password string) {
-	h.t.Helper()
-	data, _ := h.request("POST", "/admin/api/login", map[string]string{"password": password}, 200, nil)
-	var session struct {
-		CSRF string `json:"csrf"`
-	}
-	if err := json.Unmarshal(data, &session); err != nil || session.CSRF == "" {
-		h.t.Fatal("login did not return a session CSRF token", err)
-	}
-	h.csrf = session.CSRF
-}
-
-func directoryDecode[T any](t *testing.T, data []byte, field string) T {
-	t.Helper()
-	var result map[string]json.RawMessage
-	var value T
-	if err := json.Unmarshal(data, &result); err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(result[field], &value); err != nil {
-		t.Fatalf("missing/invalid %s in %s: %v", field, data, err)
-	}
-	return value
-}
-
-func (h *directoryHarness) createVendor(id string) store.Vendor {
-	h.t.Helper()
-	data, _ := h.request("POST", "/admin/api/vendors", map[string]any{"id": id, "name": store.LocalizedText{En: "Enterprise", ZhCN: "企业"}, "description": store.LocalizedText{En: "Software downloads", ZhCN: "软件下载"}}, 201, nil)
-	return directoryDecode[store.Vendor](h.t, data, "vendor")
-}
-
-func (h *directoryHarness) createApp(vendor, id, provider string, options map[string]any) store.Application {
-	h.t.Helper()
-	input := map[string]any{"id": id, "provider": provider, "name": store.LocalizedText{En: id, ZhCN: id}}
-	for key, value := range options {
-		input[key] = value
-	}
-	data, _ := h.request("POST", "/admin/api/vendors/"+vendor+"/apps", input, 201, nil)
-	return directoryDecode[store.Application](h.t, data, "app")
-}
-
-type directoryPublicApp struct {
-	ID           string                   `json:"id"`
-	Provider     string                   `json:"provider"`
-	Capabilities application.Capabilities `json:"capabilities"`
-	Icon         string                   `json:"icon"`
-	Installers   []map[string]string      `json:"installers"`
-	Vendor       struct {
-		ID   string                `json:"id"`
-		Name application.Localized `json:"name"`
-	} `json:"vendor"`
-}
-
-func (h *directoryHarness) bootstrap() (string, map[string]directoryPublicApp) {
-	h.t.Helper()
-	data, _ := h.request("GET", "/api/bootstrap", nil, 200, nil)
-	apps := directoryDecode[[]directoryPublicApp](h.t, data, "apps")
-	result := make(map[string]directoryPublicApp, len(apps))
-	for _, app := range apps {
-		result[app.ID] = app
-	}
-	for _, private := range []string{`"base_url"`, `"source_epoch"`, `"uid"`, `"password"`, `"upstream_proxy"`} {
-		if bytes.Contains(data, []byte(private)) {
-			h.t.Fatalf("public bootstrap exposed private configuration %s", private)
-		}
-	}
-	return directoryDecode[string](h.t, data, "revision"), result
-}
-
 func TestDirectoryHTTPProviderCreationCASAndSettings(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.request("GET", "/admin/api/providers", nil, 401, nil)
 	h.login(h.password)
 	data, _ := h.request("GET", "/admin/api/providers", nil, 200, nil)
@@ -323,7 +31,7 @@ func TestDirectoryHTTPProviderCreationCASAndSettings(t *testing.T) {
 	input := map[string]any{"id": "blocked", "name": store.LocalizedText{En: "Blocked", ZhCN: "阻止"}}
 	h.request("POST", "/admin/api/vendors", input, 403, map[string]string{"X-CSRF-Token": ""})
 	h.request("POST", "/admin/api/vendors", input, 403, map[string]string{"Origin": "https://foreign.example"})
-	initialRevision, _ := h.bootstrap()
+	initialRevision, _ := h.publicCatalog()
 	vendor := h.createVendor("enterprise")
 	h.request("POST", "/admin/api/vendors", input, 201, nil)
 	h.request("POST", "/admin/api/vendors", input, 409, nil)
@@ -363,8 +71,8 @@ func TestDirectoryHTTPProviderCreationCASAndSettings(t *testing.T) {
 	if rebound.SourceEpoch != 2 || rebound.MetricsID() != general.MetricsID() || rebound.StorageID() == general.StorageID() {
 		t.Fatal("API source edit did not isolate the cache namespace", rebound)
 	}
-	currentRevision, public := h.bootstrap()
-	if initialRevision == currentRevision || public[general.Key].Provider != application.HttpCache || public[general.Key].Capabilities.Versions || len(public[general.Key].Installers) != 0 || public[general.Key].Vendor.Name["zh-CN"] != "企业" {
+	currentRevision, public := h.publicCatalog()
+	if initialRevision == currentRevision || public[general.Key].Provider != application.HttpCache || public[general.Key].Capabilities.Versions || public[general.Key].Vendor.Name.ZhCN != "企业" {
 		t.Fatal("dynamic public bootstrap did not reflect directory/provider metadata", public)
 	}
 
@@ -384,7 +92,7 @@ func TestDirectoryHTTPProviderCreationCASAndSettings(t *testing.T) {
 		t.Fatal("settings update diverged from application record", updated)
 	}
 	h.request("PUT", codexAPI+"/settings", map[string]int{"channel_ttl_seconds": 30}, 409, map[string]string{"If-Match": fmt.Sprint(codex.Revision)})
-	entry, ok := h.server.Registry.Lookup(updated.Key)
+	entry, ok := h.server.registry.Lookup(updated.Key)
 	if !ok || entry.Descriptor.DefaultChannelTTLSeconds != 120 || entry.Revision != updated.Revision {
 		t.Fatal("settings write did not publish the new runtime snapshot")
 	}
@@ -397,18 +105,18 @@ func TestDirectoryHTTPProviderCreationCASAndSettings(t *testing.T) {
 
 func TestDirectoryHTTPDisableDeleteAndEmptyRestart(t *testing.T) {
 	dir := t.TempDir()
-	h := newDirectoryHarness(t, dir)
+	h := newHarness(t, withDir(dir))
 	password := h.password
 	h.login(password)
 	vendor := h.createVendor("enterprise")
 	app := h.createApp(vendor.ID, "codex", application.Codex, nil)
-	if err := h.server.DB.AddFor(app.MetricsID(), "artifact_requests", 7); err != nil {
+	if err := h.server.store.AddFor(app.MetricsID(), "artifact_requests", 7); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := h.bootstrap()
+	before, _ := h.publicCatalog()
 	data, _ := h.request("PATCH", "/admin/api/vendors/enterprise", map[string]any{"revision": vendor.Revision, "enabled": false}, 200, nil)
 	disabledVendor := directoryDecode[store.Vendor](t, data, "vendor")
-	after, public := h.bootstrap()
+	after, public := h.publicCatalog()
 	if before == after {
 		t.Fatal("vendor visibility change did not update bootstrap revision")
 	}
@@ -445,17 +153,17 @@ func TestDirectoryHTTPDisableDeleteAndEmptyRestart(t *testing.T) {
 	}
 	h.request("DELETE", "/admin/api/vendors/enterprise", map[string]any{"revision": currentVendor.Revision, "confirm_key": "enterprise"}, 200, nil)
 	h.request("DELETE", "/admin/api/vendors/openai", map[string]any{"revision": 1, "confirm_key": "openai"}, 409, nil)
-	_, public = h.bootstrap()
+	_, public = h.publicCatalog()
 	if len(public) != 0 {
 		t.Fatal("disabled or deleted application remained public")
 	}
 	h.close()
-	h = newDirectoryHarness(t, dir)
+	h = newHarness(t, withDir(dir))
 	if h.password != "" {
 		t.Fatal("admin credentials reset")
 	}
 	h.login(password)
-	_, public = h.bootstrap()
+	_, public = h.publicCatalog()
 	if len(public) != 0 {
 		t.Fatal("restart enabled a protected template")
 	}
@@ -464,14 +172,14 @@ func TestDirectoryHTTPDisableDeleteAndEmptyRestart(t *testing.T) {
 	if rows := directoryDecode[[]store.Application](t, data, "items"); len(rows) != 0 {
 		t.Fatal("permanent removal left tombstones")
 	}
-	counters, err := h.server.DB.CountersFor(app.MetricsID())
+	counters, err := h.server.store.CountersFor(app.MetricsID())
 	if err != nil || len(counters) != 0 {
 		t.Fatal("deleted history survived", counters, err)
 	}
 	h.createVendor("enterprise")
 	h.createVendor("after-restart")
 	h.createApp("after-restart", "files", application.HttpCache, map[string]any{"base_url": "http://intranet.example/files"})
-	_, public = h.bootstrap()
+	_, public = h.publicCatalog()
 	if len(public) != 1 || public["after-restart/files"].ID == "" {
 		t.Fatal("empty runtime could not admit a new application")
 	}
@@ -479,7 +187,7 @@ func TestDirectoryHTTPDisableDeleteAndEmptyRestart(t *testing.T) {
 }
 
 func TestDirectoryHTTPIconUploadAndPublicBoundary(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	vendor := h.createVendor("enterprise")
 	upload := func(svg, csrf string, want int) string {
@@ -523,7 +231,7 @@ func TestDirectoryHTTPIconUploadAndPublicBoundary(t *testing.T) {
 	h.request("PATCH", "/admin/api/vendors/enterprise", map[string]any{"revision": vendor.Revision, "icon": media.PublicPrefix + strings.Repeat("f", 64) + ".png"}, 400, nil)
 	h.request("PATCH", "/admin/api/vendors/enterprise", map[string]any{"revision": vendor.Revision, "icon": path}, 200, nil)
 	app := h.createApp(vendor.ID, "files", application.HttpCache, map[string]any{"base_url": "http://intranet.example/files"})
-	_, public := h.bootstrap()
+	_, public := h.publicCatalog()
 	if public[app.Key].Icon != path {
 		t.Fatal("application without its own icon did not inherit vendor icon")
 	}
@@ -534,15 +242,15 @@ func TestDirectoryHTTPIconUploadAndPublicBoundary(t *testing.T) {
 }
 
 func TestDirectoryOpenAISharedIconAndEnabledOnlyPATCH(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	icon, _ := h.request("GET", presets.ImagePrefix+"builtin/openai.svg", nil, 200, nil)
 	codex, _ := h.request("GET", presets.ImagePrefix+"openai/codex/icon.svg", nil, 200, nil)
 	if !bytes.Equal(icon, codex) {
 		t.Fatal("vendor and application icon bytes differ")
 	}
-	v, _ := h.server.DB.Vendor("openai")
-	a, _ := h.server.DB.Application("openai/codex")
+	v, _ := h.server.store.Vendor("openai")
+	a, _ := h.server.store.Application("openai/codex")
 	data, _ := h.request("PATCH", "/admin/api/vendors/openai", map[string]any{"revision": v.Revision, "enabled": false}, 200, nil)
 	changedVendor := directoryDecode[store.Vendor](t, data, "vendor")
 	if changedVendor.Enabled || changedVendor.Revision != v.Revision+1 || changedVendor.Name != v.Name || changedVendor.Description != v.Description || changedVendor.Icon != v.Icon {

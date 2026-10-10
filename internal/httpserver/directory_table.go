@@ -33,7 +33,7 @@ func (s *Server) applicationTable(w http.ResponseWriter, r *http.Request, vendor
 		fail(w, 400, "Invalid application table sort")
 		return
 	}
-	apps, err := s.DB.ApplicationsMatching(vendor, q, state)
+	apps, err := s.store.ApplicationsMatching(vendor, q, state)
 	if err != nil {
 		directoryError(w, err)
 		return
@@ -41,7 +41,7 @@ func (s *Server) applicationTable(w http.ResponseWriter, r *http.Request, vendor
 	rows := make([]applicationTableRow, 0, len(apps))
 	for _, app := range apps {
 		row := applicationTableRow{Application: app}
-		if entry, ok := s.Registry.LookupAny(app.Key); ok && entry.UID == app.UID && entry.SourceEpoch == app.SourceEpoch {
+		if entry, ok := s.registry.LookupAny(app.Key); ok && entry.UID == app.UID && entry.SourceEpoch == app.SourceEpoch {
 			row.LatestVersion, row.VersionDiscoveredAt, err = s.latestKnownVersion(entry)
 			if err != nil {
 				directoryError(w, err)
@@ -50,7 +50,7 @@ func (s *Server) applicationTable(w http.ResponseWriter, r *http.Request, vendor
 		}
 		// Hosted files and information pages do not record this counter.
 		if app.Provider == "codex" || app.Provider == "claude-code" || app.Provider == "http-cache" {
-			counters, e := s.DB.CountersFor(app.MetricsID())
+			counters, e := s.store.CountersFor(app.MetricsID())
 			if e != nil {
 				directoryError(w, e)
 				return
@@ -70,7 +70,7 @@ func (s *Server) applicationTable(w http.ResponseWriter, r *http.Request, vendor
 		case "version":
 			missingA, missingB = a.LatestVersion == "", b.LatestVersion == ""
 			order = strings.Compare(a.LatestVersion, b.LatestVersion)
-			if entry, ok := s.Registry.LookupAny(a.Key); ok && entry.Protocol != nil && !missingA && !missingB {
+			if entry, ok := s.registry.LookupAny(a.Key); ok && entry.Protocol != nil && !missingA && !missingB {
 				if n, e := entry.Protocol.CompareVersions(a.LatestVersion, b.LatestVersion); e == nil {
 					order = n
 				}
@@ -103,7 +103,7 @@ func (s *Server) applicationTable(w http.ResponseWriter, r *http.Request, vendor
 		return order < 0
 	})
 	result := store.NewPage[applicationTableRow](page, limit, int64(len(rows)))
-	start := (result.Page - 1) * limit
+	start := min((result.Page-1)*limit, len(rows))
 	end := min(start+limit, len(rows))
 	result.Items = rows[start:end]
 	reply(w, 200, result)

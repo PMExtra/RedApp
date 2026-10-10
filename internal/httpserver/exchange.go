@@ -6,12 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/PMExtra/RedApp/internal/auth"
-	"github.com/PMExtra/RedApp/internal/configexchange"
-	"github.com/PMExtra/RedApp/internal/identity"
-	"github.com/PMExtra/RedApp/internal/media"
-	"github.com/PMExtra/RedApp/internal/store"
-	"github.com/PMExtra/RedApp/presets"
 	"io"
 	"net/http"
 	"os"
@@ -19,6 +13,13 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/PMExtra/RedApp/internal/auth"
+	"github.com/PMExtra/RedApp/internal/configexchange"
+	"github.com/PMExtra/RedApp/internal/identity"
+	"github.com/PMExtra/RedApp/internal/media"
+	"github.com/PMExtra/RedApp/internal/store"
+	"github.com/PMExtra/RedApp/presets"
 )
 
 type exchangePreview struct {
@@ -47,7 +48,7 @@ func (s *Server) exchangeAPI(w http.ResponseWriter, r *http.Request, session aut
 		}
 		s.directoryMu.Lock()
 		defer s.directoryMu.Unlock()
-		app, e := s.DB.CopyApplication(key, input)
+		app, e := s.store.CopyApplication(key, input)
 		if e != nil {
 			directoryError(w, e)
 		} else {
@@ -71,7 +72,7 @@ func (s *Server) exchangeAPI(w http.ResponseWriter, r *http.Request, session aut
 			fail(w, 400, "Invalid export selection")
 			return true
 		}
-		p, e := s.DB.ExportConfiguration(options)
+		p, e := s.store.ExportConfiguration(options)
 		if e == nil {
 			e = s.exportImages(&p)
 		}
@@ -118,7 +119,7 @@ func (s *Server) exchangeAPI(w http.ResponseWriter, r *http.Request, session aut
 			fail(w, 400, "Invalid controlled configuration images")
 			return true
 		}
-		plan, e := s.DB.PreviewConfigurationImport(p.Documents, choices)
+		plan, e := s.store.PreviewConfigurationImport(p.Documents, choices)
 		if e != nil {
 			directoryErrorSafe(w, e)
 			return true
@@ -149,7 +150,7 @@ func (s *Server) exchangeAPI(w http.ResponseWriter, r *http.Request, session aut
 			fail(w, 400, "Explicit configuration confirmation required")
 			return true
 		}
-		if result, found, e := s.DB.ImportReceipt(id); e != nil {
+		if result, found, e := s.store.ImportReceipt(id); e != nil {
 			directoryErrorSafe(w, e)
 			return true
 		} else if found {
@@ -169,9 +170,9 @@ func (s *Server) exchangeAPI(w http.ResponseWriter, r *http.Request, session aut
 				needed[path] = body
 			}
 		}
-		e := s.Icons.ApplyImages(needed, s.DB.IconReferenced, func() error {
+		e := s.icons.ApplyImages(needed, s.store.IconReferenced, func() error {
 			var e error
-			result, e = s.DB.ExecuteConfigurationImport(preview.plan, id, input.TrustInstructions, func() bool { active, ok := s.Auth.Session(r); return ok && exchangeOwner(active) == owner })
+			result, e = s.store.ExecuteConfigurationImport(preview.plan, id, input.TrustInstructions, func() bool { active, ok := s.auth.Session(r); return ok && exchangeOwner(active) == owner })
 			return e
 		})
 		s.directoryMu.Unlock()
@@ -283,7 +284,7 @@ func (s *Server) exportImages(p *configexchange.Package) error {
 			var body []byte
 			var extension string
 			if strings.HasPrefix(field.value, media.PublicPrefix) {
-				file, mime, e := s.Icons.Open(field.value)
+				file, mime, e := s.icons.Open(field.value)
 				if e != nil {
 					return e
 				}
@@ -323,7 +324,7 @@ func (s *Server) exportImages(p *configexchange.Package) error {
 }
 func (s *Server) prepareImportImages(p *configexchange.Package) (map[string][]byte, error) {
 	// Validation writes only into an isolated directory, never into published icon storage.
-	temp, e := os.MkdirTemp(s.Dir, ".configuration-images-")
+	temp, e := os.MkdirTemp(s.dataDir, ".configuration-images-")
 	if e != nil {
 		return nil, e
 	}

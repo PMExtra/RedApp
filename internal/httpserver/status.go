@@ -1,26 +1,27 @@
 package httpserver
 
 import (
-	"github.com/PMExtra/RedApp/internal/application"
-	"github.com/PMExtra/RedApp/internal/download"
-	"github.com/PMExtra/RedApp/internal/identity"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/internal/download"
+	"github.com/PMExtra/RedApp/internal/identity"
 )
 
 // resourceViews is the shared status/listing boundary. The GeneralHttp cache can
 // append its owned snapshots here without changing metric ownership or callers.
 func (s *Server) resourceViews() ([]download.View, error) {
 	views := []download.View{}
-	if s.Downloads != nil {
-		views = s.Downloads.Snapshot()
+	if s.downloads != nil {
+		views = s.downloads.Snapshot()
 	}
-	if s.HTTPCache != nil {
-		httpViews, err := s.HTTPCache.Snapshot()
+	if s.httpCache != nil {
+		httpViews, err := s.httpCache.Snapshot()
 		if err != nil {
 			return nil, err
 		}
@@ -31,7 +32,7 @@ func (s *Server) resourceViews() ([]download.View, error) {
 
 func (s *Server) publicScopes() map[string]string {
 	scopes := map[string]string{}
-	for _, entry := range s.Registry.AllEntries() {
+	for _, entry := range s.registry.AllEntries() {
 		scopes[entry.MetricsID()] = entry.Descriptor.ID
 	}
 	return scopes
@@ -93,7 +94,7 @@ func (s *Server) status(public string) (map[string]any, error) {
 			temp += size
 		}
 	}
-	e := filepath.WalkDir(s.Dir, func(path string, d os.DirEntry, e error) error {
+	e := filepath.WalkDir(s.dataDir, func(path string, d os.DirEntry, e error) error {
 		if e != nil {
 			return e
 		}
@@ -126,34 +127,34 @@ func (s *Server) status(public string) (map[string]any, error) {
 		return nil, e
 	}
 	var disk syscall.Statfs_t
-	if e = syscall.Statfs(s.Dir, &disk); e != nil {
+	if e = syscall.Statfs(s.dataDir, &disk); e != nil {
 		return nil, e
 	}
 	applicationVersionCounts := map[string]int64{}
-	for _, entry := range s.Registry.Entries() {
+	for _, entry := range s.registry.Entries() {
 		if entry.Protocol == nil {
 			continue
 		}
-		count, err := s.DB.VersionCount(entry.StorageID())
+		count, err := s.store.VersionCount(entry.StorageID())
 		if err != nil {
 			return nil, err
 		}
 		applicationVersionCounts[entry.Descriptor.ID] = count
 	}
-	counters, e := s.DB.Counters()
+	counters, e := s.store.Counters()
 	if e != nil {
 		return nil, e
 	}
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
-	status := map[string]any{"name": "RedApp", "started": s.Started, "os": runtime.GOOS, "arch": runtime.GOARCH, "go": runtime.Version(), "goroutines": runtime.NumGoroutine(), "memory_bytes": mem.Alloc, "sampled_at": time.Now().UTC(), "resources": views, "counters": counters, "disk": map[string]any{"used_bytes": total, "logical_bytes": logical, "allocated_cache_bytes": allocatedCache, "allocated_temporary_bytes": allocatedTemp, "allocated_pending_bytes": allocatedPending, "cache_bytes": complete, "temporary_bytes": temp, "pending_bytes": pending, "other_bytes": total - allocatedCache - allocatedTemp - allocatedPending, "free_bytes": disk.Bavail * uint64(disk.Bsize)}, "public_base_url": public, "rates": s.DB.Rates(), "application_version_counts": applicationVersionCounts}
-	status["metrics"] = globalMetrics(status, s.Started)
+	status := map[string]any{"name": "RedApp", "started": s.started, "os": runtime.GOOS, "arch": runtime.GOARCH, "go": runtime.Version(), "goroutines": runtime.NumGoroutine(), "memory_bytes": mem.Alloc, "sampled_at": time.Now().UTC(), "resources": views, "counters": counters, "disk": map[string]any{"used_bytes": total, "logical_bytes": logical, "allocated_cache_bytes": allocatedCache, "allocated_temporary_bytes": allocatedTemp, "allocated_pending_bytes": allocatedPending, "cache_bytes": complete, "temporary_bytes": temp, "pending_bytes": pending, "other_bytes": total - allocatedCache - allocatedTemp - allocatedPending, "free_bytes": disk.Bavail * uint64(disk.Bsize)}, "public_base_url": public, "rates": s.store.Rates(), "application_version_counts": applicationVersionCounts}
+	status["metrics"] = globalMetrics(status, s.started)
 	status["resources"] = s.publicViews(views)
 	return status, nil
 }
 
 func (s *Server) appStatus(app, public string) (map[string]any, error) {
-	entry, ok := s.Registry.LookupAny(app)
+	entry, ok := s.registry.LookupAny(app)
 	if !ok {
 		return nil, application.ErrNotFound
 	}
@@ -169,13 +170,13 @@ func (s *Server) appStatus(app, public string) (map[string]any, error) {
 	}
 	var versionCount any
 	if entry.Protocol != nil {
-		count, err := s.DB.VersionCount(entry.StorageID())
+		count, err := s.store.VersionCount(entry.StorageID())
 		if err != nil {
 			return nil, err
 		}
 		versionCount = count
 	}
-	counters, err := s.DB.CountersFor(entry.MetricsID())
+	counters, err := s.store.CountersFor(entry.MetricsID())
 	if err != nil {
 		return nil, err
 	}

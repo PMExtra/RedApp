@@ -1,11 +1,12 @@
 package httpserver
 
 import (
-	"github.com/PMExtra/RedApp/internal/store"
 	"net/http"
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
 func positivePage(raw string, fallback int) (int, bool) {
@@ -37,7 +38,7 @@ func (s *Server) directoryList(w http.ResponseWriter, r *http.Request, parts []s
 		return
 	}
 	if len(parts) == 1 && parts[0] == "vendors" {
-		value, err := s.DB.DirectoryPage(page, limit, q, state)
+		value, err := s.store.DirectoryPage(page, limit, q, state)
 		if err != nil {
 			directoryError(w, err)
 			return
@@ -48,7 +49,7 @@ func (s *Server) directoryList(w http.ResponseWriter, r *http.Request, parts []s
 	vendor := ""
 	if len(parts) == 3 {
 		vendor = parts[1]
-		if _, err := s.DB.Vendor(vendor); err != nil {
+		if _, err := s.store.Vendor(vendor); err != nil {
 			directoryError(w, err)
 			return
 		}
@@ -57,7 +58,7 @@ func (s *Server) directoryList(w http.ResponseWriter, r *http.Request, parts []s
 		s.applicationTable(w, r, vendor, page, limit, q, state)
 		return
 	}
-	value, err := s.DB.ApplicationPage(vendor, page, limit, q, state)
+	value, err := s.store.ApplicationPage(vendor, page, limit, q, state)
 	if err != nil {
 		directoryError(w, err)
 		return
@@ -69,13 +70,13 @@ func (s *Server) instructionsAPI(w http.ResponseWriter, r *http.Request, key str
 		fail(w, 400, "Unexpected query parameters")
 		return
 	}
-	app, err := s.DB.Application(key)
+	app, err := s.store.Application(key)
 	if err != nil {
 		directoryError(w, err)
 		return
 	}
 	if r.Method == http.MethodGet {
-		value, err := s.DB.Instructions(app.UID)
+		value, err := s.store.Instructions(app.UID)
 		if err != nil {
 			directoryError(w, err)
 			return
@@ -101,12 +102,12 @@ func (s *Server) instructionsAPI(w http.ResponseWriter, r *http.Request, key str
 	}
 	s.directoryMu.Lock()
 	defer s.directoryMu.Unlock()
-	value, err = s.DB.SaveInstructions(key, value.Revision, value.LocalizedText)
+	value, err = s.store.SaveInstructions(key, value.Revision, value.LocalizedText)
 	if err != nil {
 		directoryError(w, err)
 		return
 	}
-	entry, _ := s.Registry.LookupAny(key)
+	entry, _ := s.registry.LookupAny(key)
 	revisionReply(w, value.Revision, struct {
 		store.Instructions
 		EntityRevision int64 `json:"entity_revision"`

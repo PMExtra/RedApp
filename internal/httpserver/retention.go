@@ -1,34 +1,22 @@
 package httpserver
 
 import (
-	"github.com/PMExtra/RedApp/internal/releasemaintenance"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 )
 
-func (s *Server) ReleaseMaintenance() *releasemaintenance.Service {
-	if service := s.retention.Load(); service != nil {
-		return service
-	}
-	candidate := &releasemaintenance.Service{DB: s.DB, Registry: s.Registry, Catalog: s.Catalog, Downloads: s.Downloads}
-	if s.retention.CompareAndSwap(nil, candidate) {
-		return candidate
-	}
-	return s.retention.Load()
-}
-
 func (s *Server) retentionAPI(w http.ResponseWriter, r *http.Request, app, endpoint string) bool {
 	if app == "" || !strings.HasPrefix(endpoint, "retention/") {
 		return false
 	}
-	e, ok := s.Registry.LookupAny(app)
+	e, ok := s.registry.LookupAny(app)
 	if !ok || e.Protocol == nil {
 		fail(w, 404, "Release retention is not supported")
 		return true
 	}
-	service := s.ReleaseMaintenance()
+	service := s.maintenance
 	parts := strings.Split(endpoint, "/")
 	switch {
 	case endpoint == "retention/status" && r.Method == http.MethodGet:
@@ -57,7 +45,7 @@ func (s *Server) retentionAPI(w http.ResponseWriter, r *http.Request, app, endpo
 			reply(w, 200, preview)
 		}
 	case len(parts) == 3 && r.Method == http.MethodGet:
-		job, err := s.DB.CleanupPreview(e.StorageID(), parts[1])
+		job, err := s.store.CleanupPreview(e.StorageID(), parts[1])
 		if err != nil || job.Retention == nil || job.ExecutedAt == nil && !time.Now().Before(job.ExpiresAt) || job.ExecutedAt != nil && !time.Now().Before(job.ExecutedAt.Add(24*time.Hour)) {
 			problem(w, 409, "RETENTION_INVALID", "Preview or receipt expired")
 			return true

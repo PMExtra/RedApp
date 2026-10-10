@@ -125,7 +125,7 @@ func TestSharedCatalogIsolationAndImmutableBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	fail.Store(true)
-	if _, err = service.Release(context.Background(), ids[0], "latest"); !errors.Is(err, application.ErrUpstream) {
+	if _, err = service.Release(context.Background(), ids[0], "latest"); !errors.Is(err, application.ErrUpstream) || errors.Is(err, application.ErrUntrusted) {
 		t.Fatal("stale channel served after upstream failure", err)
 	}
 	after, _ := db.Channel(ids[0], "latest")
@@ -137,7 +137,7 @@ func TestSharedCatalogIsolationAndImmutableBinding(t *testing.T) {
 	}
 	fail.Store(false)
 	changed.Store(true)
-	if _, err = service.Release(context.Background(), ids[0], "latest"); !errors.Is(err, application.ErrUpstream) {
+	if _, err = service.Release(context.Background(), ids[0], "latest"); !errors.Is(err, application.ErrUntrusted) {
 		t.Fatal("changed immutable release accepted", err)
 	}
 	r, err := service.Authorize(context.Background(), ids[0], "1.2.3", "asset.tgz")
@@ -224,7 +224,7 @@ func TestSignedEnvelopePersistenceAndFailureBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	tamper.Store(true)
-	if _, err = service.Authorize(context.Background(), "anthropic/claude-code", release.Version, "linux-x64/claude"); !errors.Is(err, application.ErrUpstream) {
+	if _, err = service.Authorize(context.Background(), "anthropic/claude-code", release.Version, "linux-x64/claude"); !errors.Is(err, application.ErrUntrusted) {
 		t.Fatal("untrusted metadata authorized an artifact", err)
 	}
 	tamper.Store(false)

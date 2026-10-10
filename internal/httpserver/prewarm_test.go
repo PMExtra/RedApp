@@ -6,10 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/PMExtra/RedApp/internal/apps/codex"
-	"github.com/PMExtra/RedApp/internal/distributor"
-	"github.com/PMExtra/RedApp/internal/store"
-	"github.com/PMExtra/RedApp/internal/warmplan"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,9 +13,14 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/PMExtra/RedApp/internal/apps/codex"
+	"github.com/PMExtra/RedApp/internal/distributor"
+	"github.com/PMExtra/RedApp/internal/store"
+	"github.com/PMExtra/RedApp/internal/warmplan"
 )
 
-func warmJob(t *testing.T, h *directoryHarness, key, id string) store.PrewarmJob {
+func warmJob(t *testing.T, h *harness, key, id string) store.PrewarmJob {
 	t.Helper()
 	deadline := time.Now().Add(4 * time.Second)
 	for time.Now().Before(deadline) {
@@ -36,7 +37,7 @@ func warmJob(t *testing.T, h *directoryHarness, key, id string) store.PrewarmJob
 	t.Fatal("prewarm task did not finish")
 	return store.PrewarmJob{}
 }
-func startWarm(t *testing.T, h *directoryHarness, key string, input any, status int) store.PrewarmJob {
+func startWarm(t *testing.T, h *harness, key string, input any, status int) store.PrewarmJob {
 	t.Helper()
 	raw, _ := h.request("POST", "/admin/api/apps/"+key+"/prewarm/start", input, status, nil)
 	var job store.PrewarmJob
@@ -45,9 +46,9 @@ func startWarm(t *testing.T, h *directoryHarness, key string, input any, status 
 	}
 	return job
 }
-func warmApp(t *testing.T, h *directoryHarness, provider, base string) {
+func warmApp(t *testing.T, h *harness, provider, base string) {
 	h.createVendor("warm")
-	v, _ := h.server.DB.Vendor("warm")
+	v, _ := h.server.store.Vendor("warm")
 	h.request("PATCH", "/admin/api/vendors/warm", map[string]any{"revision": v.Revision, "enabled": true}, 200, nil)
 	h.createApp("warm", "app", provider, map[string]any{"base_url": base, "enabled": true, "cache_ttl_seconds": 300})
 }
@@ -70,7 +71,7 @@ func TestPrewarmHTTPBackgroundIdempotencyPagesAndRetry(t *testing.T) {
 		fmt.Fprint(w, "body")
 	}))
 	defer origin.Close()
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	warmApp(t, h, "http-cache", origin.URL+"/root")
 	status, _, _ := h.raw("POST", "/admin/api/apps/warm/app/prewarm/start", strings.NewReader("{\"request_id\":\""+strings.Repeat("f", 32)+"\",\"manifest\":\"/bad\xff\"}"), "application/json", nil)
@@ -125,7 +126,7 @@ func TestPrewarmBusyCancelAndReadLimit(t *testing.T) {
 	}))
 	defer origin.Close()
 	defer close(release)
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	warmApp(t, h, "http-cache", origin.URL)
 	first := startWarm(t, h, "warm/app", map[string]any{"request_id": strings.Repeat("a", 32), "paths": []string{"/file"}}, 200)
@@ -155,9 +156,9 @@ func TestPrewarmCodexPlatformCacheVerificationAndMissing(t *testing.T) {
 		w.Write(body)
 	}))
 	defer proxy.Close()
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
-	if err := h.server.Pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: proxy.URL}, h.server.Pool.Proxy().Revision); err != nil {
+	if err := h.server.pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: proxy.URL}, h.server.pool.Proxy().Revision); err != nil {
 		t.Fatal(err)
 	}
 	warmApp(t, h, "codex", "http://warm.example")
@@ -173,24 +174,21 @@ func TestPrewarmCodexPlatformCacheVerificationAndMissing(t *testing.T) {
 	if done := warmJob(t, h, "warm/app", missing.ID); done.State != "completed_with_errors" || downloads.Load() != 1 {
 		t.Fatal(done)
 	}
-	app, _ := h.server.DB.Application("warm/app")
+	app, _ := h.server.store.Application("warm/app")
 	beforeRuntime := app.RuntimeRevision
-	_, err := h.server.DB.PatchApplicationConfiguration(app.Key, store.ConfigurationPatch{Revision: app.Revision, Set: map[string]json.RawMessage{"prewarm": encodeJSON(map[string]any{"enabled": true, "channels": []string{"latest"}, "platforms": []string{"linux-x64"}})}})
+	_, err := h.server.store.PatchApplicationConfiguration(app.Key, store.ConfigurationPatch{Revision: app.Revision, Set: map[string]json.RawMessage{"prewarm": encodeJSON(map[string]any{"enabled": true, "channels": []string{"latest"}, "platforms": []string{"linux-x64"}})}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	updated, _ := h.server.DB.Application(app.Key)
+	updated, _ := h.server.store.Application(app.Key)
 	if updated.RuntimeRevision != beforeRuntime {
 		t.Fatal("prewarm policy changed runtime revision")
 	}
-	service, err := h.server.Prewarmer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	service := h.server.prewarmer
 	service.Automatic(context.Background())
 	service.Automatic(context.Background())
 	var reason string
-	if err := h.server.DB.DB.QueryRow(`SELECT reason FROM prewarm_jobs WHERE automatic=1 ORDER BY rowid DESC LIMIT 1`).Scan(&reason); err != nil || reason != "unchanged_target" || downloads.Load() != 1 {
+	if err := h.server.store.DB.QueryRow(`SELECT reason FROM prewarm_jobs WHERE automatic=1 ORDER BY rowid DESC LIMIT 1`).Scan(&reason); err != nil || reason != "unchanged_target" || downloads.Load() != 1 {
 		t.Fatal(reason, err, downloads.Load())
 	}
 }
@@ -207,13 +205,13 @@ func TestPrewarmShutdownPersistsInterruptedAndDoesNotResume(t *testing.T) {
 	}))
 	defer origin.Close()
 	dir := t.TempDir()
-	h := newDirectoryHarness(t, dir)
+	h := newHarness(t, withDir(dir))
 	h.login(h.password)
 	warmApp(t, h, "http-cache", origin.URL)
 	first := startWarm(t, h, "warm/app", map[string]any{"request_id": strings.Repeat("a", 32), "paths": []string{"/file"}}, 200)
 	<-started
 	h.close()
-	restarted := newDirectoryHarness(t, dir)
+	restarted := newHarness(t, withDir(dir))
 	restarted.login(h.password)
 	raw, _ := restarted.request("GET", "/admin/api/apps/warm/app/prewarm/"+first.ID, nil, 200, nil)
 	var job store.PrewarmJob
@@ -222,7 +220,7 @@ func TestPrewarmShutdownPersistsInterruptedAndDoesNotResume(t *testing.T) {
 		t.Fatal(job)
 	}
 	var running int
-	if err := restarted.server.DB.DB.QueryRow(`SELECT count(*) FROM prewarm_jobs WHERE state='running'`).Scan(&running); err != nil || running != 0 {
+	if err := restarted.server.store.DB.QueryRow(`SELECT count(*) FROM prewarm_jobs WHERE state='running'`).Scan(&running); err != nil || running != 0 {
 		t.Fatal(running, err)
 	}
 }
@@ -250,13 +248,13 @@ func TestPrewarmManualIgnoresMetadataChangesAndDeletionDrains(t *testing.T) {
 		fmt.Fprint(w, "dy")
 	}))
 	defer origin.Close()
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	warmApp(t, h, "http-cache", origin.URL)
 	first := startWarm(t, h, "warm/app", map[string]any{"request_id": strings.Repeat("a", 32), "paths": []string{"/first", "/second"}}, 200)
 	<-started
-	app, _ := h.server.DB.Application("warm/app")
-	if _, err := h.server.DB.PatchApplicationConfiguration(app.Key, store.ConfigurationPatch{Revision: app.Revision, Set: map[string]json.RawMessage{"name.en": encodeJSON("Renamed")}}); err != nil {
+	app, _ := h.server.store.Application("warm/app")
+	if _, err := h.server.store.PatchApplicationConfiguration(app.Key, store.ConfigurationPatch{Revision: app.Revision, Set: map[string]json.RawMessage{"name.en": encodeJSON("Renamed")}}); err != nil {
 		t.Fatal(err)
 	}
 	close(release)
@@ -265,11 +263,11 @@ func TestPrewarmManualIgnoresMetadataChangesAndDeletionDrains(t *testing.T) {
 	}
 	second := startWarm(t, h, "warm/app", map[string]any{"request_id": strings.Repeat("b", 32), "paths": []string{"/block"}}, 200)
 	<-deleted
-	app, _ = h.server.DB.Application("warm/app")
+	app, _ = h.server.store.Application("warm/app")
 	h.request("DELETE", "/admin/api/apps/warm/app", deleteBody(app), 200, nil)
 	h.request("GET", "/admin/api/apps/warm/app/prewarm/"+second.ID, nil, 404, nil)
 	var jobs int
-	if err := h.server.DB.DB.QueryRow(`SELECT count(*) FROM prewarm_jobs WHERE app_uid=?`, app.UID).Scan(&jobs); err != nil || jobs != 0 {
+	if err := h.server.store.DB.QueryRow(`SELECT count(*) FROM prewarm_jobs WHERE app_uid=?`, app.UID).Scan(&jobs); err != nil || jobs != 0 {
 		t.Fatal(jobs, err)
 	}
 }
@@ -307,24 +305,21 @@ func TestPrewarmAutomaticPolicyChangeCancelsRemainingArtifacts(t *testing.T) {
 		w.Write(body)
 	}))
 	defer proxy.Close()
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
-	if err := h.server.Pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: proxy.URL}, h.server.Pool.Proxy().Revision); err != nil {
+	if err := h.server.pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: proxy.URL}, h.server.pool.Proxy().Revision); err != nil {
 		t.Fatal(err)
 	}
 	warmApp(t, h, "codex", "http://warm.example")
 	set := func(enabled bool) {
-		a, _ := h.server.DB.Application("warm/app")
-		_, err := h.server.DB.PatchApplicationConfiguration(a.Key, store.ConfigurationPatch{Revision: a.Revision, Set: map[string]json.RawMessage{"prewarm": encodeJSON(map[string]any{"enabled": enabled, "channels": []string{"latest"}, "platforms": []string{"linux-x64", "win32-x64"}})}})
+		a, _ := h.server.store.Application("warm/app")
+		_, err := h.server.store.PatchApplicationConfiguration(a.Key, store.ConfigurationPatch{Revision: a.Revision, Set: map[string]json.RawMessage{"prewarm": encodeJSON(map[string]any{"enabled": enabled, "channels": []string{"latest"}, "platforms": []string{"linux-x64", "win32-x64"}})}})
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
 	set(true)
-	service, err := h.server.Prewarmer()
-	if err != nil {
-		t.Fatal(err)
-	}
+	service := h.server.prewarmer
 	job, err := service.Start(context.Background(), "warm/app", warmplan.Input{RequestID: strings.Repeat("a", 32), Target: "latest", Platforms: []string{"linux-x64", "win32-x64"}}, true)
 	if err != nil {
 		t.Fatal(err)
@@ -337,7 +332,7 @@ func TestPrewarmAutomaticPolicyChangeCancelsRemainingArtifacts(t *testing.T) {
 		t.Fatal(done, other.Load())
 	}
 	var successes int
-	if err := h.server.DB.DB.QueryRow(`SELECT count(*) FROM prewarm_success`).Scan(&successes); err != nil || successes != 0 {
+	if err := h.server.store.DB.QueryRow(`SELECT count(*) FROM prewarm_success`).Scan(&successes); err != nil || successes != 0 {
 		t.Fatal(successes, err)
 	}
 }

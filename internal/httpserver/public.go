@@ -6,195 +6,295 @@ import (
 	"encoding/json"
 	"net/http"
 	"runtime"
-	"strings"
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
-	"github.com/PMExtra/RedApp/internal/config"
+	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/site"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
-func (s *Server) publicApplications(origin string) ([]map[string]any, error) {
-	taxonomy, _, err := s.DB.PublicTaxonomy()
-	if err != nil {
-		return nil, err
-	}
-	out := make([]map[string]any, 0, len(s.Registry.Entries()))
-	for _, e := range s.Registry.Entries() {
-		item, err := s.publicApplicationWithTaxonomy(e, origin, taxonomy[e.UID])
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, item)
-	}
-	return out, nil
-}
-func (s *Server) publicApplication(e application.Entry, origin string) (map[string]any, error) {
-	taxonomy, _, err := s.DB.PublicTaxonomy()
-	if err != nil {
-		return nil, err
-	}
-	return s.publicApplicationWithTaxonomy(e, origin, taxonomy[e.UID])
+// publicURL is the effective public URL (no trailing "/") for links in
+// responses: override, environment or the verified request origin.
+func (s *Server) publicURL(r *http.Request) string {
+	return s.public.View(requestState(r).origin).EffectiveURL
 }
 
-// Public DTOs expose category IDs and names only; tags stay private and only affect search.
-func (s *Server) publicApplicationWithTaxonomy(e application.Entry, origin string, categories []store.TaxonomyLabel) (map[string]any, error) {
-	if categories == nil {
-		categories = []store.TaxonomyLabel{}
-	}
-	usage, err := s.DB.Instructions(e.UID)
-	if err != nil {
-		return nil, err
-	}
-	d := e.Descriptor
-	root := origin + "/" + d.ID
-	icon := ""
-	if d.Icon != "" {
-		if strings.HasPrefix(d.Icon, "/") {
-			icon = d.Icon
-		} else {
-			icon = "/" + d.ID + "/" + d.Icon
-		}
-	}
-	definition, _ := application.ProviderDefinition(e.Provider)
-	item := map[string]any{"categories": categories, "id": d.ID, "name": d.Name, "publisher": d.Publisher, "vendor": map[string]any{"id": e.VendorID, "name": e.VendorName, "description": e.VendorDescription, "icon": e.VendorIcon, "localized_icons": e.VendorLocalizedIcons}, "summary": d.Summary, "origin": root, "detail_url": "/" + d.ID, "distribution_url": root, "icon": icon, "channels": d.Channels, "installers": publicInstallers(d.Installers), "update_policy": d.UpdatePolicy, "provider": e.Provider, "capabilities": definition.Capabilities, "instructions": usage.LocalizedText}
-	if definition.Capabilities.Versions && e.Protocol != nil {
-		latest, discovered, err := s.latestKnownVersion(e)
-		if err != nil {
-			return nil, err
-		}
-		item["latest_known_version"] = nil
-		if latest != "" {
-			item["latest_known_version"] = map[string]any{"version": latest, "first_seen": discovered}
-		}
-	}
-
-	if !definition.Capabilities.Files {
-		delete(item, "distribution_url")
-	}
-	return item, nil
+type siteSettingsDTO struct {
+	Title      localizedText `json:"title"`
+	Subtitle   localizedText `json:"subtitle"`
+	Disclaimer localizedText `json:"disclaimer"`
 }
 
-// Read only locally observed versions for this source epoch; never synchronize upstream.
-func (s *Server) latestKnownVersion(e application.Entry) (string, *time.Time, error) {
-	if e.Protocol == nil {
-		return "", nil, nil
-	}
-	versions, err := s.DB.VersionsFor(e.StorageID())
-	if err != nil {
-		return "", nil, err
-	}
-	var latest string
-	for version := range versions {
-		if _, err := e.Protocol.ValidateVersion(version); err != nil {
-			continue
-		}
-		if latest == "" {
-			latest = version
-			continue
-		}
-		if order, err := e.Protocol.CompareVersions(version, latest); err == nil && (order > 0 || order == 0 && version < latest) {
-			latest = version
-		}
-	}
-	var discovered *time.Time
-	if at, err := time.Parse(time.RFC3339, versions[latest]); latest != "" && err == nil && at.Unix() > 0 {
-		discovered = &at
-	}
-	return latest, discovered, nil
+func siteSettings(v site.Settings) siteSettingsDTO {
+	text := func(t site.Text) localizedText { return localizedText{En: t.EN, ZhCN: t.ZHCN} }
+	return siteSettingsDTO{Title: text(v.Title), Subtitle: text(v.Subtitle), Disclaimer: text(v.Disclaimer)}
 }
 
-func publicInstallers(items []application.Installer) []map[string]string {
-	out := make([]map[string]string, 0, len(items))
-	for _, item := range items {
-		label := "Shell"
-		if item.Shell == "powershell" {
-			label = "PowerShell"
-		}
-		out = append(out, map[string]string{"file": item.File, "shell": item.Shell, "runner": item.Shell, "label": label})
-	}
-	return out
+type bootstrapDTO struct {
+	Version   string          `json:"version"`
+	OS        string          `json:"os"`
+	Arch      string          `json:"arch"`
+	Site      siteSettingsDTO `json:"site"`
+	PublicURL string          `json:"public_url"`
+	Revision  string          `json:"revision"`
 }
-func (s *Server) publicAPI(w http.ResponseWriter, r *http.Request, publicView config.PublicView) {
-	if s.instructionsDocument(w, r, publicView.EffectiveURL) || s.publicCatalogAPI(w, r, publicView.EffectiveURL) {
-		return
-	}
-	if strings.HasPrefix(r.URL.Path, "/api/apps/") && strings.HasSuffix(r.URL.Path, "/files") {
-		key := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/apps/"), "/files")
-		entry, ok := s.Registry.Lookup(key)
-		if !ok || entry.Provider != application.Hosted {
-			fail(w, 404, "Application files not found")
-			return
-		}
-		if r.Method != http.MethodGet || !queryAllowed(r, "page", "limit") {
-			fail(w, 400, "Invalid file listing")
-			return
-		}
-		page, valid := positivePage(r.URL.Query().Get("page"), 1)
-		limit, validLimit := positivePage(r.URL.Query().Get("limit"), 25)
-		if !valid || !validLimit || limit > 100 {
-			fail(w, 400, "Invalid file page")
-			return
-		}
-		value, err := s.DB.HostedPage(entry.UID, page, limit)
-		if err != nil {
-			fail(w, 503, "Files unavailable")
-			return
-		}
-		reply(w, 200, value)
-		return
-	}
 
-	if r.Method != "GET" {
-		fail(w, 405, "Method not allowed")
-		return
-	}
-	if !queryAllowed(r) {
-		fail(w, 400, "Invalid query")
-		return
-	}
-	public := publicView.EffectiveURL
-	apps, err := s.publicApplications(public)
+func (s *Server) getBootstrap(w http.ResponseWriter, r *http.Request) {
+	settings, err := site.LoadSnapshot(s.store)
 	if err != nil {
-		fail(w, 503, "Application instructions unavailable")
+		s.writeError(w, r, storageError(err))
 		return
 	}
-	switch r.URL.Path {
-	case "/api/bootstrap":
-		settings, err := site.LoadSnapshot(s.DB)
-		if err != nil {
-			fail(w, 503, "Site settings unavailable")
-			return
-		}
-		version := s.Version
-		if version == "" {
-			version = "dev"
-		}
-		publicRevision := publicView.Revision
-		taxonomyRevision, err := s.DB.TaxonomyPublicRevision()
-		if err != nil {
-			fail(w, 503, "Directory unavailable")
-			return
-		}
-		identity, _ := json.Marshal([]any{version, settings.Revision, publicRevision, taxonomyRevision, public, apps})
-		digest := sha256.Sum256(identity)
-		reply(w, 200, map[string]any{"version": version, "os": runtime.GOOS, "arch": runtime.GOARCH, "site": settings.Settings, "apps": apps, "public_origin": public, "revision": hex.EncodeToString(digest[:])})
-		return
-	case "/api/apps":
-		reply(w, 200, apps)
+	taxonomy, err := s.store.TaxonomyPublicRevision()
+	if err != nil {
+		s.writeError(w, r, storageError(err))
 		return
 	}
-	if strings.HasPrefix(r.URL.Path, "/api/apps/") {
-		id := strings.TrimPrefix(r.URL.Path, "/api/apps/")
-		for _, entry := range apps {
-			if entry["id"] == id {
-				reply(w, 200, entry)
+	view := s.public.View(requestState(r).origin)
+	out := bootstrapDTO{Version: s.version, OS: runtime.GOOS, Arch: runtime.GOARCH, Site: siteSettings(settings.Settings), PublicURL: view.EffectiveURL}
+	identity, _ := json.Marshal([]any{out.Version, settings.Revision, view.Revision, view.EffectiveURL, taxonomy})
+	digest := sha256.Sum256(identity)
+	out.Revision = hex.EncodeToString(digest[:])
+	writeOK(w, out)
+}
+
+type rankingEntryDTO struct {
+	App             publicAppDTO `json:"app"`
+	DownloadClients int64        `json:"download_clients"`
+}
+type homeDTO struct {
+	Pinned      []publicAppDTO    `json:"pinned"`
+	Ranking     []rankingEntryDTO `json:"ranking"`
+	WindowHours int               `json:"window_hours"`
+}
+
+func (s *Server) getHome(w http.ResponseWriter, r *http.Request) {
+	taxonomy, _, err := s.store.PublicTaxonomy()
+	if err != nil {
+		s.writeError(w, r, storageError(err))
+		return
+	}
+	pins, err := s.store.HomepagePins()
+	if err != nil {
+		s.writeError(w, r, storageError(err))
+		return
+	}
+	scores, err := s.store.DownloadRanking(time.Now(), 20)
+	if err != nil {
+		s.writeError(w, r, storageError(err))
+		return
+	}
+	publicURL := s.publicURL(r)
+	out := homeDTO{Pinned: []publicAppDTO{}, Ranking: []rankingEntryDTO{}, WindowHours: 168}
+	for _, key := range pins.Keys {
+		if e, ok := s.registry.Lookup(key); ok {
+			app, err := s.publicApp(e, publicURL, taxonomy[e.UID])
+			if err != nil {
+				s.writeError(w, r, storageError(err))
 				return
 			}
+			out.Pinned = append(out.Pinned, app)
 		}
-		problem(w, 404, "APPLICATION_NOT_FOUND", "Application not found")
+	}
+	byUID := map[string]application.Entry{}
+	for _, e := range s.registry.Entries() {
+		byUID[e.UID] = e
+	}
+	for _, score := range scores {
+		e, ok := byUID[score.UID]
+		if !ok || score.Clients < 1 {
+			continue
+		}
+		app, err := s.publicApp(e, publicURL, taxonomy[e.UID])
+		if err != nil {
+			s.writeError(w, r, storageError(err))
+			return
+		}
+		out.Ranking = append(out.Ranking, rankingEntryDTO{App: app, DownloadClients: score.Clients})
+	}
+	writeOK(w, out)
+}
+
+type catalogPageDTO struct {
+	Items      []publicAppDTO     `json:"items"`
+	Page       int                `json:"page"`
+	Limit      int                `json:"limit"`
+	Total      int64              `json:"total"`
+	TotalPages int                `json:"total_pages"`
+	Categories []categoryCountDTO `json:"categories"`
+}
+
+func (s *Server) listCatalog(w http.ResponseWriter, r *http.Request) {
+	q, e := queryText(r, "q", 128)
+	if e != nil {
+		s.writeError(w, r, e)
 		return
 	}
-	fail(w, 404, "API endpoint not found")
+	page, limit, e := pageQuery(r, 24)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	vendor, category := r.URL.Query().Get("vendor"), r.URL.Query().Get("category")
+	if vendor != "" && !identity.ValidVendor(vendor) {
+		s.fail(w, r, codeInvalidQuery, nil, "vendor must be a vendor ID")
+		return
+	}
+	if category != "" && !identity.ValidSlug(category) {
+		s.fail(w, r, codeInvalidQuery, nil, "category must be a category ID")
+		return
+	}
+	if vendor != "" {
+		if _, ok := s.publishedVendor(w, r, vendor); !ok {
+			return
+		}
+	}
+	taxonomy, counts, err := s.store.PublicTaxonomy()
+	if err != nil {
+		s.writeError(w, r, storageError(err))
+		return
+	}
+	apps, err := s.store.ApplicationCategoryPage(vendor, page, limit, q, category)
+	if err != nil {
+		s.writeError(w, r, storageError(err))
+		return
+	}
+	publicURL := s.publicURL(r)
+	out := catalogPageDTO{Items: []publicAppDTO{}, Page: apps.Page, Limit: apps.Limit, Total: apps.Total, TotalPages: apps.TotalPages, Categories: make([]categoryCountDTO, 0, len(counts))}
+	for _, a := range apps.Items {
+		if entry, ok := s.registry.Lookup(a.Key); ok {
+			app, err := s.publicApp(entry, publicURL, taxonomy[entry.UID])
+			if err != nil {
+				s.writeError(w, r, storageError(err))
+				return
+			}
+			out.Items = append(out.Items, app)
+		}
+	}
+	for _, c := range counts {
+		out.Categories = append(out.Categories, categoryCountDTO{ID: c.ID, Name: fromStoreText(c.Name), Count: c.Count})
+	}
+	writeOK(w, out)
+}
+
+type searchHitDTO struct {
+	Kind           string         `json:"kind"`
+	Key            string         `json:"key"`
+	Name           localizedText  `json:"name"`
+	Icon           string         `json:"icon"`
+	LocalizedIcons *localizedText `json:"localized_icons"`
+}
+
+func (s *Server) searchCatalog(w http.ResponseWriter, r *http.Request) {
+	q, e := queryText(r, "q", 128)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	hits := []searchHitDTO{}
+	if q == "" {
+		writeOK(w, map[string][]searchHitDTO{"items": hits})
+		return
+	}
+	vendors, err := s.store.SearchVendors(q, 4)
+	if err != nil {
+		s.writeError(w, r, storageError(err))
+		return
+	}
+	for _, v := range vendors {
+		dto := publicVendorFromStore(v)
+		hits = append(hits, searchHitDTO{Kind: "vendor", Key: v.ID, Name: dto.Name, Icon: dto.Icon, LocalizedIcons: &dto.LocalizedIcons})
+	}
+	apps, err := s.store.ApplicationPage("", 1, 6, q, "enabled")
+	if err != nil {
+		s.writeError(w, r, storageError(err))
+		return
+	}
+	for _, a := range apps.Items {
+		if entry, ok := s.registry.Lookup(a.Key); ok {
+			hits = append(hits, searchHitDTO{Kind: "app", Key: a.Key, Name: fromLocalized(entry.Descriptor.Name), Icon: publicIcon(entry.Descriptor.Icon)})
+		}
+	}
+	writeOK(w, map[string][]searchHitDTO{"items": hits})
+}
+
+// publishedVendor reads an enabled, not deleted vendor or writes VENDOR_NOT_FOUND.
+func (s *Server) publishedVendor(w http.ResponseWriter, r *http.Request, id string) (store.Vendor, bool) {
+	v, err := s.store.Vendor(id)
+	if err != nil && !isNotFound(err) {
+		s.writeError(w, r, storageError(err))
+		return v, false
+	}
+	if err != nil || !v.Enabled || v.DeletedAt != nil {
+		s.fail(w, r, codeVendorNotFound, nil, "Vendor not found")
+		return v, false
+	}
+	return v, true
+}
+
+func (s *Server) getPublicVendor(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("vendor")
+	if !identity.ValidVendor(id) {
+		s.fail(w, r, codeInvalidPath, nil, "Invalid vendor ID")
+		return
+	}
+	if v, ok := s.publishedVendor(w, r, id); ok {
+		writeOK(w, publicVendorFromStore(v))
+	}
+}
+
+// publishedApp resolves {vendor}/{app} to a published application or writes
+// INVALID_PATH / APPLICATION_NOT_FOUND.
+func (s *Server) publishedApp(w http.ResponseWriter, r *http.Request) (application.Entry, bool) {
+	key := r.PathValue("vendor") + "/" + r.PathValue("app")
+	if _, err := application.ParseKey(key); err != nil {
+		s.fail(w, r, codeInvalidPath, nil, "Invalid application identity")
+		return application.Entry{}, false
+	}
+	e, ok := s.registry.Lookup(key)
+	if !ok {
+		s.fail(w, r, codeApplicationNotFound, nil, "Application not found")
+	}
+	return e, ok
+}
+
+func (s *Server) getPublicApp(w http.ResponseWriter, r *http.Request) {
+	e, ok := s.publishedApp(w, r)
+	if !ok {
+		return
+	}
+	taxonomy, _, err := s.store.PublicTaxonomy()
+	if err != nil {
+		s.writeError(w, r, storageError(err))
+		return
+	}
+	app, err := s.publicApp(e, s.publicURL(r), taxonomy[e.UID])
+	if err != nil {
+		s.writeError(w, r, storageError(err))
+		return
+	}
+	writeOK(w, app)
+}
+
+func (s *Server) listPublicHostedFiles(w http.ResponseWriter, r *http.Request) {
+	e, ok := s.publishedApp(w, r)
+	if !ok {
+		return
+	}
+	if e.Provider != application.Hosted {
+		s.fail(w, r, codeCapabilityUnsupported, nil, "This application does not host files")
+		return
+	}
+	page, limit, apiErr := pageQuery(r, 25)
+	if apiErr != nil {
+		s.writeError(w, r, apiErr)
+		return
+	}
+	files, err := s.store.HostedPage(e.UID, page, limit)
+	if err != nil {
+		s.writeError(w, r, storageError(err))
+		return
+	}
+	writeOK(w, hostedFilePage(files))
 }

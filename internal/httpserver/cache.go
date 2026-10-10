@@ -3,7 +3,6 @@ package httpserver
 import (
 	"errors"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -16,67 +15,8 @@ import (
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
-// General HTTP owns its file path validation. The two identity segments stay
-// canonical ASCII; only the relative file path permits ordinary URL escapes.
-func (s *Server) generalFile(w http.ResponseWriter, r *http.Request) bool {
-	parts := strings.SplitN(strings.TrimPrefix(r.URL.EscapedPath(), "/"), "/", 3)
-	if len(parts) != 3 {
-		return false
-	}
-	entry, ok := s.Registry.Lookup(parts[0] + "/" + parts[1])
-	if !ok || entry.Provider != application.HttpCache || parts[2] == "" {
-		return false
-	}
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", "GET, HEAD")
-		fail(w, 405, "File requests require GET or HEAD")
-		return true
-	}
-	encoded := strings.ToLower(parts[2])
-	path, err := url.PathUnescape(parts[2])
-	if err != nil || strings.Contains(encoded, "%2f") || strings.Contains(encoded, "%5c") || r.URL.RawQuery != "" || r.URL.ForceQuery {
-		problem(w, 400, "INVALID_PATH", "Invalid file path or query")
-		return true
-	}
-	if _, err = entry.Upstream.RelativeURL(path); err != nil {
-		problem(w, 400, "INVALID_PATH", "Invalid relative file path")
-		return true
-	}
-	if s.HTTPCache == nil {
-		fail(w, 503, "HTTP cache unavailable")
-		return true
-	}
-	if err = s.DB.Add("requests", 1); err != nil {
-		fail(w, 503, "Failed to record request")
-		return true
-	}
-	r, finish, err := s.applicationResponse(w, r, entry.StorageID())
-	if err != nil {
-		fail(w, 404, "Application unavailable")
-		return true
-	}
-	defer finish()
-	receipt := &downloadReceipt{ResponseWriter: w}
-	if err = s.HTTPCache.Serve(receipt, r, entry, path); err != nil {
-		switch {
-		case errors.Is(err, store.ErrSourceInactive):
-			problem(w, 409, "SOURCE_CHANGED", "Application source changed; retry the request")
-		case errors.Is(err, download.ErrReaderLimit), errors.Is(err, download.ErrWriterLimit):
-			problem(w, 503, "TRANSFER_CAPACITY", "Transfer capacity is currently full")
-		case errors.Is(err, httpcache.ErrFetchContended):
-			problem(w, 503, "CACHE_CONTENDED", "Cached file kept changing; retry the request")
-		default:
-			fail(w, 502, "Unable to serve the requested file")
-		}
-	}
-	if err == nil {
-		s.finishDownload(receipt, r, entry.UID)
-	}
-	return true
-}
-
 func (s *Server) sourceEntry(app string, r *http.Request) (application.Entry, error) {
-	entry, ok := s.Registry.LookupAny(app)
+	entry, ok := s.registry.LookupAny(app)
 	if !ok {
 		return entry, application.ErrNotFound
 	}
@@ -89,7 +29,7 @@ func (s *Server) sourceEntry(app string, r *http.Request) (application.Entry, er
 		return entry, store.ErrInvalidDirectory
 	}
 	entry.SourceEpoch = epoch
-	if _, err = s.DB.Source(entry.StorageID()); err != nil {
+	if _, err = s.store.Source(entry.StorageID()); err != nil {
 		return entry, err
 	}
 	return entry, nil
@@ -104,12 +44,12 @@ func (s *Server) cacheAPI(w http.ResponseWriter, r *http.Request, app, endpoint 
 			fail(w, 405, "Method not allowed")
 			return true
 		}
-		entry, found := s.Registry.LookupAny(app)
+		entry, found := s.registry.LookupAny(app)
 		if !found || entry.DeletedAt != nil {
 			fail(w, 404, "Application not found")
 			return true
 		}
-		rows, err := s.DB.Sources()
+		rows, err := s.store.Sources()
 		if err != nil {
 			fail(w, 503, "Application sources unavailable")
 			return true
@@ -141,7 +81,7 @@ func (s *Server) cacheAPI(w http.ResponseWriter, r *http.Request, app, endpoint 
 		fail(w, 404, "HTTP cache is not supported by this application")
 		return true
 	}
-	if s.HTTPCache == nil {
+	if s.httpCache == nil {
 		fail(w, 503, "HTTP cache unavailable")
 		return true
 	}
@@ -177,12 +117,12 @@ func (s *Server) cacheAPI(w http.ResponseWriter, r *http.Request, app, endpoint 
 				fail(w, 405, "Method not allowed")
 				return true
 			}
-			reply(w, 200, s.HTTPCache.CleanupStatus())
+			reply(w, 200, s.httpCache.CleanupStatus())
 		}
 		return true
 	}
 	if endpoint == "cache" && r.Method == http.MethodGet {
-		rows, err := s.HTTPCache.ListEntry(entry)
+		rows, err := s.httpCache.ListEntry(entry)
 		if err != nil {
 			fail(w, 503, "Cache list unavailable")
 		} else {
@@ -212,7 +152,7 @@ func (s *Server) cacheAPI(w http.ResponseWriter, r *http.Request, app, endpoint 
 					return true
 				}
 			}
-			page, err := s.HTTPCache.PreviewItems(entry.StorageID(), parts[1], parts[2], r.URL.Query().Get("cursor"), limit)
+			page, err := s.httpCache.PreviewItems(entry.StorageID(), parts[1], parts[2], r.URL.Query().Get("cursor"), limit)
 			if err != nil {
 				problem(w, 409, "PREVIEW_INVALID", "Preview expired or its selection is unavailable")
 			} else {
@@ -221,7 +161,7 @@ func (s *Server) cacheAPI(w http.ResponseWriter, r *http.Request, app, endpoint 
 			return true
 		}
 		if len(parts) == 3 {
-			job, err := s.HTTPCache.LookupPreview(entry.StorageID(), parts[1], parts[2])
+			job, err := s.httpCache.LookupPreview(entry.StorageID(), parts[1], parts[2])
 			if err != nil {
 				problem(w, 409, "PREVIEW_INVALID", "Preview expired or its selection is unavailable")
 			} else {
@@ -248,7 +188,7 @@ func (s *Server) cacheAPI(w http.ResponseWriter, r *http.Request, app, endpoint 
 		if input.Match != nil {
 			match = *input.Match
 		}
-		job, err := s.HTTPCache.PreviewCleanup(r.Context(), entry, input.Basis, input.Before, match)
+		job, err := s.httpCache.PreviewCleanup(r.Context(), entry, input.Basis, input.Before, match)
 		if err != nil {
 			if errors.Is(err, httpcache.ErrPreviewBusy) {
 				problem(w, 503, "PREVIEW_BUSY", "Too many previews are being built; retry shortly")
@@ -270,7 +210,7 @@ func (s *Server) cacheAPI(w http.ResponseWriter, r *http.Request, app, endpoint 
 			fail(w, 400, "Invalid application-relative resource path")
 			return true
 		}
-		item, err := s.HTTPCache.Refresh(r.Context(), entry, input.Path)
+		item, err := s.httpCache.Refresh(r.Context(), entry, input.Path)
 		if err != nil {
 			if errors.Is(err, download.ErrReaderLimit) || errors.Is(err, download.ErrWriterLimit) {
 				problem(w, 503, "TRANSFER_CAPACITY", "Transfer capacity is currently full")
@@ -296,7 +236,7 @@ func (s *Server) cacheAPI(w http.ResponseWriter, r *http.Request, app, endpoint 
 			fail(w, 400, err.Error())
 			return true
 		}
-		job, err := s.HTTPCache.PreviewRefresh(r.Context(), entry, input.Match)
+		job, err := s.httpCache.PreviewRefresh(r.Context(), entry, input.Match)
 		if err != nil {
 			if errors.Is(err, httpcache.ErrPreviewBusy) {
 				problem(w, 503, "PREVIEW_BUSY", "Too many previews are being built; retry shortly")
@@ -309,7 +249,7 @@ func (s *Server) cacheAPI(w http.ResponseWriter, r *http.Request, app, endpoint 
 		return true
 	}
 	if len(parts) == 4 && parts[1] == "refresh" && parts[3] == "execute" {
-		job, err := s.HTTPCache.ExecuteRefresh(r.Context(), entry, parts[2])
+		job, err := s.httpCache.ExecuteRefresh(r.Context(), entry, parts[2])
 		if err != nil {
 			problem(w, 409, "REFRESH_INVALID", "Refresh preview expired, is running, or its source changed")
 		} else {
@@ -318,7 +258,7 @@ func (s *Server) cacheAPI(w http.ResponseWriter, r *http.Request, app, endpoint 
 		return true
 	}
 	if len(parts) == 4 && parts[0] == "cache" && parts[1] == "cleanup" && parts[3] == "execute" {
-		result, err := s.HTTPCache.ExecuteCleanup(r.Context(), entry, parts[2])
+		result, err := s.httpCache.ExecuteCleanup(r.Context(), entry, parts[2])
 		if err != nil {
 			problem(w, 409, "CLEANUP_INVALID", "Cleanup preview expired, changed source, or execution failed")
 		} else {
@@ -348,7 +288,7 @@ func (s *Server) httpPolicy(w http.ResponseWriter, r *http.Request, app string) 
 		}
 		s.directoryMu.Lock()
 		defer s.directoryMu.Unlock()
-		if _, err = s.DB.SaveHTTPPolicy(app, revision, config); err != nil {
+		if _, err = s.store.SaveHTTPPolicy(app, revision, config); err != nil {
 			if errors.Is(err, cachepolicy.ErrInvalidPolicy) {
 				fail(w, 400, err.Error())
 			} else {
@@ -357,7 +297,7 @@ func (s *Server) httpPolicy(w http.ResponseWriter, r *http.Request, app string) 
 			return
 		}
 	}
-	config, revision, err := s.DB.ReadHTTPPolicy(app)
+	config, revision, err := s.store.ReadHTTPPolicy(app)
 	if err != nil {
 		directoryError(w, err)
 		return

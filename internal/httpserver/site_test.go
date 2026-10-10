@@ -2,17 +2,17 @@ package httpserver
 
 import (
 	"encoding/json"
-	"github.com/PMExtra/RedApp/internal/site"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/PMExtra/RedApp/internal/site"
 )
 
 func TestSiteSettingsAuthenticationCSRFAndPublicText(t *testing.T) {
-	s, _, password := newTestServer(t, nil)
-	a := s.Auth
-	token, session, err := a.Login("127.0.0.1", password)
+	h := newHarness(t)
+	token, session, err := h.server.auth.Login("127.0.0.1", h.password)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,9 +26,7 @@ func TestSiteSettingsAuthenticationCSRFAndPublicText(t *testing.T) {
 		if csrf {
 			r.Header.Set("X-CSRF-Token", session.CSRF)
 		}
-		w := httptest.NewRecorder()
-		s.ServeHTTP(w, r)
-		return w
+		return h.serve(r)
 	}
 	settings := site.Defaults()
 	settings.Title.EN = "<svg onload=alert(1)>"

@@ -200,7 +200,7 @@ func TestPasswordChangeInvalidatesSessionsAndInFlightLogin(t *testing.T) {
 	done := make(chan error)
 	go func() { _, _, e := a.Login("192.0.2.2", password+"#slow"); done <- e }()
 	<-entered
-	if e = a.Password(password, "a new password value"); e != nil {
+	if e = a.Password("192.0.2.1", password, "a new password value"); e != nil {
 		t.Fatal(e)
 	}
 	close(release)
@@ -215,5 +215,26 @@ func TestPasswordChangeInvalidatesSessionsAndInFlightLogin(t *testing.T) {
 	}
 	if _, _, e = a.Login("192.0.2.1", "a new password value"); e != nil {
 		t.Fatal(e)
+	}
+}
+
+func TestPasswordChangeRejectsWrongCurrentPasswordUnderTheLoginRateLimit(t *testing.T) {
+	a, password, _ := fastAuth(t)
+	if e := a.Password("192.0.2.9", password, "short"); !errors.Is(e, ErrPasswordInvalid) {
+		t.Fatal("short new password accepted", e)
+	}
+	for i := 0; i < 10; i++ {
+		if e := a.Password("192.0.2.9", "wrong current password", "a new password value"); !errors.Is(e, ErrCurrentPasswordIncorrect) {
+			t.Fatal(i, e)
+		}
+	}
+	if e := a.Password("192.0.2.9", password, "a new password value"); !errors.Is(e, ErrRateLimited) {
+		t.Fatal("wrong current passwords did not count against the sign-in limit", e)
+	}
+	if _, _, e := a.Login("192.0.2.9", password); !errors.Is(e, ErrRateLimited) {
+		t.Fatal("password attempts and sign-in attempts use separate limits", e)
+	}
+	if e := a.Password("192.0.2.10", password, "a new password value"); e != nil {
+		t.Fatal("another client was limited", e)
 	}
 }

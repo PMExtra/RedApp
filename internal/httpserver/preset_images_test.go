@@ -1,12 +1,13 @@
 package httpserver
 
 import (
-	"github.com/PMExtra/RedApp/presets"
 	"testing"
+
+	"github.com/PMExtra/RedApp/presets"
 )
 
 func TestPresetImageRoutes(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	for _, relative := range []string{"assets/builtin/openai.svg", "assets/builtin/anthropic.svg", "assets/openai/codex/icon.svg", "assets/anthropic/claude-code/icon.svg"} {
 		url, err := presets.Icon(relative)
 		if err != nil {

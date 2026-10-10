@@ -3,14 +3,15 @@ package httpserver
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/PMExtra/RedApp/internal/store"
 	"strings"
 	"testing"
+
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
 func TestAdminNotesPrivateCASIsolationAndRestart(t *testing.T) {
 	dir := t.TempDir()
-	h := newDirectoryHarness(t, dir)
+	h := newHarness(t, withDir(dir))
 	password := h.password
 	endpoints := []string{"/admin/api/vendors/openai/admin-notes", "/admin/api/apps/openai/codex/admin-notes"}
 	for _, path := range endpoints {
@@ -32,11 +33,11 @@ func TestAdminNotesPrivateCASIsolationAndRestart(t *testing.T) {
 		h.request("PUT", path, map[string]any{"text": "bad\x00value", "revision": 1}, 400, nil)
 	}
 	// Same application ID under another vendor, and the vendor/app type boundary, stay independent.
-	other, err := h.server.DB.CreateVendor(store.VendorInput{ID: "other", Name: store.LocalizedText{En: "Other", ZhCN: "其他"}})
+	other, err := h.server.store.CreateVendor(store.VendorInput{ID: "other", Name: store.LocalizedText{En: "Other", ZhCN: "其他"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, err := h.server.DB.CreateApplication(other.ID, store.ApplicationInput{ID: "codex", Name: store.LocalizedText{En: "Other", ZhCN: "其他"}, Provider: "info"})
+	a, err := h.server.store.CreateApplication(other.ID, store.ApplicationInput{ID: "codex", Name: store.LocalizedText{En: "Other", ZhCN: "其他"}, Provider: "info"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,12 +57,12 @@ func TestAdminNotesPrivateCASIsolationAndRestart(t *testing.T) {
 	for _, path := range []string{"/api/vendors/openai/admin-notes", "/api/apps/openai/codex/admin-notes"} {
 		h.request("GET", path, nil, 404, nil)
 	}
-	v, _ := h.server.DB.Vendor("openai")
-	app, _ := h.server.DB.Application("openai/codex")
+	v, _ := h.server.store.Vendor("openai")
+	app, _ := h.server.store.Application("openai/codex")
 	h.request("PATCH", "/admin/api/vendors/openai/configuration", map[string]any{"revision": v.Revision, "unset": []string{"icon"}}, 200, nil)
 	h.request("PATCH", "/admin/api/apps/openai/codex/configuration", map[string]any{"revision": app.Revision, "unset": []string{"icon"}}, 200, nil)
 	h.close()
-	h = newDirectoryHarness(t, dir)
+	h = newHarness(t, withDir(dir))
 	h.login(password)
 	for i, path := range endpoints {
 		raw, _ := h.request("GET", path, nil, 200, nil)
@@ -72,7 +73,7 @@ func TestAdminNotesPrivateCASIsolationAndRestart(t *testing.T) {
 		h.request("PUT", path, map[string]any{"text": "", "revision": 0}, 200, map[string]string{"If-Match": "\"1\""})
 	}
 	h.close()
-	h = newDirectoryHarness(t, dir)
+	h = newHarness(t, withDir(dir))
 	h.login(password)
 	for _, path := range endpoints {
 		raw, _ := h.request("GET", path, nil, 200, nil)

@@ -19,6 +19,7 @@
 | github.com/cloudflare/circl（go-crypto 的间接依赖） | 1.6.3 | [circl.LICENSE](circl.LICENSE) |
 | golang.org/x/sys（circl 的间接依赖） | 0.36.0 | [x-sys.LICENSE](x-sys.LICENSE)、[x-sys.PATENTS](x-sys.PATENTS) |
 | golang.org/x/text（Tag Unicode 规范化与大小写折叠） | 0.42.0 | [x-text.LICENSE](x-text.LICENSE)、[x-text.PATENTS](x-text.PATENTS) |
+| github.com/santhosh-tekuri/jsonschema/v6（仅测试：按 `api/openapi.yaml` 校验 HTTP 响应的 JSON Schema 2020-12 校验器，不编入二进制） | 6.0.3 | [jsonschema.LICENSE](jsonschema.LICENSE) |
 
 Codex 固定安装器的 LICENSE/NOTICE 在 `installers/openai/codex/upstream/`，同时嵌入服务并通过 `/openai/codex/licenses/LICENSE` 与 `/openai/codex/licenses/NOTICE` 提供。该目录不代表已完成六平台 Codex 二进制捆绑组件的许可核查；正式企业分发前须另行核查实际包内的许可材料。
 

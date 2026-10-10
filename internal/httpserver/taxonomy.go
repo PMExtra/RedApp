@@ -1,9 +1,10 @@
 package httpserver
 
 import (
-	"github.com/PMExtra/RedApp/internal/store"
 	"net/http"
 	"strings"
+
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
 // categoriesAPI lists and renames categories. Categories are created while saving an App
@@ -22,7 +23,7 @@ func (s *Server) categoriesAPI(w http.ResponseWriter, r *http.Request) bool {
 			fail(w, 400, "Invalid category listing")
 			return true
 		}
-		result, err := s.DB.TaxonomyPage(r.URL.Query().Get("q"), page, limit)
+		result, err := s.store.TaxonomyPage(r.URL.Query().Get("q"), page, limit)
 		if err != nil {
 			directoryError(w, err)
 		} else {
@@ -34,7 +35,7 @@ func (s *Server) categoriesAPI(w http.ResponseWriter, r *http.Request) bool {
 			fail(w, 400, "Invalid category patch")
 			return true
 		}
-		item, err := s.DB.PatchTaxonomy(parts[1], patch)
+		item, err := s.store.PatchTaxonomy(parts[1], patch)
 		if err != nil {
 			directoryError(w, err)
 		} else {

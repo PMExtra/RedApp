@@ -13,10 +13,10 @@ import (
 )
 
 func TestGlobalProxyResponsesRedactPasswordAndKeepItOnlyForSameProxy(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	put := func(body map[string]any, status int) []byte {
-		data, _ := h.request("PUT", "/admin/api/settings/proxy", body, status, map[string]string{"If-Match": fmt.Sprintf(`"%d"`, h.server.Pool.Proxy().Revision)})
+		data, _ := h.request("PUT", "/admin/api/settings/proxy", body, status, map[string]string{"If-Match": fmt.Sprintf(`"%d"`, h.server.pool.Proxy().Revision)})
 		return data
 	}
 	saved := "http://proxy%40user:global-secret@proxy.example:3128"
@@ -27,7 +27,7 @@ func TestGlobalProxyResponsesRedactPasswordAndKeepItOnlyForSameProxy(t *testing.
 			t.Fatal("global proxy view", string(data))
 		}
 	}
-	revision := h.server.Pool.Proxy().Revision
+	revision := h.server.pool.Proxy().Revision
 	// The placeholder may not carry the saved password to another user, scheme or host.
 	for _, moved := range []string{"http://other:****@proxy.example:3128", "socks5://proxy%40user:****@proxy.example:3128", "http://proxy%40user:****@attacker.example:3128", "http://proxy%40user:****@proxy.example:3129"} {
 		if data := put(map[string]any{"mode": "url", "url": moved}, 400); bytes.Contains(data, []byte("global-secret")) {
@@ -37,15 +37,15 @@ func TestGlobalProxyResponsesRedactPasswordAndKeepItOnlyForSameProxy(t *testing.
 	// The removed compatibility field and an implicit mode are rejected.
 	put(map[string]any{"server": saved}, 400)
 	put(map[string]any{"url": saved}, 400)
-	if got := h.server.Pool.Proxy(); got.URL != saved || got.Revision != revision {
+	if got := h.server.pool.Proxy(); got.URL != saved || got.Revision != revision {
 		t.Fatal("rejected update changed proxy", got.Redacted())
 	}
 	put(map[string]any{"mode": "url", "url": "http://proxy%40user:%2A%2A%2A%2A@proxy.example:3128"}, 200)
-	if got := h.server.Pool.Proxy(); got.URL != saved || got.Revision != revision+1 {
+	if got := h.server.pool.Proxy(); got.URL != saved || got.Revision != revision+1 {
 		t.Fatal("redacted password not kept", got.Redacted())
 	}
 	put(map[string]any{"mode": "url", "url": "http://proxy%40user:next-secret@proxy.example:3128"}, 200)
-	if h.server.Pool.Proxy().URL != "http://proxy%40user:next-secret@proxy.example:3128" {
+	if h.server.pool.Proxy().URL != "http://proxy%40user:next-secret@proxy.example:3128" {
 		t.Fatal("new password not saved")
 	}
 	put(map[string]any{"mode": "direct"}, 200)
@@ -54,7 +54,7 @@ func TestGlobalProxyResponsesRedactPasswordAndKeepItOnlyForSameProxy(t *testing.
 }
 
 func TestConfigurationResponsesRedactProxyPasswordsExceptCredentialExport(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	vendorEndpoint, appEndpoint := "/admin/api/vendors/openai/configuration", "/admin/api/apps/openai/codex/configuration"
 	patch := func(endpoint string, proxy map[string]any, status int) []byte {
@@ -80,8 +80,8 @@ func TestConfigurationResponsesRedactProxyPasswordsExceptCredentialExport(t *tes
 	patch(appEndpoint, map[string]any{"mode": "url", "url": "http://vendor-user:****@127.0.0.1:3128"}, 400)
 	patch(appEndpoint, map[string]any{"mode": "url", "url": "socks5://app-user:****@127.0.0.1:1080"}, 200)
 	patch(vendorEndpoint, map[string]any{"mode": "url", "url": "http://vendor-user:****@127.0.0.1:3128"}, 200)
-	stored, _ := h.server.DB.ApplicationConfiguration("openai/codex")
-	vendor, _ := h.server.DB.VendorConfiguration("openai")
+	stored, _ := h.server.store.ApplicationConfiguration("openai/codex")
+	vendor, _ := h.server.store.VendorConfiguration("openai")
 	if stored.ProxyEffective.URL != "socks5://app-user:app-secret@127.0.0.1:1080" || vendor.ProxyEffective.URL != vendorURL {
 		t.Fatal("redacted passwords not kept", stored.ProxyEffective.SourceScope, vendor.ProxyEffective.SourceScope)
 	}

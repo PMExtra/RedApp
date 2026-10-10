@@ -108,7 +108,7 @@ func (s *Server) applicationList(w http.ResponseWriter, r *http.Request, app, en
 		fail(w, 405, "List endpoints require GET")
 		return
 	}
-	entry, ok := s.Registry.LookupAny(app)
+	entry, ok := s.registry.LookupAny(app)
 	if !ok || entry.Protocol == nil || endpoint != "versions" && endpoint != "resources" {
 		fail(w, 404, "Application list not found")
 		return
@@ -137,7 +137,7 @@ func (s *Server) applicationList(w http.ResponseWriter, r *http.Request, app, en
 				return
 			}
 		}
-		rows, err := s.DB.VersionPage(entry.StorageID(), last, limit+1)
+		rows, err := s.store.VersionPage(entry.StorageID(), last, limit+1)
 		if err != nil {
 			fail(w, 503, "Failed to read application versions")
 			return
@@ -160,7 +160,7 @@ func (s *Server) applicationList(w http.ResponseWriter, r *http.Request, app, en
 			return
 		}
 	}
-	if s.Downloads == nil {
+	if s.downloads == nil {
 		fail(w, 503, "Download state is unavailable")
 		return
 	}
@@ -193,7 +193,7 @@ func (s *Server) eventList(w http.ResponseWriter, r *http.Request, app string) {
 	}
 	metricScope := app
 	if app != "" {
-		entry, ok := s.Registry.LookupAny(app)
+		entry, ok := s.registry.LookupAny(app)
 		if !ok {
 			fail(w, 404, "Application not found")
 			return
@@ -213,7 +213,7 @@ func (s *Server) eventList(w http.ResponseWriter, r *http.Request, app string) {
 			return
 		}
 	}
-	rows, err := s.DB.EventPage(metricScope, before, limit+1)
+	rows, err := s.store.EventPage(metricScope, before, limit+1)
 	if err != nil {
 		fail(w, 503, "Failed to read events")
 		return

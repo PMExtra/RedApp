@@ -19,17 +19,17 @@ import (
 )
 
 func TestContentProvidersInstructionsAndBackendCapabilityGates(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	h.createVendor("content")
 	info := h.createApp("content", "about", "info", nil)
 	hosted := h.createApp("content", "files", "hosted", nil)
 	for _, a := range []store.Application{info, hosted} {
 		var count int
-		if err := h.server.DB.DB.QueryRow(`SELECT COUNT(*) FROM application_sources WHERE app_uid=?`, a.UID).Scan(&count); err != nil || count != 0 {
+		if err := h.server.store.DB.QueryRow(`SELECT COUNT(*) FROM application_sources WHERE app_uid=?`, a.UID).Scan(&count); err != nil || count != 0 {
 			t.Fatal("content source created", count, err)
 		}
-		e, _ := h.server.Registry.Lookup(a.Key)
+		e, _ := h.server.registry.Lookup(a.Key)
 		if e.Upstream != nil || len(e.Upstreams) != 0 || e.Protocol != nil {
 			t.Fatal("content app has upstream", e)
 		}
@@ -48,7 +48,7 @@ func TestContentProvidersInstructionsAndBackendCapabilityGates(t *testing.T) {
 	if headers.Get("ETag") != `"0"` {
 		t.Fatal(headers)
 	}
-	before, _ := h.bootstrap()
+	before, _ := h.publicCatalog()
 	value := map[string]any{"en": "<script>never execute</script>\nUse this app.", "zh-CN": "使用说明\n保留换行"}
 	h.request("PUT", endpoint, value, 403, map[string]string{"X-CSRF-Token": "wrong", "If-Match": `"0"`})
 	_, headers = h.request("PUT", endpoint, value, 200, map[string]string{"If-Match": `"0"`})
@@ -56,40 +56,25 @@ func TestContentProvidersInstructionsAndBackendCapabilityGates(t *testing.T) {
 		t.Fatal(headers)
 	}
 	h.request("PUT", endpoint, value, 409, map[string]string{"If-Match": `"0"`})
-	after, _ := h.bootstrap()
+	after, _ := h.publicCatalog()
 	if before == after {
 		t.Fatal("instructions did not invalidate public bootstrap")
 	}
-	data, _ := h.request("GET", "/api/bootstrap", nil, 200, nil)
-	var boot struct {
-		Apps []struct {
-			ID           string              `json:"id"`
-			Instructions store.LocalizedText `json:"instructions"`
-		}
+	data, _ := h.request("GET", "/api/apps/"+info.Key, nil, 200, nil)
+	if app := decodeJSONBody[publicAppDTO](t, data); !app.InstructionsAvailable.En || !app.InstructionsAvailable.ZhCN {
+		t.Fatal("public instructions flags", string(data))
 	}
-	if err := json.Unmarshal(data, &boot); err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, a := range boot.Apps {
-		if a.ID == info.Key {
-			found = true
-			if a.Instructions.En != value["en"] || a.Instructions.ZhCN != value["zh-CN"] {
-				t.Fatal(a)
-			}
-		}
-	}
-	if !found {
-		t.Fatal("public content missing")
+	if doc, _ := h.request("GET", "/api/apps/"+info.Key+"/instructions/document?lang=zh-CN", nil, 200, nil); !bytes.Contains(doc, []byte("保留换行")) {
+		t.Fatal("instructions document lost the text", string(doc))
 	}
 	h.request("PUT", endpoint, map[string]any{"en": strings.Repeat("界", 12001), "zh-CN": ""}, 400, map[string]string{"If-Match": `"1"`})
-	if updated, _ := h.server.DB.Application(info.Key); updated.Revision != info.Revision+1 || updated.SourceEpoch != info.SourceEpoch {
+	if updated, _ := h.server.store.Application(info.Key); updated.Revision != info.Revision+1 || updated.SourceEpoch != info.SourceEpoch {
 		t.Fatal("instructions changed application identity")
 	}
 }
 func TestHostedHTTPUploadImportLocalRangeAndRestart(t *testing.T) {
 	dir := t.TempDir()
-	h := newDirectoryHarness(t, dir)
+	h := newHarness(t, withDir(dir))
 	h.login(h.password)
 	h.createVendor("content")
 	a := h.createApp("content", "files", "hosted", nil)
@@ -153,7 +138,7 @@ func TestHostedHTTPUploadImportLocalRangeAndRestart(t *testing.T) {
 	data, _ = h.request("GET", "/api/apps/content/files/files?page=99&limit=1", nil, 200, nil)
 	var page store.Page[store.HostedFile]
 	json.Unmarshal(data, &page)
-	if page.Page != 2 || page.Total != 2 || len(page.Items) != 1 {
+	if page.Page != 99 || page.Total != 2 || page.TotalPages != 2 || len(page.Items) != 0 {
 		t.Fatal(string(data))
 	}
 	data, _ = h.request("POST", "/admin/api/apps/content/files/files/import?transfer_id=ffffffffffffffffffffffffffffffff", map[string]any{"path": "bad", "url": "https://user:private-password@example.com/a?token=private-signature"}, 502, nil)
@@ -161,15 +146,15 @@ func TestHostedHTTPUploadImportLocalRangeAndRestart(t *testing.T) {
 		t.Fatal("error leaked credentials", string(data))
 	}
 	var count int
-	if err := h.server.DB.DB.QueryRow(`SELECT COUNT(*) FROM hosted_files WHERE app_uid=?`, a.UID).Scan(&count); err != nil || count != 2 {
+	if err := h.server.store.DB.QueryRow(`SELECT COUNT(*) FROM hosted_files WHERE app_uid=?`, a.UID).Scan(&count); err != nil || count != 2 {
 		t.Fatal(count, err)
 	}
-	if err := h.server.DB.DB.QueryRow(`SELECT COUNT(*) FROM http_cache_generations`).Scan(&count); err != nil || count != 0 {
+	if err := h.server.store.DB.QueryRow(`SELECT COUNT(*) FROM http_cache_generations`).Scan(&count); err != nil || count != 0 {
 		t.Fatal("hosted entered cache cleanup", count, err)
 	}
 	password := h.password
 	h.close()
-	h = newDirectoryHarness(t, dir)
+	h = newHarness(t, withDir(dir))
 	h.login(password)
 	data, _ = h.request("GET", "/content/files/nested/tool.bin", nil, 200, nil)
 	if string(data) != "replacement" {
@@ -179,39 +164,39 @@ func TestHostedHTTPUploadImportLocalRangeAndRestart(t *testing.T) {
 	h.request("GET", "/content/files/remote.zip", nil, 404, nil)
 	h.request("GET", "/admin/api/apps/content/files/files", nil, 404, nil)
 	h.request("GET", "/content/files/nested/tool.bin", nil, 404, nil)
-	if err := h.server.DB.DB.QueryRow(`SELECT count(*) FROM hosted_files WHERE app_uid=?`, a.UID).Scan(&count); err != nil || count != 0 {
+	if err := h.server.store.DB.QueryRow(`SELECT count(*) FROM hosted_files WHERE app_uid=?`, a.UID).Scan(&count); err != nil || count != 0 {
 		t.Fatal("saved files survived permanent deletion", count, err)
 	}
 
 }
 func TestNumberedAPIInputAndVersionClamping(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	for _, query := range []string{"page=0", "page=-1", "page=01", "page=1&page=2", "limit=101", "page=1000000001"} {
 		h.request("GET", "/admin/api/vendors?"+query, nil, 400, nil)
 	}
-	entry, _ := h.server.Registry.Lookup("openai/codex")
+	entry, _ := h.server.registry.Lookup("openai/codex")
 	for i := 1; i <= 4; i++ {
-		if _, err := h.server.DB.DB.Exec(`INSERT INTO app_versions(app_id,version,first_seen_s) VALUES(?,?,?)`, entry.StorageID(), fmt.Sprintf("1.0.%d", i), i); err != nil {
+		if _, err := h.server.store.DB.Exec(`INSERT INTO app_versions(app_id,version,first_seen_s) VALUES(?,?,?)`, entry.StorageID(), fmt.Sprintf("1.0.%d", i), i); err != nil {
 			t.Fatal(err)
 		}
 	}
 	data, _ := h.request("GET", "/admin/api/apps/openai/codex/versions?page=99&limit=3", nil, 200, nil)
 	var page store.Page[listedVersion]
 	json.Unmarshal(data, &page)
-	if page.Total != 4 || page.Page != 2 || len(page.Items) != 1 {
+	if page.Total != 4 || page.Page != 99 || page.TotalPages != 2 || len(page.Items) != 0 {
 		t.Fatal(string(data))
 	}
 	data, _ = h.request("GET", "/admin/api/apps/anthropic/claude-code/versions?page=99&limit=3", nil, 200, nil)
 	json.Unmarshal(data, &page)
-	if page.Total != 0 || page.Page != 1 || len(page.Items) != 0 {
+	if page.Total != 0 || page.Page != 99 || len(page.Items) != 0 {
 		t.Fatal("app leak", string(data))
 	}
 	h.request("GET", "/admin/api/apps/openai/codex/versions?page=1&cursor=abc", nil, 400, nil)
 }
 
 func TestHostedStreamingUploadExtendsOnlyAuthenticatedBodyDeadline(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	h.createVendor("stream")
 	h.createApp("stream", "files", "hosted", nil)
@@ -253,7 +238,7 @@ func TestHostedStreamingUploadExtendsOnlyAuthenticatedBodyDeadline(t *testing.T)
 }
 
 func TestHostedCancelImportClosesUpstreamAndCannotBeReachedThroughInfo(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	h.createVendor("cancel")
 	app := h.createApp("cancel", "files", "hosted", nil)
@@ -322,11 +307,11 @@ func TestHostedCancelImportClosesUpstreamAndCannotBeReachedThroughInfo(t *testin
 	}
 	h.request("GET", "/admin/api/apps/cancel/files/files/transfers/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", nil, 404, nil)
 	h.request("GET", "/cancel/files/cancel.bin", nil, 404, nil)
-	files, e := h.server.DB.HostedPage(app.UID, 1, 25)
+	files, e := h.server.store.HostedPage(app.UID, 1, 25)
 	if e != nil || files.Total != 0 {
 		t.Fatal("cancel published a resource", files, e)
 	}
-	objects, e := os.ReadDir(filepath.Join(h.server.Dir, "objects", "hosted"))
+	objects, e := os.ReadDir(filepath.Join(h.server.dataDir, "objects", "hosted"))
 	if e != nil || len(objects) != 0 {
 		t.Fatal("cancel left temporary objects", objects, e)
 	}

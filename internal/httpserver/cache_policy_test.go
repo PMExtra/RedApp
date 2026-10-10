@@ -40,21 +40,21 @@ func decodePolicyAPI(t *testing.T, body []byte, headers http.Header) policyAPIRe
 	return result
 }
 
-func readPolicyAPI(t *testing.T, h *directoryHarness, endpoint string) policyAPIResponse {
+func readPolicyAPI(t *testing.T, h *harness, endpoint string) policyAPIResponse {
 	t.Helper()
 	body, headers := h.request("GET", endpoint, nil, 200, nil)
 	return decodePolicyAPI(t, body, headers)
 }
 
-func savePolicyAPI(t *testing.T, h *directoryHarness, endpoint string, revision int64, config any) policyAPIResponse {
+func savePolicyAPI(t *testing.T, h *harness, endpoint string, revision int64, config any) policyAPIResponse {
 	t.Helper()
 	body, headers := h.request("PUT", endpoint, config, 200, map[string]string{"If-Match": fmt.Sprintf(`"%d"`, revision)})
 	return decodePolicyAPI(t, body, headers)
 }
 
-func policyHTTPApp(t *testing.T, source string) (*directoryHarness, store.Application, string) {
+func policyHTTPApp(t *testing.T, source string) (*harness, store.Application, string) {
 	t.Helper()
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	vendor := h.createVendor("policy-test")
 	app := h.createApp(vendor.ID, "files", application.HttpCache, map[string]any{"base_url": source})
@@ -63,7 +63,7 @@ func policyHTTPApp(t *testing.T, source string) (*directoryHarness, store.Applic
 
 func TestHTTPCachePolicyAPIAuthorizationCASAndPersistence(t *testing.T) {
 	dir := t.TempDir()
-	h := newDirectoryHarness(t, dir)
+	h := newHarness(t, withDir(dir))
 	h.request("GET", "/admin/api/apps/openai/codex/cache/policy", nil, 401, nil)
 	h.login(h.password)
 	h.request("GET", "/admin/api/apps/openai/codex/cache/policy", nil, 404, nil)
@@ -96,7 +96,7 @@ func TestHTTPCachePolicyAPIAuthorizationCASAndPersistence(t *testing.T) {
 	if saved.Revision != initial.Revision+1 || *saved.StaleFallback || len(saved.Rules) != 2 || saved.Rules[0].TTLSeconds != 0 || saved.Rules[0].ID == "" || saved.Rules[1].ID == "" || saved.Rules[0].ID == saved.Rules[1].ID {
 		t.Fatal("policy order, generated IDs, zero TTL or explicit false was lost", saved)
 	}
-	persisted, err := h.server.DB.Application(app.Key)
+	persisted, err := h.server.store.Application(app.Key)
 	if err != nil || persisted.SourceEpoch != app.SourceEpoch || persisted.Revision != saved.Revision {
 		t.Fatalf("policy save changed source epoch or missed directory revision: %+v %v", persisted, err)
 	}
@@ -143,7 +143,7 @@ func TestHTTPCachePolicyAPIAuthorizationCASAndPersistence(t *testing.T) {
 	saved = defaulted
 	password := h.password
 	h.close()
-	restarted := newDirectoryHarness(t, dir)
+	restarted := newHarness(t, withDir(dir))
 	restarted.login(password)
 	if after := readPolicyAPI(t, restarted, endpoint); !reflect.DeepEqual(saved, after) {
 		t.Fatal("restart lost policy IDs, revision or stale setting", after)
@@ -207,7 +207,7 @@ func TestHTTPCacheCleanupAPIFreezesMatcherAndFencesRevision(t *testing.T) {
 	fetch := func(path string) { t.Helper(); h.request("GET", "/"+app.Key+path, nil, 200, nil) }
 	age := func() {
 		t.Helper()
-		if _, err := h.server.DB.DB.Exec(`UPDATE http_cache_generations SET fetched_at_s=? WHERE storage_id=?`, time.Now().Add(-2*time.Hour).Unix(), app.StorageID()); err != nil {
+		if _, err := h.server.store.DB.Exec(`UPDATE http_cache_generations SET fetched_at_s=? WHERE storage_id=?`, time.Now().Add(-2*time.Hour).Unix(), app.StorageID()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -312,7 +312,7 @@ type sourcesAPIApplication struct {
 }
 
 func TestHTTPCacheMultiSourceAPIValidationAndEpochs(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	vendor := h.createVendor("source-test")
 	create := "/admin/api/vendors/" + vendor.ID + "/apps"
@@ -402,7 +402,7 @@ func TestHTTPCacheMultiSourceAPIValidationAndEpochs(t *testing.T) {
 		}
 	}
 	h.request("GET", "/admin/api/apps/source-test/unknown/sources", nil, 404, nil)
-	row, err := h.server.DB.Application(app.Key)
+	row, err := h.server.store.Application(app.Key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -548,7 +548,7 @@ func TestHTTPCacheRefreshAPIPaginatesAndExecutesCompleteFrozenSet(t *testing.T) 
 	}
 	// Cleanup uses the same frozen, paginated collection, and executes beyond
 	// the displayed page without requesting any upstream files.
-	if _, err := h.server.DB.DB.Exec(`UPDATE http_cache_generations SET fetched_at_s=? WHERE storage_id=?`, time.Now().Add(-2*time.Hour).Unix(), app.StorageID()); err != nil {
+	if _, err := h.server.store.DB.Exec(`UPDATE http_cache_generations SET fetched_at_s=? WHERE storage_id=?`, time.Now().Add(-2*time.Hour).Unix(), app.StorageID()); err != nil {
 		t.Fatal(err)
 	}
 	body, _ = h.request("POST", api+"/cache/cleanup/preview", map[string]any{"match": pathmatch.Spec{Type: "glob", Pattern: "/selected/"}, "basis": "fetched_at", "before": time.Now().Add(-time.Hour).UTC()}, 200, nil)
@@ -595,7 +595,7 @@ func TestHTTPCacheRefreshAPISingleOutcomesAndPreviewFences(t *testing.T) {
 	h, app, api := policyHTTPApp(t, upstream.URL)
 	h.request("GET", "/"+app.Key+"/file.bin", nil, 200, nil)
 	accessBefore := time.Now().Add(-48*time.Hour).Unix() / 60 * 60
-	if _, err := h.server.DB.DB.Exec(`UPDATE http_cache_generations SET last_access_bucket_s=? WHERE storage_id=?`, accessBefore, app.StorageID()); err != nil {
+	if _, err := h.server.store.DB.Exec(`UPDATE http_cache_generations SET last_access_bucket_s=? WHERE storage_id=?`, accessBefore, app.StorageID()); err != nil {
 		t.Fatal(err)
 	}
 	input := map[string]any{"path": "/file.bin"}
@@ -614,7 +614,7 @@ func TestHTTPCacheRefreshAPISingleOutcomesAndPreviewFences(t *testing.T) {
 		t.Fatal("conditional refresh response lost its unchanged outcome", unchanged)
 	}
 	var accessAfter int64
-	if err := h.server.DB.DB.QueryRow(`SELECT last_access_bucket_s FROM http_cache_generations WHERE storage_id=? AND is_current=1`, app.StorageID()).Scan(&accessAfter); err != nil || accessAfter > accessBefore {
+	if err := h.server.store.DB.QueryRow(`SELECT last_access_bucket_s FROM http_cache_generations WHERE storage_id=? AND is_current=1`, app.StorageID()).Scan(&accessAfter); err != nil || accessAfter > accessBefore {
 		t.Fatalf("admin refresh fabricated client access: %d %v", accessAfter, err)
 	}
 	fail.Store(true)

@@ -8,10 +8,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestRequestOriginTrustBoundary(t *testing.T) {
-	p, _ := NewProxy("10.0.0.0/8")
+	p, _ := ParseTrustedProxies([]string{"10.0.0.0/8"})
 	for _, tc := range []struct {
 		name, peer, fwd, xff, host, proto, want string
 		invalid                                 bool
@@ -44,8 +45,7 @@ func TestRequestOriginTrustBoundary(t *testing.T) {
 			if tc.proto != "" {
 				r.Header.Set("X-Forwarded-Proto", tc.proto)
 			}
-			s := Server{Proxy: p}
-			got, err := s.origin(r)
+			got, err := p.origin(r)
 			if (err != nil) != tc.invalid || !tc.invalid && got != tc.want {
 				t.Fatalf("got=%q err=%v", got, err)
 			}
@@ -59,8 +59,7 @@ func TestRequestOriginTrustBoundary(t *testing.T) {
 		r := httptest.NewRequest("GET", "http://internal:8080/health/ready", nil)
 		r.Host, r.RemoteAddr = h, "10.0.0.1:8080"
 		r.Header.Set("Forwarded", "host=external.example;proto=https")
-		s := Server{Proxy: p}
-		if _, err := s.origin(r); err == nil {
+		if _, err := p.origin(r); err == nil {
 			t.Fatalf("forwarded header hid unsafe Host %q", h)
 		}
 	}
@@ -72,17 +71,14 @@ func TestRequestOriginTrustBoundary(t *testing.T) {
 }
 
 func TestAutomaticOriginHTTPIsolationAndSecurity(t *testing.T) {
-	s, _, password := newTestServer(t, nil)
-	s.Proxy, _ = NewProxy("10.0.0.0/8")
+	h := newHarness(t, withTrustedProxies(t, "10.0.0.0/8"))
 	request := func(host, path, method, body, origin string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, "http://"+host+path, strings.NewReader(body))
 		r.RemoteAddr = "10.0.0.1:8080"
 		r.Header.Set("Forwarded", "for=8.8.8.8;host="+host+";proto=https")
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("Origin", origin)
-		w := httptest.NewRecorder()
-		s.ServeHTTP(w, r)
-		return w
+		return h.serve(r)
 	}
 	var wg sync.WaitGroup
 	for _, host := range []string{"one.example", "two.example"} {
@@ -104,25 +100,25 @@ func TestAutomaticOriginHTTPIsolationAndSecurity(t *testing.T) {
 				t.Fatalf("valid custom Host %s at %s: %d", host, path, w.Code)
 			}
 		}
-		if w := request(host, "/admin/api/status", "GET", "", ""); w.Code != 401 {
+		if w := request(host, "/admin/api/session", "GET", "", ""); w.Code != 401 {
 			t.Fatalf("custom Host bypassed authentication: %d", w.Code)
 		}
 	}
 	public := "https://published.example"
-	if _, err := s.PublicConfig.Set(&public, 0); err != nil {
+	if _, err := h.server.public.Set(&public, 0); err != nil {
 		t.Fatal(err)
 	}
-	body, _ := json.Marshal(map[string]string{"password": password})
-	if w := request("one.example", "/admin/api/login", "POST", string(body), "https://published.example"); w.Code != 403 {
-		t.Fatal("public origin granted CSRF trust")
+	body, _ := json.Marshal(map[string]string{"password": h.password})
+	if w := request("one.example", "/admin/api/session", "POST", string(body), "https://published.example"); w.Code != 403 || errorCodeOf(t, w.Body.Bytes()) != "ORIGIN_REJECTED" {
+		t.Fatal("public origin granted CSRF trust", w.Code)
 	}
-	w := request("one.example", "/admin/api/login", "POST", string(body), "https://one.example")
-	if w.Code != 200 || len(w.Result().Cookies()) != 1 {
-		t.Fatalf("login %d %s", w.Code, w.Body)
+	w := request("one.example", "/admin/api/session", "POST", string(body), "https://one.example")
+	if w.Code != 201 || len(w.Result().Cookies()) != 1 {
+		t.Fatalf("sign-in %d %s", w.Code, w.Body)
 	}
 	cookie := w.Result().Cookies()[0]
-	if !cookie.Secure || !cookie.HttpOnly || cookie.Domain != "" || cookie.Path != "/admin" || cookie.SameSite != http.SameSiteStrictMode {
-		t.Fatal("login cookie protection changed")
+	if !cookie.Secure || !cookie.HttpOnly || cookie.Domain != "" || cookie.Path != "/admin" || cookie.SameSite != http.SameSiteStrictMode || cookie.MaxAge != 8*3600 {
+		t.Fatal("sign-in cookie protection changed", cookie)
 	}
 	if w = request("one.example", "/openai/codex/install.sh", "GET", "", ""); w.Code != 200 || !bytes.Contains(w.Body.Bytes(), []byte(public+"/openai/codex")) {
 		t.Fatal("public override not used", w.Code)
@@ -136,50 +132,63 @@ func TestAutomaticOriginHTTPIsolationAndSecurity(t *testing.T) {
 	// Public settings never bypass Host syntax validation, even for health checks.
 	r := httptest.NewRequest("GET", "http://internal/health/ready", nil)
 	r.Host = "bad_host"
-	w = httptest.NewRecorder()
-	s.ServeHTTP(w, r)
-	if w.Code != 400 {
+	if w = h.serve(r); w.Code != 400 || errorCodeOf(t, w.Body.Bytes()) != "REQUEST_ORIGIN_INVALID" {
 		t.Fatal("invalid Host accepted with public override", w.Code)
+	}
+	r = httptest.NewRequest("GET", "http://internal/api/bootstrap", nil)
+	r.RemoteAddr = "10.0.0.1:8080"
+	r.Header.Set("X-Forwarded-Proto", "gopher")
+	if w = h.serve(r); w.Code != 400 || errorCodeOf(t, w.Body.Bytes()) != "REQUEST_ORIGIN_INVALID" {
+		t.Fatal("malformed trusted forwarding header accepted", w.Code)
 	}
 }
 
-func TestLoginFailureCodesAndLogoutCookie(t *testing.T) {
-	s, _, password := newTestServer(t, nil)
+func TestSignInFailureCodesAndSignOutCookie(t *testing.T) {
+	h := newHarness(t)
 	login := func(ip, password string) *httptest.ResponseRecorder {
 		body, _ := json.Marshal(map[string]string{"password": password})
-		r := httptest.NewRequest("POST", "https://one.example/admin/api/login", strings.NewReader(string(body)))
+		r := httptest.NewRequest("POST", "https://one.example/admin/api/session", strings.NewReader(string(body)))
 		r.RemoteAddr = ip + ":443"
 		r.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-		s.ServeHTTP(w, r)
-		return w
-	}
-	code := func(w *httptest.ResponseRecorder) string {
-		var problem struct{ Error struct{ Code string } }
-		json.Unmarshal(w.Body.Bytes(), &problem)
-		return problem.Error.Code
+		return h.serve(r)
 	}
 	for i := 0; i < 10; i++ {
-		if w := login("192.0.2.1", "wrong"); w.Code != 401 || code(w) != "LOGIN_FAILED" || len(w.Result().Cookies()) != 0 {
+		if w := login("192.0.2.1", "wrong"); w.Code != 401 || errorCodeOf(t, w.Body.Bytes()) != "LOGIN_FAILED" || len(w.Result().Cookies()) != 0 {
 			t.Fatal("wrong password", i, w.Code, w.Body)
 		}
 	}
-	if w := login("192.0.2.1", password); w.Code != 429 || code(w) != "LOGIN_RATE_LIMITED" || len(w.Result().Cookies()) != 0 {
+	if w := login("192.0.2.1", h.password); w.Code != 429 || errorCodeOf(t, w.Body.Bytes()) != "LOGIN_RATE_LIMITED" || len(w.Result().Cookies()) != 0 {
 		t.Fatal("rate limit", w.Code, w.Body)
 	}
-	w := login("192.0.2.2", password)
-	if w.Code != 200 {
+	w := login("192.0.2.2", h.password)
+	if w.Code != 201 {
 		t.Fatal(w.Code, w.Body)
 	}
-	var session map[string]string
-	json.Unmarshal(w.Body.Bytes(), &session)
-	r := httptest.NewRequest("POST", "https://one.example/admin/api/logout", strings.NewReader("{}"))
-	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("X-CSRF-Token", session["csrf"])
-	r.AddCookie(w.Result().Cookies()[0])
-	w = httptest.NewRecorder()
-	s.ServeHTTP(w, r)
-	if c := w.Result().Cookies(); w.Code != 200 || len(c) != 1 || c[0].Name != "redapp_session" || c[0].Value != "" || c[0].MaxAge >= 0 || !c[0].Secure {
-		t.Fatal("logout did not expire the cookie", w.Code, c)
+	session := decodeJSONBody[sessionDTO](t, w.Body.Bytes())
+	if until := time.Until(session.ExpiresAt); until < 7*time.Hour || until > 8*time.Hour+time.Minute {
+		t.Fatal("session expiry is not 8 hours", session.ExpiresAt)
+	}
+	cookie := w.Result().Cookies()[0]
+	get := httptest.NewRequest("GET", "https://one.example/admin/api/session", nil)
+	get.AddCookie(cookie)
+	if w := h.serve(get); w.Code != 200 || decodeJSONBody[sessionDTO](t, w.Body.Bytes()).CSRFToken != session.CSRFToken {
+		t.Fatal("session read", w.Code, w.Body)
+	}
+	r := httptest.NewRequest("DELETE", "https://one.example/admin/api/session", nil)
+	r.AddCookie(cookie)
+	if w := h.serve(r); w.Code != 403 || errorCodeOf(t, w.Body.Bytes()) != "CSRF_REJECTED" {
+		t.Fatal("sign-out without CSRF token", w.Code)
+	}
+	r = httptest.NewRequest("DELETE", "https://one.example/admin/api/session", nil)
+	r.Header.Set("X-CSRF-Token", session.CSRFToken)
+	r.AddCookie(cookie)
+	w = h.serve(r)
+	if c := w.Result().Cookies(); w.Code != 204 || len(c) != 1 || c[0].Name != "redapp_session" || c[0].Value != "" || c[0].MaxAge >= 0 || !c[0].Secure {
+		t.Fatal("sign-out did not expire the cookie", w.Code, c)
+	}
+	get = httptest.NewRequest("GET", "https://one.example/admin/api/session", nil)
+	get.AddCookie(cookie)
+	if w := h.serve(get); w.Code != 401 || errorCodeOf(t, w.Body.Bytes()) != "AUTH_REQUIRED" {
+		t.Fatal("signed-out session still valid", w.Code)
 	}
 }

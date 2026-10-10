@@ -8,8 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	app "github.com/PMExtra/RedApp/internal/apps/codex"
-	"github.com/PMExtra/RedApp/internal/testutil"
 	"io"
 	"net/http"
 	"os"
@@ -18,6 +16,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	app "github.com/PMExtra/RedApp/internal/apps/codex"
 )
 
 func testSHA(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
@@ -41,8 +41,9 @@ func TestEnterpriseInstallerThroughRedAppAndHashFailure(t *testing.T) {
 	manifest := []byte(fmt.Sprintf("%s  %s\n", testSHA(archive), name))
 	for _, bad := range []bool{false, true} {
 		t.Run(fmt.Sprint("corrupt=", bad), func(t *testing.T) {
-			var base string
-			c, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			h := newHarness(t)
+			base := fixtureUpstream
+			h.upstreamProxy(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
 				case strings.HasSuffix(r.URL.Path, "latest") || strings.HasSuffix(r.URL.Path, "release.json"):
 					json.NewEncoder(w).Encode(app.Release{Tag: "rust-v0.159.2", Assets: []app.Asset{{Name: name, Digest: "sha256:" + testSHA(archive), URL: base + "/releases/0.159.2/" + name}, {Name: "codex-package_SHA256SUMS", Digest: "sha256:" + testSHA(manifest), URL: base + "/releases/0.159.2/codex-package_SHA256SUMS"}}})
@@ -56,10 +57,8 @@ func TestEnterpriseInstallerThroughRedAppAndHashFailure(t *testing.T) {
 					}
 				}
 			}))
-			base = c.Base.String()
-			handler, _, _ := newTestServer(t, c)
-			enterprise := startTestServer(t, handler)
-			response, e := http.Get(enterprise.URL + "/openai/codex/install.sh")
+			key := h.releaseApp("fixture", "codex", "codex")
+			response, e := http.Get(h.http.URL + "/" + key + "/install.sh")
 			if e != nil {
 				t.Fatal(e)
 			}

@@ -31,9 +31,11 @@ const (
 )
 
 var (
-	ErrLoginFailed  = errors.New("Login failed")
-	ErrRateLimited  = errors.New("Login rate limit exceeded")
-	ErrSessionLimit = errors.New("Session limit exceeded")
+	ErrLoginFailed              = errors.New("login failed")
+	ErrRateLimited              = errors.New("login rate limit exceeded")
+	ErrSessionLimit             = errors.New("session limit exceeded")
+	ErrCurrentPasswordIncorrect = errors.New("current password is incorrect")
+	ErrPasswordInvalid          = errors.New("password must be between 12 and 72 bytes")
 )
 
 type Session struct {
@@ -202,16 +204,24 @@ func (a *Auth) CSRF(r *http.Request, s Session) bool {
 	return len(r.Header.Get("X-CSRF-Token")) == 64 && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-CSRF-Token")), []byte(s.CSRF)) == 1
 }
 
-// Password hashes outside a.mu; a concurrent change detected by revision fails this one.
-func (a *Auth) Password(old, next string) error {
+// Password replaces the administrator password and revokes every session.
+// The current password check counts against the sign-in rate limit of the
+// client ip, so a stolen session cannot brute-force the password here. Hashing
+// runs outside a.mu; a concurrent change detected by revision fails this one.
+func (a *Auth) Password(ip, old, next string) error {
 	if len(next) < 12 || len(next) > 72 {
-		return errors.New("Password must be between 12 and 72 bytes")
+		return ErrPasswordInvalid
 	}
+	key := clientKey(ip)
 	a.mu.Lock()
+	if !a.admit(key, a.now()) {
+		a.mu.Unlock()
+		return ErrRateLimited
+	}
 	current, revision := a.hash, a.revision
 	a.mu.Unlock()
-	if a.compare(current, []byte(old)) != nil {
-		return errors.New("Invalid password")
+	if len(old) > 72 || a.compare(current, []byte(old)) != nil {
+		return ErrCurrentPasswordIncorrect
 	}
 	hash, e := bcrypt.GenerateFromPassword([]byte(next), 12)
 	if e != nil {
@@ -220,7 +230,7 @@ func (a *Auth) Password(old, next string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if revision != a.revision {
-		return errors.New("Password changed concurrently")
+		return ErrCurrentPasswordIncorrect
 	}
 	if _, e = a.db.DB.Exec("UPDATE admin SET hash=?,revision=? WHERE id=1", hash, revision+1); e != nil {
 		return e
@@ -228,6 +238,7 @@ func (a *Auth) Password(old, next string) error {
 	a.hash = hash
 	a.revision = revision + 1
 	a.sessions = map[[32]byte]Session{}
+	delete(a.attempts, key)
 	return nil
 }
 func (a *Auth) Logout(r *http.Request) {

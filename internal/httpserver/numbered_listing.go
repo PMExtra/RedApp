@@ -1,11 +1,12 @@
 package httpserver
 
 import (
+	"net/http"
+	"sort"
+
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/store"
-	"net/http"
-	"sort"
 )
 
 func (s *Server) numberedApplicationList(w http.ResponseWriter, r *http.Request, entry application.Entry, endpoint string) {
@@ -24,7 +25,7 @@ func (s *Server) numberedApplicationList(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if endpoint == "versions" {
-		rows, err := s.DB.VersionNumberPage(entry.StorageID(), p, limit)
+		rows, err := s.store.VersionNumberPage(entry.StorageID(), p, limit)
 		if err != nil {
 			fail(w, 503, "Failed to read application versions")
 			return
@@ -44,14 +45,14 @@ func (s *Server) numberedApplicationList(w http.ResponseWriter, r *http.Request,
 			return
 		}
 	}
-	if s.Downloads == nil {
+	if s.downloads == nil {
 		fail(w, 503, "Download state is unavailable")
 		return
 	}
-	views := s.Downloads.SnapshotFor(entry.StorageID(), version)
+	views := s.downloads.SnapshotFor(entry.StorageID(), version)
 	sort.Slice(views, func(i, j int) bool { return views[i].ID < views[j].ID })
 	result := store.NewPage[download.View](p, limit, int64(len(views)))
-	start := (result.Page - 1) * limit
+	start := min((result.Page-1)*limit, len(views))
 	end := min(start+limit, len(views))
 	result.Items = s.publicViews(views[start:end])
 	reply(w, 200, result)

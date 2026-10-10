@@ -3,27 +3,24 @@ package httpserver
 import (
 	"bytes"
 	"errors"
-	"github.com/PMExtra/RedApp/internal/application"
-	"github.com/PMExtra/RedApp/internal/identity"
-	"github.com/PMExtra/RedApp/internal/prewarm"
-	"github.com/PMExtra/RedApp/internal/store"
-	"github.com/PMExtra/RedApp/internal/warmplan"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/internal/identity"
+	"github.com/PMExtra/RedApp/internal/prewarm"
+	"github.com/PMExtra/RedApp/internal/store"
+	"github.com/PMExtra/RedApp/internal/warmplan"
 )
 
-func (s *Server) Prewarmer() (*prewarm.Service, error) {
-	s.prewarmOnce.Do(func() { s.prewarmer, s.prewarmErr = prewarm.New(s.DB, s.Registry, s.Catalog, s.Downloads, s.HTTPCache) })
-	return s.prewarmer, s.prewarmErr
-}
 func (s *Server) prewarmAPI(w http.ResponseWriter, r *http.Request, app, endpoint string) bool {
 	if app == "" || !strings.HasPrefix(endpoint, "prewarm/") {
 		return false
 	}
-	entry, ok := s.Registry.LookupAny(app)
+	entry, ok := s.registry.LookupAny(app)
 	if !ok {
 		fail(w, 404, "Application not found")
 		return true
@@ -41,15 +38,11 @@ func (s *Server) prewarmAPI(w http.ResponseWriter, r *http.Request, app, endpoin
 		reply(w, 200, map[string]any{"release": release, "platforms": platforms, "channels": entry.Descriptor.Channels, "limits": warmplan.DefaultLimits()})
 		return true
 	}
-	service, err := s.Prewarmer()
-	if err != nil {
-		fail(w, 503, "Prewarm unavailable")
-		return true
-	}
+	service := s.prewarmer
 	respond := func(job store.PrewarmJob, err error) {
 		switch {
 		case errors.Is(err, prewarm.ErrBusy):
-			reply(w, 409, map[string]any{"error": map[string]string{"code": "PREWARM_BUSY", "message": "Prewarm worker busy"}, "job": job})
+			problem(w, 409, "PREWARM_BUSY", "Another prewarm task is running; retry later")
 		case errors.Is(err, prewarm.ErrInvalid):
 			fail(w, 400, "Invalid prewarm input")
 		case err != nil:
@@ -97,7 +90,7 @@ func (s *Server) prewarmAPI(w http.ResponseWriter, r *http.Request, app, endpoin
 			fail(w, 400, "Invalid limit")
 			return true
 		}
-		items, total, err := s.DB.PrewarmItems(entry.UID, job.ID, page, limit)
+		items, total, err := s.store.PrewarmItems(entry.UID, job.ID, page, limit)
 		if err != nil {
 			fail(w, 503, "Prewarm items unavailable")
 		} else {

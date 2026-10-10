@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/store"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func deleteBody(a store.Application) map[string]any {
@@ -52,7 +51,7 @@ func TestForceDeleteCancelsCacheOriginWithoutInterruptingSibling(t *testing.T) {
 		}
 	}))
 	defer upstream.Close()
-	h := newForceHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	h.createVendor("force")
 	a := h.createApp("force", "a", "http-cache", map[string]any{"base_url": upstream.URL + "/a"})
@@ -111,31 +110,31 @@ func TestForceDeleteCancelsCacheOriginWithoutInterruptingSibling(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("sibling did not finish")
 	}
-	if _, err := h.server.DB.Application(b.Key); err != nil {
+	if _, err := h.server.store.Application(b.Key); err != nil {
 		t.Fatal(err)
 	}
 	h.request("DELETE", "/admin/api/apps/"+a.Key, deleteBody(a), 200, nil)
 	replacement := h.createApp("force", "a", "info", nil)
 	h.request("DELETE", "/admin/api/apps/"+a.Key, deleteBody(a), 409, nil)
-	if row, err := h.server.DB.Application(replacement.Key); err != nil || row.UID != replacement.UID || row.DeletedAt != nil {
+	if row, err := h.server.store.Application(replacement.Key); err != nil || row.UID != replacement.UID || row.DeletedAt != nil {
 		t.Fatal("old delete reached replacement", row, err)
 	}
 }
 
 func TestForceDeleteTimeoutBlocksAdmissionAndRestartsFromIntent(t *testing.T) {
 	dir := t.TempDir()
-	h := newForceHarness(t, dir, func(s *Server) { s.deleteWait = 20 * time.Millisecond })
+	h := newHarness(t, withDir(dir), withOptions(WithDeleteWait(20*time.Millisecond)))
 	h.login(h.password)
 	h.createVendor("force")
 	a := h.createApp("force", "held", "hosted", nil)
-	entry, _ := h.server.Registry.Lookup(a.Key)
-	file, err := h.server.Hosted.Put(context.Background(), entry, "file", "", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", func(context.Context) (io.ReadCloser, int64, error) {
+	entry, _ := h.server.registry.Lookup(a.Key)
+	file, err := h.server.hosted.Put(context.Background(), entry, "file", "", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", func(context.Context) (io.ReadCloser, int64, error) {
 		return io.NopCloser(strings.NewReader("keep until drained")), 18, nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, release, err := h.server.DB.ApplicationWork(context.Background(), a.StorageID())
+	ctx, release, err := h.server.store.ApplicationWork(context.Background(), a.StorageID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,13 +149,13 @@ func TestForceDeleteTimeoutBlocksAdmissionAndRestartsFromIntent(t *testing.T) {
 	if _, err = os.Stat(filepath.Join(dir, "objects", "hosted", file.ID)); err != nil {
 		t.Fatal("files removed before exit", err)
 	}
-	if _, _, err = h.server.DB.ApplicationWork(context.Background(), a.StorageID()); !errors.Is(err, store.ErrSourceInactive) {
+	if _, _, err = h.server.store.ApplicationWork(context.Background(), a.StorageID()); !errors.Is(err, store.ErrSourceInactive) {
 		t.Fatal("new work admitted", err)
 	}
 	h.request("DELETE", "/admin/api/apps/"+a.Key, deleteBody(a), 409, nil)
 	// A failed final transaction must retain the intent and files, with the same retry response.
 	release()
-	if _, err = h.server.DB.DB.Exec(`CREATE TEMP TRIGGER fail_final_delete BEFORE DELETE ON applications BEGIN SELECT RAISE(ABORT,'isolated final-delete failure'); END`); err != nil {
+	if _, err = h.server.store.DB.Exec(`CREATE TEMP TRIGGER fail_final_delete BEFORE DELETE ON applications BEGIN SELECT RAISE(ABORT,'isolated final-delete failure'); END`); err != nil {
 		t.Fatal(err)
 	}
 	h.request("DELETE", "/admin/api/apps/"+a.Key, deleteBody(a), 409, nil)
@@ -165,7 +164,7 @@ func TestForceDeleteTimeoutBlocksAdmissionAndRestartsFromIntent(t *testing.T) {
 	}
 	// Startup recovery handles only explicit permanent-deletion intents.
 	soft := h.createApp("force", "soft", "info", nil)
-	if err = h.server.DB.DeleteApplication(soft.Key, soft.Revision); err != nil {
+	if err = h.server.store.DeleteApplication(soft.Key, soft.Revision); err != nil {
 		t.Fatal(err)
 	}
 	release()
@@ -199,17 +198,17 @@ func TestForceDeleteTimeoutBlocksAdmissionAndRestartsFromIntent(t *testing.T) {
 }
 
 func TestForceDeleteStopsHostedImportBeforePublishing(t *testing.T) {
-	h := newForceHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	h.createVendor("force")
 	a := h.createApp("force", "import", "hosted", nil)
-	entry, _ := h.server.Registry.Lookup(a.Key)
+	entry, _ := h.server.registry.Lookup(a.Key)
 	reader, writer := io.Pipe()
 	defer writer.Close()
 	started := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		_, err := h.server.Hosted.Put(context.Background(), entry, "file", "", "cccccccccccccccccccccccccccccccc", func(context.Context) (io.ReadCloser, int64, error) { close(started); return reader, -1, nil })
+		_, err := h.server.hosted.Put(context.Background(), entry, "file", "", "cccccccccccccccccccccccccccccccc", func(context.Context) (io.ReadCloser, int64, error) { close(started); return reader, -1, nil })
 		done <- err
 	}()
 	awaitClosed(t, started)
@@ -222,15 +221,15 @@ func TestForceDeleteStopsHostedImportBeforePublishing(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("import did not exit")
 	}
-	if _, err := h.server.DB.HostedFile(a.UID, "file"); !errors.Is(err, sql.ErrNoRows) {
+	if _, err := h.server.store.HostedFile(a.UID, "file"); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatal(err)
 	}
-	files, err := os.ReadDir(filepath.Join(h.server.Dir, "objects", "hosted"))
+	files, err := os.ReadDir(filepath.Join(h.server.dataDir, "objects", "hosted"))
 	if err != nil || len(files) != 0 {
 		t.Fatal("orphan import body", files, err)
 	}
 	opened := false
-	_, err = h.server.Hosted.Put(context.Background(), entry, "file", "", "dddddddddddddddddddddddddddddddd", func(context.Context) (io.ReadCloser, int64, error) {
+	_, err = h.server.hosted.Put(context.Background(), entry, "file", "", "dddddddddddddddddddddddddddddddd", func(context.Context) (io.ReadCloser, int64, error) {
 		opened = true
 		return io.NopCloser(strings.NewReader("late")), 4, nil
 	})
@@ -250,14 +249,14 @@ func TestForceDeleteAbortsHostedHTTP2StreamAndPreservesSiblingStream(t *testing.
 		}
 	}))
 	defer origin.Close()
-	h := newForceHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	h.createVendor("force")
 	a := h.createApp("force", "hosted", "hosted", nil)
 	h.createApp("force", "sibling", "http-cache", map[string]any{"base_url": origin.URL})
-	entry, _ := h.server.Registry.Lookup(a.Key)
+	entry, _ := h.server.registry.Lookup(a.Key)
 	const size = 16 << 20
-	_, err := h.server.Hosted.Put(context.Background(), entry, "large", "", "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", func(context.Context) (io.ReadCloser, int64, error) {
+	_, err := h.server.hosted.Put(context.Background(), entry, "large", "", "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", func(context.Context) (io.ReadCloser, int64, error) {
 		return io.NopCloser(strings.NewReader(strings.Repeat("x", size))), size, nil
 	})
 	if err != nil {
@@ -312,27 +311,6 @@ func TestForceDeleteAbortsHostedHTTP2StreamAndPreservesSiblingStream(t *testing.
 	}
 }
 
-// These are deletion tests, not password-work-factor benchmarks. Production and
-// the authentication regression suite continue to use the real bcrypt cost.
-func newForceHarness(t *testing.T, dir string, configure ...func(*Server)) *directoryHarness {
-	t.Helper()
-	db, err := store.Open(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	const password = "isolated-deletion-test-password"
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = db.DB.Exec(`INSERT INTO admin VALUES(1,?,1)`, hash); err != nil {
-		t.Fatal(err)
-	}
-	h := newDirectoryHarnessWithStore(t, dir, db, configure...)
-	h.password = password
-	return h
-}
-
 // Metadata and installer writes can block too, even without an active origin.
 type heldApplicationResponse struct {
 	headers          http.Header
@@ -361,7 +339,7 @@ func TestForceDeleteDrainsCachedMetadataResponse(t *testing.T) {
 	}))
 	defer origin.Close()
 	base = origin.URL
-	h := newForceHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	h.createVendor("force")
 	a := h.createApp("force", "release", "codex", map[string]any{"base_url": base})

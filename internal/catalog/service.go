@@ -159,17 +159,11 @@ func (s *Service) fetch(parent context.Context, e application.Entry, target stri
 		if err == nil {
 			v, versionErr := e.Protocol.ValidateVersion(resolved.Version)
 			if versionErr != nil || v != resolved.Version {
-				err = fmt.Errorf("%w: noncanonical channel version", application.ErrUpstream)
+				err = fmt.Errorf("%w: noncanonical channel version", application.ErrUntrusted)
 			}
 		}
 		if err == nil && resolved.Envelope != nil {
-			release, err = e.Protocol.VerifyRelease(resolved.Version, *resolved.Envelope)
-			if err == nil {
-				err = s.persist(e, release, time.Now().UTC())
-			}
-			if err != nil {
-				err = fmt.Errorf("%w: %w", application.ErrUpstream, err)
-			}
+			release, err = s.verifyAndPersist(e, resolved.Version, *resolved.Envelope)
 		} else if err == nil {
 			release, err = s.release(ctx, e, resolved.Version)
 		}
@@ -182,13 +176,7 @@ func (s *Service) fetch(parent context.Context, e application.Entry, target stri
 		var envelope application.Envelope
 		envelope, err = e.Protocol.FetchRelease(ctx, target)
 		if err == nil {
-			release, err = e.Protocol.VerifyRelease(target, envelope)
-			if err == nil {
-				err = s.persist(e, release, time.Now().UTC())
-			}
-			if err != nil {
-				err = fmt.Errorf("%w: %w", application.ErrUpstream, err)
-			}
+			release, err = s.verifyAndPersist(e, target, envelope)
 		}
 	}
 	if err != nil {
@@ -257,7 +245,7 @@ func (s *Service) Authorize(ctx context.Context, app, version, key string) (down
 			return download.Resource{}, err
 		}
 		if bound.SourceURL != a.Source || bound.SHA256 != a.SHA256 || !equalSize(bound.ExpectedSize, a.Size) {
-			return download.Resource{}, fmt.Errorf("%w: persisted resource binding differs from trusted metadata", application.ErrUpstream)
+			return download.Resource{}, fmt.Errorf("%w: persisted resource binding differs from trusted metadata", application.ErrUntrusted)
 		}
 		return download.Resource{Application: e.StorageID(), MetricsID: e.MetricsID(), SourceFence: sourceFence(e), Version: version, Key: key, ID: download.LogicalIdentity(e.StorageID(), version, key), Source: a.Source, Hash: a.SHA256, Size: a.Size, Labels: map[string]string{"app": app, "version": version, "name": key}}, nil
 	}
@@ -326,4 +314,21 @@ func candidates(e application.Entry, storageID, minimum string, views []download
 	}
 	sort.Strings(unknown)
 	return ids, unknown, nil
+}
+
+// verifyAndPersist verifies freshly fetched release metadata and stores it.
+// Verification failures and conflicts with already trusted bindings are
+// untrusted metadata; storage failures keep their own error.
+func (s *Service) verifyAndPersist(e application.Entry, version string, envelope application.Envelope) (application.Release, error) {
+	release, err := e.Protocol.VerifyRelease(version, envelope)
+	if err != nil {
+		return application.Release{}, fmt.Errorf("%w: %w", application.ErrUntrusted, err)
+	}
+	if err = s.persist(e, release, time.Now().UTC()); err != nil {
+		if errors.Is(err, store.ErrImmutableRelease) {
+			err = fmt.Errorf("%w: %w", application.ErrUntrusted, err)
+		}
+		return application.Release{}, err
+	}
+	return release, nil
 }

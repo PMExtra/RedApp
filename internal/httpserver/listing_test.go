@@ -33,7 +33,7 @@ func listingServer(t *testing.T) (*Server, *store.Store) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.DB.Close() })
-	return &Server{DB: db, Registry: registry}, db
+	return &Server{store: db, registry: registry}, db
 }
 func listRequest(s *Server, app, endpoint, query string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
@@ -158,23 +158,23 @@ func TestResourcePaginationBindsVersionFilterAndApplication(t *testing.T) {
 	size := int64(len(payload))
 	client, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(payload) }))
 	s, db := listingServer(t)
-	entries := s.Registry.Entries()
+	entries := s.registry.Entries()
 	clients := map[string]*distributor.Client{}
 	for i := range entries {
 		entries[i].Upstream = client
 		clients[entries[i].Descriptor.ID] = client
 	}
 	var err error
-	s.Registry, err = application.NewRegistry(entries)
+	s.registry, err = application.NewRegistry(entries)
 	if err != nil {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
-	s.Downloads, err = download.NewApplications(dir, db, clients)
+	s.downloads, err = download.NewApplications(dir, db, clients)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Downloads.Close() })
+	t.Cleanup(func() { s.downloads.Close() })
 	app, other := "openai/codex", "anthropic/claude-code"
 	for _, owner := range []string{app, other} {
 		for _, version := range []string{"1.0.0", "1.0.1"} {
@@ -187,7 +187,7 @@ func TestResourcePaginationBindsVersionFilterAndApplication(t *testing.T) {
 			}
 			for _, bound := range resources {
 				r := download.Resource{Application: owner, Version: version, Key: bound.Key, ID: download.LogicalIdentity(owner, version, bound.Key), Source: bound.SourceURL, Hash: hash, Size: &size}
-				reader, _, err := s.Downloads.Acquire(context.Background(), r)
+				reader, _, err := s.downloads.Acquire(context.Background(), r)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -221,5 +221,29 @@ func TestResourcePaginationBindsVersionFilterAndApplication(t *testing.T) {
 	empty := decodeList[download.View](t, listRequest(s, app, "resources", "?version=9.0.0"))
 	if len(empty.Items) != 0 || empty.NextCursor != nil {
 		t.Fatal("empty filtered page is not final")
+	}
+}
+
+func TestVersionCleanupPreviewAndExecuteAfterDownloads(t *testing.T) {
+	data := []byte("official archive")
+	h := newHarness(t)
+	h.upstreamProxy(codexRelease("0.159.2", map[string][]byte{"archive.tgz": data}, nil))
+	key := h.releaseApp("fixture", "codex", "codex")
+	h.login("")
+	h.request("GET", "/"+key+"/releases/0.159.2/archive.tgz", nil, 200, nil)
+	body, _ := h.request("POST", "/admin/api/apps/"+key+"/cleanup/preview", map[string]string{"minimum_version": "0.160.0"}, 200, nil)
+	var preview struct {
+		Job                  struct{ ID string }
+		LogicalBytes         int64 `json:"logical_bytes"`
+		ReclaimableBlobBytes int64 `json:"reclaimable_blob_bytes"`
+		Active               int   `json:"active"`
+	}
+	json.Unmarshal(body, &preview)
+	if preview.LogicalBytes != int64(len(data)) || preview.ReclaimableBlobBytes != int64(len(data)) || preview.Active != 0 {
+		t.Fatal("cleanup preview lost frozen byte and activity counts", string(body))
+	}
+	h.request("POST", "/admin/api/apps/anthropic/claude-code/cleanup/"+preview.Job.ID+"/execute", map[string]any{}, 409, nil)
+	for range 2 {
+		h.request("POST", "/admin/api/apps/"+key+"/cleanup/"+preview.Job.ID+"/execute", map[string]any{}, 200, nil)
 	}
 }

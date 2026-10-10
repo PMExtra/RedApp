@@ -52,5 +52,5 @@ func (s *Server) finishDownload(w *downloadReceipt, r *http.Request, uid string)
 		}
 	}
 	// Accounting failure cannot change a file response already delivered.
-	_ = s.DB.RecordDownload(uid, s.Proxy.ClientIP(r), time.Now())
+	_ = s.store.RecordDownload(uid, s.proxies.ClientIP(r), time.Now())
 }

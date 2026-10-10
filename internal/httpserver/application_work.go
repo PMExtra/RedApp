@@ -11,7 +11,7 @@ import (
 // Cancellation expires only this response's deadline (an HTTP/2 stream, not its
 // shared connection). Join the callback before the ResponseWriter is released.
 func (s *Server) applicationResponse(w http.ResponseWriter, r *http.Request, app string) (*http.Request, func(), error) {
-	ctx, finish, err := s.DB.ApplicationWork(r.Context(), app)
+	ctx, finish, err := s.store.ApplicationWork(r.Context(), app)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -35,7 +35,7 @@ func (s *Server) applicationResponse(w http.ResponseWriter, r *http.Request, app
 var errDeletePending = errors.New("Application deletion is not complete")
 
 func (s *Server) deleteApplication(ctx context.Context, key string, revision int64) (err error) {
-	uid, drained, err := s.DB.PrepareApplicationDeletion(key, revision)
+	uid, drained, err := s.store.PrepareApplicationDeletion(key, revision)
 	if err != nil {
 		return err
 	}
@@ -56,8 +56,8 @@ func (s *Server) deleteApplication(ctx context.Context, key string, revision int
 		return ctx.Err()
 	}
 	var purge func(remove func() error) error
-	if s.Downloads != nil {
-		purge = func(remove func() error) error { return s.Downloads.PurgeApplication(uid, remove) }
+	if s.downloads != nil {
+		purge = func(remove func() error) error { return s.downloads.PurgeApplication(uid, remove) }
 	}
-	return s.DB.FinishApplicationDeletion(uid, purge)
+	return s.store.FinishApplicationDeletion(uid, purge)
 }

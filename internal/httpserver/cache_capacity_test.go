@@ -7,14 +7,14 @@ import (
 )
 
 func TestManualRefreshReportsTransferCapacity(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	h.createVendor("enterprise")
 	app := h.createApp("enterprise", "files", application.HttpCache, map[string]any{"base_url": "http://127.0.0.1:1"})
-	if err := h.server.Downloads.ConfigureLimits(1, 1, 1<<20); err != nil {
+	if err := h.server.downloads.ConfigureLimits(1, 1, 1<<20); err != nil {
 		t.Fatal(err)
 	}
-	release, err := h.server.Downloads.AcquireHTTPReader()
+	release, err := h.server.downloads.AcquireHTTPReader()
 	if err != nil {
 		t.Fatal(err)
 	}

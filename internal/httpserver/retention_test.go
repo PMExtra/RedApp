@@ -6,10 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/PMExtra/RedApp/internal/apps/codex"
-	"github.com/PMExtra/RedApp/internal/distributor"
-	"github.com/PMExtra/RedApp/internal/releasemaintenance"
-	"github.com/PMExtra/RedApp/internal/store"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +15,11 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/PMExtra/RedApp/internal/apps/codex"
+	"github.com/PMExtra/RedApp/internal/distributor"
+	"github.com/PMExtra/RedApp/internal/releasemaintenance"
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
 type retentionFixtureControl struct {
@@ -31,9 +32,9 @@ type retentionFixtureControl struct {
 }
 
 func (c *retentionFixtureControl) finish() { c.releaseOnce.Do(func() { close(c.release) }) }
-func retentionFixture(t *testing.T, dir string) (*directoryHarness, *retentionFixtureControl) {
+func retentionFixture(t *testing.T, dir string) (*harness, *retentionFixtureControl) {
 	t.Helper()
-	h := newDirectoryHarness(t, dir)
+	h := newHarness(t, withDir(dir))
 	h.login(h.password)
 	fail := &retentionFixtureControl{started: make(chan struct{}), release: make(chan struct{})}
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -69,24 +70,24 @@ func retentionFixture(t *testing.T, dir string) (*directoryHarness, *retentionFi
 	}))
 	t.Cleanup(proxy.Close)
 	t.Cleanup(fail.finish)
-	if err := h.server.Pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: proxy.URL}, h.server.Pool.Proxy().Revision); err != nil {
+	if err := h.server.pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: proxy.URL}, h.server.pool.Proxy().Revision); err != nil {
 		t.Fatal(err)
 	}
 	h.createVendor("retention")
-	v, _ := h.server.DB.Vendor("retention")
+	v, _ := h.server.store.Vendor("retention")
 	h.request("PATCH", "/admin/api/vendors/retention", map[string]any{"revision": v.Revision, "enabled": true}, 200, nil)
 	h.createApp("retention", "binary", "codex", map[string]any{"base_url": "http://retention.example", "cache_ttl_seconds": 60, "enabled": true})
 	for _, version := range []string{"1.0.0", "2.0.0", "10.0.0"} {
 		h.request("GET", "/retention/binary/releases/"+version+"/asset.tgz", nil, 200, nil)
 	}
-	if _, err := h.server.Catalog.Release(context.Background(), "retention/binary", "99.0.0"); err != nil {
+	if _, err := h.server.catalog.Release(context.Background(), "retention/binary", "99.0.0"); err != nil {
 		t.Fatal(err)
 	}
 	return h, fail
 }
-func retentionPlan(t *testing.T, h *directoryHarness) releasemaintenance.Preview {
+func retentionPlan(t *testing.T, h *harness) releasemaintenance.Preview {
 	t.Helper()
-	a, _ := h.server.DB.Application("retention/binary")
+	a, _ := h.server.store.Application("retention/binary")
 	data, _ := h.request("POST", "/admin/api/apps/retention/binary/retention/preview", map[string]any{"revision": a.Revision}, 200, nil)
 	var p releasemaintenance.Preview
 	if err := json.Unmarshal(data, &p); err != nil {
@@ -102,14 +103,14 @@ func retentionPlan(t *testing.T, h *directoryHarness) releasemaintenance.Preview
 	p.Versions = page.Items
 	return p
 }
-func setRetention(t *testing.T, h *directoryHarness, n int, enabled bool) {
+func setRetention(t *testing.T, h *harness, n int, enabled bool) {
 	t.Helper()
-	a, _ := h.server.DB.Application("retention/binary")
-	cfg, err := h.server.DB.PatchApplicationConfiguration(a.Key, store.ConfigurationPatch{Revision: a.Revision, Set: map[string]json.RawMessage{"retention": encodeJSON(map[string]any{"enabled": enabled, "keep_latest": n})}})
+	a, _ := h.server.store.Application("retention/binary")
+	cfg, err := h.server.store.PatchApplicationConfiguration(a.Key, store.ConfigurationPatch{Revision: a.Revision, Set: map[string]json.RawMessage{"retention": encodeJSON(map[string]any{"enabled": enabled, "keep_latest": n})}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	after, _ := h.server.DB.Application(a.Key)
+	after, _ := h.server.store.Application(a.Key)
 	if after.RuntimeRevision != a.RuntimeRevision || after.SourceEpoch != a.SourceEpoch || cfg.Revision == a.Revision {
 		t.Fatal("retention changed runtime fence", a, after)
 	}
@@ -123,21 +124,21 @@ func TestRetentionAPIProtectsReadersAndPersistsReceipt(t *testing.T) {
 		t.Fatal(p)
 	}
 	h.request("GET", "/admin/api/apps/retention/binary/retention/"+p.ID+"/items?page=1&limit=1", nil, 200, nil)
-	resource, err := h.server.Catalog.Authorize(context.Background(), "retention/binary", "1.0.0", "asset.tgz")
+	resource, err := h.server.catalog.Authorize(context.Background(), "retention/binary", "1.0.0", "asset.tgz")
 	if err != nil {
 		t.Fatal(err)
 	}
 	oldPath := ""
-	for _, v := range h.server.Downloads.SnapshotFor(resource.Application, resource.Version) {
+	for _, v := range h.server.downloads.SnapshotFor(resource.Application, resource.Version) {
 		if v.Current {
 			oldPath = v.Path
 		}
 	}
-	reader, _, err := h.server.Downloads.Acquire(context.Background(), resource)
+	reader, _, err := h.server.downloads.Acquire(context.Background(), resource)
 	if err != nil {
 		t.Fatal(err)
 	}
-	receipt, err := h.server.ReleaseMaintenance().Execute(context.Background(), "retention/binary", p.ID)
+	receipt, err := h.server.maintenance.Execute(context.Background(), "retention/binary", p.ID)
 	if err != nil || receipt.RetiredVersions != 0 || receipt.Skipped["1.0.0"] != "in_use_at_execution" {
 		t.Fatal(receipt, err)
 	}
@@ -153,23 +154,23 @@ func TestRetentionAPIProtectsReadersAndPersistsReceipt(t *testing.T) {
 		t.Fatal("retired unique blob still present", oldPath, err)
 	}
 	h.request("POST", "/admin/api/apps/retention/binary/retention/"+p.ID+"/execute", map[string]any{}, 200, nil)
-	stats, _ := h.server.DB.VersionStats(resource.Application)
+	stats, _ := h.server.store.VersionStats(resource.Application)
 	if stats["1.0.0"].ArtifactRequests == 0 {
 		t.Fatal("download statistics removed")
 	}
 	h.close()
-	restarted := newDirectoryHarness(t, dir)
+	restarted := newHarness(t, withDir(dir))
 	defer restarted.close()
-	entry, _ := restarted.server.Registry.Lookup("retention/binary")
-	job, err := restarted.server.DB.CleanupPreview(entry.StorageID(), p.ID)
+	entry, _ := restarted.server.registry.Lookup("retention/binary")
+	job, err := restarted.server.store.CleanupPreview(entry.StorageID(), p.ID)
 	if err != nil || job.ExecutedAt == nil || len(job.Result) == 0 {
 		t.Fatal(job, err)
 	}
-	repeat, err := restarted.server.ReleaseMaintenance().Execute(context.Background(), entry.Descriptor.ID, p.ID)
+	repeat, err := restarted.server.maintenance.Execute(context.Background(), entry.Descriptor.ID, p.ID)
 	if err != nil || repeat.LogicalBytes != final.LogicalBytes {
 		t.Fatal(repeat, err)
 	}
-	raw, _ := restarted.server.DB.RetentionStatus(entry.UID)
+	raw, _ := restarted.server.store.RetentionStatus(entry.UID)
 	if !strings.Contains(string(raw), "success") {
 		t.Fatal(string(raw))
 	}
@@ -180,8 +181,8 @@ func TestRetentionRejectsChangedPolicySourceAndChannels(t *testing.T) {
 			h, _ := retentionFixture(t, t.TempDir())
 			setRetention(t, h, 1, false)
 			p := retentionPlan(t, h)
-			a, _ := h.server.DB.Application("retention/binary")
-			entry, _ := h.server.Registry.Lookup(a.Key)
+			a, _ := h.server.store.Application("retention/binary")
+			entry, _ := h.server.registry.Lookup(a.Key)
 			switch change {
 			case "retention":
 				setRetention(t, h, 2, false)
@@ -190,23 +191,23 @@ func TestRetentionRejectsChangedPolicySourceAndChannels(t *testing.T) {
 			case "disabled":
 				h.request("PATCH", "/admin/api/apps/"+a.Key, map[string]any{"revision": a.Revision, "enabled": false}, 200, nil)
 			case "channel":
-				_, err := h.server.DB.DB.Exec(`UPDATE channels SET version='10.0.0' WHERE app_id=?`, entry.StorageID())
+				_, err := h.server.store.DB.Exec(`UPDATE channels SET version='10.0.0' WHERE app_id=?`, entry.StorageID())
 				if err != nil {
 					t.Fatal(err)
 				}
 			case "expired_channel":
-				h.server.DB.DB.Exec(`UPDATE channels SET expires_at_s=? WHERE app_id=?`, time.Now().Add(-time.Hour).Unix(), entry.StorageID())
+				h.server.store.DB.Exec(`UPDATE channels SET expires_at_s=? WHERE app_id=?`, time.Now().Add(-time.Hour).Unix(), entry.StorageID())
 			case "expired_preview":
-				h.server.DB.DB.Exec(`UPDATE cleanup_previews SET expires_at_s=0 WHERE id=?`, p.ID)
+				h.server.store.DB.Exec(`UPDATE cleanup_previews SET expires_at_s=0 WHERE id=?`, p.ID)
 			case "ttl":
-				_, err := h.server.DB.PatchApplicationConfiguration(a.Key, store.ConfigurationPatch{Revision: a.Revision, Set: map[string]json.RawMessage{"cache_ttl_seconds": encodeJSON(1)}})
+				_, err := h.server.store.PatchApplicationConfiguration(a.Key, store.ConfigurationPatch{Revision: a.Revision, Set: map[string]json.RawMessage{"cache_ttl_seconds": encodeJSON(1)}})
 				if err != nil {
 					t.Fatal(err)
 				}
 			}
 			h.request("POST", "/admin/api/apps/retention/binary/retention/"+p.ID+"/execute", map[string]any{}, 409, nil)
 			var count int
-			if err := h.server.DB.DB.QueryRow(`SELECT count(*) FROM generations WHERE app_id=? AND retired_at_s IS NOT NULL`, entry.StorageID()).Scan(&count); err != nil || count != 0 {
+			if err := h.server.store.DB.QueryRow(`SELECT count(*) FROM generations WHERE app_id=? AND retired_at_s IS NOT NULL`, entry.StorageID()).Scan(&count); err != nil || count != 0 {
 				t.Fatal("retired despite invalid preview", count, err)
 			}
 		})
@@ -215,27 +216,27 @@ func TestRetentionRejectsChangedPolicySourceAndChannels(t *testing.T) {
 func TestRetentionUnverifiedChannelDeletesNothingAndDisabledScheduleDoesNothing(t *testing.T) {
 	h, fail := retentionFixture(t, t.TempDir())
 	setRetention(t, h, 1, false)
-	h.server.ReleaseMaintenance().Pass(context.Background())
+	h.server.maintenance.Pass(context.Background())
 	var count int
-	h.server.DB.DB.QueryRow(`SELECT count(*) FROM cleanup_previews`).Scan(&count)
+	h.server.store.DB.QueryRow(`SELECT count(*) FROM cleanup_previews`).Scan(&count)
 	if count != 0 {
 		t.Fatal("disabled schedule ran")
 	}
 	fail.Store(true)
 	setRetention(t, h, 1, true)
-	h.server.ReleaseMaintenance().Pass(context.Background())
-	a, _ := h.server.Registry.Lookup("retention/binary")
-	h.server.DB.DB.QueryRow(`SELECT count(*) FROM generations WHERE app_id=? AND retired_at_s IS NOT NULL`, a.StorageID()).Scan(&count)
+	h.server.maintenance.Pass(context.Background())
+	a, _ := h.server.registry.Lookup("retention/binary")
+	h.server.store.DB.QueryRow(`SELECT count(*) FROM generations WHERE app_id=? AND retired_at_s IS NOT NULL`, a.StorageID()).Scan(&count)
 	if count != 0 {
 		t.Fatal(count)
 	}
-	raw, _ := h.server.DB.RetentionStatus(a.UID)
+	raw, _ := h.server.store.RetentionStatus(a.UID)
 	if !strings.Contains(string(raw), "channel_unavailable") {
 		t.Fatal(string(raw))
 	}
 	fail.Store(false)
-	h.server.ReleaseMaintenance().Pass(context.Background())
-	raw, _ = h.server.DB.RetentionStatus(a.UID)
+	h.server.maintenance.Pass(context.Background())
+	raw, _ = h.server.store.RetentionStatus(a.UID)
 	if !strings.Contains(string(raw), `"retired_versions":1`) {
 		t.Fatal(string(raw))
 	}
@@ -246,11 +247,11 @@ func TestRetentionNewWriterProtectsWholeVersionWithoutExpandingFrozenSelection(t
 	setRetention(t, h, 1, false)
 	p := retentionPlan(t, h)
 	control.block.Store(true)
-	r, err := h.server.Catalog.Authorize(context.Background(), "retention/binary", "1.0.0", "extra.tgz")
+	r, err := h.server.catalog.Authorize(context.Background(), "retention/binary", "1.0.0", "extra.tgz")
 	if err != nil {
 		t.Fatal(err)
 	}
-	reader, _, err := h.server.Downloads.Acquire(context.Background(), r)
+	reader, _, err := h.server.downloads.Acquire(context.Background(), r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,12 +261,12 @@ func TestRetentionNewWriterProtectsWholeVersionWithoutExpandingFrozenSelection(t
 		t.Fatal("writer did not start")
 	}
 	reader.Close()
-	receipt, err := h.server.ReleaseMaintenance().Execute(context.Background(), "retention/binary", p.ID)
+	receipt, err := h.server.maintenance.Execute(context.Background(), "retention/binary", p.ID)
 	if err != nil || receipt.RetiredVersions != 0 || receipt.Skipped["1.0.0"] != "in_use_at_execution" {
 		t.Fatal(receipt, err)
 	}
 	control.finish()
-	drain, _, err := h.server.Downloads.Acquire(context.Background(), r)
+	drain, _, err := h.server.downloads.Acquire(context.Background(), r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +274,7 @@ func TestRetentionNewWriterProtectsWholeVersionWithoutExpandingFrozenSelection(t
 	if _, err = io.Copy(io.Discard, drain); err != nil {
 		t.Fatal(err)
 	}
-	for _, v := range h.server.Downloads.SnapshotFor(r.Application, r.Version) {
+	for _, v := range h.server.downloads.SnapshotFor(r.Application, r.Version) {
 		if v.Retired {
 			t.Fatal("part of protected version retired", v)
 		}
@@ -289,17 +290,17 @@ func TestRetentionScheduledPassRetiresAtMost100Versions(t *testing.T) {
 		h.request("GET", fmt.Sprintf("/retention/binary/releases/%d.0.0/asset.tgz", version), nil, 200, nil)
 	}
 	setRetention(t, h, 1, true)
-	service := h.server.ReleaseMaintenance()
+	service := h.server.maintenance
 	service.Pass(context.Background())
-	entry, _ := h.server.Registry.Lookup("retention/binary")
-	raw, _ := h.server.DB.RetentionStatus(entry.UID)
+	entry, _ := h.server.registry.Lookup("retention/binary")
+	raw, _ := h.server.store.RetentionStatus(entry.UID)
 	var status releasemaintenance.Status
 	json.Unmarshal(raw, &status)
 	if status.RetiredVersions != 100 {
 		t.Fatal(string(raw))
 	}
 	service.Pass(context.Background())
-	raw, _ = h.server.DB.RetentionStatus(entry.UID)
+	raw, _ = h.server.store.RetentionStatus(entry.UID)
 	json.Unmarshal(raw, &status)
 	if status.RetiredVersions != 5 {
 		t.Fatal(string(raw))
@@ -310,17 +311,17 @@ func TestRetentionReceiptExpiresAndEmptySelectionSucceeds(t *testing.T) {
 	h, _ := retentionFixture(t, t.TempDir())
 	setRetention(t, h, 3, false)
 	p := retentionPlan(t, h)
-	receipt, err := h.server.ReleaseMaintenance().Execute(context.Background(), "retention/binary", p.ID)
+	receipt, err := h.server.maintenance.Execute(context.Background(), "retention/binary", p.ID)
 	if err != nil || receipt.RetiredVersions != 0 || len(receipt.Selection) != 0 {
 		t.Fatal(receipt, err)
 	}
-	if _, err = h.server.DB.DB.Exec(`UPDATE cleanup_previews SET executed_at_s=? WHERE id=?`, time.Now().Add(-25*time.Hour).Unix(), p.ID); err != nil {
+	if _, err = h.server.store.DB.Exec(`UPDATE cleanup_previews SET executed_at_s=? WHERE id=?`, time.Now().Add(-25*time.Hour).Unix(), p.ID); err != nil {
 		t.Fatal(err)
 	}
 	h.request("POST", "/admin/api/apps/retention/binary/retention/"+p.ID+"/execute", map[string]any{}, 409, nil)
-	h.server.ReleaseMaintenance().Pass(context.Background())
+	h.server.maintenance.Pass(context.Background())
 	var count int
-	h.server.DB.DB.QueryRow(`SELECT count(*) FROM cleanup_previews WHERE id=?`, p.ID).Scan(&count)
+	h.server.store.DB.QueryRow(`SELECT count(*) FROM cleanup_previews WHERE id=?`, p.ID).Scan(&count)
 	if count != 0 {
 		t.Fatal("expired receipt not pruned while schedule disabled")
 	}
@@ -356,7 +357,7 @@ func TestRetentionClaudeUsesVerifiedChannelsAndNeverWarmsMetadataOnlyRelease(t *
 				}
 			}))
 			defer proxy.Close()
-			if err = h.server.Pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: proxy.URL}, h.server.Pool.Proxy().Revision); err != nil {
+			if err = h.server.pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: proxy.URL}, h.server.pool.Proxy().Revision); err != nil {
 				t.Fatal(err)
 			}
 			app := h.createApp("retention", "claude", "claude-code", map[string]any{"base_url": "http://retention.example", "cache_ttl_seconds": 60, "enabled": true})
@@ -365,9 +366,9 @@ func TestRetentionClaudeUsesVerifiedChannelsAndNeverWarmsMetadataOnlyRelease(t *
 				want = 409
 			}
 			data, _ := h.request("POST", "/admin/api/apps/"+app.Key+"/retention/preview", map[string]any{"revision": app.Revision}, want, nil)
-			entry, _ := h.server.Registry.Lookup(app.Key)
+			entry, _ := h.server.registry.Lookup(app.Key)
 			var count int
-			if err = h.server.DB.DB.QueryRow(`SELECT count(*) FROM generations WHERE app_id=?`, entry.StorageID()).Scan(&count); err != nil || count != 0 {
+			if err = h.server.store.DB.QueryRow(`SELECT count(*) FROM generations WHERE app_id=?`, entry.StorageID()).Scan(&count); err != nil || count != 0 {
 				t.Fatal("metadata created binary generation", count, err)
 			}
 			if valid {
@@ -377,14 +378,14 @@ func TestRetentionClaudeUsesVerifiedChannelsAndNeverWarmsMetadataOnlyRelease(t *
 					t.Fatal(string(data))
 				}
 				for _, channel := range []string{"latest", "stable"} {
-					row, err := h.server.DB.Channel(entry.StorageID(), channel)
+					row, err := h.server.store.Channel(entry.StorageID(), channel)
 					if err != nil || row.Version != "2.1.285" {
 						t.Fatal(row, err)
 					}
 				}
 				h.request("POST", "/admin/api/apps/"+app.Key+"/retention/"+preview.ID+"/execute", map[string]any{}, 200, nil)
 			} else {
-				h.server.DB.DB.QueryRow(`SELECT count(*) FROM cleanup_previews WHERE app_id=?`, entry.StorageID()).Scan(&count)
+				h.server.store.DB.QueryRow(`SELECT count(*) FROM cleanup_previews WHERE app_id=?`, entry.StorageID()).Scan(&count)
 				if count != 0 {
 					t.Fatal("created preview with unverified channel")
 				}

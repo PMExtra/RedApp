@@ -21,14 +21,14 @@ import (
 // ReloadDirectory publishes one complete runtime snapshot. Callers serialize
 // mutations with directoryMu; source fences reject work from replaced snapshots.
 func (s *Server) ReloadDirectory() error {
-	if s.Pool == nil {
+	if s.pool == nil {
 		return errors.New("Application transport unavailable")
 	}
-	snapshot, err := s.DB.DirectoryConfigurationSnapshot()
+	snapshot, err := s.store.DirectoryConfigurationSnapshot()
 	if err != nil {
 		return err
 	}
-	entries, err := builtin.EntriesFromConfiguration(snapshot, s.Pool)
+	entries, err := builtin.EntriesFromConfiguration(snapshot, s.pool)
 	if err != nil {
 		return err
 	}
@@ -39,28 +39,28 @@ func (s *Server) ReloadDirectory() error {
 	sources := snapshot.Sources
 	clients := make(map[string]*distributor.Client, len(sources))
 	for _, source := range sources {
-		client, e := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, snapshot.ProviderDefaults[source.Provider], source.AppUID, snapshot.ProxyScopes[source.AppUID].VendorUID, s.Pool)
+		client, e := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, snapshot.ProviderDefaults[source.Provider], source.AppUID, snapshot.ProxyScopes[source.AppUID].VendorUID, s.pool)
 		if e != nil {
 			return e
 		}
 		clients[source.StorageID()] = client
 	}
-	if s.Downloads != nil {
-		if err = s.Downloads.RegisterUpstreams(clients); err != nil {
+	if s.downloads != nil {
+		if err = s.downloads.RegisterUpstreams(clients); err != nil {
 			return err
 		}
 	}
-	return s.Registry.Replace(next.AllEntries())
+	return s.registry.Replace(next.AllEntries())
 }
 
 func (s *Server) setDirectoryTTL(key string, expected int64, seconds int) (int64, error) {
 	s.directoryMu.Lock()
 	defer s.directoryMu.Unlock()
-	row, err := s.DB.Application(key)
+	row, err := s.store.Application(key)
 	if err != nil {
 		return 0, err
 	}
-	row, err = s.DB.PatchApplicationFields(key, expected, map[string]json.RawMessage{"cache_ttl_seconds": encodeJSON(seconds)}, nil)
+	row, err = s.store.PatchApplicationFields(key, expected, map[string]json.RawMessage{"cache_ttl_seconds": encodeJSON(seconds)}, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -156,10 +156,10 @@ func (s *Server) validateDirectoryIcon(path string) error {
 	if path == "" || builtinIcon {
 		return nil
 	}
-	if s.Icons == nil {
+	if s.icons == nil {
 		return store.ErrInvalidDirectory
 	}
-	f, _, err := s.Icons.Open(path)
+	f, _, err := s.icons.Open(path)
 	if err != nil {
 		return fmt.Errorf("%w: upload the icon before selecting it", store.ErrInvalidDirectory)
 	}
@@ -261,11 +261,11 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 		switch {
 		case isVendor && len(parts) == 2:
 			var row store.Vendor
-			row, err = s.DB.Vendor(parts[1])
+			row, err = s.store.Vendor(parts[1])
 			result = map[string]any{"vendor": row}
 		case isApp && len(parts) == 3:
 			var row store.Application
-			row, err = s.DB.Application(parts[1] + "/" + parts[2])
+			row, err = s.store.Application(parts[1] + "/" + parts[2])
 			result = map[string]any{"app": row}
 		default:
 			fail(w, 405, "Method not allowed")
@@ -278,7 +278,7 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 		}
 		return true
 	}
-	if s.Pool == nil {
+	if s.pool == nil {
 		fail(w, 503, "Application directory is unavailable")
 		return true
 	}
@@ -338,7 +338,7 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 			return true
 		}
 		var row store.Vendor
-		row, err = s.DB.CreateVendor(in.vendorInput())
+		row, err = s.store.CreateVendor(in.vendorInput())
 		result = map[string]any{"vendor": row}
 		status = 201
 	case create:
@@ -346,7 +346,7 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 		input, err = in.applicationInput()
 		if err == nil {
 			var row store.Application
-			row, err = s.DB.CreateApplication(parts[1], input)
+			row, err = s.store.CreateApplication(parts[1], input)
 			result = map[string]any{"app": row}
 			status = 201
 		}
@@ -356,7 +356,7 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 			return true
 		}
 		var row store.Vendor
-		row, err = s.DB.Vendor(parts[1])
+		row, err = s.store.Vendor(parts[1])
 		if err != nil {
 			break
 		}
@@ -365,14 +365,14 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 				fail(w, 400, "Confirm the exact vendor ID for permanent deletion")
 				return true
 			}
-			err = s.DB.PermanentlyDeleteVendor(parts[1], in.Revision)
+			err = s.store.PermanentlyDeleteVendor(parts[1], in.Revision)
 		} else if r.Method == http.MethodPatch {
 			set, e := in.configurationFields("Vendor")
 			if e != nil {
 				err = e
 				break
 			}
-			row, err = s.DB.PatchVendorFields(parts[1], in.Revision, set, in.Enabled)
+			row, err = s.store.PatchVendorFields(parts[1], in.Revision, set, in.Enabled)
 		} else {
 			fail(w, 405, "Method not allowed")
 			return true
@@ -381,7 +381,7 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 	case isApp && len(parts) == 3:
 		key := parts[1] + "/" + parts[2]
 		var row store.Application
-		row, err = s.DB.Application(key)
+		row, err = s.store.Application(key)
 		if errors.Is(err, sql.ErrNoRows) && r.Method == http.MethodDelete && in.ConfirmKey == key && in.ConfirmUID != "" {
 			reply(w, 200, map[string]any{"deleted": true})
 			return true
@@ -419,7 +419,7 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 					set["base_urls"] = encodeJSON([]string{base})
 				}
 			}
-			row, err = s.DB.PatchApplicationFields(key, in.Revision, set, in.Enabled)
+			row, err = s.store.PatchApplicationFields(key, in.Revision, set, in.Enabled)
 		} else {
 			fail(w, 405, "Method not allowed")
 			return true
@@ -433,7 +433,7 @@ func (s *Server) directoryAPI(w http.ResponseWriter, r *http.Request) bool {
 		directoryError(w, err)
 	} else {
 		if r.Method == http.MethodDelete {
-			cleanupPending := s.DB.ProcessPendingDeletes(s.Dir) != nil
+			cleanupPending := s.store.ProcessPendingDeletes(s.dataDir) != nil
 			result = map[string]any{"deleted": true, "cleanup_pending": cleanupPending}
 		}
 		reply(w, status, result)
@@ -446,7 +446,7 @@ func (s *Server) uploadIcon(w http.ResponseWriter, r *http.Request) {
 		fail(w, 405, "Method not allowed")
 		return
 	}
-	if s.Icons == nil {
+	if s.icons == nil {
 		fail(w, 503, "Icon storage unavailable")
 		return
 	}
@@ -474,7 +474,7 @@ func (s *Server) uploadIcon(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Only one icon file is allowed")
 		return
 	}
-	path, err := s.Icons.Put(bytes.NewReader(body))
+	path, err := s.icons.Put(bytes.NewReader(body))
 	if err != nil {
 		if errors.Is(err, media.ErrTooLarge) {
 			fail(w, 413, "Icon exceeds the size limit")
@@ -489,11 +489,11 @@ func (s *Server) uploadIcon(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) icon(w http.ResponseWriter, r *http.Request) {
-	if s.Icons == nil {
+	if s.icons == nil {
 		fail(w, 404, "Icon not found")
 		return
 	}
-	f, mime, err := s.Icons.Open(r.URL.Path)
+	f, mime, err := s.icons.Open(r.URL.Path)
 	if err != nil {
 		fail(w, 404, "Icon not found")
 		return

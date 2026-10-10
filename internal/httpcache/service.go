@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -375,4 +376,21 @@ func (s *Service) recover() error {
 		}
 	}
 	return s.recoverPreviews(context.Background())
+}
+
+// ErrCacheMiss reports a Cache-Control: only-if-cached request for a file that
+// has no fresh cached copy. Nothing was contacted or written.
+var ErrCacheMiss = errors.New("only-if-cached request for an uncached file")
+
+// UpstreamStatusError reports an upstream response that is neither a file nor
+// a retryable failure (for example 404 or 403). Nothing was written.
+type UpstreamStatusError struct{ Status int }
+
+func (e *UpstreamStatusError) Error() string {
+	return "upstream returned HTTP " + strconv.Itoa(e.Status)
+}
+
+// NotFound reports whether the upstream said the file does not exist.
+func (e *UpstreamStatusError) NotFound() bool {
+	return e.Status == http.StatusNotFound || e.Status == http.StatusGone
 }

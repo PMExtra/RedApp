@@ -1,8 +1,9 @@
 package httpserver
 
 import (
-	"github.com/PMExtra/RedApp/internal/store"
 	"net/http"
+
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
 // Reached only through admin(), after session and CSRF validation.
@@ -13,7 +14,7 @@ func (s *Server) adminNotesAPI(w http.ResponseWriter, r *http.Request, kind, key
 		return
 	}
 	if r.Method == http.MethodGet {
-		value, err := s.DB.AdminNotes(kind, key)
+		value, err := s.store.AdminNotes(kind, key)
 		if err != nil {
 			directoryError(w, err)
 			return
@@ -40,7 +41,7 @@ func (s *Server) adminNotesAPI(w http.ResponseWriter, r *http.Request, kind, key
 	}
 	s.directoryMu.Lock()
 	defer s.directoryMu.Unlock()
-	value, err := s.DB.SaveAdminNotes(kind, key, value.Revision, value.Text)
+	value, err := s.store.SaveAdminNotes(kind, key, value.Revision, value.Text)
 	if err != nil {
 		directoryError(w, err)
 		return

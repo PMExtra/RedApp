@@ -2,164 +2,138 @@ package httpserver
 
 import (
 	"bytes"
-	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
-	app "github.com/PMExtra/RedApp/internal/apps/codex"
-	"github.com/PMExtra/RedApp/internal/history"
-	"github.com/PMExtra/RedApp/internal/testutil"
-	"io"
 	"net/http"
-	"net/http/cookiejar"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
 
-func TestAdminHTTPDownloadMetricsAndCSRF(t *testing.T) {
-	data := []byte("official archive")
-	h := sha256.Sum256(data)
-	hash := hex.EncodeToString(h[:])
-	var base string
-	upstream, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "latest") || strings.HasSuffix(r.URL.Path, "release.json") {
-			json.NewEncoder(w).Encode(app.Release{Tag: "rust-v0.159.2", Assets: []app.Asset{{Name: "archive.tgz", Digest: "sha256:" + hash, URL: base + "/releases/0.159.2/archive.tgz"}}})
-		} else {
-			w.Write(data)
-		}
-	}))
-	base = upstream.Base.String()
-	handler, db, password := newTestServer(t, upstream)
-	server := startTestServer(t, handler)
-	jar, _ := cookiejar.New(nil)
-	client := &http.Client{Jar: jar}
-	csrf := ""
-	request := func(method, path string, body any, secure bool, revision string) (int, []byte) {
-		t.Helper()
-		var reader io.Reader
-		if body != nil {
-			b, _ := json.Marshal(body)
-			reader = bytes.NewReader(b)
-		}
-		r, _ := http.NewRequest(method, server.URL+path, reader)
-		r.Header.Set("Content-Type", "application/json")
-		if secure {
-			r.Header.Set("X-CSRF-Token", csrf)
-		}
-		if revision != "" {
-			r.Header.Set("If-Match", revision)
-		}
-		response, e := client.Do(r)
-		if e != nil {
-			t.Fatal(e)
-		}
-		defer response.Body.Close()
-		b, e := io.ReadAll(response.Body)
-		if e != nil {
-			t.Fatal(e)
-		}
-		return response.StatusCode, b
-	}
+func TestRouterErrorsUseTheErrorDocument(t *testing.T) {
+	h := newHarness(t)
 	for _, tc := range []struct {
 		method, path string
 		status       int
-	}{{"GET", "/unknown", 404}, {"POST", "/", 405}, {"GET", "/?unexpected=1", 400}, {"GET", "/admin/unknown", 404}, {"GET", "/admin/api/status", 401}, {"POST", "/health/live", 405}, {"GET", "/install.sh", 404}, {"GET", "/api/info", 404}, {"GET", "/apps/codex", 404}} {
-		if status, body := request(tc.method, tc.path, nil, false, ""); status != tc.status {
-			t.Fatalf("%s %s: %d %s", tc.method, tc.path, status, body)
+		code         errorCode
+	}{
+		{"GET", "/unknown", 404, codeVendorNotFound},
+		{"POST", "/", 405, codeMethodNotAllowed},
+		{"PUT", "/api/bootstrap", 405, codeMethodNotAllowed},
+		{"GET", "/?unexpected=1", 400, codeInvalidQuery},
+		{"GET", "/api/bootstrap?a=1", 400, codeInvalidQuery},
+		{"GET", "/api/catalog?page=1&page=2", 400, codeInvalidQuery},
+		{"GET", "/api/catalog?q=", 400, codeInvalidQuery},
+		{"GET", "/admin/api/session", 401, codeAuthRequired},
+		{"POST", "/health/live", 405, codeMethodNotAllowed},
+		{"GET", "/install.sh", 404, codeVendorNotFound},
+		{"GET", "/api/info", 404, codeNotFound},
+		{"GET", "/api/apps/openai", 404, codeNotFound},
+		{"GET", "/assets/a/b/c", 404, codeNotFound},
+		{"GET", "/apps/codex", 404, codeApplicationNotFound},
+		{"GET", "/Bad/codex", 400, codeInvalidPath},
+		{"GET", "/openai//codex", 400, codeInvalidPath},
+		{"GET", "/openai/codex/%2e%2e/x", 400, codeInvalidPath},
+		{"GET", "/openai/codex/a%2Fb", 400, codeInvalidPath},
+		{"GET", "/openai/codex/a%5Cb", 400, codeInvalidPath},
+	} {
+		code, body, header := h.raw(tc.method, tc.path, nil, "", nil)
+		if code != tc.status || errorCodeOf(t, body) != string(tc.code) {
+			t.Errorf("%s %s: %d %s", tc.method, tc.path, code, body)
+		}
+		if tc.code == codeMethodNotAllowed && header.Get("Allow") == "" {
+			t.Errorf("%s %s: 405 without Allow", tc.method, tc.path)
 		}
 	}
-	if status, body := request("POST", "/admin/api/login", map[string]string{"password": password}, false, ""); status != 200 {
-		t.Fatal(status, string(body))
-	} else {
-		var session map[string]string
-		json.Unmarshal(body, &session)
-		csrf = session["csrf"]
+	if code, body, _ := h.raw("GET", "/admin/unknown", nil, "", nil); code != 404 || !bytes.Contains(body, []byte("<!doctype html")) && !bytes.Contains(body, []byte("<!DOCTYPE html")) {
+		t.Fatalf("unknown admin page: %d %.80s", code, body)
 	}
-	endpoint := "/admin/api/apps/openai/codex/settings"
-	if code, _ := request("PUT", endpoint, map[string]int{"channel_ttl_seconds": 120}, false, "0"); code != 403 {
-		t.Fatal("CSRF not enforced", code)
+}
+
+func TestRequestIDIsSharedByHeaderErrorAndLogs(t *testing.T) {
+	h := newHarness(t)
+	code, body, header := h.raw("GET", "/api/vendors/missing", nil, "", nil)
+	id := header.Get("X-Request-Id")
+	var e errorBody
+	if code != 404 || decodeJSONBody[errorBody](t, body).Error.RequestID != id || len(id) != 16 {
+		t.Fatal(code, string(body), id, e)
 	}
+	_, _, second := h.raw("GET", "/health/live", nil, "", nil)
+	if second.Get("X-Request-Id") == id {
+		t.Fatal("request IDs repeat")
+	}
+	logs := h.logs.String()
+	if !strings.Contains(logs, "request_id="+id) || !strings.Contains(logs, "code=VENDOR_NOT_FOUND") || !strings.Contains(logs, "operation=getPublicVendor") {
+		t.Fatalf("access log lacks the request: %s", logs)
+	}
+}
+
+func TestPanicsBecomeInternalErrors(t *testing.T) {
+	h := newHarness(t)
+	h.server.mux.HandleFunc("GET /panic-test", func(w http.ResponseWriter, r *http.Request) { panic("handler bug") })
+	r := httptest.NewRequest("GET", "http://internal/panic-test", nil)
+	w := httptest.NewRecorder()
+	h.server.ServeHTTP(w, r)
+	if w.Code != 500 || errorCodeOf(t, w.Body.Bytes()) != "INTERNAL_ERROR" || strings.Contains(w.Body.String(), "handler bug") {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if !strings.Contains(h.logs.String(), "handler bug") {
+		t.Fatal("panic not logged")
+	}
+}
+
+func TestDownloadCountersCSRFAndPasswordChange(t *testing.T) {
+	data := []byte("official archive")
+	h := newHarness(t)
+	var served int
+	h.upstreamProxy(codexRelease("0.159.2", map[string][]byte{"archive.tgz": data}, func(string) { served++ }))
+	key := h.releaseApp("fixture", "codex", "codex")
+	h.login("")
+	csrf := h.csrf
+	h.csrf = ""
+	h.expectError("DELETE", "/admin/api/session", nil, 403, codeCSRFRejected, nil)
+	h.expectError("POST", "/admin/api/password", map[string]string{"current_password": h.password, "new_password": "correct-horse-battery-new"}, 403, codeCSRFRejected, nil)
+	h.csrf = csrf
 	for range 2 {
-		if code, body := request("GET", "/openai/codex/releases/0.159.2/archive.tgz", nil, false, ""); code != 200 || !bytes.Equal(body, data) {
-			t.Fatal(code, string(body))
+		body, header := h.request("GET", "/"+key+"/releases/0.159.2/archive.tgz", nil, 200, nil)
+		if !bytes.Equal(body, data) || header.Get("X-Expected-SHA256") == "" || header.Get("Accept-Ranges") != "none" {
+			t.Fatal(string(body), header)
 		}
 	}
-	if code, _ := request("GET", "/openai/codex/releases/0.159.2/unlisted", nil, false, ""); code != 404 {
-		t.Fatal("unauthorized resource", code)
+	if _, header := h.request("HEAD", "/"+key+"/releases/0.159.2/archive.tgz", nil, 200, nil); header.Get("X-Expected-SHA256") == "" {
+		t.Fatal("HEAD lost artifact headers", header)
 	}
-	counters, _ := db.Counters()
-	owned, _ := db.CountersFor("openai/codex")
-	if counters["artifact_requests"] != 2 || counters["miss_requests"] != 1 || counters["cache_hit_requests"] != 1 || counters["downstream_bytes"] != int64(2*len(data)) || owned["downstream_bytes"] != counters["downstream_bytes"] {
-		t.Fatal(counters, owned)
+	h.expectError("GET", "/"+key+"/releases/0.159.2/unlisted", nil, 404, codeFileNotFound, nil)
+	h.expectError("GET", "/"+key+"/releases/0.159.2/archive.tgz?x=1", nil, 400, codeInvalidQuery, nil)
+	if served != 1 {
+		t.Fatal("artifact fetched more than once or HEAD downloaded", served)
+	}
+	counters, _ := h.store.Counters()
+	if counters["artifact_requests"] != 2 || counters["miss_requests"] != 1 || counters["cache_hit_requests"] != 1 || counters["downstream_bytes"] != int64(2*len(data)) {
+		t.Fatal(counters)
 	}
 	if _, ok := counters["reuse_requests"]; ok {
 		t.Fatal("retired counter written")
 	}
-	if err := db.SeenFor("anthropic/claude-code", "0.159.2"); err != nil {
-		t.Fatal(err)
+	h.expectError("POST", "/admin/api/password", map[string]string{"current_password": "wrong password", "new_password": "correct-horse-battery-new"}, 400, codeCurrentPasswordIncorrect, nil)
+	h.expectError("POST", "/admin/api/password", map[string]string{"current_password": h.password, "new_password": "short"}, 400, codePasswordInvalid, nil)
+	h.expectError("POST", "/admin/api/password", map[string]string{"old": h.password, "new": "correct-horse-battery-new"}, 400, codeInvalidRequest, nil)
+	code, _, _ := h.raw("POST", "/admin/api/password", strings.NewReader(`{"current_password":"x","new_password":"y"}`), "text/plain", nil)
+	if code != 415 {
+		t.Fatal("non-JSON body accepted", code)
 	}
-	status, err := handler.status(server.URL)
-	if err != nil {
-		t.Fatal(err)
+	_, header := h.request("POST", "/admin/api/password", map[string]string{"current_password": h.password, "new_password": "correct-horse-battery-new"}, 204, nil)
+	if !strings.Contains(header.Get("Set-Cookie"), "Max-Age=0") {
+		t.Fatal("password change did not expire the cookie", header)
 	}
-	for _, metric := range status["metrics"].([]history.Metric) {
-		if metric.Key == "versions.total" && *metric.Value != 2 {
-			t.Fatal("global versions lost application", *metric.Value)
-		}
+	h.expectError("GET", "/admin/api/session", nil, 401, codeAuthRequired, nil)
+	h.login("correct-horse-battery-new")
+	if !strings.Contains(h.logs.String(), "operation=changePassword") || strings.Contains(h.logs.String(), "correct-horse-battery-new") || strings.Contains(h.logs.String(), h.csrf) {
+		t.Fatal("logs miss the operation or contain secrets")
 	}
-	for _, path := range []string{"/admin/api/status", "/admin/api/apps/openai/codex/status"} {
-		code, body := request("GET", path, nil, false, "")
-		var summary map[string]json.RawMessage
-		if code != 200 || json.Unmarshal(body, &summary) != nil {
-			t.Fatal("status summary unavailable", code, string(body))
-		}
-		for _, key := range []string{"resources", "events", "versions", "version_stats", "application_versions"} {
-			if _, present := summary[key]; present {
-				t.Fatal("status summary contains an unbounded list", path, key)
-			}
-		}
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	handler.SampleHistory(ctx, func(e error) { t.Fatal(e) })
-	if code, body := request("GET", "/admin/api/history?scope=global&metric=versions.total&range=24h", nil, false, ""); code != 200 {
-		t.Fatal(code, string(body))
-	}
-	if code, body := request("GET", "/admin/api/apps/openai/codex/history?metric=versions.total&range=24h", nil, false, ""); code != 200 {
-		t.Fatal(code, string(body))
-	}
-	code, body := request("POST", "/admin/api/apps/openai/codex/cleanup/preview", map[string]string{"minimum_version": "0.160.0"}, true, "")
-	if code != 200 {
-		t.Fatal(code, string(body))
-	}
-	var preview struct {
-		Job                  struct{ ID string }
-		LogicalBytes         int64 `json:"logical_bytes"`
-		ReclaimableBlobBytes int64 `json:"reclaimable_blob_bytes"`
-		Active               int   `json:"active"`
-	}
-	json.Unmarshal(body, &preview)
-	if preview.LogicalBytes != int64(len(data)) || preview.ReclaimableBlobBytes != int64(len(data)) || preview.Active != 0 {
-		t.Fatal("cleanup preview lost frozen byte and activity counts", string(body))
-	}
-	if code, _ = request("POST", "/admin/api/apps/anthropic/claude-code/cleanup/"+preview.Job.ID+"/execute", map[string]any{}, true, ""); code != 409 {
-		t.Fatal("cross-app cleanup accepted", code)
-	}
-	for range 2 {
-		if code, body = request("POST", "/admin/api/apps/openai/codex/cleanup/"+preview.Job.ID+"/execute", map[string]any{}, true, ""); code != 200 {
-			t.Fatal(code, string(body))
-		}
-	}
-	if code, body = request("POST", "/admin/api/password", map[string]string{"old": password, "new": "correct-horse-battery-new"}, true, ""); code != 200 {
-		t.Fatal(code, string(body))
-	}
-	if code, _ = request("GET", "/admin/api/session", nil, false, ""); code != 401 {
-		t.Fatal("password did not invalidate session", code)
-	}
+
 }
+
 func TestProxyTrustedMultiHopIPv6AndMalformed(t *testing.T) {
-	p, e := NewProxy("10.0.0.0/8,fd00::/8")
+	p, e := ParseTrustedProxies([]string{"10.0.0.0/8", "fd00::/8"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -177,11 +151,13 @@ func TestProxyTrustedMultiHopIPv6AndMalformed(t *testing.T) {
 			t.Errorf("%+v: %s", c, got)
 		}
 	}
+	if _, err := ParseTrustedProxies([]string{"not-a-cidr"}); err == nil {
+		t.Fatal("invalid CIDR accepted")
+	}
 }
-func TestPublicURLRejectsInjectionAndSubpaths(t *testing.T) {
-	for _, s := range []string{"https://good.example/evil", "https://user:secret@good.example", "https://good.example?q=1", "https://good.example/'$(id)'", "javascript://evil"} {
-		if _, e := PublicURL(s); e == nil {
-			t.Fatal(s)
-		}
+
+func TestNewRejectsMissingDependencies(t *testing.T) {
+	if _, err := New(Deps{}); err == nil || !strings.Contains(err.Error(), "Store") || !strings.Contains(err.Error(), "Prewarmer") {
+		t.Fatal(err)
 	}
 }

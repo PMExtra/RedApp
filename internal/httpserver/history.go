@@ -2,10 +2,11 @@ package httpserver
 
 import (
 	"context"
+	"time"
+
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/history"
-	"time"
 )
 
 func globalMetrics(status map[string]any, started time.Time) []history.Metric {
@@ -87,7 +88,7 @@ func (s *Server) SampleHistory(ctx context.Context, onError func(error)) {
 		if err == nil {
 			at = status["sampled_at"].(time.Time)
 			observations := []history.Observation{{Scope: "global", Metrics: status["metrics"].([]history.Metric)}}
-			for _, entry := range s.Registry.Entries() {
+			for _, entry := range s.registry.Entries() {
 				if entry.Provider == application.Info || entry.Provider == application.Hosted {
 					continue
 				}
@@ -99,9 +100,9 @@ func (s *Server) SampleHistory(ctx context.Context, onError func(error)) {
 				observations = append(observations, history.Observation{Scope: "app", AppID: entry.MetricsID(), Metrics: appStatus["metrics"].([]history.Metric)})
 			}
 			if err == nil {
-				err = s.History.RecordScoped(at, observations)
+				err = s.history.RecordScoped(at, observations)
 			}
-		} else if maintenanceErr := s.History.Maintain(at); maintenanceErr != nil {
+		} else if maintenanceErr := s.history.Maintain(at); maintenanceErr != nil {
 			onError(maintenanceErr)
 		}
 		if err != nil {

@@ -5,10 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/PMExtra/RedApp/internal/application"
-	"github.com/PMExtra/RedApp/internal/distributor"
-	"github.com/PMExtra/RedApp/internal/store"
-	"github.com/PMExtra/RedApp/presets"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,10 +12,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/internal/distributor"
+	"github.com/PMExtra/RedApp/internal/store"
+	"github.com/PMExtra/RedApp/presets"
 )
 
 func TestV072PublicDirectoryPinsTemplatesAndInstructionDocuments(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	h.createVendor("acme")
 	for i := 0; i < 7; i++ {
@@ -34,7 +35,7 @@ func TestV072PublicDirectoryPinsTemplatesAndInstructionDocuments(t *testing.T) {
 	data, _ := h.request("GET", "/api/catalog?vendor=acme&q=tool-6&limit=1", nil, 200, nil)
 	var page store.Page[map[string]any]
 	json.Unmarshal(data, &page)
-	if page.Total != 1 || len(page.Items) != 1 || page.Items[0]["id"] != "acme/tool-6" {
+	if page.Total != 1 || len(page.Items) != 1 || page.Items[0]["key"] != "acme/tool-6" {
 		t.Fatal("search after limit", string(data))
 	}
 	data, _ = h.request("GET", "/api/search?q=acme", nil, 200, nil)
@@ -52,7 +53,7 @@ func TestV072PublicDirectoryPinsTemplatesAndInstructionDocuments(t *testing.T) {
 	if !bytes.Contains(data, []byte("acme/tool-6")) {
 		t.Fatal("pin missing", string(data))
 	}
-	app, _ := h.server.DB.Application("acme/tool-6")
+	app, _ := h.server.store.Application("acme/tool-6")
 	h.request("PATCH", "/admin/api/apps/"+app.Key, map[string]any{"revision": app.Revision, "enabled": false}, 200, nil)
 	for _, path := range []string{"/api/home", "/api/catalog?q=tool-6", "/api/search?q=tool-6"} {
 		data, _ = h.request("GET", path, nil, 200, nil)
@@ -65,7 +66,7 @@ func TestV072PublicDirectoryPinsTemplatesAndInstructionDocuments(t *testing.T) {
 	for _, path := range []string{"/admin/api/apps/openai/codex/template", "/admin/api/vendors/openai/template"} {
 		h.request("GET", path, nil, 404, nil)
 	}
-	if err := h.server.Pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: "http://fake-user:fake-secret@proxy.example:8080"}, h.server.Pool.Proxy().Revision); err != nil {
+	if err := h.server.pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: "http://fake-user:fake-secret@proxy.example:8080"}, h.server.pool.Proxy().Revision); err != nil {
 		t.Fatal(err)
 	}
 	source := "# Fixture\n\n<script>window.fixtureInline=1</script>\n<script src=\"https://cdn.example/fixture.js\"></script>\n<img src=\"https://cdn.example/fixture.png\">\n\n{{app_name}} {{public_origin}} {{unknown}}"
@@ -97,21 +98,15 @@ func TestV072PublicDirectoryPinsTemplatesAndInstructionDocuments(t *testing.T) {
 	}
 }
 func TestV072DownloadRankingCountsOnlySuccessfulPublicTransfers(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir(), func(s *Server) {
-		var err error
-		s.Proxy, err = NewProxy("192.0.2.0/24")
-		if err != nil {
-			t.Fatal(err)
-		}
-	})
+	h := newHarness(t, withTrustedProxies(t, "192.0.2.0/24"))
 	h.login(h.password)
-	if _, err := h.server.DB.DB.Exec(`UPDATE catalog_state SET ranking_salt=zeroblob(32)`); err != nil {
+	if _, err := h.server.store.DB.Exec(`UPDATE catalog_state SET ranking_salt=zeroblob(32)`); err != nil {
 		t.Fatal(err)
 	}
 	h.createVendor("content")
 	a := h.createApp("content", "files", "hosted", nil)
-	entry, _ := h.server.Registry.Lookup(a.Key)
-	_, err := h.server.Hosted.Put(context.Background(), entry, "file.bin", "", "cccccccccccccccccccccccccccccccc", func(context.Context) (io.ReadCloser, int64, error) {
+	entry, _ := h.server.registry.Lookup(a.Key)
+	_, err := h.server.hosted.Put(context.Background(), entry, "file.bin", "", "cccccccccccccccccccccccccccccccc", func(context.Context) (io.ReadCloser, int64, error) {
 		return io.NopCloser(strings.NewReader("fixture bytes")), 13, nil
 	})
 	if err != nil {
@@ -119,10 +114,10 @@ func TestV072DownloadRankingCountsOnlySuccessfulPublicTransfers(t *testing.T) {
 	}
 	ranking := func(want int64) {
 		t.Helper()
-		rows, err := h.server.DB.DownloadRanking(time.Now(), 20)
+		rows, err := h.server.store.DownloadRanking(time.Now(), 20)
 		for deadline := time.Now().Add(time.Second); want > 0 && (len(rows) != 1 || rows[0].Clients != want) && time.Now().Before(deadline); {
 			time.Sleep(time.Millisecond)
-			rows, err = h.server.DB.DownloadRanking(time.Now(), 20)
+			rows, err = h.server.store.DownloadRanking(time.Now(), 20)
 		}
 		if err != nil {
 			t.Fatal(err)
@@ -155,7 +150,7 @@ func TestV072DownloadRankingCountsOnlySuccessfulPublicTransfers(t *testing.T) {
 		t.Fatal(w.Code)
 	}
 	ranking(2)
-	lease, err := h.server.Downloads.AcquireHTTPWriter()
+	lease, err := h.server.downloads.AcquireHTTPWriter()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,18 +166,18 @@ func TestV072CacheHitsRankAndReceiptRejectsFailedWrites(t *testing.T) {
 		io.WriteString(w, "cached bytes")
 	}))
 	defer upstream.Close()
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	h.createVendor("cache")
 	a := h.createApp("cache", "files", application.HttpCache, map[string]any{"base_url": upstream.URL})
 	for i := 0; i < 2; i++ {
 		h.request("GET", "/cache/files/tool.bin", nil, 200, nil)
 	}
-	scores, _ := h.server.DB.DownloadRanking(time.Now(), 20)
+	scores, _ := h.server.store.DownloadRanking(time.Now(), 20)
 	if len(scores) != 1 || scores[0].Clients != 1 {
 		t.Fatal(scores)
 	}
-	counts, _ := h.server.DB.CountersFor(a.MetricsID())
+	counts, _ := h.server.store.CountersFor(a.MetricsID())
 	if counts["cache_hit_requests"] != 1 {
 		t.Fatal("fixture did not exercise a cache hit", counts)
 	}
@@ -191,18 +186,18 @@ func TestV072CacheHitsRankAndReceiptRejectsFailedWrites(t *testing.T) {
 		r.RemoteAddr = "192.0.2.55:1234"
 		h.server.finishDownload(receipt, r, a.UID)
 	}
-	scores, _ = h.server.DB.DownloadRanking(time.Now(), 20)
+	scores, _ = h.server.store.DownloadRanking(time.Now(), 20)
 	if scores[0].Clients != 1 {
 		t.Fatal("failed receipt counted", scores)
 	}
 }
 
 func TestV072DisabledBrandIconRemainsAvailableOnlyToAdmin(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	path := "/admin/api/assets/builtin-icon?path=" + url.QueryEscape(presets.ImagePrefix+"openai/codex/icon.svg")
 	h.request("GET", path, nil, 401, nil)
 	h.login(h.password)
-	v, _ := h.server.DB.Vendor("openai")
+	v, _ := h.server.store.Vendor("openai")
 	h.request("PATCH", "/admin/api/vendors/openai", map[string]any{"enabled": false, "revision": v.Revision}, 200, nil)
 	data, headers := h.request("GET", path, nil, 200, nil)
 	if !bytes.Contains(data, []byte("<svg")) || headers.Get("Content-Type") != "image/svg+xml" || !strings.Contains(headers.Get("Content-Security-Policy"), "sandbox") {
@@ -212,7 +207,7 @@ func TestV072DisabledBrandIconRemainsAvailableOnlyToAdmin(t *testing.T) {
 }
 
 func TestFieldResetNeverChangesEnabled(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	for _, enabled := range []bool{true, false} {
 		for _, kind := range []string{"vendor", "app"} {
@@ -244,7 +239,7 @@ func TestFieldResetNeverChangesEnabled(t *testing.T) {
 }
 
 func TestVendorApplicationsPagesIncludeDisabledAndIsolateVendor(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	v := h.createVendor("many")
 	other := h.createVendor("other")

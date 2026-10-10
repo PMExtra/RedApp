@@ -104,8 +104,7 @@ func (s *Service) Serve(w http.ResponseWriter, r *http.Request, entry applicatio
 			if old != nil {
 				s.unpin(old.GenerationID)
 			}
-			s.serveStatus(w, http.StatusGatewayTimeout)
-			return nil
+			return ErrCacheMiss
 		}
 		if r.Method == http.MethodHead {
 			if old != nil {
@@ -142,12 +141,6 @@ func safeHeaders(w http.ResponseWriter, name string) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
 	w.Header().Set("Cache-Control", "no-store")
-}
-func (s *Service) serveStatus(w http.ResponseWriter, status int) {
-	if status < 400 || status > 599 {
-		status = http.StatusBadGateway
-	}
-	http.Error(w, http.StatusText(status), status)
 }
 func requestRange(r *http.Request) *http.Request {
 	if r.Method == http.MethodHead || strings.Contains(r.Header.Get("Range"), ",") {
@@ -282,8 +275,7 @@ func (s *Service) headResponse(w http.ResponseWriter, r *http.Request, f fill, o
 		if err = s.retire(old); err != nil {
 			return err
 		}
-		s.serveStatus(w, resp.StatusCode)
-		return nil
+		return &UpstreamStatusError{Status: resp.StatusCode}
 	}
 	if resp.StatusCode == http.StatusNotModified {
 		initial, _ := attempt.Client.RelativeURL(path)
@@ -306,8 +298,7 @@ func (s *Service) headResponse(w http.ResponseWriter, r *http.Request, f fill, o
 		return s.serveStored(w, r, result.row)
 	}
 	if resp.StatusCode != http.StatusOK {
-		s.serveStatus(w, resp.StatusCode)
-		return nil
+		return &UpstreamStatusError{Status: resp.StatusCode}
 	}
 	if old != nil {
 		if !f.eligible(resp.Header) {
@@ -355,8 +346,7 @@ func (s *Service) serveResult(w http.ResponseWriter, r *http.Request, result fet
 		defer s.unpin(result.row.GenerationID)
 		return s.serveStored(w, r, result.row)
 	}
-	s.serveStatus(w, result.status)
-	return nil
+	return &UpstreamStatusError{Status: result.status}
 }
 
 func (s *Service) serveDirect(w http.ResponseWriter, r *http.Request, result fetchResult, name string) error {

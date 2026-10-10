@@ -31,7 +31,7 @@ func TestGeneralHTTPRouteEncodingMethodsAndRanges(t *testing.T) {
 		io.WriteString(w, "abcdefghij")
 	}))
 	defer upstream.Close()
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	h.createVendor("enterprise")
 	app := h.createApp("enterprise", "files", application.HttpCache, map[string]any{"base_url": upstream.URL + "/packages"})
@@ -42,11 +42,11 @@ func TestGeneralHTTPRouteEncodingMethodsAndRanges(t *testing.T) {
 	}
 	assertCounters := func(requests, hits, downstream int64) {
 		t.Helper()
-		global, err := h.server.DB.Counters()
+		global, err := h.server.store.Counters()
 		if err != nil {
 			t.Fatal(err)
 		}
-		owned, err := h.server.DB.CountersFor(app.MetricsID())
+		owned, err := h.server.store.CountersFor(app.MetricsID())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -54,7 +54,7 @@ func TestGeneralHTTPRouteEncodingMethodsAndRanges(t *testing.T) {
 			t.Fatal("GeneralHttp request/traffic counters are missing, duplicated, or scoped incorrectly", global, owned)
 		}
 		for _, scope := range []string{app.Key, app.StorageID()} {
-			wrong, err := h.server.DB.CountersFor(scope)
+			wrong, err := h.server.store.CountersFor(scope)
 			if err != nil || wrong["artifact_requests"] != 0 {
 				t.Fatal("GeneralHttp wrote counters outside the stable application scope", scope, wrong, err)
 			}
@@ -116,7 +116,7 @@ func TestGeneralHTTPCacheAdminHistoricalSourceCleanup(t *testing.T) {
 	defer oldSource.Close()
 	newUpstream := newSource("new source file")
 	defer newUpstream.Close()
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.request("GET", "/admin/api/apps/openai/codex/sources", nil, 401, nil)
 	h.login(h.password)
 	h.createVendor("enterprise")
@@ -160,7 +160,7 @@ func TestGeneralHTTPCacheAdminHistoricalSourceCleanup(t *testing.T) {
 	}
 	// Make the already fetched historical row old enough for the real time-based
 	// preview without sleeping or changing the HTTP-cache service's clock.
-	if _, err := h.server.DB.DB.Exec("UPDATE http_cache_generations SET fetched_at_s=? WHERE id=?", time.Now().Add(-time.Hour).Unix(), oldRows[0].GenerationID); err != nil {
+	if _, err := h.server.store.DB.Exec("UPDATE http_cache_generations SET fetched_at_s=? WHERE id=?", time.Now().Add(-time.Hour).Unix(), oldRows[0].GenerationID); err != nil {
 		t.Fatal(err)
 	}
 	selection := map[string]any{"basis": "fetched_at", "before": time.Now().UTC().Add(-time.Minute)}

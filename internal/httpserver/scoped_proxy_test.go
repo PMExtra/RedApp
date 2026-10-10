@@ -22,7 +22,7 @@ import (
 
 func TestScopedProxiesRouteCatalogArtifactsHTTPAndHostedImports(t *testing.T) {
 	dir := t.TempDir()
-	h := newDirectoryHarness(t, dir)
+	h := newHarness(t, withDir(dir))
 	h.login(h.password)
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "direct") }))
 	defer origin.Close()
@@ -74,23 +74,23 @@ func TestScopedProxiesRouteCatalogArtifactsHTTPAndHostedImports(t *testing.T) {
 		}
 		h.request("POST", "/admin/api/vendors/routing/apps", input, 201, nil)
 	}
-	if err := h.server.Pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: first.URL}, h.server.Pool.Proxy().Revision); err != nil {
+	if err := h.server.pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: first.URL}, h.server.pool.Proxy().Revision); err != nil {
 		t.Fatal(err)
 	}
 	// App direct overrides the vendor proxy, while its sibling inherits it.
-	vendor, _ := h.server.DB.Vendor("routing")
-	if _, err := h.server.DB.PatchVendorConfiguration(vendor.ID, store.ConfigurationPatch{Revision: vendor.Revision, Set: map[string]json.RawMessage{"proxy": encodeJSON(networkproxy.Config{Mode: "url", URL: strings.Replace(second.URL, "://", "://fixture:private-proxy-secret@", 1)})}}); err != nil {
+	vendor, _ := h.server.store.Vendor("routing")
+	if _, err := h.server.store.PatchVendorConfiguration(vendor.ID, store.ConfigurationPatch{Revision: vendor.Revision, Set: map[string]json.RawMessage{"proxy": encodeJSON(networkproxy.Config{Mode: "url", URL: strings.Replace(second.URL, "://", "://fixture:private-proxy-secret@", 1)})}}); err != nil {
 		t.Fatal(err)
 	}
-	app, _ := h.server.DB.Application("routing/cache")
-	if _, err := h.server.DB.PatchApplicationConfiguration(app.Key, store.ConfigurationPatch{Revision: app.Revision, Set: map[string]json.RawMessage{"proxy": encodeJSON(networkproxy.Direct())}}); err != nil {
+	app, _ := h.server.store.Application("routing/cache")
+	if _, err := h.server.store.PatchApplicationConfiguration(app.Key, store.ConfigurationPatch{Revision: app.Revision, Set: map[string]json.RawMessage{"proxy": encodeJSON(networkproxy.Direct())}}); err != nil {
 		t.Fatal(err)
 	}
 	data, _ := h.request("GET", "/routing/cache/direct-file", nil, 200, nil)
 	if string(data) != "direct" {
 		t.Fatal("app direct did not override vendor", string(data))
 	}
-	if _, err := h.server.Catalog.Release(context.Background(), "routing/release", "latest"); err != nil {
+	if _, err := h.server.catalog.Release(context.Background(), "routing/release", "latest"); err != nil {
 		t.Fatal(err)
 	}
 	h.request("POST", "/admin/api/apps/routing/hosted/files/import?transfer_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", map[string]any{"path": "import", "url": origin.URL + "/import"}, 201, nil)
@@ -99,8 +99,8 @@ func TestScopedProxiesRouteCatalogArtifactsHTTPAndHostedImports(t *testing.T) {
 		t.Fatal("Hosted import missed app/vendor scope")
 	}
 	// Remove the vendor override: the inherited release client now uses global A.
-	vendor, _ = h.server.DB.Vendor(vendor.ID)
-	if _, err := h.server.DB.PatchVendorConfiguration(vendor.ID, store.ConfigurationPatch{Revision: vendor.Revision, Set: map[string]json.RawMessage{"proxy": encodeJSON(networkproxy.Inherit())}}); err != nil {
+	vendor, _ = h.server.store.Vendor(vendor.ID)
+	if _, err := h.server.store.PatchVendorConfiguration(vendor.ID, store.ConfigurationPatch{Revision: vendor.Revision, Set: map[string]json.RawMessage{"proxy": encodeJSON(networkproxy.Inherit())}}); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
@@ -117,11 +117,11 @@ func TestScopedProxiesRouteCatalogArtifactsHTTPAndHostedImports(t *testing.T) {
 		done <- err
 	}()
 	<-started
-	before, _ := h.server.DB.Application("routing/release")
-	if _, err := h.server.DB.PatchApplicationConfiguration(before.Key, store.ConfigurationPatch{Revision: before.Revision, Set: map[string]json.RawMessage{"name.en": encodeJSON("Edited during download")}}); err != nil {
+	before, _ := h.server.store.Application("routing/release")
+	if _, err := h.server.store.PatchApplicationConfiguration(before.Key, store.ConfigurationPatch{Revision: before.Revision, Set: map[string]json.RawMessage{"name.en": encodeJSON("Edited during download")}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.server.Pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: strings.Replace(second.URL, "://", "://fixture:private-proxy-secret@", 1)}, h.server.Pool.Proxy().Revision); err != nil {
+	if err := h.server.pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: strings.Replace(second.URL, "://", "://fixture:private-proxy-secret@", 1)}, h.server.pool.Proxy().Revision); err != nil {
 		t.Fatal(err)
 	}
 	once.Do(func() { close(release) })
@@ -129,7 +129,7 @@ func TestScopedProxiesRouteCatalogArtifactsHTTPAndHostedImports(t *testing.T) {
 		t.Fatal(err)
 	}
 	published := false
-	for _, view := range h.server.Downloads.Snapshot() {
+	for _, view := range h.server.downloads.Snapshot() {
 		if view.Resource.Application == before.StorageID() && view.Resource.Version == "2.0.0" && view.Current && !view.Retired && view.State == "complete" {
 			published = true
 		}
@@ -137,15 +137,15 @@ func TestScopedProxiesRouteCatalogArtifactsHTTPAndHostedImports(t *testing.T) {
 	if !published {
 		t.Fatal("metadata/proxy retired or prevented publication of admitted writer")
 	}
-	after, _ := h.server.DB.Application(before.Key)
+	after, _ := h.server.store.Application(before.Key)
 	if after.RuntimeRevision != before.RuntimeRevision || after.SourceEpoch != before.SourceEpoch {
 		t.Fatal("metadata/proxy invalidated active writer")
 	}
-	if _, err := h.server.Catalog.Release(context.Background(), before.Key, "3.0.0"); err != nil {
+	if _, err := h.server.catalog.Release(context.Background(), before.Key, "3.0.0"); err != nil {
 		t.Fatal(err)
 	}
-	app, _ = h.server.DB.Application("routing/cache")
-	if _, err := h.server.DB.PatchApplicationConfiguration(app.Key, store.ConfigurationPatch{Revision: app.Revision, Set: map[string]json.RawMessage{"proxy": encodeJSON(networkproxy.Inherit())}}); err != nil {
+	app, _ = h.server.store.Application("routing/cache")
+	if _, err := h.server.store.PatchApplicationConfiguration(app.Key, store.ConfigurationPatch{Revision: app.Revision, Set: map[string]json.RawMessage{"proxy": encodeJSON(networkproxy.Inherit())}}); err != nil {
 		t.Fatal(err)
 	}
 	data, _ = h.request("GET", "/routing/cache/next-file", nil, 200, nil)
@@ -153,24 +153,24 @@ func TestScopedProxiesRouteCatalogArtifactsHTTPAndHostedImports(t *testing.T) {
 		t.Fatal("HTTP cache missed new inherited proxy", string(data))
 	}
 	// Global failed CAS and DB write failures preserve both persistence and routing.
-	savedProxy := h.server.Pool.Proxy()
+	savedProxy := h.server.pool.Proxy()
 	invalid, _ := h.request("PUT", "/admin/api/settings/proxy", map[string]any{"mode": "url", "url": "http://fixture:private-proxy-secret@proxy.example"}, 400, map[string]string{"If-Match": fmt.Sprintf(`"%d"`, savedProxy.Revision)})
 	if bytes.Contains(invalid, []byte("private-proxy-secret")) {
 		t.Fatal("proxy credential error leak")
 	}
-	if err := h.server.Pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: first.URL}, savedProxy.Revision-1); err == nil {
+	if err := h.server.pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: first.URL}, savedProxy.Revision-1); err == nil {
 		t.Fatal("stale global CAS accepted")
 	}
-	if _, err := h.server.DB.DB.Exec(`CREATE TRIGGER reject_global_proxy BEFORE UPDATE ON settings WHEN NEW.key='upstream_proxy' BEGIN SELECT RAISE(FAIL,'injected write failure'); END`); err != nil {
+	if _, err := h.server.store.DB.Exec(`CREATE TRIGGER reject_global_proxy BEFORE UPDATE ON settings WHEN NEW.key='upstream_proxy' BEGIN SELECT RAISE(FAIL,'injected write failure'); END`); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.server.Pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: first.URL}, savedProxy.Revision); err == nil {
+	if err := h.server.pool.SetProxy(distributor.ProxyUpdate{Mode: "url", URL: first.URL}, savedProxy.Revision); err == nil {
 		t.Fatal("failed global write accepted")
 	}
-	if h.server.Pool.Proxy() != savedProxy {
+	if h.server.pool.Proxy() != savedProxy {
 		t.Fatal("failed global write changed transport view")
 	}
-	h.server.DB.DB.Exec(`DROP TRIGGER reject_global_proxy`)
+	h.server.store.DB.Exec(`DROP TRIGGER reject_global_proxy`)
 	// Administrative proxy credentials do not enter bootstrap, directory or events.
 	for _, path := range []string{"/api/bootstrap", "/api/vendors/routing", "/api/apps/routing/release"} {
 		raw, _ := h.request("GET", path, nil, 200, nil)
@@ -178,7 +178,7 @@ func TestScopedProxiesRouteCatalogArtifactsHTTPAndHostedImports(t *testing.T) {
 			t.Fatal("public credential leak", path)
 		}
 	}
-	events, err := h.server.DB.EventsFor(after.MetricsID())
+	events, err := h.server.store.EventsFor(after.MetricsID())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestScopedProxiesRouteCatalogArtifactsHTTPAndHostedImports(t *testing.T) {
 		t.Fatal("proxy credential event leak")
 	}
 	// A deleted app and a forged vendor scope cannot fall back to global routing.
-	scoped, err := h.server.Pool.NewScopedClient(origin.URL, distributor.GeneralHTTP, after.UID, "ffffffffffffffffffffffffffffffff")
+	scoped, err := h.server.pool.NewScopedClient(origin.URL, distributor.GeneralHTTP, after.UID, "ffffffffffffffffffffffffffffffff")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,12 +195,12 @@ func TestScopedProxiesRouteCatalogArtifactsHTTPAndHostedImports(t *testing.T) {
 		response.Body.Close()
 		t.Fatal("wrong vendor scope contacted network")
 	}
-	app, _ = h.server.DB.Application("routing/cache")
-	deletedClient, err := h.server.Pool.NewScopedClient(origin.URL, distributor.GeneralHTTP, app.UID, app.VendorUID)
+	app, _ = h.server.store.Application("routing/cache")
+	deletedClient, err := h.server.pool.NewScopedClient(origin.URL, distributor.GeneralHTTP, app.UID, app.VendorUID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = h.server.DB.DeleteApplication(app.Key, app.Revision); err != nil {
+	if err = h.server.store.DeleteApplication(app.Key, app.Revision); err != nil {
 		t.Fatal(err)
 	}
 	if response, err := deletedClient.Get(context.Background(), origin.URL+"/deleted", nil); err == nil {
@@ -209,15 +209,15 @@ func TestScopedProxiesRouteCatalogArtifactsHTTPAndHostedImports(t *testing.T) {
 	}
 	// Restart reloads the same independent/inherited proxy settings and fences.
 	h.close()
-	h = newDirectoryHarness(t, dir)
-	if h.server.Pool.Proxy() != savedProxy {
+	h = newHarness(t, withDir(dir))
+	if h.server.pool.Proxy() != savedProxy {
 		t.Fatal("restart changed global proxy")
 	}
-	restarted, _ := h.server.DB.ApplicationConfiguration("routing/release")
+	restarted, _ := h.server.store.ApplicationConfiguration("routing/release")
 	if restarted.ProxyEffective.Mode != "url" || restarted.ProxyEffective.URL != savedProxy.URL || restarted.ProxyEffective.SourceScope != "global" {
 		t.Fatal("restart lost inheritance")
 	}
-	if _, err := h.server.Catalog.Release(context.Background(), "routing/release", "4.0.0"); err != nil {
+	if _, err := h.server.catalog.Release(context.Background(), "routing/release", "4.0.0"); err != nil {
 		t.Fatal(err)
 	}
 	mu.Lock()

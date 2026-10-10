@@ -4,17 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/store"
-	"io"
-	"mime"
-	"net/http"
-	"net/url"
-	"path"
-	"strings"
-	"time"
 )
 
 func (s *Server) hostedError(w http.ResponseWriter, err error) {
@@ -41,12 +39,12 @@ func (s *Server) hostedAPI(w http.ResponseWriter, r *http.Request, app, endpoint
 	if endpoint != "files" && !strings.HasPrefix(endpoint, "files/") {
 		return false
 	}
-	entry, ok := s.Registry.LookupAny(app)
+	entry, ok := s.registry.LookupAny(app)
 	if !ok || entry.Provider != application.Hosted {
 		fail(w, 404, "Hosted resources unavailable")
 		return true
 	}
-	if s.Hosted == nil {
+	if s.hosted == nil {
 		fail(w, 503, "File storage unavailable")
 		return true
 	}
@@ -68,7 +66,7 @@ func (s *Server) hostedAPI(w http.ResponseWriter, r *http.Request, app, endpoint
 			fail(w, 400, "Invalid file page")
 			return true
 		}
-		result, err := s.DB.HostedPage(entry.UID, page, limit)
+		result, err := s.store.HostedPage(entry.UID, page, limit)
 		if err != nil {
 			s.hostedError(w, err)
 		} else {
@@ -82,7 +80,7 @@ func (s *Server) hostedAPI(w http.ResponseWriter, r *http.Request, app, endpoint
 			return true
 		}
 		if r.Method == http.MethodDelete {
-			if s.Hosted.Cancel(entry.UID, parts[2]) {
+			if s.hosted.Cancel(entry.UID, parts[2]) {
 				reply(w, 200, map[string]bool{"cancelled": true})
 			} else {
 				fail(w, 404, "Transfer not found")
@@ -90,7 +88,7 @@ func (s *Server) hostedAPI(w http.ResponseWriter, r *http.Request, app, endpoint
 			return true
 		}
 		if r.Method == http.MethodGet {
-			progress, ok := s.Hosted.Progress(entry.UID, parts[2])
+			progress, ok := s.hosted.Progress(entry.UID, parts[2])
 			if ok {
 				reply(w, 200, progress)
 			} else {
@@ -104,7 +102,7 @@ func (s *Server) hostedAPI(w http.ResponseWriter, r *http.Request, app, endpoint
 			fail(w, 400, "Invalid file query")
 			return true
 		}
-		if err := s.Hosted.Delete(entry.UID, parts[1]); err != nil {
+		if err := s.hosted.Delete(entry.UID, parts[1]); err != nil {
 			s.hostedError(w, err)
 		} else {
 			reply(w, 200, map[string]bool{"deleted": true})
@@ -132,13 +130,13 @@ func (s *Server) hostedAPI(w http.ResponseWriter, r *http.Request, app, endpoint
 			URL        string `json:"url"`
 			ExpectedID string `json:"expected_id"`
 		}
-		if decodeLimit(w, r, &input, 16<<10) != nil || s.Pool == nil {
+		if decodeLimit(w, r, &input, 16<<10) != nil || s.pool == nil {
 			fail(w, 400, "Invalid import request")
 			return true
 		}
 		relative, expected = input.Path, input.ExpectedID
 		open = func(ctx context.Context) (io.ReadCloser, int64, error) {
-			response, err := s.Pool.FetchImport(ctx, entry.UID, entry.VendorUID, input.URL)
+			response, err := s.pool.FetchImport(ctx, entry.UID, entry.VendorUID, input.URL)
 			if err != nil {
 				return nil, 0, err
 			}
@@ -148,7 +146,7 @@ func (s *Server) hostedAPI(w http.ResponseWriter, r *http.Request, app, endpoint
 		// Authenticated streaming uploads need the same five-minute transfer
 		// window as imports; the ordinary API body deadline remains short.
 		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(5 * time.Minute))
-		r.Body = http.MaxBytesReader(w, r.Body, s.Downloads.MaxArtifactBytes()+(128<<10))
+		r.Body = http.MaxBytesReader(w, r.Body, s.downloads.MaxArtifactBytes()+(128<<10))
 		reader, err := r.MultipartReader()
 		if err != nil {
 			fail(w, 400, "Expected a multipart file upload")
@@ -188,58 +186,12 @@ func (s *Server) hostedAPI(w http.ResponseWriter, r *http.Request, app, endpoint
 			return true
 		}
 	}
-	result, err := s.Hosted.Put(r.Context(), entry, relative, expected, transferID, open)
+	result, err := s.hosted.Put(r.Context(), entry, relative, expected, transferID, open)
 	if err != nil {
 		s.hostedError(w, err)
 	} else {
 		reply(w, 201, result)
 	}
-	return true
-}
-func (s *Server) hostedFile(w http.ResponseWriter, r *http.Request) bool {
-	parts := strings.SplitN(strings.TrimPrefix(r.URL.EscapedPath(), "/"), "/", 3)
-	if len(parts) != 3 || parts[2] == "" {
-		return false
-	}
-	entry, ok := s.Registry.Lookup(parts[0] + "/" + parts[1])
-	if !ok || entry.Provider != application.Hosted {
-		return false
-	}
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		fail(w, 405, "File requests require GET or HEAD")
-		return true
-	}
-	relative, err := url.PathUnescape(parts[2])
-	encoded := strings.ToLower(parts[2])
-	if err != nil || strings.Contains(encoded, "%2f") || strings.Contains(encoded, "%5c") || !store.ValidHostedPath(relative) || !queryAllowed(r) {
-		fail(w, 400, "Invalid file path")
-		return true
-	}
-	if s.Hosted == nil {
-		fail(w, 503, "File storage unavailable")
-		return true
-	}
-	r, finish, err := s.applicationResponse(w, r, entry.StorageID())
-	if err != nil {
-		s.hostedError(w, err)
-		return true
-	}
-	defer finish()
-	file, row, release, err := s.Hosted.Open(entry.UID, relative)
-	if err != nil {
-		s.hostedError(w, err)
-		return true
-	}
-	defer file.Close()
-	defer release()
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(relative)}))
-	w.Header().Set("ETag", `"sha256-`+row.SHA256+`"`)
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
-	receipt := &downloadReceipt{ResponseWriter: w}
-	http.ServeContent(receipt, r, path.Base(relative), row.CreatedAt, file)
-	s.finishDownload(receipt, r, entry.UID)
 	return true
 }
 

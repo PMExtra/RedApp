@@ -8,96 +8,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/PMExtra/RedApp/internal/application"
-	"github.com/PMExtra/RedApp/internal/apps/builtin"
-	"github.com/PMExtra/RedApp/internal/distributor"
-	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/store"
 )
-
-type preparedDirectory struct {
-	server    *Server
-	registry  *application.PreparedRegistry
-	downloads *download.UpstreamPublication
-	proxy     *distributor.ProxyPublication
-}
-
-func (p *preparedDirectory) Abort() {
-	if p.downloads != nil {
-		p.downloads.Abort()
-	}
-	if p.proxy != nil {
-		p.proxy.Abort()
-	}
-}
-func (p *preparedDirectory) Publish() {
-	publish := func() {
-		if p.proxy != nil {
-			p.proxy.Publish()
-		}
-		p.server.Registry.Publish(p.registry)
-	}
-	if p.downloads != nil {
-		p.downloads.PublishWith(publish)
-	} else {
-		publish()
-	}
-}
-
-// ConfigurePublication installs the same prepare/CAS/publish coordinator for API
-// and direct Store writers. Client construction performs local validation only.
-func (s *Server) ConfigurePublication() {
-	s.configurationOnce.Do(func() {
-		if s.DB == nil || s.Registry == nil || s.Pool == nil {
-			return
-		}
-		s.DB.SetDistributionValidation(builtin.ValidateDescriptors)
-		s.DB.SetConfigurationPrepare(func(candidate store.DirectorySnapshot) (store.ConfigurationPublication, error) {
-			proxy, err := s.Pool.PrepareConfiguration(candidate)
-			if err != nil {
-				return nil, err
-			}
-			prepared := false
-			defer func() {
-				if !prepared {
-					proxy.Abort()
-				}
-			}()
-			entries, err := builtin.EntriesFromConfiguration(candidate, s.Pool)
-			if err != nil {
-				return nil, err
-			}
-			registry, err := application.PrepareRegistry(entries)
-			if err != nil {
-				return nil, err
-			}
-			clients := map[string]*distributor.Client{}
-			for _, source := range candidate.Sources {
-				client, err := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, candidate.ProviderDefaults[source.Provider], source.AppUID, candidate.ProxyScopes[source.AppUID].VendorUID, s.Pool)
-				if err != nil {
-					return nil, err
-				}
-				clients[source.StorageID()] = client
-			}
-			result := &preparedDirectory{server: s, registry: registry, proxy: proxy}
-			if s.Downloads != nil {
-				result.downloads, err = s.Downloads.PrepareUpstreams(clients)
-				if err != nil {
-					return nil, err
-				}
-			}
-			if s.testConfigurationPrepare != nil {
-				if err = s.testConfigurationPrepare(candidate); err != nil {
-					prepared = true
-					result.Abort()
-					return nil, err
-				}
-			}
-			prepared = true
-			return result, nil
-		})
-	})
-}
 
 func (s *Server) configurationAPI(w http.ResponseWriter, r *http.Request, kind, key string) {
 	if !queryAllowed(r) {
@@ -135,15 +47,15 @@ func (s *Server) configurationAPI(w http.ResponseWriter, r *http.Request, kind, 
 			}
 		}
 		if kind == "Vendor" {
-			value, err = s.DB.PatchVendorConfiguration(key, patch)
+			value, err = s.store.PatchVendorConfiguration(key, patch)
 		} else {
-			value, err = s.DB.PatchApplicationConfiguration(key, patch)
+			value, err = s.store.PatchApplicationConfiguration(key, patch)
 		}
 	} else {
 		if kind == "Vendor" {
-			value, err = s.DB.VendorConfiguration(key)
+			value, err = s.store.VendorConfiguration(key)
 		} else {
-			value, err = s.DB.ApplicationConfiguration(key)
+			value, err = s.store.ApplicationConfiguration(key)
 		}
 	}
 	if err != nil {

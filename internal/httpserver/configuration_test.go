@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
+	"testing"
+
 	"github.com/PMExtra/RedApp/internal/apps/builtin"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/identity"
-	"sync/atomic"
-	"testing"
 
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -22,7 +23,7 @@ func configurationValue(t *testing.T, raw []byte) store.Configuration {
 	return c
 }
 func TestConfigurationAPIAndLegacyWritersShareAuthority(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	endpoint := "/admin/api/apps/openai/codex/configuration"
 	raw, _ := h.request("GET", endpoint, nil, 200, nil)
@@ -45,8 +46,8 @@ func TestConfigurationAPIAndLegacyWritersShareAuthority(t *testing.T) {
 	if c.Fields["description.zh-CN"].Source != "custom" || c.Fields["name.zh-CN"].Source != "inherited" || c.Fields["base_url"].Source != "inherited" {
 		t.Fatal("legacy patch invented overrides", c)
 	}
-	app, _ := h.server.DB.Application("openai/codex")
-	ins, _ := h.server.DB.Instructions(app.UID)
+	app, _ := h.server.store.Application("openai/codex")
+	ins, _ := h.server.store.Instructions(app.UID)
 	h.request("PUT", "/admin/api/apps/openai/codex/instructions", map[string]any{"revision": ins.Revision, "en": "custom instructions", "zh-CN": ins.ZhCN}, 200, nil)
 	raw, _ = h.request("GET", endpoint, nil, 200, nil)
 	c = configurationValue(t, raw)
@@ -73,7 +74,7 @@ func TestConfigurationAPIAndLegacyWritersShareAuthority(t *testing.T) {
 	}
 }
 func TestConfigurationIndependentEntityAndNoOp(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	h.request("POST", "/admin/api/vendors", map[string]any{"id": "acme", "name": map[string]string{"en": "Acme", "zh-CN": "Acme"}}, 201, nil)
 	endpoint := "/admin/api/vendors/acme/configuration"
@@ -93,50 +94,48 @@ func TestConfigurationIndependentEntityAndNoOp(t *testing.T) {
 
 func TestConfigurationRuntimeAndDatabaseStayAlignedOnFailure(t *testing.T) {
 	var fail atomic.Bool
-	h := newDirectoryHarness(t, t.TempDir(), func(s *Server) {
-		s.testConfigurationPrepare = func(store.DirectorySnapshot) error {
-			if fail.Load() {
-				return errors.New("injected prepare failure")
-			}
-			return nil
+	h := newHarness(t, withOptions(WithConfigurationCheck(func(store.DirectorySnapshot) error {
+		if fail.Load() {
+			return errors.New("injected prepare failure")
 		}
-	})
+		return nil
+	})))
 	h.login(h.password)
 	key := "openai/codex"
-	before, _ := h.server.DB.Application(key)
-	entry, _ := h.server.Registry.Lookup(key)
+	before, _ := h.server.store.Application(key)
+	entry, _ := h.server.registry.Lookup(key)
 	endpoint := "/admin/api/apps/" + key + "/configuration"
 	body := map[string]any{"revision": before.Revision, "set": map[string]any{"base_url": "https://replacement.example/codex"}}
 	fail.Store(true)
 	h.request("PATCH", endpoint, body, 503, nil)
 	fail.Store(false)
-	if _, err := h.server.DB.DB.Exec(`CREATE TRIGGER reject_runtime_config BEFORE UPDATE ON applications BEGIN SELECT RAISE(FAIL,'injected DB failure'); END`); err != nil {
+	if _, err := h.server.store.DB.Exec(`CREATE TRIGGER reject_runtime_config BEFORE UPDATE ON applications BEGIN SELECT RAISE(FAIL,'injected DB failure'); END`); err != nil {
 		t.Fatal(err)
 	}
 	h.request("PATCH", endpoint, body, 503, nil)
-	after, _ := h.server.DB.Application(key)
-	current, _ := h.server.Registry.Lookup(key)
+	after, _ := h.server.store.Application(key)
+	current, _ := h.server.registry.Lookup(key)
 	if after.Revision != before.Revision || after.SourceEpoch != before.SourceEpoch || after.BaseURL != before.BaseURL || current.Upstream != entry.Upstream || current.Revision != entry.Revision {
 		t.Fatal("half-saved configuration", after, current)
 	}
 	candidateID := identity.StorageID(before.UID, before.SourceEpoch+1)
-	client, err := builtin.NewScopedSourceClient(before.Provider, "https://other.example/codex", "", before.UID, before.VendorUID, h.server.Pool)
+	client, err := builtin.NewScopedSourceClient(before.Provider, "https://other.example/codex", "", before.UID, before.VendorUID, h.server.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := h.server.Downloads.PrepareUpstreams(map[string]*distributor.Client{candidateID: client})
+	plan, err := h.server.downloads.PrepareUpstreams(map[string]*distributor.Client{candidateID: client})
 	if err != nil {
 		t.Fatal("aborted namespace leaked into Downloads", err)
 	}
 	plan.Abort()
-	h.server.DB.DB.Exec(`DROP TRIGGER reject_runtime_config`)
+	h.server.store.DB.Exec(`DROP TRIGGER reject_runtime_config`)
 	raw, _ := h.request("PATCH", endpoint, body, 200, nil)
 	saved := configurationValue(t, raw)
-	current, _ = h.server.Registry.Lookup(key)
+	current, _ = h.server.registry.Lookup(key)
 	if current.Revision != saved.Revision || current.SourceEpoch != before.SourceEpoch+1 || current.Upstream.Base.String() != "https://replacement.example/codex" {
 		t.Fatal("published runtime differs from DB", current, saved)
 	}
-	if err = h.server.DB.CheckSourceActive(entry.StorageID(), store.SourceFence{AppRuntimeRevision: entry.RuntimeRevision, VendorRuntimeRevision: entry.VendorRuntimeRevision}); !errors.Is(err, store.ErrSourceInactive) {
+	if err = h.server.store.CheckSourceActive(entry.StorageID(), store.SourceFence{AppRuntimeRevision: entry.RuntimeRevision, VendorRuntimeRevision: entry.VendorRuntimeRevision}); !errors.Is(err, store.ErrSourceInactive) {
 		t.Fatal("old source fence accepted", err)
 	}
 }

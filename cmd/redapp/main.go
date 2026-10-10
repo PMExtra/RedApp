@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -28,6 +29,8 @@ import (
 	"github.com/PMExtra/RedApp/internal/httpserver"
 	"github.com/PMExtra/RedApp/internal/instance"
 	"github.com/PMExtra/RedApp/internal/media"
+	"github.com/PMExtra/RedApp/internal/prewarm"
+	"github.com/PMExtra/RedApp/internal/releasemaintenance"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -35,6 +38,8 @@ var version = "dev"
 var revision = "unknown"
 
 func main() {
+	// Structured logs on stderr; the standard log package is routed to the same handler.
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	if err := command(os.Args[1:]); err != nil {
 		log.Print(err)
 		os.Exit(1)
@@ -139,7 +144,7 @@ func serve(c config.Deployment) error {
 	if err := store.Preflight(c.DataDir); err != nil {
 		return err
 	}
-	proxy, err := httpserver.NewProxy(strings.Join(c.TrustedProxies, ","))
+	proxies, err := httpserver.ParseTrustedProxies(c.TrustedProxies)
 	if err != nil {
 		return err
 	}
@@ -229,8 +234,22 @@ func serve(c config.Deployment) error {
 		return err
 	}
 	defer hostedFiles.Close()
-	handler := &httpserver.Server{Version: version, DB: db, Registry: registry, Catalog: catalog.New(db, registry), Downloads: manager, HTTPCache: httpCache, Hosted: hostedFiles, Auth: a, Proxy: proxy, Upstream: upstream, Pool: upstream, Icons: icons, History: metricHistory, PublicConfig: public, Dir: guard.Directory, Started: time.Now().UTC()}
-	handler.ConfigurePublication()
+	catalogService := catalog.New(db, registry)
+	prewarmer, err := prewarm.New(db, registry, catalogService, manager, httpCache)
+	if err != nil {
+		return err
+	}
+	defer prewarmer.Close()
+	maintenance := &releasemaintenance.Service{DB: db, Registry: registry, Catalog: catalogService, Downloads: manager, AutomaticPrewarm: prewarmer.Automatic}
+	handler, err := httpserver.New(httpserver.Deps{
+		Version: version, Store: db, Registry: registry, Catalog: catalogService, Downloads: manager,
+		HTTPCache: httpCache, Hosted: hostedFiles, Auth: a, TrustedProxies: proxies, Pool: upstream,
+		Icons: icons, History: metricHistory, PublicSettings: public, Prewarmer: prewarmer, Maintenance: maintenance,
+		DataDir: guard.Directory, Started: time.Now().UTC(), Logger: slog.Default(),
+	})
+	if err != nil {
+		return err
+	}
 	server := &http.Server{Addr: c.Listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 10 * time.Minute, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -241,15 +260,9 @@ func serve(c config.Deployment) error {
 		handler.SampleHistory(metricCtx, func(err error) { log.Printf("Metric history sampling failed: %v", err) })
 	}()
 	defer func() { cancelMetrics(); <-metricDone }()
-	prewarmer, err := handler.Prewarmer()
-	if err != nil {
-		return err
-	}
-	defer prewarmer.Close()
-	handler.ReleaseMaintenance().AutomaticPrewarm = prewarmer.Automatic
 	retentionCtx, cancelRetention := context.WithCancel(ctx)
 	retentionDone := make(chan struct{})
-	go func() { defer close(retentionDone); handler.ReleaseMaintenance().Run(retentionCtx) }()
+	go func() { defer close(retentionDone); maintenance.Run(retentionCtx) }()
 	defer func() { cancelRetention(); <-retentionDone }()
 	cleanupCtx, cancelCleanup := context.WithCancel(ctx)
 	cleanupDone := make(chan struct{})

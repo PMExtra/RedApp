@@ -9,9 +9,9 @@ import (
 )
 
 func TestDefaultVersionInstructionsUseOnlyObservedVersions(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	for _, key := range []string{"openai/codex", "anthropic/claude-code"} {
-		entry, _ := h.server.Registry.Lookup(key)
+		entry, _ := h.server.registry.Lookup(key)
 		for _, lang := range []string{"en", "zh-CN"} {
 			route := "/api/apps/" + key + "/instructions/document?lang=" + lang
 			raw, _ := h.request("GET", route, nil, 200, nil)
@@ -35,7 +35,7 @@ func TestDefaultVersionInstructionsUseOnlyObservedVersions(t *testing.T) {
 			}
 		}
 		for _, version := range []string{"1.9.0", "1.10.0", "999.0.0-evil'$(touch-x)"} {
-			if err := h.server.DB.SeenFor(entry.StorageID(), version); err != nil {
+			if err := h.server.store.SeenFor(entry.StorageID(), version); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -63,7 +63,7 @@ func TestDefaultVersionInstructionsUseOnlyObservedVersions(t *testing.T) {
 				t.Fatal(advanced)
 			}
 		}
-		if err := h.server.DB.SeenFor(entry.StorageID(), "2.0.0"); err != nil {
+		if err := h.server.store.SeenFor(entry.StorageID(), "2.0.0"); err != nil {
 			t.Fatal(err)
 		}
 		raw, _ := h.request("GET", "/api/apps/"+key+"/instructions/document?lang=en", nil, 200, nil)
@@ -79,13 +79,13 @@ func TestDefaultVersionInstructionsUseOnlyObservedVersions(t *testing.T) {
 }
 
 func TestEditableInstructionVariablesAndEscaping(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	key := "openai/codex"
-	entry, _ := h.server.Registry.Lookup(key)
-	current, _ := h.server.DB.Instructions(entry.UID)
+	entry, _ := h.server.registry.Lookup(key)
+	current, _ := h.server.store.Instructions(entry.UID)
 	custom := "# Custom\n\n```sh\nprintf '%s' '{{latest_version}}' '{{base_url}}{{app_path}}'\n```\n\n`{{latest_version}}` {{unknown}}\n\n<!-- redapp:known-version -->"
-	if _, err := h.server.DB.SaveInstructions(key, current.Revision, store.LocalizedText{En: custom, ZhCN: custom}); err != nil {
+	if _, err := h.server.store.SaveInstructions(key, current.Revision, store.LocalizedText{En: custom, ZhCN: custom}); err != nil {
 		t.Fatal(err)
 	}
 	for _, lang := range []string{"en", "zh-CN"} {
@@ -95,14 +95,14 @@ func TestEditableInstructionVariablesAndEscaping(t *testing.T) {
 			t.Fatal("custom interpolation", string(raw))
 		}
 	}
-	if err := h.server.DB.SeenFor(entry.StorageID(), "3.1.0"); err != nil {
+	if err := h.server.store.SeenFor(entry.StorageID(), "3.1.0"); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ := h.request("GET", "/api/apps/"+key+"/instructions/document?lang=en", nil, 200, nil)
 	if !strings.Contains(string(raw), "3.1.0") || strings.Contains(string(raw), "&lt;version&gt;") {
 		t.Fatal("editable variable did not update")
 	}
-	stored, _ := h.server.DB.Instructions(entry.UID)
+	stored, _ := h.server.store.Instructions(entry.UID)
 	if stored.En != custom || stored.ZhCN != custom {
 		t.Fatal("render modified stored custom Markdown")
 	}
@@ -111,14 +111,14 @@ func TestEditableInstructionVariablesAndEscaping(t *testing.T) {
 	if strings.Contains(result, "<img") || !strings.Contains(result, "&lt;img") || !strings.Contains(result, "{{latest_version}}") || !strings.Contains(result, "&#34;") {
 		t.Fatal("unsafe or recursive scalar interpolation", result)
 	}
-	if _, err := h.server.DB.SaveInstructions(key, stored.Revision, store.LocalizedText{}); err != nil {
+	if _, err := h.server.store.SaveInstructions(key, stored.Revision, store.LocalizedText{}); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ = h.request("GET", "/api/apps/"+key+"/instructions/document?lang=en", nil, 200, nil)
 	if strings.Contains(string(raw), `class="copy-block"`) {
 		t.Fatal("explicit empty was replaced")
 	}
-	if err := h.server.DB.DB.Close(); err != nil {
+	if err := h.server.store.DB.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if got := h.server.interpolateInstructionVariables(entry, "{{latest_version}}", "", "en"); got != "&lt;version&gt;" {

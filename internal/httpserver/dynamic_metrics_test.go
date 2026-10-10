@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
@@ -43,7 +44,7 @@ func TestDynamicMetricsAndListsKeepStorageAndPublicNamespacesSeparate(t *testing
 	other := makeApp("claude", "claude-code")
 	general := makeApp("files", "http-cache")
 	pool := distributor.NewPool()
-	s := &Server{DB: db, Dir: dir, Started: time.Now()}
+	s := &Server{store: db, dataDir: dir, started: time.Now()}
 	reload := func() {
 		t.Helper()
 		vendors, e := db.Vendors(true)
@@ -54,17 +55,17 @@ func TestDynamicMetricsAndListsKeepStorageAndPublicNamespacesSeparate(t *testing
 		if e != nil {
 			t.Fatal(e)
 		}
-		s.Registry, e = builtin.NewDynamic(vendors, apps, pool)
+		s.registry, e = builtin.NewDynamic(vendors, apps, pool)
 		if e != nil {
 			t.Fatal(e)
 		}
 	}
 	reload()
-	s.Downloads, err = download.NewApplications(dir, db, map[string]*distributor.Client{app.StorageID(): client})
+	s.downloads, err = download.NewApplications(dir, db, map[string]*distributor.Client{app.StorageID(): client})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { s.Downloads.Close() })
+	t.Cleanup(func() { s.downloads.Close() })
 	cache := func(a store.Application, c *distributor.Client, version string) {
 		t.Helper()
 		sum := sha256.Sum256(payload)
@@ -79,7 +80,7 @@ func TestDynamicMetricsAndListsKeepStorageAndPublicNamespacesSeparate(t *testing
 			t.Fatal(e)
 		}
 		r := download.Resource{Application: a.StorageID(), MetricsID: a.MetricsID(), SourceFence: source.Fence(), Version: version, Key: bound.Key, Source: bound.SourceURL, Hash: hash, Size: &size, ID: download.LogicalIdentity(a.StorageID(), version, bound.Key)}
-		reader, _, e := s.Downloads.Acquire(context.Background(), r)
+		reader, _, e := s.downloads.Acquire(context.Background(), r)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -107,7 +108,7 @@ func TestDynamicMetricsAndListsKeepStorageAndPublicNamespacesSeparate(t *testing
 		t.Fatal(err)
 	}
 	replacement := &distributor.Client{Base: base, HTTP: client.HTTP}
-	if err = s.Downloads.RegisterUpstreams(map[string]*distributor.Client{app.StorageID(): replacement}); err != nil {
+	if err = s.downloads.RegisterUpstreams(map[string]*distributor.Client{app.StorageID(): replacement}); err != nil {
 		t.Fatal(err)
 	}
 	reload()
@@ -157,7 +158,7 @@ func TestDynamicMetricsAndListsKeepStorageAndPublicNamespacesSeparate(t *testing
 			t.Fatal("private scope escaped", view.Resource)
 		}
 	}
-	originals := s.Downloads.Snapshot()
+	originals := s.downloads.Snapshot()
 	if len(originals) != 2 {
 		t.Fatal(originals)
 	}
@@ -181,7 +182,7 @@ func TestDynamicMetricsAndListsKeepStorageAndPublicNamespacesSeparate(t *testing
 			t.Fatal("GeneralHttp versions metric fabricated zero")
 		}
 	}
-	s.History, err = history.Open(db)
+	s.history, err = history.Open(db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,9 +233,31 @@ func TestDynamicMetricsAndListsKeepStorageAndPublicNamespacesSeparate(t *testing
 	}
 }
 
-func TestResourceViewsIsSafeBeforeManagersStart(t *testing.T) {
-	s := &Server{}
-	if views, err := s.resourceViews(); err != nil || views == nil || len(views) != 0 {
-		t.Fatal(views)
+func TestStatusAndHistoryAfterReleaseDownloads(t *testing.T) {
+	data := []byte("official archive")
+	h := newHarness(t)
+	h.upstreamProxy(codexRelease("0.159.2", map[string][]byte{"archive.tgz": data}, nil))
+	key := h.releaseApp("fixture", "codex", "codex")
+	h.login("")
+	h.request("GET", "/"+key+"/releases/0.159.2/archive.tgz", nil, 200, nil)
+	if err := h.store.SeenFor("anthropic/claude-code", "0.159.2"); err != nil {
+		t.Fatal(err)
 	}
+	for _, path := range []string{"/admin/api/status", "/admin/api/apps/" + key + "/status"} {
+		data, _ := h.request("GET", path, nil, 200, nil)
+		var summary map[string]json.RawMessage
+		if json.Unmarshal(data, &summary) != nil {
+			t.Fatal("status summary unavailable", string(data))
+		}
+		for _, field := range []string{"resources", "events", "versions", "version_stats", "application_versions"} {
+			if _, present := summary[field]; present {
+				t.Fatal("status summary contains an unbounded list", path, field)
+			}
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	h.server.SampleHistory(ctx, func(e error) { t.Fatal(e) })
+	h.request("GET", "/admin/api/history?scope=global&metric=versions.total&range=24h", nil, 200, nil)
+	h.request("GET", "/admin/api/apps/"+key+"/history?metric=versions.total&range=24h", nil, 200, nil)
 }

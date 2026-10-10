@@ -2,33 +2,17 @@ package httpserver
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"io"
 	"net/http"
-	"strings"
 	"testing"
-
-	app "github.com/PMExtra/RedApp/internal/apps/codex"
-	"github.com/PMExtra/RedApp/internal/testutil"
 )
 
 func TestDownloadCompletesWhenCounterPersistenceFails(t *testing.T) {
 	data := bytes.Repeat([]byte("official archive "), 8<<10) // Several copy-buffer chunks.
-	h := sha256.Sum256(data)
-	hash := hex.EncodeToString(h[:])
-	var base string
-	upstream, _ := testutil.Upstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "latest") || strings.HasSuffix(r.URL.Path, "release.json") {
-			json.NewEncoder(w).Encode(app.Release{Tag: "rust-v0.159.2", Assets: []app.Asset{{Name: "archive.tgz", Digest: "sha256:" + hash, URL: base + "/releases/0.159.2/archive.tgz"}}})
-		} else {
-			w.Write(data)
-		}
-	}))
-	base = upstream.Base.String()
-	handler, db, _ := newTestServer(t, upstream)
-	server := startTestServer(t, handler)
+	h := newHarness(t)
+	h.upstreamProxy(codexRelease("0.159.2", map[string][]byte{"archive.tgz": data}, nil))
+	key := h.releaseApp("fixture", "codex", "codex")
+	db := h.store
 	triggers := []string{
 		`CREATE TRIGGER fail_counter_insert BEFORE INSERT ON metric_counters BEGIN SELECT RAISE(FAIL,'counter fault'); END`,
 		`CREATE TRIGGER fail_counter_update BEFORE UPDATE ON metric_counters BEGIN SELECT RAISE(FAIL,'counter fault'); END`,
@@ -40,7 +24,7 @@ func TestDownloadCompletesWhenCounterPersistenceFails(t *testing.T) {
 		}
 	}
 	for range 2 { // Miss then cache hit.
-		response, err := http.Get(server.URL + "/openai/codex/releases/0.159.2/archive.tgz")
+		response, err := http.Get(h.http.URL + "/" + key + "/releases/0.159.2/archive.tgz")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -57,8 +41,9 @@ func TestDownloadCompletesWhenCounterPersistenceFails(t *testing.T) {
 		db.DB.Exec("DROP TRIGGER " + name)
 	}
 	// Increments retained across failed flushes are persisted once storage recovers.
-	counters, _ := db.CountersFor("openai/codex")
-	stats, _ := db.VersionStats("openai/codex")
+	entry, _ := h.server.registry.Lookup(key)
+	counters, _ := db.CountersFor(entry.MetricsID())
+	stats, _ := db.VersionStats(entry.StorageID())
 	if counters["artifact_requests"] != 2 || counters["download_success"] != 2 || counters["downstream_bytes"] != int64(2*len(data)) || stats["0.159.2"].DownstreamBytes != int64(2*len(data)) {
 		t.Fatal(counters, stats)
 	}

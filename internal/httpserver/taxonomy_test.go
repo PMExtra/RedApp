@@ -3,13 +3,14 @@ package httpserver
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/PMExtra/RedApp/internal/store"
 	"strings"
 	"testing"
+
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
 func TestCategoriesTagsPublicPrivacyAndSearch(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.request("GET", "/admin/api/categories", nil, 401, nil)
 	h.login(h.password)
 	h.request("POST", "/admin/api/vendors", map[string]any{"id": "taxonomy", "name": map[string]string{"en": "Taxonomy", "zh-CN": "分类"}, "enabled": true}, 201, nil)
@@ -28,10 +29,10 @@ func TestCategoriesTagsPublicPrivacyAndSearch(t *testing.T) {
 	// New categories are typed names saved with the App in one request.
 	save("taxonomy/own", map[string]any{"set": map[string]any{"categories": []string{}, "tags": []string{"#Private Tag", "private tag"}}, "new_categories": []string{"Tools"}}, 200)
 	// The entity PATCH accepts the categories set; the removed single-value field is rejected.
-	peer, _ := h.server.DB.Application("taxonomy/peer")
+	peer, _ := h.server.store.Application("taxonomy/peer")
 	h.request("PATCH", "/admin/api/apps/taxonomy/peer", map[string]any{"revision": peer.Revision, "category": "tools"}, 400, nil)
 	h.request("PATCH", "/admin/api/apps/taxonomy/peer", map[string]any{"revision": peer.Revision, "categories": []string{"tools", "tools"}}, 200, nil)
-	if peer, _ = h.server.DB.Application("taxonomy/peer"); strings.Join(peer.Categories, ",") != "tools" {
+	if peer, _ = h.server.store.Application("taxonomy/peer"); strings.Join(peer.Categories, ",") != "tools" {
 		t.Fatal("entity PATCH categories", peer.Categories)
 	}
 	save("taxonomy/disabled", map[string]any{"set": map[string]any{"categories": []string{"tools"}}, "new_categories": []string{"Private only"}}, 200)
@@ -43,7 +44,7 @@ func TestCategoriesTagsPublicPrivacyAndSearch(t *testing.T) {
 	if listing.Total != 2 || listing.Items[0].ID != "private-only" || listing.Items[0].Applications != 1 || listing.Items[1].ID != "tools" || listing.Items[1].Applications != 3 {
 		t.Fatal("category listing", string(raw))
 	}
-	own, _ := h.server.DB.Application("taxonomy/own")
+	own, _ := h.server.store.Application("taxonomy/own")
 	if strings.Join(own.Tags, ",") != "Private Tag" {
 		t.Fatal("tags not normalized", own.Tags)
 	}
@@ -57,7 +58,7 @@ func TestCategoriesTagsPublicPrivacyAndSearch(t *testing.T) {
 	h.request("PATCH", "/admin/api/categories/tools", map[string]any{"revision": tools.Revision, "set": map[string]any{"name.en": "Blocked"}}, 403, nil)
 	h.csrf = oldCSRF
 	h.request("PATCH", "/admin/api/categories/tools", map[string]any{"revision": tools.Revision, "set": map[string]any{"name.en": "Tools renamed"}}, 200, nil)
-	after, _ := h.server.DB.Application("taxonomy/own")
+	after, _ := h.server.store.Application("taxonomy/own")
 	if after.Revision != own.Revision || after.RuntimeRevision != own.RuntimeRevision || after.SourceEpoch != own.SourceEpoch {
 		t.Fatal("category rename touched app")
 	}
@@ -95,17 +96,17 @@ func TestCategoriesTagsPublicPrivacyAndSearch(t *testing.T) {
 		Categories []store.CategoryCount
 	}
 	json.Unmarshal(raw, &result)
-	if result.Total != 2 || len(result.Items) != 1 || result.Items[0]["id"] != "taxonomy/peer" || len(result.Categories) != 1 || result.Categories[0].Name.En != "Tools renamed" || result.Categories[0].Count != 2 {
+	if result.Total != 2 || len(result.Items) != 1 || result.Items[0]["key"] != "taxonomy/peer" || len(result.Categories) != 1 || result.Categories[0].Name.En != "Tools renamed" || result.Categories[0].Count != 2 {
 		t.Fatal(string(raw))
 	}
 	// Counts are site-wide and do not follow the search text; tag search still finds the App.
 	raw, _ = h.request("GET", "/api/catalog?q=%23private", nil, 200, nil)
 	json.Unmarshal(raw, &result)
-	if result.Total != 1 || result.Items[0]["id"] != "taxonomy/own" || len(result.Categories) != 1 || result.Categories[0].Count != 2 {
+	if result.Total != 1 || result.Items[0]["key"] != "taxonomy/own" || len(result.Categories) != 1 || result.Categories[0].Count != 2 {
 		t.Fatal("tag search or site-wide counts", string(raw))
 	}
 	raw, _ = h.request("GET", "/api/search?q=private", nil, 200, nil)
-	if !bytes.Contains(raw, []byte(`"id":"taxonomy/own"`)) {
+	if !bytes.Contains(raw, []byte(`"key":"taxonomy/own"`)) {
 		t.Fatal("public suggestions ignore tags", string(raw))
 	}
 	h.request("GET", "/api/catalog?category=bad/slug", nil, 400, nil)

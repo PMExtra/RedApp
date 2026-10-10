@@ -2,29 +2,31 @@ package httpserver
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
 )
 
-type Proxy struct{ Networks []*net.IPNet }
+// TrustedProxies are the reverse proxies (CIDRs from the deployment
+// configuration) whose forwarding headers decide the request origin and the
+// client IP. Requests from other peers never have their headers trusted.
+type TrustedProxies struct{ networks []*net.IPNet }
 
-func NewProxy(cidrs string) (Proxy, error) {
-	p := Proxy{}
-	if cidrs == "" {
-		return p, nil
-	}
-	for _, s := range strings.Split(cidrs, ",") {
+// ParseTrustedProxies parses CIDR notations such as "10.0.0.0/8".
+func ParseTrustedProxies(cidrs []string) (TrustedProxies, error) {
+	p := TrustedProxies{}
+	for _, s := range cidrs {
 		_, n, e := net.ParseCIDR(strings.TrimSpace(s))
 		if e != nil {
-			return p, e
+			return p, fmt.Errorf("parse trusted proxy %q: %w", s, e)
 		}
-		p.Networks = append(p.Networks, n)
+		p.networks = append(p.networks, n)
 	}
 	return p, nil
 }
-func (p Proxy) trusted(ip net.IP) bool {
-	for _, n := range p.Networks {
+func (p TrustedProxies) trusted(ip net.IP) bool {
+	for _, n := range p.networks {
 		if n.Contains(ip) {
 			return true
 		}
@@ -144,7 +146,7 @@ func forwarded(s string) ([]net.IP, error) {
 }
 
 // ClientIP walks from the directly connected peer to the first untrusted hop.
-func (p Proxy) ClientIP(r *http.Request) string {
+func (p TrustedProxies) ClientIP(r *http.Request) string {
 	peer := parseIP(r.RemoteAddr)
 	if peer == nil {
 		return "unknown"

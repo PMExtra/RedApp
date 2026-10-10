@@ -3,29 +3,30 @@ package httpserver
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/PMExtra/RedApp/internal/store"
 	"testing"
+
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
 func TestVendorApplicationTableFiltersSortsBeforePagingAndUsesRecordedStatistics(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.request("GET", "/admin/api/vendors/openai/apps?view=table", nil, 401, nil)
 	h.login(h.password)
 	for i := 0; i < 23; i++ {
-		a, err := h.server.DB.CreateApplication("openai", store.ApplicationInput{ID: fmt.Sprintf("tool-%02d", i), Name: store.LocalizedText{En: fmt.Sprintf("Tool %02d", i), ZhCN: fmt.Sprintf("工具 %02d", 22-i)}, Provider: "codex", BaseURL: "https://example.com/releases/", CacheTTLSeconds: 1, Enabled: i%2 == 0})
+		a, err := h.server.store.CreateApplication("openai", store.ApplicationInput{ID: fmt.Sprintf("tool-%02d", i), Name: store.LocalizedText{En: fmt.Sprintf("Tool %02d", i), ZhCN: fmt.Sprintf("工具 %02d", 22-i)}, Provider: "codex", BaseURL: "https://example.com/releases/", CacheTTLSeconds: 1, Enabled: i%2 == 0})
 		if err != nil {
 			t.Fatal(err)
 		}
 		for v, at := range map[string]int64{"1.9.0": 300, "1.10.0": int64(100 + i), "invalid": 900} {
-			if _, err = h.server.DB.DB.Exec("INSERT INTO app_versions(app_id,version,first_seen_s) VALUES(?,?,?)", a.StorageID(), v, at); err != nil {
+			if _, err = h.server.store.DB.Exec("INSERT INTO app_versions(app_id,version,first_seen_s) VALUES(?,?,?)", a.StorageID(), v, at); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if err = h.server.DB.AddFor(a.MetricsID(), "download_success", int64(i)); err != nil {
+		if err = h.server.store.AddFor(a.MetricsID(), "download_success", int64(i)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	_, err := h.server.DB.CreateApplication("openai", store.ApplicationInput{ID: "info", Name: store.LocalizedText{En: "Info", ZhCN: "介绍"}, Provider: "info"})
+	_, err := h.server.store.CreateApplication("openai", store.ApplicationInput{ID: "info", Name: store.LocalizedText{En: "Info", ZhCN: "介绍"}, Provider: "info"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +62,7 @@ func TestVendorApplicationTableFiltersSortsBeforePagingAndUsesRecordedStatistics
 		t.Fatal(p)
 	}
 	p = get("q=tool-22&page=99&limit=2")
-	if p.Total != 1 || p.Page != 1 || p.Items[0].ID != "tool-22" {
+	if p.Total != 1 || p.Page != 99 || len(p.Items) != 0 {
 		t.Fatal(p)
 	}
 	p = get("q=absent&limit=2")
@@ -76,8 +77,8 @@ func TestVendorApplicationTableFiltersSortsBeforePagingAndUsesRecordedStatistics
 	if p.Total != 11 {
 		t.Fatal(p.Total)
 	}
-	a, _ := h.server.DB.Application("openai/tool-22")
-	if _, err = h.server.DB.DB.Exec("INSERT INTO app_versions(app_id,version,first_seen_s) VALUES(?,?,0)", a.StorageID(), "10.0.0"); err != nil {
+	a, _ := h.server.store.Application("openai/tool-22")
+	if _, err = h.server.store.DB.Exec("INSERT INTO app_versions(app_id,version,first_seen_s) VALUES(?,?,0)", a.StorageID(), "10.0.0"); err != nil {
 		t.Fatal(err)
 	}
 	p = get("q=tool&sort=version&order=desc&limit=1")
@@ -89,7 +90,7 @@ func TestVendorApplicationTableFiltersSortsBeforePagingAndUsesRecordedStatistics
 		t.Fatal("missing time must sort last", p)
 	}
 
-	if _, err = h.server.DB.DB.Exec("UPDATE applications SET source_epoch=source_epoch+1 WHERE uid=?", a.UID); err != nil {
+	if _, err = h.server.store.DB.Exec("UPDATE applications SET source_epoch=source_epoch+1 WHERE uid=?", a.UID); err != nil {
 		t.Fatal(err)
 	}
 	if err = h.server.ReloadDirectory(); err != nil {
@@ -106,12 +107,12 @@ func TestVendorApplicationTableFiltersSortsBeforePagingAndUsesRecordedStatistics
 }
 
 func TestApplicationTableMutationReconcilesFilteredLastPage(t *testing.T) {
-	h := newDirectoryHarness(t, t.TempDir())
+	h := newHarness(t)
 	h.login(h.password)
 	var last store.Application
 	for i := 0; i < 21; i++ {
 		var err error
-		last, err = h.server.DB.CreateApplication("openai", store.ApplicationInput{ID: fmt.Sprintf("managed-%02d", i), Name: store.LocalizedText{En: fmt.Sprintf("Managed %02d", i), ZhCN: fmt.Sprintf("测试 %02d", i)}, Provider: "info", Enabled: true})
+		last, err = h.server.store.CreateApplication("openai", store.ApplicationInput{ID: fmt.Sprintf("managed-%02d", i), Name: store.LocalizedText{En: fmt.Sprintf("Managed %02d", i), ZhCN: fmt.Sprintf("测试 %02d", i)}, Provider: "info", Enabled: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -132,10 +133,10 @@ func TestApplicationTableMutationReconcilesFilteredLastPage(t *testing.T) {
 	}
 	get("enabled", 2, 21)
 	h.request("PATCH", "/admin/api/apps/"+last.Key, map[string]any{"revision": last.Revision, "enabled": false}, 200, nil)
-	get("enabled", 1, 20)
-	get("disabled", 1, 1)
+	get("enabled", 2, 20)
+	get("disabled", 2, 1)
 	h.request("PATCH", "/admin/api/apps/"+last.Key, map[string]any{"revision": last.Revision, "enabled": true}, 409, nil)
-	get("disabled", 1, 1)
+	get("disabled", 2, 1)
 	h.request("DELETE", "/admin/api/apps/"+last.Key, map[string]any{"revision": last.Revision + 1, "confirm_key": last.Key, "confirm_uid": last.UID}, 200, nil)
-	get("disabled", 1, 0)
+	get("disabled", 2, 0)
 }

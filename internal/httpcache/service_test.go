@@ -197,9 +197,10 @@ func TestCacheValidatorsHeadRangeAndStaleFailures(t *testing.T) {
 		}
 	}
 	mode.Store(3)
-	w, err := f.serve(t, "GET", http.Header{})
-	if err != nil || w.Code != 404 || len(f.rows(t)) != 0 {
-		t.Fatal("404 served stale", w.Code, err)
+	_, err = f.serve(t, "GET", http.Header{})
+	var status *UpstreamStatusError
+	if !errors.As(err, &status) || !status.NotFound() || len(f.rows(t)) != 0 {
+		t.Fatal("404 served stale", err)
 	}
 }
 
@@ -276,7 +277,7 @@ func TestHeadAndRequestCacheDirectives(t *testing.T) {
 		t.Fatal("cold HEAD conditional or allocation", w.Code, err)
 	}
 	w, err = f.serve(t, "GET", http.Header{"Cache-Control": {"only-if-cached"}})
-	if err != nil || w.Code != 504 || calls.Load() != 1 {
+	if !errors.Is(err, ErrCacheMiss) || w.Code != 200 || w.Body.Len() != 0 || calls.Load() != 1 {
 		t.Fatal("only-if-cached contacted origin", w.Code, err)
 	}
 	// A client request directive never selects a private upstream transfer:
