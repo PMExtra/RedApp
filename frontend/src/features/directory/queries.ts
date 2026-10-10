@@ -9,6 +9,7 @@ import {
 } from "@tanstack/vue-query";
 import {
   api,
+  fetchAllPages,
   ifMatch,
   isApiError,
   queryKey,
@@ -145,21 +146,16 @@ export function useAllVendorApps(
     queryKey: computed(() => queryKey("listApps", { ...toValue(params), all: true })),
     queryFn: async ({ signal }) => {
       const { vendor, q, state } = toValue(params);
-      const items: AppListItem[] = [];
-      for (let page = 1; ; page++) {
-        const result = await unwrap(
+      return fetchAllPages((page) =>
+        unwrap(
           api.GET("/admin/api/apps", {
             params: {
               query: { vendor, q: q || undefined, state, page, limit: ALL_PAGE_SIZE },
             },
             signal,
           }),
-        );
-        items.push(...result.items);
-        if (page >= result.total_pages || result.items.length === 0) {
-          return { items, total: result.total };
-        }
-      }
+        ),
+      );
     },
     enabled: computed(() => toValue(enabled)),
   });
