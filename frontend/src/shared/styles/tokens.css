@@ -1,0 +1,78 @@
+/*
+ * Design tokens. Components use them only through the Tailwind theme in
+ * main.css (bg-surface, text-muted, rounded-md, shadow-overlay, z-modal …);
+ * the raw --rd-* variables switch between the light and dark themes.
+ */
+:root {
+  color-scheme: light;
+
+  /* Neutral surfaces and text */
+  --rd-bg: #f7f7f8;
+  --rd-surface: #ffffff;
+  --rd-surface-raised: #ffffff;
+  --rd-surface-sunken: #f0f0f2;
+  --rd-surface-hover: #f2f2f4;
+  --rd-border: #e2e2e6;
+  --rd-border-strong: #c8c8cf;
+  --rd-text: #18181b;
+  --rd-text-muted: #52525b;
+  --rd-text-subtle: #71717a;
+  --rd-text-inverse: #ffffff;
+
+  /* Brand and intent colors; every *-fg passes WCAG AA on its background. */
+  --rd-primary: #b4232a;
+  --rd-primary-hover: #961c22;
+  --rd-primary-soft: #fdecec;
+  --rd-primary-fg: #ffffff;
+  --rd-danger: #b42318;
+  --rd-danger-hover: #912018;
+  --rd-danger-soft: #fef3f2;
+  --rd-danger-fg: #ffffff;
+  --rd-warning: #b54708;
+  --rd-warning-soft: #fffaeb;
+  --rd-success: #067647;
+  --rd-success-soft: #ecfdf3;
+  --rd-info: #175cd3;
+  --rd-info-soft: #eff8ff;
+  --rd-focus: #2563eb;
+  --rd-overlay: rgb(9 9 11 / 0.45);
+
+  /* Shadows */
+  --rd-shadow-sm: 0 1px 2px rgb(16 24 40 / 0.06);
+  --rd-shadow-md: 0 2px 6px rgb(16 24 40 / 0.08), 0 1px 2px rgb(16 24 40 / 0.04);
+  --rd-shadow-overlay: 0 12px 32px rgb(16 24 40 / 0.16), 0 2px 6px rgb(16 24 40 / 0.08);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --rd-bg: #0f0f12;
+  --rd-surface: #18181c;
+  --rd-surface-raised: #212126;
+  --rd-surface-sunken: #121215;
+  --rd-surface-hover: #26262c;
+  --rd-border: #2e2e35;
+  --rd-border-strong: #45454e;
+  --rd-text: #f4f4f5;
+  --rd-text-muted: #b4b4bd;
+  --rd-text-subtle: #8f8f99;
+  --rd-text-inverse: #18181b;
+  --rd-primary: #f47c7f;
+  --rd-primary-hover: #f89c9e;
+  --rd-primary-soft: #3a1a1c;
+  --rd-primary-fg: #1d0a0b;
+  --rd-danger: #f97066;
+  --rd-danger-hover: #fda29b;
+  --rd-danger-soft: #3a1714;
+  --rd-danger-fg: #1d0806;
+  --rd-warning: #fdb022;
+  --rd-warning-soft: #3a2a0a;
+  --rd-success: #47cd89;
+  --rd-success-soft: #0b2e1e;
+  --rd-info: #84caff;
+  --rd-info-soft: #0c2440;
+  --rd-focus: #84adff;
+  --rd-overlay: rgb(0 0 0 / 0.6);
+  --rd-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --rd-shadow-md: 0 2px 6px rgb(0 0 0 / 0.45);
+  --rd-shadow-overlay: 0 12px 32px rgb(0 0 0 / 0.55), 0 0 0 1px rgb(255 255 255 / 0.06);
+}

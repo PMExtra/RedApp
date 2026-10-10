@@ -33,7 +33,7 @@ frontend/node_modules/.package-lock.json: frontend/package.json frontend/package
 frontend: frontend/node_modules/.package-lock.json
 	cd frontend && npm run build
 frontend-test: frontend/node_modules/.package-lock.json
-	cd frontend && npm run typecheck && npm test
+	cd frontend && npm run codegen:check && npm run lint && npm run format:check && npm run typecheck && npm test
 
 # Uses the current native binary; does not rebuild.
 runtime-test:
