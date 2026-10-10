@@ -891,3 +891,24 @@ func TestSourceEpochIsolationAndRecovery(t *testing.T) {
 		t.Fatal("recovery deleted unrelated historical source", rows, err)
 	}
 }
+
+func TestStreamPublishedBeforeReaderMarksAccessStillRecordsAccess(t *testing.T) {
+	f := newFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"small"`)
+		w.Header().Set("Content-Length", "5")
+		io.WriteString(w, "small")
+	}), 300)
+	// Hold the reader after its first byte until the fill has ended and the
+	// body has been published, the window in which a short body used to be
+	// published without an access time.
+	streamFirstByte = func(st *stream) { <-st.done }
+	t.Cleanup(func() { streamFirstByte = nil })
+	w, err := f.serve(t, "GET", http.Header{})
+	if err != nil || w.Body.String() != "small" {
+		t.Fatal(w, err)
+	}
+	rows := f.rows(t)
+	if len(rows) != 1 || rows[0].LastAccessAt == nil {
+		t.Fatalf("published cold entry has no access time: %+v", rows)
+	}
+}

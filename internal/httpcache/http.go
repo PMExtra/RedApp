@@ -12,6 +12,7 @@ import (
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/distributor"
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
 // Serve returns errors only before writing response headers. It reserves shared
@@ -385,14 +386,31 @@ func (s *Service) serveDirect(w http.ResponseWriter, r *http.Request, result fet
 // file, waiting for the requested bytes; without one, the whole body is sent.
 // A response that ends before the body does (a range or a 304) does not wait
 // for the rest of the fill.
+// streamFirstByte is a test hook run once a stream reader has its first byte;
+// nil in production.
+var streamFirstByte func(*stream)
+
 func (s *Service) serveStream(w http.ResponseWriter, r *http.Request, st *stream) error {
 	defer s.leaveStream(st)
 	if err := st.body.Await(r.Context(), 1); err != nil {
 		return streamError(err)
 	}
+	if streamFirstByte != nil {
+		streamFirstByte(st)
+	}
+	// Publication records the access when a public reader is already known;
+	// a short body can be published before this reader gets here, so record
+	// the access on the published entry instead.
 	s.mu.Lock()
 	st.public = true
+	published := st.published
 	s.mu.Unlock()
+	if published != "" {
+		bucket := s.now().Unix() / 60 * 60
+		if err := s.db.TouchHTTPCacheEntry(published, bucket); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+	}
 	safeHeaders(w, st.fill.path)
 	// The digest is not known yet: only an upstream ETag is sent.
 	if tag := st.header.Get("ETag"); tag != "" {
