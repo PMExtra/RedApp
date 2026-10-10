@@ -93,8 +93,10 @@ export const adminRoutes: RouteRecordRaw[] = [
       {
         // The tab host gates tabs by provider capabilities. The path itself
         // (no tab) is replaced by the provider's default tab once the
-        // application is loaded (see AppLayout).
+        // application is loaded (see AppLayout). It is an x-spa-routes entry
+        // so links without a tab (events, notifications) survive a reload.
         path: "vendors/:vendor/apps/:app",
+        name: "admin-app",
         component: () => import("@/pages/admin/apps/AppLayout.vue"),
         children: [
           {
