@@ -70,7 +70,7 @@ npm run build           # 输出到 internal/httpserver/web
 | 命令 | 覆盖 | 需要 |
 | --- | --- | --- |
 | `make check` | 文档检查（`docs-check`）、工具链与 CI 固定检查（`toolchain-check`）、`gofmt`（`cmd internal installers presets`）、`go vet` | Go、Python |
-| `make test` | 发布脚本单测、文档检查与工具链检查单测、`go test -race ./...`、Shell 安装器契约、安装器更新与每日维护的离线回归 | Go、Python、`patch` |
+| `make test` | 发布脚本单测、文档检查与工具链检查单测、`go test -race`（`cmd`、`installers`、`internal`、`presets`）、Shell 安装器契约、安装器更新与每日维护的离线回归 | Go、Python、`patch` |
 | `make frontend-test` | 生成物检查、ESLint、Prettier、`vue-tsc` 类型检查与 Vitest DOM 测试 | Node |
 | `make runtime-test` | 用**当前** `bin/redapp`（不重新编译，缺失时直接失败）跑真实进程：数据目录与配置、HTTP 路由与重启、使用说明文档执行、retention、prewarm、分类/Tag、配置导入导出 | 已构建的二进制、Node（自动 `npm ci`，供 Happy DOM 使用） |
 | `make e2e` | 用**当前** `bin/redapp` 和全新数据目录启动服务，从首次启动日志读取管理员密码，发布一个 `info` 应用作为公开内容，再跑 Playwright（Chromium）：公开首页、目录搜索与应用页、公开与后台 404 文档、登录—导航—退出、站点文本保存、不带标签的应用深链；控制台不能有错误（含 CSP 违规） | 已构建的二进制、Node、Playwright Chromium（`cd frontend && npx playwright install --with-deps chromium`） |

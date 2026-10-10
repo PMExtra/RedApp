@@ -15,7 +15,7 @@
 | 命令 | 用途 |
 | --- | --- |
 | `make check` | 文档检查、工具链版本与 CI 固定检查、`gofmt`、`go vet` |
-| `make test` | 脚本单测、`go test -race ./...`、Shell 安装器与维护回归 |
+| `make test` | 脚本单测、`go test -race`（`cmd`、`installers`、`internal`、`presets`）、Shell 安装器与维护回归 |
 | `make frontend-test` | 前端生成物检查（`codegen:check`）、ESLint、Prettier、类型检查与 Vitest |
 | `make frontend` | 构建前端到 `internal/httpserver/web` |
 | `cd frontend && npm run codegen` | 由 `api/openapi.yaml` 重新生成前端 API 类型 |
