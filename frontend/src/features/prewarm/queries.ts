@@ -12,13 +12,6 @@ export const PREWARM_POLL_MS = 1_500;
 
 type Name = MaybeRefOrGetter<string>;
 
-/** 32 lowercase hex characters, the format of client-generated IDs. */
-export function randomId(): string {
-  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join("");
-}
-
 function storageKey(vendor: string, app: string): string {
   return `redapp-prewarm-job:${vendor}/${app}`;
 }

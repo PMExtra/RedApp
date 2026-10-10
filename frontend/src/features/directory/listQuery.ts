@@ -1,6 +1,6 @@
 import { computed, ref, watch } from "vue";
 import { useRoute, useRouter, type LocationQueryRaw } from "vue-router";
-import { useDebounced } from "@/shared/lib";
+import { parsePage, useDebounced } from "@/shared/lib";
 import type { DirectoryState } from "./queries";
 
 const STATES: readonly DirectoryState[] = ["current", "enabled", "disabled", "deleted"];
@@ -21,10 +21,7 @@ export function useListQuery() {
     const value = route.query.state;
     return STATES.find((item) => item === value) ?? "current";
   });
-  const page = computed(() => {
-    const value = Number(route.query.page);
-    return Number.isSafeInteger(value) && value >= 1 ? value : 1;
-  });
+  const page = computed(() => parsePage(route.query.page));
 
   function update(next: { q?: string; state?: DirectoryState; page?: number }): void {
     const query: LocationQueryRaw = { ...route.query };

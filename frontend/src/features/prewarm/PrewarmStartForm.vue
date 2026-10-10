@@ -9,6 +9,7 @@ import {
   type PathMatch,
 } from "@/features/cache-policy";
 import { isApiError } from "@/shared/api";
+import { randomId } from "@/shared/lib";
 import {
   Alert,
   Button,
@@ -25,7 +26,6 @@ import {
 } from "@/shared/ui";
 import SizeInput from "./SizeInput.vue";
 import {
-  randomId,
   usePrewarmActions,
   type PrewarmJob,
   type PrewarmLimits,

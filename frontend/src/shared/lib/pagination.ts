@@ -31,3 +31,9 @@ export function useCursorPagination() {
     },
   };
 }
+
+/** Parses a `?page=` value; anything but a positive integer is page 1. */
+export function parsePage(value: unknown): number {
+  if (typeof value !== "string" || !/^[1-9]\d{0,8}$/.test(value)) return 1;
+  return Number(value);
+}

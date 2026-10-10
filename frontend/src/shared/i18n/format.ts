@@ -116,3 +116,11 @@ export function useLocalized() {
   const { locale } = useI18n();
   return (text: LocalizedValue | null | undefined) => pickLocalized(text, locale.value as Locale);
 }
+
+/** A vendor logo for a UI language: the language's logo, else the default `icon`. */
+export function vendorLogo(
+  vendor: { icon: string; localized_icons: Record<Locale, string> },
+  locale: string,
+): string {
+  return vendor.localized_icons[locale === "zh-CN" ? "zh-CN" : "en"] || vendor.icon;
+}

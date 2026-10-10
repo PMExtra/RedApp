@@ -3,10 +3,10 @@ import { computed, ref } from "vue";
 import { Download } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink, RouterView, useRoute } from "vue-router";
-import { useVendor, vendorLogo } from "@/features/directory";
+import { useVendor } from "@/features/directory";
 import { ExportDialog } from "@/features/exchange";
 import { isApiError } from "@/shared/api";
-import { useLocalized } from "@/shared/i18n";
+import { useLocalized, vendorLogo } from "@/shared/i18n";
 import { useDocumentTitle } from "@/shared/lib";
 import {
   Alert,

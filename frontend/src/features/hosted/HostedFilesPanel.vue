@@ -5,7 +5,7 @@ import { useI18n } from "vue-i18n";
 import { isApiError, type UploadProgress } from "@/shared/api";
 import { useDirtyGuard } from "@/shared/forms";
 import { useFormat } from "@/shared/i18n";
-import { confirm, distributionPath, toast } from "@/shared/lib";
+import { confirm, distributionPath, randomId, toast } from "@/shared/lib";
 import {
   Alert,
   Button,
@@ -24,7 +24,6 @@ import {
 } from "@/shared/ui";
 import {
   TRANSFER_FIRST_POLL_MS,
-  randomId,
   useCancelHostedTransfer,
   useDeleteHostedFile,
   useHostedFiles,

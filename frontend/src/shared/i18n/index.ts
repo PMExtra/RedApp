@@ -98,5 +98,6 @@ export {
   formatDuration,
   pickLocalized,
   useLocalized,
+  vendorLogo,
   type LocalizedValue,
 } from "./format";

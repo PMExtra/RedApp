@@ -5,8 +5,7 @@ import { useI18n } from "vue-i18n";
 import type { Schema } from "@/shared/api";
 import { useFormat } from "@/shared/i18n";
 import { distributionPath } from "@/shared/lib";
-import { AsyncState, Card, RelativeTime } from "@/shared/ui";
-import PagedNavigation from "./PagedNavigation.vue";
+import { AsyncState, Card, Pagination, RelativeTime } from "@/shared/ui";
 import { HOSTED_PAGE_SIZE, usePublicHostedFiles } from "./queries";
 
 /** Download list of a hosted application, 25 files per page. */
@@ -62,7 +61,7 @@ function href(path: string) {
       </ul>
     </AsyncState>
     <template v-if="data && data.total_pages > 1" #footer>
-      <PagedNavigation v-model:page="page" :total="data.total" :page-size="HOSTED_PAGE_SIZE" />
+      <Pagination v-model:page="page" :total="data.total" :page-size="HOSTED_PAGE_SIZE" />
     </template>
   </Card>
 </template>

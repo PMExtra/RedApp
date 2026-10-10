@@ -39,7 +39,6 @@ export {
   isPublished,
   type AppTab,
 } from "./links";
-export { vendorLogo } from "./logo";
 export { useListQuery } from "./listQuery";
 export type { ResetBinding } from "./types";
 export { default as StateFilter } from "./StateFilter.vue";

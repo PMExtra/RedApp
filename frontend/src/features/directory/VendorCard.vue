@@ -3,10 +3,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } fro
 import { ChevronLeft, ChevronRight, Plus } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink } from "vue-router";
-import { useLocalized } from "@/shared/i18n";
+import { useLocalized, vendorLogo } from "@/shared/i18n";
 import { Badge, Button, EntityIcon, Spinner, cn } from "@/shared/ui";
 import { appRoute, vendorRoute } from "./links";
-import { vendorLogo } from "./logo";
 import { useAllVendorApps, type App, type DirectoryState, type VendorListItem } from "./queries";
 
 /**

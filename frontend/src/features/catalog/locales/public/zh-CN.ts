@@ -26,11 +26,6 @@ export default {
       chip: "{name}（{count}）",
       all: "全部",
     },
-    pageJump: {
-      label: "跳至页码",
-      go: "跳转",
-      invalid: "请输入 1 到 {total} 之间的页码。",
-    },
     app: {
       latestVersion: "最新版本",
       firstSeen: "首次发现于{time}",

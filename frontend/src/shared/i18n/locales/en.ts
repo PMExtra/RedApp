@@ -76,6 +76,11 @@ export default {
       page: "Page {page}",
       pageOf: "Page {page} of {total}",
       total: "{count} items",
+      jump: {
+        label: "Go to page",
+        go: "Go",
+        invalid: "Enter a page from 1 to {total}.",
+      },
     },
     combobox: {
       noResults: "No matches.",

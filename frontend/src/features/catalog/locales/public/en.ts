@@ -26,11 +26,6 @@ export default {
       chip: "{name} ({count})",
       all: "All",
     },
-    pageJump: {
-      label: "Go to page",
-      go: "Go",
-      invalid: "Enter a page from 1 to {total}.",
-    },
     app: {
       latestVersion: "Latest version",
       firstSeen: "first seen {time}",

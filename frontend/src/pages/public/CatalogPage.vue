@@ -7,16 +7,21 @@ import {
   AppGrid,
   CATALOG_PAGE_SIZE,
   CategoryFilter,
-  PagedNavigation,
-  parsePage,
   useCatalog,
   usePublicVendor,
-  vendorLogo,
 } from "@/features/catalog";
 import { isApiError } from "@/shared/api";
-import { useLocalized, type Locale } from "@/shared/i18n";
-import { isSlug, useDebounced, useDocumentTitle } from "@/shared/lib";
-import { AsyncState, Button, EntityIcon, Input, PageHeader, Skeleton } from "@/shared/ui";
+import { useLocalized, vendorLogo } from "@/shared/i18n";
+import { isSlug, parsePage, useDebounced, useDocumentTitle } from "@/shared/lib";
+import {
+  AsyncState,
+  Button,
+  EntityIcon,
+  Input,
+  PageHeader,
+  Pagination,
+  Skeleton,
+} from "@/shared/ui";
 import NotFoundPage from "./NotFoundPage.vue";
 
 /**
@@ -98,7 +103,7 @@ const vendorName = computed(() =>
   vendorData.value ? localized(vendorData.value.name) || vendorData.value.id : "",
 );
 const logo = computed(() =>
-  vendorData.value ? vendorLogo(vendorData.value, locale.value as Locale) : "",
+  vendorData.value ? vendorLogo(vendorData.value, locale.value) : "",
 );
 const title = computed(() => (vendor.value ? vendorName.value : t("catalog.list.title")));
 useDocumentTitle(() =>
@@ -196,7 +201,7 @@ const emptyText = computed(() => {
           :aria-busy="catalog.isPlaceholderData.value || undefined"
         />
       </AsyncState>
-      <PagedNavigation
+      <Pagination
         v-if="data && data.items.length"
         v-model:page="currentPage"
         :total="data.total"

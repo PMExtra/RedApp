@@ -2,13 +2,13 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { isApiError } from "@/shared/api";
+import { randomId } from "@/shared/lib";
 import { AsyncState, Card } from "@/shared/ui";
 import AutoPrewarmPolicy from "./AutoPrewarmPolicy.vue";
 import PrewarmJobView from "./PrewarmJobView.vue";
 import PrewarmStartForm from "./PrewarmStartForm.vue";
 import {
   loadJobId,
-  randomId,
   storeJobId,
   usePrewarmActions,
   usePrewarmJob,

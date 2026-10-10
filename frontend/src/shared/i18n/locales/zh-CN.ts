@@ -76,6 +76,11 @@ export default {
       page: "第 {page} 页",
       pageOf: "第 {page} 页，共 {total} 页",
       total: "共 {count} 项",
+      jump: {
+        label: "跳至页码",
+        go: "跳转",
+        invalid: "请输入 1 到 {total} 之间的页码。",
+      },
     },
     combobox: {
       noResults: "没有匹配项。",
