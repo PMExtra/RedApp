@@ -1,1 +1,0 @@
-import{Qt as e,_n as t,ar as n,dn as r,fn as i,jn as a,ln as o}from"./ui-zFFKZo7B.js";import{b as s,c}from"./directory-BbrUhfvG.js";var l=t({__name:`VendorAppsPage`,setup(t){let l=e(),u=s(o(()=>String(l.params.vendor)));return(e,t)=>n(u).data.value?(a(),r(n(c),{key:n(u).data.value.uid,vendor:n(u).data.value},null,8,[`vendor`])):i(``,!0)}});export{l as default};

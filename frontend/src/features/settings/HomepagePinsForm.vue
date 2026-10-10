@@ -38,7 +38,7 @@ const draft = ref<string[]>([]);
 // applications chosen in this session from the search result.
 type PinState = HomepagePinnedApp["state"];
 interface PinInfo {
-  name: string | null;
+  name: HomepagePinnedApp["name"];
   icon: string;
   state: PinState;
 }
@@ -54,7 +54,7 @@ useDirtyGuard(dirty);
 function remember(apps: readonly HomepagePinnedApp[]) {
   for (const app of apps) {
     info.value.set(app.key, {
-      name: app.name ? localized(app.name) : null,
+      name: app.name,
       icon: app.icon ?? "",
       state: app.state,
     });
@@ -95,7 +95,7 @@ const announcement = ref("");
 function add(app: AppListItem) {
   if (draft.value.includes(app.key) || full.value) return;
   info.value.set(app.key, {
-    name: localized(app.name),
+    name: app.name,
     icon: app.icon,
     state: app.deleted_at ? "deleted" : app.enabled ? "published" : "disabled",
   });
@@ -108,8 +108,14 @@ function remove(key: string) {
   announcement.value = t("settings.homepage.removed", { name: itemLabel(key) });
 }
 
-function itemLabel(key: string) {
+// Localized at render so a language switch renames the pins.
+function pinName(key: string): string | null {
   const name = info.value.get(key)?.name;
+  return name ? localized(name) : null;
+}
+
+function itemLabel(key: string) {
+  const name = pinName(key);
   return name ? `${name} (${key})` : key;
 }
 
@@ -162,13 +168,10 @@ function discard() {
               <span class="w-6 text-end text-xs text-muted tabular-nums">{{ index + 1 }}</span>
               <EntityIcon :src="info.get(item)?.icon ?? ''" size="sm" />
               <span class="flex min-w-0 flex-1 flex-col">
-                <span v-if="info.get(item)?.name" class="truncate text-sm">
-                  {{ info.get(item)?.name }}
+                <span v-if="pinName(item)" class="truncate text-sm">
+                  {{ pinName(item) }}
                 </span>
-                <code
-                  class="truncate font-mono text-xs"
-                  :class="info.get(item)?.name && 'text-muted'"
-                >
+                <code class="truncate font-mono text-xs" :class="pinName(item) && 'text-muted'">
                   {{ item }}
                 </code>
               </span>
