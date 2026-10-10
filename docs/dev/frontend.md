@@ -30,7 +30,7 @@
 
 服务端必须这样提供（规范 `x-spa-routes`，含 `documents` 字段）：
 
-- `x-spa-routes.routes` 中的公开路径返回 `index.html`（`200 text/html`）。厂商和应用不存在或未发布时按规范返回 404 JSON。
+- `x-spa-routes.routes` 中的公开路径返回 `index.html`（`200 text/html`）。厂商和应用不存在或未发布时返回同一个 `index.html`，状态为 404；页面的数据请求（`getPublicVendor`、`listCatalog`、`getPublicApp`）同样返回 404，SPA 据此显示“页面不存在”。
 - `x-spa-routes.routes` 中的 `/admin/...` 路径返回 `admin.html`（`200`）；其余 `/admin/...`（不含 `/admin/api/`）返回 `admin.html` 且状态 404，由 SPA 显示“页面不存在”。`/admin/...` 不能回退到 `index.html`。
 - `/admin` 重定向 `/admin/overview`（307）。
 - 两个文档都带 `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'`。产物里没有内联脚本、内联 `<style>` 或 `eval`。
@@ -78,6 +78,7 @@ frontend/
 | --- | --- | --- |
 | `bootstrap` | `getBootstrap` 查询、站点文本、`SiteFooter` | 两个入口 |
 | `search` | 头部搜索框（`searchCatalog`、`getHome`） | 公开 |
+| `catalog` | 首页、目录、厂商与应用详情的查询，应用卡片、分类筛选、带跳页的分页、托管下载列表、下载地址前缀、头部后台链接（`useAdminLink`） | 公开 |
 | `instructions` | 沙箱使用说明 iframe | 公开（后台预览可复用） |
 | `session` | 会话 store、登录表单、会话过期对话框、修改密码、账户菜单、`safeReturnPath` | 后台 |
 | `configuration` | 应用/厂商配置覆盖的查询与 PATCH、`FieldReset` | 后台（B、C 两个包共用） |
@@ -243,7 +244,7 @@ Reka UI 的 `SelectViewport`/`ComboboxViewport`/`ScrollAreaViewport` 会插入�
 - `src/test/render.ts`：`renderWithApp(component, { props, routes, path })` 带完整插件（严格 i18n、Query 不重试、内存路由、Toaster、ConfirmHost）；`renderEntry("admin" | "public", path)` 渲染整个入口（布局、守卫、会话）。
 - 需要状态的组件测试写一个 fixture SFC 放在 `src/test/components/`（运行时不含模板编译器）。
 - 按角色和可见文本查询（Testing Library），断言可观察行为；不依赖组件内部状态或 CSS 类名。
-- Playwright：`e2e/smoke.spec.ts`，在嵌入新前端的真实 Go 服务上运行：
+- Playwright：`e2e/*.spec.ts`，在嵌入新前端的真实 Go 服务上运行：
 
 ```sh
 make build && bin/redapp &                  # 首次启动日志里有管理员密码
@@ -251,7 +252,7 @@ cd frontend && npx playwright install chromium
 REDAPP_E2E_URL=http://127.0.0.1:8080 REDAPP_E2E_PASSWORD=... npm run e2e
 ```
 
-  覆盖公开首页、后台 404 文档、登录—导航—退出，且要求控制台无错误（含 CSP 违规）。保存流程（站点设置）在相应页面完成后启用。
+  `smoke.spec.ts` 覆盖公开首页、后台 404 文档、登录—导航—退出；`public.spec.ts` 覆盖首页—目录搜索—应用页与公开 404 文档（需要至少一个已发布应用，全新安装的预置应用即可）。都要求控制台无错误（含 CSP 违规）。保存流程（站点设置）在相应页面完成后启用。
 
 ## 命令
 
