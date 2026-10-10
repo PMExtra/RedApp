@@ -61,7 +61,7 @@ func (m *Manager) PurgeApplication(uid string, remove func() error) error {
 	defer m.mu.Unlock()
 	prefix := "app/" + uid + "-e"
 	for _, g := range m.all {
-		if strings.HasPrefix(g.Resource.Application, prefix) && (g.running || g.readers != 0) {
+		if strings.HasPrefix(g.Resource.Application, prefix) && g.active() {
 			return ErrTransfersActive
 		}
 	}

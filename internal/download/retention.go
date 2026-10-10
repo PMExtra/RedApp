@@ -26,7 +26,7 @@ func (m *Manager) CleanupRetention(ctx context.Context, app, jobID string) (stor
 	}
 	blocked := map[string]string{}
 	for _, g := range m.all {
-		if SameOwner(g.Resource.Application, app) && (g.running || g.readers > 0) {
+		if SameOwner(g.Resource.Application, app) && g.active() {
 			blocked[g.Resource.Version] = "in_use_at_execution"
 		}
 	}

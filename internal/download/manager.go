@@ -87,10 +87,15 @@ type Generation struct {
 	finishWork     func()
 	done           bool
 	readers        int
+	hashing        bool // pinned by a manager-owned verification running without mu
 	samples        []sample
 	upstreamStatus int
 	downloadNS     int64
 }
+
+// active generations own their files: a writer, readers or an in-flight hash.
+func (g *Generation) active() bool { return g.running || g.readers > 0 || g.hashing }
+
 type sample struct {
 	time  time.Time
 	bytes int64
@@ -123,9 +128,17 @@ type View struct {
 	DownloadNS   int64
 	SampledAt    time.Time
 }
+
+// Lock invariant: mu guards in-memory state and short database/file metadata
+// operations, but is never held while hashing a whole file. A complete-file
+// SHA256 runs in a manager-owned goroutine registered in verifying; callers
+// wait for it without mu and then re-run admission, which re-checks generation
+// identity and state. A generation being hashed is pinned (hashing) and is not
+// removed until that verification commits its result under mu.
 type Manager struct {
 	publicationMu sync.Mutex // Configuration publication and Close only; never acquired while holding mu.
 	mu            sync.Mutex
+	verifying     map[string]*verification // logical resource ID -> in-flight verification
 	dir           string
 	db            *store.Store
 	upstreams     map[string]*distributor.Client
@@ -155,7 +168,7 @@ func NewApplications(dir string, db *store.Store, clients map[string]*distributo
 		upstreams[app] = client
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m := &Manager{dir: dir, db: db, upstreams: upstreams, current: map[string]*Generation{}, all: map[string]*Generation{}, ctx: ctx, cancel: cancel, maxBytes: 4 << 30, maxReaders: 512, maxWriters: 16}
+	m := &Manager{dir: dir, db: db, upstreams: upstreams, current: map[string]*Generation{}, all: map[string]*Generation{}, verifying: map[string]*verification{}, ctx: ctx, cancel: cancel, maxBytes: 4 << 30, maxReaders: 512, maxWriters: 16}
 	if e := m.recover(); e != nil {
 		cancel()
 		m.closeFiles()
@@ -254,10 +267,139 @@ func verified(f *os.File, n int64, expected string) bool {
 	return verifiedContext(context.Background(), f, n, expected)
 }
 func verifiedContext(ctx context.Context, f *os.File, n int64, expected string) bool {
+	ok, err := hashMatches(ctx, f, n, expected)
+	return ok && err == nil
+}
+
+// hashMatches reports whether the first n bytes of f have the expected digest.
+// A non-nil error means the check was cancelled and proves nothing about the
+// content; unreadable or short content is reported as a mismatch.
+func hashMatches(ctx context.Context, f *os.File, n int64, expected string) (bool, error) {
 	h := sha256.New()
 	copied, e := io.Copy(h, verificationReader{ctx, io.NewSectionReader(f, 0, n)})
-	return e == nil && copied == n && hex.EncodeToString(h.Sum(nil)) == expected
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	return e == nil && copied == n && hex.EncodeToString(h.Sum(nil)) == expected, nil
 }
+
+// fileCheck is a whole-file verification result bound to the inode it read.
+type fileCheck struct {
+	info  os.FileInfo
+	valid bool
+}
+
+// checkFile hashes a cache file without holding mu. A nil result with a nil
+// error means the file could not be opened as a regular cache file.
+func checkFile(ctx context.Context, path string, n int64, expected string) (*fileCheck, error) {
+	f, err := openRegular(path)
+	if err != nil {
+		return nil, nil
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, nil
+	}
+	ok := false
+	if st.Size() == n {
+		if ok, err = hashMatches(ctx, f, n, expected); err != nil {
+			return nil, err
+		}
+	}
+	return &fileCheck{info: st, valid: ok}, nil
+}
+
+// matches reports whether path is still the exact inode and size that was hashed.
+func (c *fileCheck) matches(st os.FileInfo) bool {
+	return c != nil && st != nil && os.SameFile(c.info, st) && st.Size() == c.info.Size() && st.ModTime().Equal(c.info.ModTime())
+}
+
+// verification is one in-flight whole-file check for a logical resource.
+// err is written before done is closed and is returned to every waiter.
+type verification struct {
+	done chan struct{}
+	err  error
+}
+
+var errVerificationPending = errors.New("Cache verification in progress")
+
+// startVerificationLocked runs check without mu under application work owned
+// by the manager, so a waiter's cancellation never aborts it for the others.
+// commit runs under mu with the hashing result (or the cancellation error).
+func (m *Manager) startVerificationLocked(r Resource, check func(context.Context) (*fileCheck, error), commit func(*fileCheck, error) error) error {
+	if m.verifying[r.ID] != nil {
+		return errVerificationPending
+	}
+	ctx, finish, err := m.db.ApplicationWork(m.ctx, r.Application)
+	if err != nil {
+		return err
+	}
+	v := &verification{done: make(chan struct{})}
+	m.verifying[r.ID] = v
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		defer finish()
+		m.checkpoint("verification.before_hash", nil)
+		result, err := check(ctx)
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		delete(m.verifying, r.ID)
+		v.err = commit(result, err)
+		close(v.done)
+	}()
+	return nil
+}
+
+// verifyDormantLocked re-admits a dormant complete head only after its bytes
+// verify. Cancellation leaves it untouched; only proven-invalid content retires.
+func (m *Manager) verifyDormantLocked(g *Generation) error {
+	path, n, hash := g.Path, g.Bytes, g.Resource.Hash
+	err := m.startVerificationLocked(g.Resource, func(ctx context.Context) (*fileCheck, error) {
+		return checkFile(ctx, path, n, hash)
+	}, func(check *fileCheck, err error) error {
+		g.hashing = false
+		if err != nil {
+			return err
+		}
+		if m.current[g.Resource.ID] != g || g.Retired || g.State != "complete" || !g.dormant || g.Path != path {
+			// Ownership changed while hashing; removal deferred by the pin happens now.
+			if g.Retired && !g.running && g.readers == 0 && g.State != "deleted" {
+				return m.removeLocked(g)
+			}
+			return nil
+		}
+		if st, e := os.Lstat(path); e == nil && check.matches(st) && check.valid {
+			g.dormant = false
+			return nil
+		}
+		return m.discardCompleteLocked(g)
+	})
+	if err == nil {
+		g.hashing = true
+	}
+	return err
+}
+
+// discardCompleteLocked retires a complete head whose bytes are missing or invalid.
+func (m *Manager) discardCompleteLocked(g *Generation) error {
+	g.Retired = true
+	g.Error = "Completed cache file is missing or invalid"
+	m.save(g)
+	if err := m.db.RetireGeneration(g.Resource.Application, g.ID, time.Now()); err != nil {
+		return err
+	}
+	if m.current[g.Resource.ID] == g {
+		delete(m.current, g.Resource.ID)
+	}
+	m.removeLocked(g)
+	return nil
+}
+
+// createLocked returns errVerificationPending when an existing blob must be
+// verified first; the verification then installs either a complete generation
+// reusing the blob or a queued download generation.
 func (m *Manager) createLocked(r Resource, fullRetry bool, contexts ...context.Context) (*Generation, error) {
 	ctx := m.ctx
 	if len(contexts) > 0 {
@@ -269,7 +411,6 @@ func (m *Manager) createLocked(r Resource, fullRetry bool, contexts ...context.C
 	if e := m.validateResource(r); e != nil {
 		return nil, e
 	}
-	g := &Generation{ctx: ctx, ID: id(), Resource: r, State: "queued", Total: -1, Started: time.Now(), changed: make(chan struct{}), FullRetry: fullRetry}
 	// Only complete, revalidated content may be reused across logical resources.
 	// In-flight writers are never coalesced by content digest.
 	if blob, e := m.db.Blob(r.Application, r.Hash); e == nil {
@@ -277,27 +418,65 @@ func (m *Manager) createLocked(r Resource, fullRetry bool, contexts ...context.C
 			return nil, ErrArtifactLimit
 		}
 		path := m.blobPath(r)
-		f, err := openRegular(path)
-		if err == nil {
-			st, statErr := f.Stat()
-			valid := statErr == nil && st.Size() == blob.SizeBytes && (r.Size == nil || *r.Size == st.Size()) && verifiedContext(ctx, f, st.Size(), r.Hash)
-			f.Close()
-			if valid {
-				g.Path, g.Bytes, g.Total, g.State, g.done = path, blob.SizeBytes, blob.SizeBytes, "complete", true
-				g.Finished = time.Now()
-				if e = m.db.CreateGeneration(m.record(g)); e != nil {
-					return nil, e
-				}
-				m.current[r.ID], m.all[g.ID] = g, g
-				return g, nil
+		if st, err := os.Lstat(path); err == nil && st.Mode().IsRegular() && st.Size() == blob.SizeBytes && (r.Size == nil || *r.Size == st.Size()) {
+			if e = m.verifyBlobLocked(r, fullRetry, path, blob.SizeBytes); e != nil {
+				return nil, e
 			}
+			return nil, errVerificationPending
 		}
 	} else if !errors.Is(e, sql.ErrNoRows) {
 		return nil, e
 	}
+	return m.createPartLocked(ctx, r, fullRetry)
+}
+
+// verifyBlobLocked hashes an existing blob without mu, then installs a complete
+// generation if the same inode verified, or a queued download otherwise.
+func (m *Manager) verifyBlobLocked(r Resource, fullRetry bool, path string, size int64) error {
+	return m.startVerificationLocked(r, func(ctx context.Context) (*fileCheck, error) {
+		return checkFile(ctx, path, size, r.Hash)
+	}, func(check *fileCheck, err error) error {
+		if err != nil {
+			return err
+		}
+		if m.closed {
+			return errors.New("Server is shutting down")
+		}
+		if m.current[r.ID] != nil {
+			return nil // Another admission installed a head; waiters re-run admission.
+		}
+		if e := m.db.CheckSourceActive(r.Application, r.SourceFence); e != nil {
+			return e
+		}
+		st, statErr := os.Lstat(path)
+		if statErr == nil && check != nil && !check.matches(st) {
+			return nil // Replaced while hashing (e.g. a repair published); verify again.
+		}
+		if statErr == nil && check != nil && check.valid {
+			blob, e := m.db.Blob(r.Application, r.Hash)
+			if e != nil && !errors.Is(e, sql.ErrNoRows) {
+				return e
+			}
+			if e == nil && blob.SizeBytes == size {
+				g := &Generation{ctx: m.ctx, ID: id(), Resource: r, Path: path, Bytes: size, Total: size, State: "complete", done: true, Started: time.Now(), changed: make(chan struct{}), FullRetry: fullRetry}
+				g.Finished = time.Now()
+				if e = m.db.CreateGeneration(m.record(g)); e != nil {
+					return e
+				}
+				m.current[r.ID], m.all[g.ID] = g, g
+				return nil
+			}
+		}
+		_, e := m.createPartLocked(m.ctx, r, fullRetry)
+		return e
+	})
+}
+
+func (m *Manager) createPartLocked(ctx context.Context, r Resource, fullRetry bool) (*Generation, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	g := &Generation{ctx: ctx, ID: id(), Resource: r, State: "queued", Total: -1, Started: time.Now(), changed: make(chan struct{}), FullRetry: fullRetry}
 	if m.jobs >= m.maxWriters {
 		return nil, ErrWriterLimit
 	}
@@ -338,9 +517,44 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 			finish()
 		}
 	}()
+	for first := true; ; first = false {
+		reader, hit, wait, err := m.admit(ctx, r, finish, first)
+		if wait == nil {
+			keep = err == nil
+			return reader, hit, err
+		}
+		// Only this caller stops waiting on cancellation; the manager-owned
+		// verification continues for other waiters and commits its own result.
+		m.checkpoint("acquire.wait_verification", nil)
+		select {
+		case <-ctx.Done():
+			return nil, false, ctx.Err()
+		case <-wait.done:
+		}
+		if wait.err != nil {
+			return nil, false, wait.err
+		}
+	}
+}
+
+// admit performs one admission pass under mu. A non-nil verification means the
+// caller must wait for it without mu and then re-run admission.
+func (m *Manager) admit(ctx context.Context, r Resource, finish func(), first bool) (*Reader, bool, *verification, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.checkpoint("acquire_before_db_validation", nil)
+	if first {
+		m.checkpoint("acquire_before_db_validation", nil)
+	}
+	reader, hit, err := m.admitLocked(ctx, r, finish)
+	if errors.Is(err, errVerificationPending) {
+		if v := m.verifying[r.ID]; v != nil {
+			return nil, false, v, nil
+		}
+	}
+	return reader, hit, nil, err
+}
+
+func (m *Manager) admitLocked(ctx context.Context, r Resource, finish func()) (*Reader, bool, error) {
 	if e := m.validateResource(r); e != nil {
 		return nil, false, e
 	}
@@ -355,6 +569,9 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 	}
 	if m.readersLocked() >= m.maxReaders {
 		return nil, false, ErrReaderLimit
+	}
+	if m.verifying[r.ID] != nil {
+		return nil, false, errVerificationPending
 	}
 	g := m.current[r.ID]
 	// A previous admission may finish its readers, but cannot recruit new
@@ -388,25 +605,17 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 		if valid && g.dormant {
 			// Inactive recovery preserves files without changing their ownership.
 			// Re-admission must verify the bytes before trusting that dormant head.
-			f, err := openRegular(g.Path)
-			valid = err == nil && verifiedContext(ctx, f, g.Bytes, g.Resource.Hash)
-			if f != nil {
-				f.Close()
+			if e := m.verifyDormantLocked(g); e != nil {
+				return nil, false, e
 			}
+			return nil, false, errVerificationPending
 		}
 		if !valid {
-			g.Retired = true
-			g.Error = "Completed cache file is missing or invalid"
-			m.save(g)
-			if err := m.db.RetireGeneration(r.Application, g.ID, time.Now()); err != nil {
+			if err := m.discardCompleteLocked(g); err != nil {
 				return nil, false, err
 			}
-			delete(m.current, r.ID)
-			m.removeLocked(g)
 			g = nil
 			hit = false
-		} else {
-			g.dormant = false
 		}
 	}
 	if g == nil {
@@ -440,7 +649,6 @@ func (m *Manager) Acquire(ctx context.Context, r Resource) (*Reader, bool, error
 		}
 	}
 	g.readers++
-	keep = true
 	return &Reader{m: m, g: g, ctx: ctx, Kind: kind, finishWork: finish}, hit, nil
 }
 func (r *Reader) Read(p []byte) (int, error) {
@@ -517,7 +725,7 @@ func (m *Manager) retireLocked(g *Generation) error {
 }
 
 func (m *Manager) removeLocked(g *Generation) error {
-	if g.running || g.readers > 0 {
+	if g.active() {
 		return nil
 	}
 	if g.file != nil {
@@ -767,6 +975,12 @@ func (m *Manager) run(g *Generation) {
 		g.VerificationNS = time.Since(start).Nanoseconds()
 		m.mu.Unlock()
 	}
+	// Hash any blob already published for this digest before taking mu;
+	// publishLocked trusts this result only for the same unchanged inode.
+	var existing *fileCheck
+	if err == nil {
+		existing, _ = checkFile(g.ctx, m.blobPath(g.Resource), g.Bytes, g.Resource.Hash)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	g.Finished = time.Now()
@@ -793,7 +1007,7 @@ func (m *Manager) run(g *Generation) {
 			err = errors.New("File fsync failed")
 		}
 		if err == nil && !g.Retired && m.current[g.Resource.ID] == g {
-			err = m.publishLocked(g)
+			err = m.publishLocked(g, existing)
 		}
 	}
 	if err == nil {
