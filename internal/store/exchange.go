@@ -691,6 +691,10 @@ func (s *Store) ImportReceipt(id string) (ImportResult, bool, error) {
 	return importReceipt(s.read, id)
 }
 
+// importReceiptChecked is nil in production. Tests set it to run after an
+// import found no receipt outside writeMu.
+var importReceiptChecked func()
+
 // ExecuteConfigurationImport applies a reviewed plan atomically: every entity
 // it creates or updates, its categories and notes commit in one transaction or
 // not at all. Each touched entity is checked against what the preview saw;
@@ -698,6 +702,9 @@ func (s *Store) ImportReceipt(id string) (ImportResult, bool, error) {
 func (s *Store) ExecuteConfigurationImport(plan ImportPlan, id string, trust bool, guard ...func() bool) (ImportResult, error) {
 	if result, found, e := s.ImportReceipt(id); e != nil || found {
 		return result, e
+	}
+	if importReceiptChecked != nil {
+		importReceiptChecked()
 	}
 	result := ImportResult{Items: []ImportApplied{}, Applied: true}
 	if !plan.Ready || plan.NeedsTrust && !trust {
