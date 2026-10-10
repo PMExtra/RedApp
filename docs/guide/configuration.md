@@ -107,7 +107,7 @@ redapp serve --config ./custom.yaml --listen 127.0.0.1:8081
 
 The public address is the origin used in generated download links and install commands. It is chosen in this order:
 
-1. The override saved on the **Site appearance** page (`/admin/settings/site`)
+1. The override saved on the **Site settings** page (`/admin/settings/site`)
 2. `REDAPP_PUBLIC_URL`
 3. The origin of the current request, derived from the `Host` header and trusted proxy headers
 

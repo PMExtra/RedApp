@@ -131,15 +131,17 @@ RedApp 读取转发头的方式：
 | --- | --- |
 | `/admin/overview` | 概览：服务状态和带历史图表的指标 |
 | `/admin/events` | 事件：近期警告和失败 |
-| `/admin/settings/site` | 站点外观：标题、副标题、声明、公共地址、首页置顶 |
-| `/admin/settings/proxy` | 回源代理：全局出口代理 |
+| `/admin/settings/site` | 站点设置：标题、副标题、声明、公共地址、首页置顶 |
+| `/admin/settings/proxy` | 上游代理：全局出口代理 |
 | `/admin/vendors` | 厂商与应用：列表、搜索、导入 |
 | `/admin/vendors/new` | 创建厂商 |
 | `/admin/categories` | 重命名分类 |
+| `/admin/vendors/<vendor>` | 打开厂商设置 |
 | `/admin/vendors/<vendor>/settings` | 厂商设置、导出 |
 | `/admin/vendors/<vendor>/apps` | 厂商下的应用 |
 | `/admin/vendors/<vendor>/apps/new` | 创建应用 |
 | `/admin/vendors/<vendor>/admin-notes` | 厂商的私有备注 |
+| `/admin/vendors/<vendor>/apps/<app>` | 打开应用的主标签页：版本（Codex、Claude Code）、缓存（HTTP 缓存）、文件（Hosted）或设置 |
 | `/admin/vendors/<vendor>/apps/<app>/settings` | 应用设置、使用说明、导出、复制 |
 | `/admin/vendors/<vendor>/apps/<app>/admin-notes` | 应用的私有备注 |
 | `/admin/vendors/<vendor>/apps/<app>/versions` | 版本与资源（Codex、Claude Code） |
@@ -156,7 +158,7 @@ RedApp 读取转发头的方式：
 | `/<vendor>/<app>` | 应用页面及使用说明 |
 | `/<vendor>/<app>/<path>` | 文件、安装器和发布下载 |
 
-首页按站点外观页设定的顺序显示置顶应用（最多 100 个）。只有已发布的应用会出现在首页。已停用或已删除应用的置顶项仍在管理后台中列出并标注状态，直到你移除它们。
+首页按站点设置页设定的顺序显示置顶应用（最多 100 个）。只有已发布的应用会出现在首页。已停用或已删除应用的置顶项仍在管理后台中列出并标注状态，直到你移除它们。
 
 厂商 ID `all`、`admin`、`api`、`assets` 和 `health` 为保留名称。
 

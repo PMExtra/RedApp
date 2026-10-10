@@ -107,7 +107,7 @@ redapp serve --config ./custom.yaml --listen 127.0.0.1:8081
 
 公共地址是生成下载链接和安装命令时使用的 origin，按以下顺序确定：
 
-1. **站点外观**页面（`/admin/settings/site`）中保存的覆盖值
+1. **站点设置**页面（`/admin/settings/site`）中保存的覆盖值
 2. `REDAPP_PUBLIC_URL`
 3. 当前请求的 origin，由 `Host` 头和可信代理头推导
 
@@ -138,7 +138,7 @@ RedApp 可以通过 HTTP、HTTPS 或 SOCKS5 代理访问上游。代理按应用
 
 | 作用域 | 模式 | 设置位置 |
 | --- | --- | --- |
-| 全局 | `direct`、`url` | **回源代理**页面（`/admin/settings/proxy`） |
+| 全局 | `direct`、`url` | **上游代理**页面（`/admin/settings/proxy`） |
 | 厂商 | `inherit`、`direct`、`url` | 厂商设置 |
 | 应用 | `inherit`、`direct`、`url` | 应用设置 |
 

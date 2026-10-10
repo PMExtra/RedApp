@@ -166,6 +166,7 @@ On the cache page you can force a revalidation:
 
 - **Refresh one file** revalidates a single cached path, even if it is still fresh.
 - **Refresh by pattern** builds a preview of the matching cached files. Executing it revalidates all of them in the background.
+- Refreshing works only on the current source of an enabled application whose vendor is enabled. A file whose new response may not be cached, or that changed meanwhile, is reported as skipped.
 
 Refresh only touches files already in the cache. It does not discover new upstream files; use prewarm for that.
 
@@ -250,7 +251,7 @@ Retention keeps only the newest cached versions. It is off by default.
 - If a channel cannot be verified, the whole pass is skipped.
 - Retention runs every 15 minutes and removes at most 100 versions per application per pass. You can also preview and run it manually.
 - A manual preview uses the saved setting, so save changes first. It expires after 10 minutes; after execution, its result stays available for 24 hours.
-- Old source epochs and disabled applications are not touched.
+- Old source epochs and disabled applications are not touched. A manual preview or run of a disabled application, or of one whose vendor is disabled, is refused; enable both first.
 
 ### Prewarm
 
@@ -272,7 +273,7 @@ Prewarm downloads files before clients ask for them.
 | Duration | 1 hour | 24 hours |
 
 - Only one prewarm task runs at a time in the whole service. There is no queue; a second start is refused while one runs.
-- Disabled applications cannot be prewarmed.
+- Applications that are disabled, or whose vendor is disabled, cannot be prewarmed; their cache page asks you to enable them first. The prewarm settings stay editable.
 - Each directory listing may be up to 2 MiB.
 - Cancelling a task does not cancel downloads that public clients also wait for.
 - A restart marks a running task as interrupted. It is not resumed.
@@ -288,7 +289,8 @@ Hosted applications serve files that administrators provide.
 - The size limit per file is `max_artifact_bytes` (4 GiB by default).
 - Files are kept until an administrator deletes them. To change a file, use **Replace** on it; a conflicting change made meanwhile is rejected.
 - Uploads and imports show their progress and can be cancelled while they run.
-- An import URL may contain a query string, for example a signed download link. RedApp uses it once and never stores or shows it. URLs with credentials are refused.
+- An import URL may contain a query string, for example a signed download link. RedApp uses it once and never stores or shows it. URLs with credentials or a fragment (`#...`) are refused.
+- Files of a deleted hosted application can still be downloaded and deleted, but not added or replaced.
 - Downloads support byte ranges and conditional requests.
 
 ## App info and usage instructions

@@ -131,15 +131,17 @@ Sign in at `/admin/login`. Pages that you can open directly or bookmark:
 | --- | --- |
 | `/admin/overview` | Overview: service status and metrics with history charts |
 | `/admin/events` | Events: recent warnings and failures |
-| `/admin/settings/site` | Site appearance: titles, subtitles, disclaimers, public address, homepage pins |
+| `/admin/settings/site` | Site settings: titles, subtitles, disclaimers, public address, homepage pins |
 | `/admin/settings/proxy` | Upstream proxy: global outbound proxy |
 | `/admin/vendors` | Vendors and applications: list, search, import |
 | `/admin/vendors/new` | Create a vendor |
 | `/admin/categories` | Rename categories |
+| `/admin/vendors/<vendor>` | Opens the vendor settings |
 | `/admin/vendors/<vendor>/settings` | Vendor settings, export |
 | `/admin/vendors/<vendor>/apps` | Applications of a vendor |
 | `/admin/vendors/<vendor>/apps/new` | Create an application |
 | `/admin/vendors/<vendor>/admin-notes` | Private notes for a vendor |
+| `/admin/vendors/<vendor>/apps/<app>` | Opens the application's main tab: versions (Codex, Claude Code), cache (HTTP cache), files (Hosted) or settings |
 | `/admin/vendors/<vendor>/apps/<app>/settings` | Application settings, usage instructions, export, copy |
 | `/admin/vendors/<vendor>/apps/<app>/admin-notes` | Private notes for an application |
 | `/admin/vendors/<vendor>/apps/<app>/versions` | Versions and resources (Codex, Claude Code) |
@@ -156,7 +158,7 @@ Public pages:
 | `/<vendor>/<app>` | Application page with usage instructions |
 | `/<vendor>/<app>/<path>` | Files, installers and release downloads |
 
-The home page shows the pinned applications in the order set on the site appearance page (up to 100). Only published applications appear there. Pins of disabled or deleted applications stay listed and labelled in the admin console until you remove them.
+The home page shows the pinned applications in the order set on the site settings page (up to 100). Only published applications appear there. Pins of disabled or deleted applications stay listed and labelled in the admin console until you remove them.
 
 The vendor IDs `all`, `admin`, `api`, `assets` and `health` are reserved.
 
