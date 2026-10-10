@@ -99,17 +99,23 @@ func digestOf(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// noPartialFiles waits until only published bodies remain. A failed fill
+// removes its part file from its own goroutine, after the response that a
+// test observes has ended.
 func (f *fixture) noPartialFiles(t *testing.T) {
 	t.Helper()
-	files, err := os.ReadDir(f.s.dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, file := range files {
-		if !strings.HasSuffix(file.Name(), ".body") {
-			t.Fatal("partial cache file left behind", file.Name())
+	waitFor(t, "partial cache file left behind", func() bool {
+		files, err := os.ReadDir(f.s.dir)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
+		for _, file := range files {
+			if !strings.HasSuffix(file.Name(), ".body") {
+				return false
+			}
+		}
+		return true
+	})
 }
 
 func TestConcurrentColdReadersStreamBeforeTheUpstreamCompletes(t *testing.T) {

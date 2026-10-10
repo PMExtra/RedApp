@@ -122,15 +122,18 @@ func TestMultipleSourceFailuresBeforeAResponseAndTerminalStatus(t *testing.T) {
 					t.Fatal(w.Body.String())
 				}
 			}
-			files, e := os.ReadDir(f.s.dir)
-			if e != nil {
-				t.Fatal(e)
-			}
-			for _, file := range files {
-				if strings.HasSuffix(file.Name(), ".part") {
-					t.Fatal("incomplete source spool survived", file.Name())
+			waitFor(t, "incomplete source spool survived", func() bool {
+				files, e := os.ReadDir(f.s.dir)
+				if e != nil {
+					t.Fatal(e)
 				}
-			}
+				for _, file := range files {
+					if strings.HasSuffix(file.Name(), ".part") {
+						return false
+					}
+				}
+				return true
+			})
 		})
 	}
 }

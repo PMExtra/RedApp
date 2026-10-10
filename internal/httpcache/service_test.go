@@ -335,10 +335,10 @@ func TestCacheSingleflightAndUnsharedResponses(t *testing.T) {
 				t.Fatal(rows)
 			}
 			if policy != "cacheable" {
-				files, _ := os.ReadDir(f.s.dir)
-				if len(files) != 0 {
-					t.Fatal("unshared response reached disk", files)
-				}
+				waitFor(t, "unshared response reached disk", func() bool {
+					files, _ := os.ReadDir(f.s.dir)
+					return len(files) == 0
+				})
 			}
 			if !f.budget.drained() {
 				t.Fatal("capacity leaked")
