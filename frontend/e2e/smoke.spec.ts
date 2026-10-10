@@ -59,10 +59,13 @@ test.describe("administration", () => {
     await expect(subtitle).toBeEditable();
     const original = await subtitle.inputValue();
     const changed = `Smoke test ${String(Date.now())}`;
+    // The toast itself; its screen reader announcement repeats the text for
+    // about a second in a visually hidden live region.
+    const saved = page.getByRole("listitem").filter({ hasText: /Site texts saved|站点文本已保存/ });
 
     await subtitle.fill(changed);
     await save.click();
-    await expect(page.getByText(/Site texts saved|站点文本已保存/)).toBeVisible();
+    await expect(saved).toBeVisible();
 
     // The saved value survives a reload (fresh GET with a new revision).
     await page.reload();
@@ -70,7 +73,7 @@ test.describe("administration", () => {
 
     await subtitle.fill(original);
     await save.click();
-    await expect(page.getByText(/Site texts saved|站点文本已保存/).first()).toBeVisible();
+    await expect(saved).toBeVisible();
     await page.reload();
     await expect(subtitle).toHaveValue(original);
     expect(errors).toEqual([]);
