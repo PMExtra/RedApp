@@ -28,6 +28,10 @@ import (
 )
 
 var ErrBusy = errors.New("prewarm worker busy")
+
+// jobFinished is nil in production. Tests set it to run after a job's terminal
+// state is persisted and before the job releases the worker slot.
+var jobFinished func()
 var ErrInvalid = errors.New("invalid prewarm input")
 
 // ErrRunning reports that a running job cannot be retried.
@@ -239,6 +243,9 @@ func (s *Service) Start(ctx context.Context, key string, in warmplan.Input, auto
 		defer cancel()
 		defer finish()
 		s.run(work, e, job, current.Budget)
+		if jobFinished != nil {
+			jobFinished()
+		}
 	}()
 	return job, true, nil
 }
