@@ -46,7 +46,7 @@
 | `internal/hosted` | 管理员上传的托管文件 |
 | `internal/prewarm`、`internal/warmplan` | 预热任务与预热计划上限 |
 | `internal/releasemaintenance` | 定时版本保留与自动预热 |
-| `internal/store` | SQLite schema 与全部持久化；**新 SQL 只能写在这里**（`httpcache` 的存量见阶段 5）；`storetest` 供测试另开连接 |
+| `internal/store` | SQLite schema 与全部持久化；**SQL 只能写在这里**；`storetest` 供测试另开连接 |
 | `internal/auth` | 管理员密码、会话、CSRF、登录限速 |
 | `internal/config` | 部署配置与公共地址 |
 | `internal/configexchange` | 配置导入导出格式与校验 |
