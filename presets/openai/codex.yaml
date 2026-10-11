@@ -43,7 +43,7 @@ spec:
 
       ### Update
 
-      Rerun the default installation command above to install the latest version. A command specifying a version installs that version.
+      Rerun the default installation command above to install the latest version.
 
       <details class="installer-options">
       <summary>Install a specific version</summary>
@@ -80,7 +80,7 @@ spec:
 
       ### 更新
 
-      重新执行上方默认安装命令即可安装最新版本；指定版本的命令仍安装所指定的版本。
+      重新执行上方默认安装命令即可安装最新版本。
 
       <details class="installer-options">
       <summary>安装指定版本</summary>

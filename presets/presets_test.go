@@ -35,8 +35,8 @@ func TestReviewedEquivalence(t *testing.T) {
 		t.Fatalf("unexpected entity count: %+v", s)
 	}
 	expected := map[string][2]string{
-		"openai/codex":          {"c67dd70cfe28cb5ee2312790461dd1bbbc8449b90da5fd1d5faa4d2c0328f411", "6d65b60e90504947edc71f264a0d199069eb244a7d39edd31a29fb373bcd02de"},
-		"anthropic/claude-code": {"0e01324021561d6312032735dbd91e7a7597d498a93533f3af5b198d648d0113", "a182fda9c01ce28ae750c32c4bbc4fae3b6dc8c34c057d105b9cf65989f08f25"},
+		"openai/codex":          {"3332acb736e97c4f47e47ede55bfd2426c55292f4000dbf05e5ce6748d6e4285", "0149d99939dd3e933029d07c9e2224840a14f8046fa0c9f78c0a893845203ae0"},
+		"anthropic/claude-code": {"b378f7fb967d15ef3e9de248dfb5e284cbfe2ce2e23317aede7e30f8ebbf08d2", "4e3bd42eb271ab8f94ac33b1df44eccd1c64142724ebab0a0e1916e10313e08b"},
 	}
 	for _, a := range s.Apps {
 		h := expected[a.Key()]
