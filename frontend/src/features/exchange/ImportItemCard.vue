@@ -192,7 +192,7 @@ function setChecked(key: "dictionary_update" | "detach_template" | "update_notes
         :key="difference.field"
         class="rounded-md border border-border"
       >
-        <summary class="cursor-pointer px-3 py-1.5 font-mono text-xs focus-ring">
+        <summary class="px-3 py-1.5 font-mono text-xs focus-ring">
           {{ difference.field }}
         </summary>
         <div class="grid gap-2 p-3 md:grid-cols-2">

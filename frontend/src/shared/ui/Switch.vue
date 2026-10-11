@@ -12,7 +12,7 @@ defineProps<{ disabled?: boolean; name?: string }>();
     v-model="model"
     :disabled="disabled"
     :name="name"
-    class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent bg-border-strong transition-colors focus-ring disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary"
+    class="relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border-2 border-transparent bg-border-strong transition-colors focus-ring disabled:opacity-50 data-[state=checked]:bg-primary"
   >
     <SwitchThumb
       class="pointer-events-none block size-4 rounded-full bg-surface shadow-sm transition-transform data-[state=checked]:translate-x-4 rtl:data-[state=checked]:-translate-x-4"

@@ -4,6 +4,7 @@ import { Plus, Trash2 } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import {
   FieldReset,
+  OverlayFormActions,
   useAppConfiguration,
   useAppConfigurationPatch,
   useOverlayDraft,
@@ -171,22 +172,25 @@ async function reload() {
             <Switch
               id="cache-policy-stale-fallback"
               v-model="draft['http_policy.stale_fallback']"
+              class="mt-0.5"
               aria-describedby="cache-policy-stale-fallback-hint"
             />
             <div class="flex min-w-0 flex-1 flex-col gap-1">
-              <label for="cache-policy-stale-fallback" class="text-sm font-medium">
-                {{ t("cachePolicy.staleFallback") }}
-              </label>
+              <div class="flex h-6 items-center justify-between gap-2">
+                <label for="cache-policy-stale-fallback" class="cursor-pointer text-sm font-medium">
+                  {{ t("cachePolicy.staleFallback") }}
+                </label>
+                <FieldReset
+                  :linked="linked"
+                  :origin="fields['http_policy.stale_fallback']"
+                  :modified="overlay.modified('http_policy.stale_fallback')"
+                  @reset="overlay.restore('http_policy.stale_fallback')"
+                />
+              </div>
               <p id="cache-policy-stale-fallback-hint" class="text-xs text-muted">
                 {{ t("cachePolicy.staleFallbackHint") }}
               </p>
             </div>
-            <FieldReset
-              :linked="linked"
-              :origin="fields['http_policy.stale_fallback']"
-              :modified="overlay.modified('http_policy.stale_fallback')"
-              @reset="overlay.restore('http_policy.stale_fallback')"
-            />
           </section>
 
           <section class="flex flex-col gap-3" aria-labelledby="cache-policy-rules">
@@ -344,19 +348,14 @@ async function reload() {
         </fieldset>
 
         <p class="text-xs text-muted">{{ t("cachePolicy.limit", { max: MAX_RULES }) }}</p>
-        <div v-if="!readOnly" class="flex flex-wrap gap-2">
-          <Button
-            type="submit"
-            variant="primary"
-            :loading="busy"
-            :disabled="!overlay.dirty.value || (submitted && invalid)"
-          >
-            {{ t("cachePolicy.save") }}
-          </Button>
-          <Button :disabled="!overlay.dirty.value || busy" @click="overlay.reset()">
-            {{ t("cachePolicy.discard") }}
-          </Button>
-        </div>
+        <OverlayFormActions
+          v-if="!readOnly"
+          :dirty="overlay.dirty.value"
+          :saving="busy"
+          :disabled="!overlay.dirty.value || (submitted && invalid)"
+          :save-label="t('cachePolicy.save')"
+          @discard="overlay.reset()"
+        />
       </form>
     </AsyncState>
   </Card>

@@ -38,7 +38,7 @@ const rows = computed(() => {
     class="rounded-lg border border-border"
     @toggle="open = ($event.target as HTMLDetailsElement).open"
   >
-    <summary class="cursor-pointer px-3 py-2 text-sm font-medium focus-ring">
+    <summary class="px-3 py-2 text-sm font-medium focus-ring">
       {{ t("metrics.history.table.toggle", { count: format.number(rows.length) }) }}
     </summary>
     <div

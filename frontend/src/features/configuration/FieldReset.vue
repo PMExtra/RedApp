@@ -6,7 +6,8 @@ import type { Schema } from "@/shared/api";
 import { IconButton } from "@/shared/ui";
 
 /**
- * "Restore template value" next to an overlay field. Visible only for
+ * "Restore template value" at the end of an overlay field's label row
+ * (Field's `label-end` slot); it fits the fixed 24px row. Visible only for
  * template-linked entities when the field is overridden (`custom`) or edited.
  * The caller restores the draft and adds the path to `unset` when it was custom.
  */
@@ -33,7 +34,14 @@ const label = computed(() =>
 </script>
 
 <template>
-  <IconButton v-if="visible" :label="label" size="sm" :disabled="disabled" @click="emit('reset')">
+  <IconButton
+    v-if="visible"
+    class="-my-1"
+    :label="label"
+    size="sm"
+    :disabled="disabled"
+    @click="emit('reset')"
+  >
     <RotateCcw aria-hidden="true" />
   </IconButton>
 </template>

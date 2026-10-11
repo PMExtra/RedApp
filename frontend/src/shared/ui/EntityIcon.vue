@@ -68,9 +68,11 @@ const heights = { xs: "h-5", sm: "h-7", md: "h-9", lg: "h-12", xl: "h-16" };
       class="size-full object-contain dark:p-[12%]"
       @error="failed = true"
     />
+    <!-- Same box as an image so the glyph matches uploaded icons in size. -->
     <Box
       v-else
-      class="size-3/5 text-subtle dark:text-[#6b7280]"
+      :stroke-width="1.5"
+      class="size-full text-subtle dark:p-[12%] dark:text-[#6b7280]"
       :aria-label="alt || undefined"
       :aria-hidden="!alt"
     />

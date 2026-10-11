@@ -3,6 +3,7 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   FieldReset,
+  OverlayFormActions,
   useAppConfiguration,
   useAppConfigurationPatch,
   useOverlayDraft,
@@ -10,15 +11,7 @@ import {
 import { useDirtyGuard } from "@/shared/forms";
 import { useFormat } from "@/shared/i18n";
 import { toast } from "@/shared/lib";
-import {
-  Alert,
-  AsyncState,
-  Button,
-  Card,
-  Field,
-  NumberInput,
-  RevisionConflictAlert,
-} from "@/shared/ui";
+import { Alert, AsyncState, Card, Field, NumberInput, RevisionConflictAlert } from "@/shared/ui";
 
 /**
  * Metadata freshness (`cache_ttl_seconds`) of a release application: how long
@@ -93,15 +86,24 @@ async function reload() {
           {{ t("cachePolicy.templateMissing") }}
         </Alert>
         <RevisionConflictAlert v-if="save.hasConflict.value" @reload="reload" />
-        <div class="flex items-start gap-2">
-          <Field
-            v-slot="{ control }"
-            class="w-64"
-            :label="t('cachePolicy.ttl.label')"
-            :description="t('cachePolicy.ttl.hint')"
-            :error="overlay.dirty.value ? error : undefined"
-            required
-          >
+        <Field
+          class="w-64"
+          :label="t('cachePolicy.ttl.label')"
+          :description="t('cachePolicy.ttl.hint')"
+          :error="overlay.dirty.value ? error : undefined"
+          required
+        >
+          <template #label-end>
+            <FieldReset
+              :linked="(configuration.data.value?.template_ref ?? null) !== null"
+              :origin="configuration.data.value?.fields.cache_ttl_seconds"
+              :modified="overlay.modified('cache_ttl_seconds')"
+              :template-value="templateValue"
+              :disabled="readOnly || save.isPending.value"
+              @reset="overlay.restore('cache_ttl_seconds')"
+            />
+          </template>
+          <template #default="{ control }">
             <NumberInput
               v-bind="control"
               v-model="value"
@@ -111,30 +113,15 @@ async function reload() {
               :unit="t('cachePolicy.ttl.unit')"
               :disabled="readOnly || save.isPending.value"
             />
-          </Field>
-          <FieldReset
-            class="mt-7"
-            :linked="(configuration.data.value?.template_ref ?? null) !== null"
-            :origin="configuration.data.value?.fields.cache_ttl_seconds"
-            :modified="overlay.modified('cache_ttl_seconds')"
-            :template-value="templateValue"
-            :disabled="readOnly || save.isPending.value"
-            @reset="overlay.restore('cache_ttl_seconds')"
-          />
-        </div>
-        <div v-if="!readOnly" class="flex flex-wrap gap-2">
-          <Button
-            type="submit"
-            variant="primary"
-            :loading="save.isPending.value"
-            :disabled="!overlay.dirty.value || Boolean(error)"
-          >
-            {{ t("common.actions.save") }}
-          </Button>
-          <Button :disabled="!overlay.dirty.value || save.isPending.value" @click="overlay.reset()">
-            {{ t("cachePolicy.discard") }}
-          </Button>
-        </div>
+          </template>
+        </Field>
+        <OverlayFormActions
+          v-if="!readOnly"
+          :dirty="overlay.dirty.value"
+          :saving="save.isPending.value"
+          :disabled="!overlay.dirty.value || Boolean(error)"
+          @discard="overlay.reset()"
+        />
       </form>
     </AsyncState>
   </Card>

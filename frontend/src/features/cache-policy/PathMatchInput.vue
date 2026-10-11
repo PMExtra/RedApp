@@ -84,9 +84,7 @@ function run() {
       </Field>
     </div>
     <details v-if="testable" class="group">
-      <summary
-        class="inline-flex cursor-pointer items-center gap-1 rounded-sm text-sm font-medium focus-ring"
-      >
+      <summary class="inline-flex items-center gap-1 rounded-sm text-sm font-medium focus-ring">
         <ChevronRight class="size-4 transition-transform group-open:rotate-90" aria-hidden="true" />
         {{ t("cachePolicy.match.testTitle") }}
       </summary>

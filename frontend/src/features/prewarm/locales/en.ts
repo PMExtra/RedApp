@@ -98,7 +98,6 @@ export default {
       platforms: "Platforms",
       incomplete: "Choose at least one channel and one platform, or turn automatic prewarm off.",
       save: "Save automatic prewarm",
-      discard: "Discard changes",
       saved: "Automatic prewarm saved.",
     },
   },

@@ -88,7 +88,7 @@ function refreshFile(entry: CacheEntry) {
         <template #cell-path="{ row }">
           <details class="group">
             <summary
-              class="inline-flex cursor-pointer items-start gap-1 rounded-sm font-mono text-xs break-all focus-ring"
+              class="inline-flex items-start gap-1 rounded-sm font-mono text-xs break-all focus-ring"
             >
               <ChevronRight
                 class="mt-0.5 size-3 shrink-0 transition-transform group-open:rotate-90"

@@ -287,9 +287,7 @@ function submit() {
     </template>
 
     <details class="group">
-      <summary
-        class="inline-flex cursor-pointer items-center gap-1 rounded-sm text-sm font-medium focus-ring"
-      >
+      <summary class="inline-flex items-center gap-1 rounded-sm text-sm font-medium focus-ring">
         <ChevronRight class="size-4 transition-transform group-open:rotate-90" aria-hidden="true" />
         {{ t("prewarm.limits.title") }}
       </summary>

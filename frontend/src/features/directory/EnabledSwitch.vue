@@ -36,7 +36,9 @@ function change(enabled: boolean): void {
       :aria-describedby="`${id}-hint`"
       @update:model-value="change"
     />
-    <label :for="id" class="text-sm font-medium">{{ t("directory.fields.enabled") }}</label>
+    <label :for="id" class="cursor-pointer text-sm font-medium">{{
+      t("directory.fields.enabled")
+    }}</label>
     <span :id="`${id}-hint`" class="sr-only">{{ hint }}</span>
     <Spinner v-if="pending" size="sm" class="text-muted" />
     <InfoTip v-else :label="t('directory.enabledAbout')" :content="hint" />

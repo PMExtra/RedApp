@@ -17,7 +17,10 @@ const props = defineProps<{
   required?: boolean;
   hideLabel?: boolean;
 }>();
-defineSlots<{ default: (props: { field: FormFieldBinding }) => unknown }>();
+defineSlots<{
+  default: (props: { field: FormFieldBinding }) => unknown;
+  "label-end"?: () => unknown;
+}>();
 
 const { value, errorMessage, handleBlur, meta, setValue } = useField(() => props.name);
 const shownError = computed(() =>
@@ -41,13 +44,13 @@ function binding(control: FieldControlProps): FormFieldBinding {
 
 <template>
   <Field
-    v-slot="{ control }"
     :label="label"
     :description="description"
     :error="shownError"
     :required="required"
     :hide-label="hideLabel"
   >
-    <slot :field="binding(control)" />
+    <template v-if="$slots['label-end']" #label-end><slot name="label-end" /></template>
+    <template #default="{ control }"><slot :field="binding(control)" /></template>
   </Field>
 </template>

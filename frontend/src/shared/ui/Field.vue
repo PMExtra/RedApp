@@ -17,7 +17,11 @@ const props = defineProps<{
   /** Hide the label visually (keep it for screen readers). */
   hideLabel?: boolean;
 }>();
-defineSlots<{ default: (props: { control: FieldControlProps }) => unknown }>();
+defineSlots<{
+  default: (props: { control: FieldControlProps }) => unknown;
+  /** Inline action at the end of the label row (for example FieldReset). */
+  "label-end"?: () => unknown;
+}>();
 const { t } = useI18n();
 const generated = useId();
 const id = computed(() => props.id ?? generated);
@@ -35,16 +39,20 @@ const control = computed<FieldControlProps>(() => ({
 
 <template>
   <div class="flex flex-col gap-1.5">
-    <label
-      :id="`${id}-label`"
-      :for="id"
-      class="text-sm font-medium"
-      :class="hideLabel && 'sr-only'"
-    >
-      {{ label }}
-      <span v-if="required" class="text-danger" aria-hidden="true">*</span>
-      <span v-if="required" class="sr-only">({{ t("ui.form.required") }})</span>
-    </label>
+    <!-- Fixed height so a label-end action (FieldReset) never shifts the control. -->
+    <div :class="hideLabel ? 'contents' : 'flex h-6 items-center justify-between gap-2'">
+      <label
+        :id="`${id}-label`"
+        :for="id"
+        class="text-sm font-medium"
+        :class="hideLabel && 'sr-only'"
+      >
+        {{ label }}
+        <span v-if="required" class="text-danger" aria-hidden="true">*</span>
+        <span v-if="required" class="sr-only">({{ t("ui.form.required") }})</span>
+      </label>
+      <slot name="label-end" />
+    </div>
     <slot :control="control" />
     <p v-if="description" :id="`${id}-description`" class="text-xs text-muted">
       {{ description }}

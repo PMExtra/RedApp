@@ -72,7 +72,7 @@ function rowError(index: number): string | undefined {
 
 <template>
   <fieldset class="flex flex-col gap-2" :disabled="disabled">
-    <div class="flex items-center justify-between gap-2">
+    <div class="flex h-6 items-center justify-between gap-2">
       <legend class="text-sm font-medium">{{ t("directory.source.urls") }}</legend>
       <slot name="reset" />
     </div>

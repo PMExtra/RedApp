@@ -17,7 +17,7 @@ const fallbackId = useId();
       v-model="model"
       :disabled="disabled"
       :name="name"
-      class="flex size-4 shrink-0 items-center justify-center rounded-sm border border-border-strong bg-surface text-primary-fg focus-ring disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=indeterminate]:border-primary data-[state=indeterminate]:bg-primary"
+      class="flex size-4 shrink-0 items-center justify-center rounded-sm border border-border-strong bg-surface text-primary-fg focus-ring disabled:opacity-50 data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=indeterminate]:border-primary data-[state=indeterminate]:bg-primary"
     >
       <CheckboxIndicator>
         <Minus v-if="model === 'indeterminate'" class="size-3" aria-hidden="true" />

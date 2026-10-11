@@ -83,7 +83,7 @@ const submit = handleSubmit(async (values) => {
           </FormField>
           <div class="flex items-start gap-3 pt-7">
             <Switch :id="enabledId" v-model="enabled" />
-            <label :for="enabledId" class="text-sm font-medium">
+            <label :for="enabledId" class="cursor-pointer text-sm font-medium">
               {{ t("directory.fields.enabled") }}
             </label>
           </div>

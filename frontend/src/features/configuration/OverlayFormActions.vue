@@ -6,7 +6,15 @@ import { Button } from "@/shared/ui";
  * Footer of a configuration form: save (submit), discard and the draft state.
  * Place it inside the `<form>`; `form` targets a form elsewhere on the page.
  */
-defineProps<{ dirty: boolean; saving?: boolean; disabled?: boolean; form?: string }>();
+defineProps<{
+  dirty: boolean;
+  saving?: boolean;
+  /** Disables save (for example while the draft is unchanged or invalid). */
+  disabled?: boolean;
+  form?: string;
+  /** Specific save text (default "Save"). */
+  saveLabel?: string;
+}>();
 const emit = defineEmits<{ discard: [] }>();
 const { t } = useI18n();
 </script>
@@ -20,7 +28,7 @@ const { t } = useI18n();
       {{ t("configuration.discard") }}
     </Button>
     <Button type="submit" variant="primary" :form="form" :loading="saving" :disabled="disabled">
-      {{ t("common.actions.save") }}
+      {{ saveLabel ?? t("common.actions.save") }}
     </Button>
   </div>
 </template>

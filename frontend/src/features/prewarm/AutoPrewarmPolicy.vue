@@ -3,6 +3,7 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   FieldReset,
+  OverlayFormActions,
   useAppConfiguration,
   useAppConfigurationPatch,
   useOverlayDraft,
@@ -10,7 +11,7 @@ import {
 import type { Schema } from "@/shared/api";
 import { useDirtyGuard } from "@/shared/forms";
 import { toast } from "@/shared/lib";
-import { Alert, AsyncState, Button, Checkbox, RevisionConflictAlert, Switch } from "@/shared/ui";
+import { Alert, AsyncState, Checkbox, RevisionConflictAlert, Switch } from "@/shared/ui";
 import type { PrewarmOptions } from "./queries";
 
 type Policy = Schema<"PrewarmPolicy">;
@@ -100,19 +101,26 @@ async function reload() {
       <RevisionConflictAlert v-if="save.hasConflict.value" @reload="reload" />
       <fieldset class="flex flex-col gap-4" :disabled="readOnly || save.isPending.value">
         <div class="flex items-start gap-3">
-          <Switch id="prewarm-auto" v-model="enabled" aria-describedby="prewarm-auto-hint" />
+          <Switch
+            id="prewarm-auto"
+            v-model="enabled"
+            class="mt-0.5"
+            aria-describedby="prewarm-auto-hint"
+          />
           <div class="flex min-w-0 flex-1 flex-col gap-1">
-            <label for="prewarm-auto" class="text-sm font-medium">{{
-              t("prewarm.auto.enabled")
-            }}</label>
+            <div class="flex h-6 items-center justify-between gap-2">
+              <label for="prewarm-auto" class="cursor-pointer text-sm font-medium">{{
+                t("prewarm.auto.enabled")
+              }}</label>
+              <FieldReset
+                :linked="(configuration.data.value?.template_ref ?? null) !== null"
+                :origin="configuration.data.value?.fields.prewarm"
+                :modified="overlay.modified('prewarm')"
+                @reset="overlay.restore('prewarm')"
+              />
+            </div>
             <p id="prewarm-auto-hint" class="text-xs text-muted">{{ t("prewarm.auto.hint") }}</p>
           </div>
-          <FieldReset
-            :linked="(configuration.data.value?.template_ref ?? null) !== null"
-            :origin="configuration.data.value?.fields.prewarm"
-            :modified="overlay.modified('prewarm')"
-            @reset="overlay.restore('prewarm')"
-          />
         </div>
         <fieldset class="flex flex-col gap-2">
           <legend class="mb-1 text-sm font-medium">{{ t("prewarm.auto.channels") }}</legend>
@@ -146,19 +154,14 @@ async function reload() {
         </fieldset>
       </fieldset>
       <Alert v-if="error" tone="warning">{{ error }}</Alert>
-      <div v-if="!readOnly" class="flex flex-wrap gap-2">
-        <Button
-          type="submit"
-          variant="primary"
-          :loading="save.isPending.value"
-          :disabled="!overlay.dirty.value || Boolean(error)"
-        >
-          {{ t("prewarm.auto.save") }}
-        </Button>
-        <Button :disabled="!overlay.dirty.value || save.isPending.value" @click="overlay.reset()">
-          {{ t("prewarm.auto.discard") }}
-        </Button>
-      </div>
+      <OverlayFormActions
+        v-if="!readOnly"
+        :dirty="overlay.dirty.value"
+        :saving="save.isPending.value"
+        :disabled="!overlay.dirty.value || Boolean(error)"
+        :save-label="t('prewarm.auto.save')"
+        @discard="overlay.reset()"
+      />
     </form>
   </AsyncState>
 </template>

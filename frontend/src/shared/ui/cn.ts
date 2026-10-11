@@ -18,5 +18,5 @@ export const panelClass =
 
 /** Items inside menus and listboxes. */
 export const itemClass =
-  "relative flex cursor-default select-none items-center gap-2 rounded-md px-2 py-1.5 outline-none " +
+  "relative flex select-none items-center gap-2 rounded-md px-2 py-1.5 outline-none " +
   "data-[highlighted]:bg-surface-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-50";

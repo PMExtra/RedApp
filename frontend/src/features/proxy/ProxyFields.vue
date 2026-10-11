@@ -19,6 +19,7 @@ const props = defineProps<{
   disabled?: boolean;
   urlError?: string;
 }>();
+defineSlots<{ /** At the end of the legend row (FieldReset). */ reset?: () => unknown }>();
 const { t } = useI18n();
 const id = useId();
 const URL_PLACEHOLDER = "http://user:password@proxy.example:3128";
@@ -52,7 +53,10 @@ const effectiveText = computed(() => {
 
 <template>
   <fieldset class="flex flex-col gap-3" :disabled="disabled">
-    <legend class="mb-2 text-sm font-medium">{{ t("proxy.legend") }}</legend>
+    <div class="mb-2 flex h-6 items-center justify-between gap-2">
+      <legend class="text-sm font-medium">{{ t("proxy.legend") }}</legend>
+      <slot name="reset" />
+    </div>
     <RadioGroup v-model="mode" :options="options" orientation="horizontal" :name="`${id}-mode`" />
     <template v-if="mode === 'url'">
       <Field

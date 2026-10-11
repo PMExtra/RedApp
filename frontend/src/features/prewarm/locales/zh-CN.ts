@@ -97,7 +97,6 @@ export default {
       platforms: "平台",
       incomplete: "请至少选择一个渠道和一个平台，或关闭自动预热。",
       save: "保存自动预热",
-      discard: "放弃更改",
       saved: "自动预热已保存。",
     },
   },

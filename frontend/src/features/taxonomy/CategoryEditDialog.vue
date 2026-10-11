@@ -82,22 +82,23 @@ const submit = form.handleSubmit(async (values) => {
           :reloading="query.isFetching.value"
           @reload="save.reload()"
         />
-        <div v-for="language in languages" :key="language" class="flex items-start gap-2">
-          <div class="min-w-0 flex-1">
-            <FormField
-              v-slot="{ field }"
-              :name="`name.${language}`"
-              :label="t('taxonomy.edit.nameIn', { language: t(`common.languages.${language}`) })"
-              required
-            >
-              <Input v-bind="field" :lang="language" autocomplete="off" />
-            </FormField>
-          </div>
-          <FieldReset
-            v-bind="overlay.resetBinding(`name.${language}`)"
-            @reset="overlay.reset(`name.${language}`)"
-          />
-        </div>
+        <FormField
+          v-for="language in languages"
+          :key="language"
+          :name="`name.${language}`"
+          :label="t('taxonomy.edit.nameIn', { language: t(`common.languages.${language}`) })"
+          required
+        >
+          <template #label-end>
+            <FieldReset
+              v-bind="overlay.resetBinding(`name.${language}`)"
+              @reset="overlay.reset(`name.${language}`)"
+            />
+          </template>
+          <template #default="{ field }">
+            <Input v-bind="field" :lang="language" autocomplete="off" />
+          </template>
+        </FormField>
       </form>
     </AsyncState>
     <template #footer>

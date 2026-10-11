@@ -227,9 +227,7 @@ function expected(resource: Resource): number | null {
                 }}
               </span>
               <details v-if="row.error" class="group mt-1">
-                <summary
-                  class="inline-flex cursor-pointer items-center gap-1 rounded-sm text-danger focus-ring"
-                >
+                <summary class="inline-flex items-center gap-1 rounded-sm text-danger focus-ring">
                   <ChevronRight
                     class="size-3 transition-transform group-open:rotate-90"
                     aria-hidden="true"

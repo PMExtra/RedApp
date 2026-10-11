@@ -3,6 +3,7 @@ import { computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   FieldReset,
+  OverlayFormActions,
   useAppConfiguration,
   useAppConfigurationPatch,
   useOverlayDraft,
@@ -10,15 +11,7 @@ import {
 import type { Schema } from "@/shared/api";
 import { useDirtyGuard } from "@/shared/forms";
 import { confirm, toast } from "@/shared/lib";
-import {
-  Alert,
-  AsyncState,
-  Button,
-  Field,
-  NumberInput,
-  RevisionConflictAlert,
-  Switch,
-} from "@/shared/ui";
+import { Alert, AsyncState, Field, NumberInput, RevisionConflictAlert, Switch } from "@/shared/ui";
 
 type Policy = Schema<"RetentionPolicy">;
 
@@ -112,24 +105,27 @@ async function reload() {
         <Switch
           id="retention-enabled"
           v-model="enabled"
+          class="mt-0.5"
           aria-describedby="retention-enabled-hint"
           :disabled="readOnly || save.isPending.value"
         />
         <div class="flex min-w-0 flex-1 flex-col gap-1">
-          <label for="retention-enabled" class="text-sm font-medium">
-            {{ t("retention.enabled") }}
-          </label>
+          <div class="flex h-6 items-center justify-between gap-2">
+            <label for="retention-enabled" class="cursor-pointer text-sm font-medium">
+              {{ t("retention.enabled") }}
+            </label>
+            <FieldReset
+              :linked="(configuration.data.value?.template_ref ?? null) !== null"
+              :origin="configuration.data.value?.fields.retention"
+              :modified="overlay.modified('retention')"
+              :disabled="readOnly || save.isPending.value"
+              @reset="overlay.restore('retention')"
+            />
+          </div>
           <p id="retention-enabled-hint" class="text-xs text-muted">
             {{ t("retention.enabledHint") }}
           </p>
         </div>
-        <FieldReset
-          :linked="(configuration.data.value?.template_ref ?? null) !== null"
-          :origin="configuration.data.value?.fields.retention"
-          :modified="overlay.modified('retention')"
-          :disabled="readOnly || save.isPending.value"
-          @reset="overlay.restore('retention')"
-        />
       </div>
       <Field
         v-slot="{ control }"
@@ -148,19 +144,14 @@ async function reload() {
           :disabled="readOnly || save.isPending.value"
         />
       </Field>
-      <div v-if="!readOnly" class="flex flex-wrap gap-2">
-        <Button
-          type="submit"
-          variant="primary"
-          :loading="save.isPending.value"
-          :disabled="!overlay.dirty.value || Boolean(keepError)"
-        >
-          {{ t("retention.save") }}
-        </Button>
-        <Button :disabled="!overlay.dirty.value || save.isPending.value" @click="overlay.reset()">
-          {{ t("retention.discard") }}
-        </Button>
-      </div>
+      <OverlayFormActions
+        v-if="!readOnly"
+        :dirty="overlay.dirty.value"
+        :saving="save.isPending.value"
+        :disabled="!overlay.dirty.value || Boolean(keepError)"
+        :save-label="t('retention.save')"
+        @discard="overlay.reset()"
+      />
     </form>
   </AsyncState>
 </template>

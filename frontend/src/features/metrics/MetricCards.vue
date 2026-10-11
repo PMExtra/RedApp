@@ -115,9 +115,7 @@ function hint(metric: Metric) {
       v-if="diagnosticCount > 0"
       class="group/diag rounded-xl border border-border bg-surface shadow-sm"
     >
-      <summary
-        class="flex cursor-pointer list-none items-center gap-2 rounded-xl px-5 py-4 focus-ring"
-      >
+      <summary class="flex list-none items-center gap-2 rounded-xl px-5 py-4 focus-ring">
         <ChevronRight
           class="size-4 text-muted transition-transform group-open/diag:rotate-90"
           aria-hidden="true"

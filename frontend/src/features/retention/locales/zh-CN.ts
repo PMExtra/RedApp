@@ -16,7 +16,6 @@ export default {
     keepLatestHint: "当前来源中有完整缓存文件的最新版本。",
     keepRange: "请输入 1 到 1000 之间的整数。",
     save: "保存保留策略",
-    discard: "放弃更改",
     saved: "保留策略已保存。",
     execute: "删除选中的版本",
     executeTitle: "删除选中的版本？",

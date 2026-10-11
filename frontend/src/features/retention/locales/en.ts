@@ -17,7 +17,6 @@ export default {
     keepLatestHint: "The newest versions with a complete cached file in the current source.",
     keepRange: "Enter a whole number from 1 to 1000.",
     save: "Save retention",
-    discard: "Discard changes",
     saved: "Retention policy saved.",
     execute: "Delete selected versions",
     executeTitle: "Delete the selected versions?",

@@ -64,6 +64,6 @@ onBeforeUnmount(() => {
     :sandbox="SANDBOX"
     allow="clipboard-write"
     loading="lazy"
-    class="block h-[120px] w-full rounded-lg border border-border bg-surface"
+    class="block h-[120px] w-full bg-surface"
   />
 </template>

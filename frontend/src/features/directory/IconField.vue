@@ -49,7 +49,7 @@ async function choose(event: Event): Promise<void> {
 
 <template>
   <div role="group" :aria-labelledby="`${id}-label`" class="flex flex-col gap-2">
-    <div class="flex items-center justify-between gap-2">
+    <div class="flex h-6 items-center justify-between gap-2">
       <span :id="`${id}-label`" class="text-sm font-medium">{{ label }}</span>
       <slot name="reset" />
     </div>

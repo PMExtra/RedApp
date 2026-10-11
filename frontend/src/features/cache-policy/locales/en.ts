@@ -10,7 +10,6 @@ export default {
     staleFallbackHint:
       "Applies to all paths, including TTL 0. When off, origin failures (network, timeout, 5xx) return an error and stored files are kept.",
     save: "Save cache rules",
-    discard: "Discard changes",
     saved: "Cache rules saved.",
     limit: "Up to {max} rules per list. Changes apply after saving.",
     match: {

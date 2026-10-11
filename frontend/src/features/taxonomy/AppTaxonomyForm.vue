@@ -118,7 +118,7 @@ const submit = form.handleSubmit(async (values) => {
           {{ t("taxonomy.categories.loadFailed") }}
         </Alert>
         <fieldset class="flex flex-col gap-2" :disabled="readOnly">
-          <div class="flex items-center justify-between gap-2">
+          <div class="flex h-6 items-center justify-between gap-2">
             <legend class="text-sm font-medium">{{ t("taxonomy.categories.label") }}</legend>
             <FieldReset
               v-bind="overlay.resetBinding('categories')"
@@ -136,7 +136,7 @@ const submit = form.handleSubmit(async (values) => {
           />
         </fieldset>
         <fieldset class="flex flex-col gap-2" :disabled="readOnly">
-          <div class="flex items-center justify-between gap-2">
+          <div class="flex h-6 items-center justify-between gap-2">
             <legend class="text-sm font-medium">{{ t("taxonomy.tags.label") }}</legend>
             <FieldReset
               v-bind="overlay.resetBinding('tags')"

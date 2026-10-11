@@ -44,39 +44,43 @@ const strategies = computed(() => [
       </template>
     </SourceUrlList>
 
-    <div class="flex items-start gap-2">
-      <div class="min-w-0 flex-1">
-        <FormField
-          v-slot="{ field }"
-          name="source_strategy"
-          :label="t('directory.source.strategy')"
-          :description="t('directory.source.strategyHint')"
-        >
-          <RadioGroup
-            v-bind="field"
-            :options="strategies"
-            orientation="horizontal"
-            :disabled="disabled"
-          />
-        </FormField>
-      </div>
-      <FieldReset
-        v-if="resetBinding"
-        v-bind="resetBinding('source_strategy')"
-        :disabled="disabled"
-        @reset="emit('reset', 'source_strategy')"
-      />
-    </div>
+    <FormField
+      name="source_strategy"
+      :label="t('directory.source.strategy')"
+      :description="t('directory.source.strategyHint')"
+    >
+      <template v-if="resetBinding" #label-end>
+        <FieldReset
+          v-bind="resetBinding('source_strategy')"
+          :disabled="disabled"
+          @reset="emit('reset', 'source_strategy')"
+        />
+      </template>
+      <template #default="{ field }">
+        <RadioGroup
+          v-bind="field"
+          :options="strategies"
+          orientation="horizontal"
+          :disabled="disabled"
+        />
+      </template>
+    </FormField>
 
-    <div class="flex items-start gap-2">
-      <div class="min-w-0 max-w-xs flex-1">
-        <FormField
-          v-slot="{ field }"
-          name="cache_ttl_seconds"
-          :label="t('directory.source.ttl')"
-          :description="t('directory.source.ttlHint')"
-          required
-        >
+    <div class="max-w-xs">
+      <FormField
+        name="cache_ttl_seconds"
+        :label="t('directory.source.ttl')"
+        :description="t('directory.source.ttlHint')"
+        required
+      >
+        <template v-if="resetBinding" #label-end>
+          <FieldReset
+            v-bind="resetBinding('cache_ttl_seconds')"
+            :disabled="disabled"
+            @reset="emit('reset', 'cache_ttl_seconds')"
+          />
+        </template>
+        <template #default="{ field }">
           <NumberInput
             v-bind="field"
             :min="0"
@@ -85,42 +89,35 @@ const strategies = computed(() => [
             unit="s"
             :disabled="disabled"
           />
-        </FormField>
-      </div>
-      <FieldReset
-        v-if="resetBinding"
-        v-bind="resetBinding('cache_ttl_seconds')"
-        :disabled="disabled"
-        @reset="emit('reset', 'cache_ttl_seconds')"
-      />
+        </template>
+      </FormField>
     </div>
   </div>
 
-  <div v-else-if="release" class="flex items-start gap-2">
-    <div class="min-w-0 flex-1">
-      <FormField
-        v-slot="{ field }"
-        name="base_url"
-        :label="t('directory.source.baseUrl')"
-        :description="t('directory.source.baseUrlHint')"
-        required
-      >
-        <Input
-          v-bind="field"
-          type="url"
-          inputmode="url"
-          spellcheck="false"
-          autocomplete="off"
-          maxlength="4096"
-          :disabled="disabled"
-        />
-      </FormField>
-    </div>
-    <FieldReset
-      v-if="resetBinding"
-      v-bind="resetBinding('base_url')"
-      :disabled="disabled"
-      @reset="emit('reset', 'base_url')"
-    />
-  </div>
+  <FormField
+    v-else-if="release"
+    name="base_url"
+    :label="t('directory.source.baseUrl')"
+    :description="t('directory.source.baseUrlHint')"
+    required
+  >
+    <template v-if="resetBinding" #label-end>
+      <FieldReset
+        v-bind="resetBinding('base_url')"
+        :disabled="disabled"
+        @reset="emit('reset', 'base_url')"
+      />
+    </template>
+    <template #default="{ field }">
+      <Input
+        v-bind="field"
+        type="url"
+        inputmode="url"
+        spellcheck="false"
+        autocomplete="off"
+        maxlength="4096"
+        :disabled="disabled"
+      />
+    </template>
+  </FormField>
 </template>

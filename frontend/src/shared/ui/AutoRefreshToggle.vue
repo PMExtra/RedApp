@@ -12,6 +12,6 @@ const id = useId();
 <template>
   <span class="inline-flex items-center gap-2 text-sm">
     <Switch :id="id" v-model="enabled" />
-    <label :for="id">{{ t("ui.autoRefresh") }}</label>
+    <label :for="id" class="cursor-pointer">{{ t("ui.autoRefresh") }}</label>
   </span>
 </template>

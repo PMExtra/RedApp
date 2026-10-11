@@ -229,6 +229,47 @@
     outline: 2px solid var(--rd-focus);
     outline-offset: 2px;
   }
+  /*
+   * Preflight leaves buttons with the default arrow. Every clickable control
+   * (native or a Reka role) shows the pointer; disabled ones show not-allowed.
+   * :where keeps specificity at zero so cursor utilities still win.
+   */
+  :where(
+    button,
+    select,
+    summary,
+    input:is([type="checkbox"], [type="radio"], [type="file"], [type="range"], [type="color"]),
+    [role="button"],
+    [role="checkbox"],
+    [role="radio"],
+    [role="switch"],
+    [role="tab"],
+    [role="option"],
+    [role="menuitem"],
+    [role="menuitemcheckbox"],
+    [role="menuitemradio"]
+  ) {
+    cursor: pointer;
+  }
+  :where(
+    button,
+    select,
+    input,
+    [role="button"],
+    [role="checkbox"],
+    [role="radio"],
+    [role="switch"],
+    [role="tab"],
+    [role="option"],
+    [role="menuitem"],
+    [role="menuitemcheckbox"],
+    [role="menuitemradio"]
+  ):where(:disabled, [aria-disabled="true"], [data-disabled]) {
+    cursor: not-allowed;
+  }
+  ::file-selector-button {
+    cursor: pointer;
+  }
   code,
   kbd,
   pre,

@@ -96,39 +96,40 @@ const submit = form.handleSubmit(async (values) => {
           @reload="save.reload()"
         />
         <p class="text-xs text-muted">{{ t("directory.instructions.variables", VARIABLES) }}</p>
-        <div v-for="language in languages" :key="language" class="flex items-start gap-2">
-          <div class="min-w-0 flex-1">
-            <FormField
-              v-slot="{ field }"
-              :name="`instructions.${language}`"
-              :label="
-                t('directory.instructions.label', {
-                  language: t(`common.languages.${language}`),
-                })
-              "
-              :description="
-                t('directory.instructions.count', {
-                  count: format.number(length(language)),
-                  max: format.number(MAX),
-                })
-              "
-            >
-              <Textarea
-                v-bind="field"
-                :rows="10"
-                monospace
-                spellcheck="false"
-                :lang="language"
-                :disabled="readOnly"
-              />
-            </FormField>
-          </div>
-          <FieldReset
-            v-bind="overlay.resetBinding(`instructions.${language}`)"
-            :disabled="readOnly"
-            @reset="overlay.reset(`instructions.${language}`)"
-          />
-        </div>
+        <FormField
+          v-for="language in languages"
+          :key="language"
+          :name="`instructions.${language}`"
+          :label="
+            t('directory.instructions.label', {
+              language: t(`common.languages.${language}`),
+            })
+          "
+          :description="
+            t('directory.instructions.count', {
+              count: format.number(length(language)),
+              max: format.number(MAX),
+            })
+          "
+        >
+          <template #label-end>
+            <FieldReset
+              v-bind="overlay.resetBinding(`instructions.${language}`)"
+              :disabled="readOnly"
+              @reset="overlay.reset(`instructions.${language}`)"
+            />
+          </template>
+          <template #default="{ field }">
+            <Textarea
+              v-bind="field"
+              :rows="10"
+              monospace
+              spellcheck="false"
+              :lang="language"
+              :disabled="readOnly"
+            />
+          </template>
+        </FormField>
         <OverlayFormActions
           v-if="!readOnly"
           :dirty="overlay.dirty.value"

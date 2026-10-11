@@ -9,7 +9,6 @@ export default {
     staleFallbackHint:
       "适用于所有路径，包括 TTL 为 0 的路径。关闭后，源站失败（网络、超时、5xx）会返回错误，已存储的文件保留。",
     save: "保存缓存规则",
-    discard: "放弃更改",
     saved: "缓存规则已保存。",
     limit: "每个列表最多 {max} 条规则。保存后生效。",
     match: {
