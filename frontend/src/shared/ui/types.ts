@@ -36,6 +36,8 @@ export interface TabItem {
 export interface NavTabItem {
   to: RouteLocationRaw;
   label: string;
+  /** Selected although the route is not `to` itself (a page below the tab). */
+  active?: boolean;
 }
 
 export interface Crumb {

@@ -46,6 +46,9 @@ const route = useRoute();
 const router = useRouter();
 const vendorId = computed(() => String(route.params.vendor));
 const appId = computed(() => String(route.params.app));
+const version = computed(() =>
+  typeof route.params.version === "string" ? route.params.version : null,
+);
 const app = useApp(vendorId, appId);
 const vendor = useVendor(vendorId);
 const providers = useProviders();
@@ -78,7 +81,9 @@ const breadcrumbs = computed<Crumb[]>(() => [
     label: vendorName.value,
     to: { name: "admin-vendor-apps", params: { vendor: vendorId.value } },
   },
-  { label: name.value },
+  ...(version.value && app.data.value
+    ? [{ label: name.value, to: appRoute(app.data.value, "versions") }, { label: version.value }]
+    : [{ label: name.value }]),
 ]);
 
 const TAB_LABELS: Record<AppTab, string> = {
@@ -93,7 +98,11 @@ const available = computed<AppTab[]>(() => (app.data.value ? appTabs(app.data.va
 const tabs = computed<NavTabItem[]>(() => {
   const data = app.data.value;
   if (!data) return [];
-  return available.value.map((tab) => ({ label: t(TAB_LABELS[tab]), to: appRoute(data, tab) }));
+  return available.value.map((tab) => ({
+    label: t(TAB_LABELS[tab]),
+    to: appRoute(data, tab),
+    active: tab === currentTab.value,
+  }));
 });
 const currentTab = computed(() => appTabFromRoute(route.name));
 const tabAvailable = computed(

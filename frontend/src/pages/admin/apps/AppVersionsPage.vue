@@ -1,9 +1,9 @@
 <script setup lang="ts">
-// Versions tab of release applications: versions and stored files.
+// Versions tab of release applications; each version links to AppVersionPage.
 // AppLayout only shows it for codex and claude-code applications that are not deleted.
 import { computed } from "vue";
 import { useRoute } from "vue-router";
-import { ReleaseInventory } from "@/features/releases";
+import { VersionList } from "@/features/releases";
 import { useAutoRefresh } from "@/shared/lib";
 import { AutoRefreshToggle } from "@/shared/ui";
 
@@ -18,6 +18,6 @@ const auto = useAutoRefresh();
     <div class="flex justify-end">
       <AutoRefreshToggle v-model="auto.enabled.value" />
     </div>
-    <ReleaseInventory :vendor="vendor" :app="app" :auto-refresh="auto.enabled.value" />
+    <VersionList :vendor="vendor" :app="app" :auto-refresh="auto.enabled.value" />
   </div>
 </template>
