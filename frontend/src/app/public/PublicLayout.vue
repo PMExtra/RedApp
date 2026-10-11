@@ -21,12 +21,12 @@ const { t } = useI18n();
 const { bootstrap, title, subtitle } = useSiteTexts();
 useSiteTitle(title);
 const route = useRoute();
-// On application pages the admin link opens that application's admin tab.
+// On vendor and application pages the admin link opens their admin page.
 const adminHref = useAdminLink(() => {
   const { vendor, app } = route.params;
-  return route.name === "public-app" && typeof vendor === "string" && typeof app === "string"
-    ? { vendor, app }
-    : null;
+  if (typeof vendor !== "string") return null;
+  if (route.name === "public-vendor") return { vendor };
+  return route.name === "public-app" && typeof app === "string" ? { vendor, app } : null;
 });
 </script>
 

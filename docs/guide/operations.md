@@ -140,10 +140,10 @@ Sign in at `/admin/login`. Pages that you can open directly or bookmark:
 | `/admin/vendors/<vendor>/settings` | Vendor settings, export |
 | `/admin/vendors/<vendor>/apps` | Applications of a vendor |
 | `/admin/vendors/<vendor>/apps/new` | Create an application |
-| `/admin/vendors/<vendor>/admin-notes` | Private notes for a vendor |
+| `/admin/vendors/<vendor>/admin-notes` | Private Markdown notes for a vendor |
 | `/admin/vendors/<vendor>/apps/<app>` | Opens the application's main tab: versions (Codex, Claude Code), cache (HTTP cache), files (Hosted) or settings |
 | `/admin/vendors/<vendor>/apps/<app>/settings` | Application settings, usage instructions, export, copy |
-| `/admin/vendors/<vendor>/apps/<app>/admin-notes` | Private notes for an application |
+| `/admin/vendors/<vendor>/apps/<app>/admin-notes` | Private Markdown notes for an application |
 | `/admin/vendors/<vendor>/apps/<app>/versions` | Versions and resources (Codex, Claude Code) |
 | `/admin/vendors/<vendor>/apps/<app>/metrics` | Application metrics (HTTP cache, Codex, Claude Code) |
 | `/admin/vendors/<vendor>/apps/<app>/cache` | Cache management (HTTP cache, Codex, Claude Code) |

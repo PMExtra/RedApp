@@ -16,7 +16,6 @@ import { ProxyFields } from "@/features/proxy";
 import { isApiError } from "@/shared/api";
 import { toast } from "@/shared/lib";
 import { AsyncState, Card, RevisionConflictAlert } from "@/shared/ui";
-import EnabledSwitch from "./EnabledSwitch.vue";
 import IconField from "./IconField.vue";
 import LocalizedTextFields from "./LocalizedTextFields.vue";
 import type { Vendor } from "./queries";
@@ -104,13 +103,10 @@ const submit = form.handleSubmit(async (values) => {
 
       <Card :title="t('directory.sections.details')">
         <div class="flex flex-col gap-5">
-          <div class="flex flex-wrap items-start justify-between gap-4">
-            <dl class="text-sm">
-              <dt class="text-muted">{{ t("directory.fields.vendorId") }}</dt>
-              <dd class="font-mono">{{ vendor.id }}</dd>
-            </dl>
-            <EnabledSwitch :entity="vendor" />
-          </div>
+          <dl class="text-sm">
+            <dt class="text-muted">{{ t("directory.fields.vendorId") }}</dt>
+            <dd class="font-mono">{{ vendor.id }}</dd>
+          </dl>
           <p v-if="overlay.linked.value" class="text-sm text-muted">
             {{ t("configuration.linkedHint") }}
           </p>

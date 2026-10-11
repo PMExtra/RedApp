@@ -73,7 +73,8 @@ describe("application tabs", () => {
     await renderAdminPage("/admin/vendors/example/apps/tools/admin-notes");
     expect(await tabNames()).toEqual(["Settings", "Cache", "Metrics", "Admin notes"]);
     expect(screen.getByText(/This application is deleted/)).toBeInTheDocument();
-    expect(await screen.findByRole("textbox", { name: "Notes" })).toBeDisabled();
+    expect(await screen.findByText("Rotate the upstream token in May.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit notes" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Export configuration" })).toBeNull();
   });
 

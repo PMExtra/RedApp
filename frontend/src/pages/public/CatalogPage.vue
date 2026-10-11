@@ -139,7 +139,7 @@ const emptyText = computed(() => {
       "
     >
       <template v-if="logo" #actions>
-        <EntityIcon :src="logo" variant="logo" size="lg" />
+        <EntityIcon :src="logo" variant="logo" size="lg" decorative />
       </template>
     </PageHeader>
 

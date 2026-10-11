@@ -113,17 +113,27 @@ export function usePublicHostedFiles(
 
 /**
  * Admin page for the header's administration link: the application's main
- * admin tab on application pages (`target` set), else the overview.
+ * admin tab on application pages, the vendor's admin page on vendor pages,
+ * else the overview. Unpublished targets fall back to the overview.
  */
-export function useAdminLink(target: MaybeRefOrGetter<{ vendor: string; app: string } | null>) {
+export function useAdminLink(target: MaybeRefOrGetter<{ vendor: string; app?: string } | null>) {
+  const vendor = usePublicVendor(() => {
+    const current = toValue(target);
+    return current && !current.app ? current.vendor : "";
+  });
   const app = usePublicApp(
     () => toValue(target)?.vendor ?? "",
     () => toValue(target)?.app ?? "",
   );
   return computed(() => {
     const current = toValue(target);
-    const data = app.data.value;
-    if (!current || !data) return "/admin/overview";
-    return adminAppPath(current.vendor, current.app, data.capabilities);
+    if (current?.app) {
+      const data = app.data.value;
+      return data
+        ? adminAppPath(current.vendor, current.app, data.capabilities)
+        : "/admin/overview";
+    }
+    if (current && vendor.data.value) return `/admin/vendors/${current.vendor}`;
+    return "/admin/overview";
   });
 }

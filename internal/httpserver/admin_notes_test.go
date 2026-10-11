@@ -82,3 +82,25 @@ func TestAdminNotesPrivateCASIsolationAndRestart(t *testing.T) {
 		}
 	}
 }
+
+func TestAdminNotesRenderSafeMarkdown(t *testing.T) {
+	h := newHarness(t)
+	h.login(h.password)
+	path := "/admin/api/vendors/openai/admin-notes"
+	text := "## Token\n\n- [x] **rotate** in May\n\n<script>alert(1)</script>\n\n<b onclick=x>raw</b> [bad](javascript:alert(1)) https://example.com\n\n| a | b |\n| :-: | --: |\n| 1 | 2 |\n"
+	data, _ := h.request("PUT", path, map[string]any{"text": text}, 200, ifMatchHeader(1))
+	saved := decodeJSONBody[adminNotesDTO](t, data)
+	for _, want := range []string{"<h2>Token</h2>", `<input checked="" disabled="" type="checkbox"`, "<strong>rotate</strong>", `<a href="https://example.com">`, `<th align="center">a</th>`, `<td align="right">2</td>`} {
+		if !strings.Contains(saved.HTML, want) {
+			t.Fatalf("rendered notes lack %q:\n%s", want, saved.HTML)
+		}
+	}
+	for _, banned := range []string{"<script", "onclick", "<b", "javascript:", "style="} {
+		if strings.Contains(saved.HTML, banned) {
+			t.Fatalf("rendered notes contain %q:\n%s", banned, saved.HTML)
+		}
+	}
+	if got := getJSON[adminNotesDTO](h, path); got.HTML != saved.HTML || got.Text != text {
+		t.Fatal("GET renders differently", got)
+	}
+}

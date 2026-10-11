@@ -2836,11 +2836,13 @@ export interface components {
             new_categories?: string[];
         };
         AdminNotes: {
-            /** @description Private plain text; no control characters except newline, CR and tab. Never public. */
+            /** @description Private Markdown text; no control characters except newline, CR and tab. Never public. */
             text: string;
         };
         AdminNotesState: {
             text: string;
+            /** @description `text` rendered as GitHub-flavored Markdown without raw HTML: HTML blocks and inline HTML are omitted and dangerous link destinations are dropped. Empty for empty notes. */
+            html: string;
             revision: components["schemas"]["Revision"];
         };
         Category: {

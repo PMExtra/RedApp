@@ -282,7 +282,12 @@ export function category(overrides: Overrides<Schema<"Category">> = {}): Schema<
 export function notes(
   overrides: Overrides<Schema<"AdminNotesState">> = {},
 ): Schema<"AdminNotesState"> {
-  return { text: "Rotate the upstream token in May.", revision: 2, ...overrides };
+  return {
+    text: "Rotate the upstream token in May.",
+    html: "<p>Rotate the upstream token in May.</p>\n",
+    revision: 2,
+    ...overrides,
+  };
 }
 
 export function importItem(overrides: Overrides<Schema<"ImportItem">> = {}): Schema<"ImportItem"> {

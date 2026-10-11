@@ -6782,14 +6782,19 @@ components:
         text:
           type: string
           maxLength: 12000
-          description: Private plain text; no control characters except newline, CR and tab. Never public.
+          description: Private Markdown text; no control characters except newline, CR and tab. Never public.
     AdminNotesState:
       type: object
       additionalProperties: false
-      required: [text, revision]
+      required: [text, html, revision]
       properties:
         text:
           type: string
+        html:
+          type: string
+          description: >-
+            `text` rendered as GitHub-flavored Markdown without raw HTML: HTML blocks and inline HTML are omitted and
+            dangerous link destinations are dropped. Empty for empty notes.
         revision:
           $ref: '#/components/schemas/Revision'
     Category:

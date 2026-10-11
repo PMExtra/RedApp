@@ -72,6 +72,7 @@ export default {
       descriptionIn: "描述（{language}）",
       enabled: "启用",
     },
+    enabledAbout: "关于启用",
     enabledHint: {
       vendor: "立即保存。停用厂商会隐藏其全部应用，已存储的数据会保留。",
       app: "立即保存。停用的应用仍可在此管理，已存储的数据会保留。",

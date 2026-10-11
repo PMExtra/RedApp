@@ -36,7 +36,11 @@ const emit = defineEmits<{
   /** Enter pressed while the list is closed or nothing is highlighted. */
   submit: [search: string];
 }>();
-defineSlots<{ option?: (props: { option: T }) => unknown }>();
+defineSlots<{
+  option?: (props: { option: T }) => unknown;
+  /** Decorative icon inside the input's start edge. */
+  leading?: () => unknown;
+}>();
 
 const { t } = useI18n();
 const open = ref(false);
@@ -86,9 +90,16 @@ function onEnter(event: KeyboardEvent) {
         v-bind="$attrs"
         v-model="search"
         :placeholder="placeholder"
-        :class="cn(controlClass, 'h-9 pe-8')"
+        :class="cn(controlClass, 'h-9 pe-8', $slots.leading && 'ps-8')"
         @keydown.enter.capture="onEnter"
       />
+      <span
+        v-if="$slots.leading"
+        class="pointer-events-none absolute start-2.5 flex text-subtle [&>svg]:size-4"
+        aria-hidden="true"
+      >
+        <slot name="leading" />
+      </span>
       <Spinner v-if="loading" size="sm" class="pointer-events-none absolute end-2 text-muted" />
     </ComboboxAnchor>
     <ComboboxPortal>

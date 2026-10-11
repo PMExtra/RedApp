@@ -75,6 +75,7 @@ export default {
       descriptionIn: "Description ({language})",
       enabled: "Enabled",
     },
+    enabledAbout: "About enabling",
     enabledHint: {
       vendor:
         "Saves immediately. Disabling a vendor hides all its applications; stored data is kept.",

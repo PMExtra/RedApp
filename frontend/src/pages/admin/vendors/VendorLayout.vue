@@ -3,7 +3,7 @@ import { computed, ref } from "vue";
 import { Download } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink, RouterView, useRoute } from "vue-router";
-import { useVendor } from "@/features/directory";
+import { EnabledSwitch, useVendor } from "@/features/directory";
 import { ExportDialog } from "@/features/exchange";
 import { isApiError } from "@/shared/api";
 import { useLocalized, vendorLogo } from "@/shared/i18n";
@@ -21,7 +21,10 @@ import {
   type NavTabItem,
 } from "@/shared/ui";
 
-/** Vendor header (name, logo, state, export) and the vendor tabs. */
+/**
+ * Vendor header (name, state, decorative logo) and the vendor tabs with the
+ * enable switch and export at the tab row's end.
+ */
 const { t, locale } = useI18n();
 const localized = useLocalized();
 const route = useRoute();
@@ -83,16 +86,25 @@ const tabs = computed<NavTabItem[]>(() => [
               <Badge v-if="vendor.data.value.has_template">{{ t("directory.builtin") }}</Badge>
             </template>
             <template #actions>
-              <EntityIcon :src="vendorLogo(vendor.data.value, locale)" variant="logo" size="lg" />
-              <Button v-if="!vendor.data.value.deleted_at" @click="exporting = true">
-                <Download aria-hidden="true" /> {{ t("exchange.export.action") }}
-              </Button>
+              <EntityIcon
+                :src="vendorLogo(vendor.data.value, locale)"
+                variant="logo"
+                size="lg"
+                decorative
+              />
             </template>
           </PageHeader>
           <Alert v-if="vendor.data.value.deleted_at" tone="warning">
             {{ t("directory.readOnly.vendor") }}
           </Alert>
-          <NavTabs :items="tabs" :label="t('adminShell.tabs.label')" />
+          <NavTabs :items="tabs" :label="t('adminShell.tabs.label')">
+            <template v-if="!vendor.data.value.deleted_at" #end>
+              <EnabledSwitch :entity="vendor.data.value" />
+              <Button size="sm" @click="exporting = true">
+                <Download aria-hidden="true" /> {{ t("exchange.export.action") }}
+              </Button>
+            </template>
+          </NavTabs>
           <RouterView />
           <ExportDialog v-model:open="exporting" kind="vendor" :entity-key="vendor.data.value.id" />
         </div>

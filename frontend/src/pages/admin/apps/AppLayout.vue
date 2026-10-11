@@ -8,6 +8,7 @@ import {
   appRoute,
   appTabFromRoute,
   appTabs,
+  EnabledSwitch,
   isPublished,
   useApp,
   useProviders,
@@ -33,8 +34,8 @@ import {
 } from "@/shared/ui";
 
 /**
- * Application header (icon, state, public link, download URL, export, copy)
- * and the tab host. Tabs follow the provider: files for `hosted`; cache and
+ * Application header (icon, state, public link, download URL) and the tab
+ * host; the tab row's end holds the enable switch, export and copy. Tabs follow the provider: files for `hosted`; cache and
  * metrics for `http-cache`, `codex` and `claude-code`; versions for `codex`
  * and `claude-code`. A tab the provider lacks shows "not available" instead.
  */
@@ -170,20 +171,24 @@ watch(
                 size="md"
               />
             </template>
-            <template v-if="!app.data.value.deleted_at">
-              <Button @click="exporting = true">
-                <Download aria-hidden="true" /> {{ t("exchange.export.action") }}
-              </Button>
-              <Button @click="copying = true">
-                <CopyPlus aria-hidden="true" /> {{ t("exchange.copy.action") }}
-              </Button>
-            </template>
           </template>
         </PageHeader>
         <Alert v-if="app.data.value.deleted_at" tone="warning">
           {{ t("directory.readOnly.app") }}
         </Alert>
-        <NavTabs :items="tabs" :label="t('adminShell.tabs.label')" />
+        <NavTabs :items="tabs" :label="t('adminShell.tabs.label')">
+          <template v-if="!app.data.value.deleted_at" #end>
+            <EnabledSwitch :entity="app.data.value" />
+            <div class="flex gap-2">
+              <Button size="sm" @click="exporting = true">
+                <Download aria-hidden="true" /> {{ t("exchange.export.action") }}
+              </Button>
+              <Button size="sm" @click="copying = true">
+                <CopyPlus aria-hidden="true" /> {{ t("exchange.copy.action") }}
+              </Button>
+            </div>
+          </template>
+        </NavTabs>
         <RouterView v-if="tabAvailable" />
         <EmptyState
           v-else-if="currentTab !== undefined"

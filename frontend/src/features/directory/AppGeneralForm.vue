@@ -17,7 +17,6 @@ import { isApiError } from "@/shared/api";
 import { useLocalized } from "@/shared/i18n";
 import { toast } from "@/shared/lib";
 import { AsyncState, Card, RevisionConflictAlert } from "@/shared/ui";
-import EnabledSwitch from "./EnabledSwitch.vue";
 import IconField from "./IconField.vue";
 import { isReleaseProvider } from "./links";
 import LocalizedTextFields from "./LocalizedTextFields.vue";
@@ -134,15 +133,12 @@ const submit = form.handleSubmit(async (values) => {
 
       <Card :title="t('directory.sections.details')">
         <div class="flex flex-col gap-5">
-          <div class="flex flex-wrap items-start justify-between gap-4">
-            <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-              <dt class="text-muted">{{ t("directory.fields.appKey") }}</dt>
-              <dd class="font-mono">{{ app.key }}</dd>
-              <dt class="text-muted">{{ t("directory.fields.provider") }}</dt>
-              <dd>{{ providerName }}</dd>
-            </dl>
-            <EnabledSwitch :entity="app" />
-          </div>
+          <dl class="grid w-fit grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+            <dt class="text-muted">{{ t("directory.fields.appKey") }}</dt>
+            <dd class="font-mono">{{ app.key }}</dd>
+            <dt class="text-muted">{{ t("directory.fields.provider") }}</dt>
+            <dd>{{ providerName }}</dd>
+          </dl>
           <p class="text-xs text-muted">{{ t("directory.fields.fixedAfterCreate") }}</p>
           <p v-if="overlay.linked.value" class="text-sm text-muted">
             {{ t("configuration.linkedHint") }}

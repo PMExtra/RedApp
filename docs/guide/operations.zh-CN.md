@@ -140,10 +140,10 @@ RedApp 读取转发头的方式：
 | `/admin/vendors/<vendor>/settings` | 厂商设置、导出 |
 | `/admin/vendors/<vendor>/apps` | 厂商下的应用 |
 | `/admin/vendors/<vendor>/apps/new` | 创建应用 |
-| `/admin/vendors/<vendor>/admin-notes` | 厂商的私有备注 |
+| `/admin/vendors/<vendor>/admin-notes` | 厂商的私有备注（Markdown） |
 | `/admin/vendors/<vendor>/apps/<app>` | 打开应用的主标签页：版本（Codex、Claude Code）、缓存（HTTP 缓存）、文件（Hosted）或设置 |
 | `/admin/vendors/<vendor>/apps/<app>/settings` | 应用设置、使用说明、导出、复制 |
-| `/admin/vendors/<vendor>/apps/<app>/admin-notes` | 应用的私有备注 |
+| `/admin/vendors/<vendor>/apps/<app>/admin-notes` | 应用的私有备注（Markdown） |
 | `/admin/vendors/<vendor>/apps/<app>/versions` | 版本与资源（Codex、Claude Code） |
 | `/admin/vendors/<vendor>/apps/<app>/metrics` | 应用指标（HTTP 缓存、Codex、Claude Code） |
 | `/admin/vendors/<vendor>/apps/<app>/cache` | 缓存管理（HTTP 缓存、Codex、Claude Code） |

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { keepPreviousData, useQuery } from "@tanstack/vue-query";
+import { Search } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { api, queryKey, unwrap } from "@/shared/api";
@@ -92,10 +93,11 @@ async function submit(text: string) {
     keep-search
     maxlength="128"
     type="search"
-    class="w-full max-w-md"
+    class="w-full"
     @select="open"
     @submit="submit"
   >
+    <template #leading><Search /></template>
     <template #option="{ option }">
       <EntityIcon :src="option.icon" size="sm" />
       <span class="flex min-w-0 flex-col">

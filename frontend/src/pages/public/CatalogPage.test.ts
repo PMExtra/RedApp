@@ -249,6 +249,18 @@ describe("vendor catalog", () => {
     });
   });
 
+  it("links the header's admin button to the vendor's admin page", async () => {
+    vendorServer();
+    await renderEntry("public", "/anthropic");
+    const banner = screen.getByRole("banner");
+    await waitFor(() => {
+      expect(within(banner).getByRole("link", { name: "Administration" })).toHaveAttribute(
+        "href",
+        "/admin/vendors/anthropic",
+      );
+    });
+  });
+
   it("ignores a late response of the previous vendor", async () => {
     let release = () => {};
     const openaiDelay = new Promise<void>((resolve) => {
@@ -282,5 +294,8 @@ describe("vendor catalog", () => {
     await waitFor(() => {
       expect(document.title).toBe("Page not found · RedApp Mirror");
     });
+    expect(
+      within(screen.getByRole("banner")).getByRole("link", { name: "Administration" }),
+    ).toHaveAttribute("href", "/admin/overview");
   });
 });

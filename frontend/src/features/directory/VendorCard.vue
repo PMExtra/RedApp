@@ -167,7 +167,7 @@ onBeforeUnmount(() => {
           {{ countLabel }}
         </RouterLink>
       </div>
-      <EntityIcon :src="vendorLogo(vendor, locale)" variant="logo" size="lg" />
+      <EntityIcon :src="vendorLogo(vendor, locale)" variant="logo" size="lg" decorative />
     </header>
 
     <div class="group/strip relative">

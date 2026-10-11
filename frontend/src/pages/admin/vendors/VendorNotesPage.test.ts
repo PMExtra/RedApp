@@ -5,6 +5,43 @@ import { notes, vendor } from "@/test/factories/directory";
 import { apiError, mockApi, useHandlers } from "@/test/msw";
 
 describe("vendor admin notes", () => {
+  it("shows rendered notes until the edit button opens the text", async () => {
+    const source = "## Token\n\n**Rotate**";
+    useHandlers(
+      mockApi("get", "/admin/api/vendors/{vendor}", () => vendor()),
+      mockApi("get", "/admin/api/vendors/{vendor}/admin-notes", () =>
+        notes({ text: source, html: "<h2>Token</h2>\n<p><strong>Rotate</strong></p>\n" }),
+      ),
+    );
+    const { user } = await renderAdminPage("/admin/vendors/example/admin-notes");
+    expect(await screen.findByRole("heading", { name: "Token" })).toBeInTheDocument();
+    expect(screen.getByText("Rotate").tagName).toBe("STRONG");
+    expect(screen.queryByRole("textbox", { name: "Notes" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Edit notes" }));
+    const text = screen.getByRole("textbox", { name: "Notes" });
+    expect(text).toHaveValue(source);
+    await user.type(text, " soon");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("textbox", { name: "Notes" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Edit notes" }));
+    expect(screen.getByRole("textbox", { name: "Notes" })).toHaveValue(source);
+  });
+
+  it("shows a placeholder for empty notes and none of the editor for deleted vendors", async () => {
+    useHandlers(
+      mockApi("get", "/admin/api/vendors/{vendor}", () =>
+        vendor({ deleted_at: "2026-01-01T00:00:00Z" }),
+      ),
+      mockApi("get", "/admin/api/vendors/{vendor}/admin-notes", () =>
+        notes({ text: "", html: "" }),
+      ),
+    );
+    await renderAdminPage("/admin/vendors/example/admin-notes");
+    expect(await screen.findByText("No notes yet.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Edit notes" })).toBeNull();
+  });
+
   it("saves with the notes revision and keeps the draft on a conflict", async () => {
     let revision = 2;
     let conflict = true;
@@ -25,6 +62,7 @@ describe("vendor admin notes", () => {
       }),
     );
     const { user } = await renderAdminPage("/admin/vendors/example/admin-notes");
+    await user.click(await screen.findByRole("button", { name: "Edit notes" }));
     const text = await screen.findByRole("textbox", { name: "Notes" });
     await waitFor(() => {
       expect(text).toHaveValue("Old note");
@@ -46,6 +84,8 @@ describe("vendor admin notes", () => {
     expect(await screen.findByText("Notes saved.")).toBeInTheDocument();
     expect(saves.calls[1]?.ifMatch).toBe('"3"');
     expect(screen.queryByText("Unsaved changes")).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Notes" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Edit notes" })).toBeInTheDocument();
   });
 
   it("limits notes to 12000 characters", async () => {
@@ -59,7 +99,8 @@ describe("vendor admin notes", () => {
       }),
     );
     const { user } = await renderAdminPage("/admin/vendors/example/admin-notes");
-    const text = await screen.findByRole("textbox", { name: "Notes" });
+    await user.click(await screen.findByRole("button", { name: "Edit notes" }));
+    const text = screen.getByRole("textbox", { name: "Notes" });
     await user.click(text);
     await user.paste("x".repeat(12001));
     await user.click(screen.getByRole("button", { name: "Save notes" }));

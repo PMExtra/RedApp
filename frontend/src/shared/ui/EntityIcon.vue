@@ -8,7 +8,9 @@ import { cn } from "./cn";
  * fall back to a generic glyph when missing or broken; `logo` keeps the aspect
  * ratio at a fixed height and renders nothing without an image. Icons are
  * drawn for light backgrounds: the light theme shows them on the page itself,
- * the dark theme on a dimmed light tile.
+ * the dark theme on a dimmed light tile. A `decorative` logo (mood only, next
+ * to the vendor name) stays transparent and dimmed instead, and the dark theme
+ * draws it as a light silhouette.
  */
 const props = withDefaults(
   defineProps<{
@@ -17,6 +19,7 @@ const props = withDefaults(
     alt?: string;
     size?: "xs" | "sm" | "md" | "lg" | "xl";
     variant?: "square" | "logo";
+    decorative?: boolean;
   }>(),
   { alt: "", size: "md", variant: "square" },
 );
@@ -39,7 +42,10 @@ const heights = { xs: "h-5", sm: "h-7", md: "h-9", lg: "h-12", xl: "h-16" };
       :alt="alt"
       :class="
         cn(
-          'w-auto max-w-48 rounded-lg bg-icon-bg object-contain dark:box-content dark:px-2 dark:py-1',
+          'w-auto max-w-48 object-contain',
+          decorative
+            ? 'opacity-60 dark:opacity-50 dark:brightness-0 dark:invert'
+            : 'rounded-lg bg-icon-bg dark:box-content dark:px-2 dark:py-1',
           heights[size],
         )
       "
