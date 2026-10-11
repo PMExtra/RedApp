@@ -13,6 +13,8 @@ const props = withDefaults(
     showLabel?: boolean;
     /** Glyph before copying (for example Share2 for "copy link to share"). */
     icon?: Component;
+    /** Also confirm a successful copy with this notification. */
+    copiedMessage?: string;
   }>(),
   { size: "sm", icon: () => Copy },
 );
@@ -27,6 +29,7 @@ async function copy() {
   try {
     await navigator.clipboard.writeText(props.text);
     copied.value = true;
+    if (props.copiedMessage) toast({ tone: "success", title: props.copiedMessage });
     announcement.value = "";
     await nextTick();
     announcement.value = t("ui.copy.copied");

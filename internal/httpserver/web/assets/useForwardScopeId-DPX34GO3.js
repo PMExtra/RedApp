@@ -1,0 +1,1 @@
+import{yn as e}from"./ui-BHPI5gZP.js";function t(){let t=e()?.vnode?.scopeId;return t?{[t]:``}:{}}export{t};

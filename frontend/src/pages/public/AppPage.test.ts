@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/vue";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Schema } from "@/shared/api";
 import { bootstrap, home, localized, publicApp } from "@/test/factories";
 import {
@@ -74,6 +74,19 @@ describe("application page", () => {
       "href",
       "/admin/vendors/openai/apps/codex/versions",
     );
+  });
+
+  it("copies the page link to share and confirms it", async () => {
+    appServer(publicApp());
+    await renderEntry("public", "/openai/codex");
+    // user-event installs a clipboard stub; observe it after setup.
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, "writeText");
+    await user.click(await screen.findByRole("button", { name: "Copy link to share" }));
+    expect(writeText).toHaveBeenCalledWith("https://mirror.example.internal/openai/codex");
+    expect(
+      await screen.findByText("Link copied. Go share it with your friends!"),
+    ).toBeInTheDocument();
   });
 
   it("shows instructions only when they exist in the current language", async () => {

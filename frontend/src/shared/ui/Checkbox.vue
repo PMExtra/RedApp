@@ -24,7 +24,12 @@ const fallbackId = useId();
         <Check v-else class="size-3" aria-hidden="true" />
       </CheckboxIndicator>
     </CheckboxRoot>
-    <label v-if="label || $slots.default" :for="props.id ?? fallbackId" class="text-sm">
+    <label
+      v-if="label || $slots.default"
+      :for="props.id ?? fallbackId"
+      class="text-sm"
+      :class="disabled ? 'cursor-not-allowed' : 'cursor-pointer'"
+    >
       <slot>{{ label }}</slot>
     </label>
   </span>

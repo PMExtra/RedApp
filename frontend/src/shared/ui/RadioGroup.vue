@@ -38,7 +38,11 @@ const base = useId();
       >
         <RadioGroupIndicator class="block size-2 rounded-full bg-primary" />
       </RadioGroupItem>
-      <label :for="`${base}-${option.value}`" class="cursor-pointer text-sm">
+      <label
+        :for="`${base}-${option.value}`"
+        class="text-sm"
+        :class="disabled || option.disabled ? 'cursor-not-allowed' : 'cursor-pointer'"
+      >
         {{ option.label }}
         <span v-if="option.description" class="block text-xs text-muted">
           {{ option.description }}

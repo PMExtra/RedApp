@@ -90,7 +90,13 @@ const prefix = computed(
           <EntityIcon :src="app.icon" size="xl" />
         </template>
         <template #actions>
-          <CopyButton :text="pageUrl" :icon="Share2" :label="t('catalog.app.share')" size="md" />
+          <CopyButton
+            :text="pageUrl"
+            :icon="Share2"
+            :label="t('catalog.app.share')"
+            :copied-message="t('catalog.app.shareCopied')"
+            size="md"
+          />
         </template>
         <template v-if="capabilities?.versions || app.categories.length" #meta>
           <AppVersion :app="app" />

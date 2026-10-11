@@ -1,5 +1,5 @@
 <script setup lang="ts" generic="T extends ComboboxOption">
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import {
   ComboboxAnchor,
   ComboboxContent,
@@ -29,6 +29,13 @@ const props = defineProps<{
   keepSearch?: boolean;
   /** Clear the selection and the typed text after choosing (pickers that add to a list). */
   clearOnSelect?: boolean;
+  /**
+   * Search boxes: Reka's automatic first-item highlight does not count, so
+   * Enter submits the typed text until the arrow keys move through the list.
+   */
+  manualHighlight?: boolean;
+  /** Show the suggestions on focus or click, before anything is typed. */
+  openOnFocus?: boolean;
   class?: string;
 }>();
 const emit = defineEmits<{
@@ -53,6 +60,26 @@ const hasHighlight = computed(
     props.options.some((option) => option.value === highlighted.value && !option.disabled),
 );
 
+// Set by the arrow keys; typing or closing hands Enter back to the text.
+const navigated = ref(false);
+watch([search, open], () => {
+  navigated.value = false;
+});
+const activeHighlight = computed(
+  () => hasHighlight.value && (!props.manualHighlight || navigated.value),
+);
+
+function onArrow(event: KeyboardEvent) {
+  if (!props.manualHighlight || navigated.value || !open.value || event.isComposing) return;
+  // The first arrow starts at an end of the list instead of moving past the
+  // hidden automatic highlight (Reka handles Home/End on the input).
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  navigated.value = true;
+  const key = event.key === "ArrowUp" ? "End" : "Home";
+  event.currentTarget?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+}
+
 function onSelect(value: unknown) {
   const option = props.options.find((item) => item.value === value);
   if (!option) return;
@@ -70,7 +97,13 @@ function onSelect(value: unknown) {
 function onEnter(event: KeyboardEvent) {
   // Enter that confirms an IME composition must not submit.
   if (event.isComposing) return;
-  if (!open.value || !hasHighlight.value) emit("submit", search.value);
+  if (open.value && activeHighlight.value) return; // Reka chooses the highlighted option.
+  if (props.manualHighlight) {
+    // Keep Reka from choosing an automatic highlight the user never moved to.
+    if (open.value && hasHighlight.value) event.stopImmediatePropagation();
+    open.value = false;
+  }
+  emit("submit", search.value);
 }
 </script>
 
@@ -82,6 +115,8 @@ function onEnter(event: KeyboardEvent) {
     :reset-search-term-on-blur="false"
     :reset-search-term-on-select="!keepSearch"
     :disabled="disabled"
+    :open-on-focus="openOnFocus"
+    :open-on-click="openOnFocus"
     @update:model-value="onSelect"
     @highlight="highlighted = $event?.value as string | undefined"
   >
@@ -92,6 +127,8 @@ function onEnter(event: KeyboardEvent) {
         :placeholder="placeholder"
         :class="cn(controlClass, 'h-9 pe-8', $slots.leading && 'ps-8')"
         @keydown.enter.capture="onEnter"
+        @keydown.up.capture="onArrow"
+        @keydown.down.capture="onArrow"
       />
       <span
         v-if="$slots.leading"
@@ -107,7 +144,16 @@ function onEnter(event: KeyboardEvent) {
       <ComboboxContent
         position="popper"
         :side-offset="4"
-        :class="cn(panelClass, 'max-h-80 w-(--reka-combobox-trigger-width) overflow-y-auto')"
+        :class="
+          cn(
+            panelClass,
+            'max-h-80 w-(--reka-combobox-trigger-width) overflow-y-auto',
+            // Hide the automatic highlight; hovering still shows.
+            manualHighlight &&
+              !navigated &&
+              '[&_[data-highlighted]:not(:hover)]:bg-transparent [&_[role=option]:hover]:bg-surface-hover',
+          )
+        "
       >
         <ComboboxEmpty class="px-2 py-1.5 text-muted">
           {{ loading ? t("ui.combobox.loading") : t("ui.combobox.noResults") }}

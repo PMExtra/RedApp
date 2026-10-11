@@ -49,8 +49,8 @@ describe("public shell", () => {
     const { router } = await renderEntry("public", "/");
     const user = userEvent.setup();
     const box = screen.getByRole("combobox", { name: "Search applications and vendors" });
+    // Focusing the empty box shows the popular applications.
     await user.click(box);
-    await user.keyboard("{ArrowDown}");
     expect(await screen.findByRole("option", { name: /Codex CLI/ })).toBeInTheDocument();
 
     await user.type(box, "claude");
@@ -62,7 +62,36 @@ describe("public shell", () => {
     });
   });
 
-  it("opens the catalog search on Enter without a highlighted suggestion", async () => {
+  it("opens the catalog search on Enter, never the first suggestion implicitly", async () => {
+    publicServer();
+    const { router } = await renderEntry("public", "/");
+    const user = userEvent.setup();
+    const box = screen.getByRole("combobox", { name: "Search applications and vendors" });
+    await user.type(box, "claude");
+    expect(await screen.findByRole("option", { name: /Claude Code/ })).toBeInTheDocument();
+    await user.keyboard("{Enter}");
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/all?q=claude");
+    });
+  });
+
+  it("moves through suggestions with the arrow keys and opens the chosen one", async () => {
+    publicServer();
+    const { router } = await renderEntry("public", "/");
+    const user = userEvent.setup();
+    const box = screen.getByRole("combobox", { name: "Search applications and vendors" });
+    await user.type(box, "claude");
+    expect(await screen.findByRole("option", { name: /Claude Code/ })).toBeInTheDocument();
+    // The first arrow starts at the first suggestion; the next one moves on.
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("option", { name: /Anthropic/ })).toHaveAttribute("data-highlighted");
+    await user.keyboard("{ArrowDown}{Enter}");
+    await waitFor(() => {
+      expect(router.currentRoute.value.path).toBe("/anthropic/claude-code");
+    });
+  });
+
+  it("opens the catalog search on Enter with the list closed", async () => {
     publicServer();
     const { router } = await renderEntry("public", "/");
     const user = userEvent.setup();

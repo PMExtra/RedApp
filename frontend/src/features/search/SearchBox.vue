@@ -16,8 +16,10 @@ interface SearchOption extends ComboboxOption {
 
 /**
  * Header search with suggestions: `searchCatalog` for typed text, popular
- * applications (`getHome` ranking) while empty. Choosing a suggestion opens
- * `/{key}`; Enter without a highlighted suggestion opens `/all?q=`.
+ * applications (`getHome` ranking) while empty, shown as soon as the box is
+ * focused. Choosing a suggestion (click,
+ * or arrow keys then Enter) opens `/{key}`; Enter on the typed text opens
+ * `/all?q=` — the first suggestion is never chosen implicitly.
  */
 const { t } = useI18n();
 const localized = useLocalized();
@@ -91,6 +93,8 @@ async function submit(text: string) {
     :placeholder="t('search.placeholder')"
     :aria-label="t('search.label')"
     keep-search
+    manual-highlight
+    open-on-focus
     maxlength="128"
     type="search"
     class="w-full"
