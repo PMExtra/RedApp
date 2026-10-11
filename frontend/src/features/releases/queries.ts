@@ -36,10 +36,11 @@ export function useVersions(
   });
 }
 
+/** Stored generations of the files of one version. */
 export function useResources(
   vendor: Name,
   app: Name,
-  version: Ref<string | null>,
+  version: Name,
   cursor: Ref<string | null>,
   refetchInterval: Ref<number | false>,
 ) {
@@ -48,7 +49,7 @@ export function useResources(
       queryKey("listResources", {
         vendor: toValue(vendor),
         app: toValue(app),
-        version: version.value,
+        version: toValue(version),
         cursor: cursor.value,
       }),
     ),
@@ -59,7 +60,7 @@ export function useResources(
             path: { vendor: toValue(vendor), app: toValue(app) },
             query: {
               limit: 25,
-              ...(version.value ? { version: version.value } : {}),
+              version: toValue(version),
               ...(cursor.value ? { cursor: cursor.value } : {}),
             },
           },

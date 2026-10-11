@@ -32,6 +32,7 @@ export {
   appTabFromRoute,
   defaultAppTab,
   vendorRoute,
+  versionRoute,
   hasVersions,
   hasCache,
   hasHostedFiles,

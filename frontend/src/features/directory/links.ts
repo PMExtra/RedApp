@@ -51,8 +51,17 @@ export function defaultAppTab(app: Pick<App, "provider" | "deleted_at">): AppTab
   return "settings";
 }
 
+/** Pages below a tab; the tab stays selected on them. */
+const SUBPAGE_TABS: Record<string, AppTab> = { "admin-app-version": "versions" };
+
 export function appTabFromRoute(name: unknown): AppTab | undefined {
+  if (typeof name === "string" && name in SUBPAGE_TABS) return SUBPAGE_TABS[name];
   return (Object.keys(TAB_ROUTES) as AppTab[]).find((tab) => TAB_ROUTES[tab] === name);
+}
+
+/** The stored files of one version of a release application. */
+export function versionRoute(vendor: string, app: string, version: string): RouteLocationRaw {
+  return { name: "admin-app-version", params: { vendor, app, version } };
 }
 
 export function appRoute(

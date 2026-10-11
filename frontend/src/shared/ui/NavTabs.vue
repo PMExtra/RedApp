@@ -21,7 +21,10 @@ defineSlots<{ end?: () => unknown }>();
         <li v-for="item in items" :key="item.label">
           <RouterLink
             :to="item.to"
-            class="inline-block border-b-2 border-transparent px-3 py-2 text-sm font-medium whitespace-nowrap text-muted hover:text-fg focus-ring"
+            :class="[
+              'inline-block border-b-2 border-transparent px-3 py-2 text-sm font-medium whitespace-nowrap text-muted hover:text-fg focus-ring',
+              item.active && '!border-primary !text-fg',
+            ]"
             exact-active-class="!border-primary !text-fg"
           >
             {{ item.label }}
