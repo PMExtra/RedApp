@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -67,10 +68,43 @@ func (s *Server) refuseDisabled(w http.ResponseWriter, r *http.Request, e applic
 }
 
 type versionDTO struct {
-	Version         string    `json:"version"`
-	FirstSeen       time.Time `json:"first_seen"`
-	Requests        int64     `json:"requests"`
-	DownstreamBytes int64     `json:"downstream_bytes"`
+	Version         string          `json:"version"`
+	FirstSeen       time.Time       `json:"first_seen"`
+	Requests        int64           `json:"requests"`
+	DownstreamBytes int64           `json:"downstream_bytes"`
+	Files           versionFilesDTO `json:"files"`
+}
+
+// versionFilesDTO counts the stored generations of a version by state;
+// retired generations only count as retired.
+type versionFilesDTO struct {
+	Complete    int `json:"complete"`
+	InProgress  int `json:"in_progress"`
+	Interrupted int `json:"interrupted"`
+	Failed      int `json:"failed"`
+	Retired     int `json:"retired"`
+}
+
+// versionFiles groups the generations of a storage namespace by version.
+func versionFiles(views []download.View) map[string]versionFilesDTO {
+	out := map[string]versionFilesDTO{}
+	for _, v := range views {
+		files := out[v.Resource.Version]
+		switch {
+		case v.Retired:
+			files.Retired++
+		case v.State == "complete":
+			files.Complete++
+		case v.State == "interrupted":
+			files.Interrupted++
+		case v.State == "failed" || v.State == "invalid":
+			files.Failed++
+		default:
+			files.InProgress++
+		}
+		out[v.Resource.Version] = files
+	}
+	return out
 }
 
 // newestFirst orders versions by the provider's version order, newest first.
@@ -129,10 +163,11 @@ func (s *Server) listVersions(w http.ResponseWriter, r *http.Request) {
 		start = i + 1
 	}
 	end := min(start+limit, len(ordered))
+	files := versionFiles(s.downloads.SnapshotFor(e.StorageID(), ""))
 	page := cursorPage[versionDTO]{Items: make([]versionDTO, 0, end-start)}
 	for _, v := range ordered[start:end] {
 		row := stats[v]
-		page.Items = append(page.Items, versionDTO{Version: row.Version, FirstSeen: row.FirstSeen.UTC(), Requests: row.ArtifactRequests, DownstreamBytes: row.DownstreamBytes})
+		page.Items = append(page.Items, versionDTO{Version: row.Version, FirstSeen: row.FirstSeen.UTC(), Requests: row.ArtifactRequests, DownstreamBytes: row.DownstreamBytes, Files: files[v]})
 	}
 	if end < len(ordered) {
 		page.NextCursor = afterCursor("listVersions", scope, ordered[end-1])

@@ -3017,6 +3017,21 @@ export interface components {
             requests: number;
             /** Format: int64 */
             downstream_bytes: number;
+            files: components["schemas"]["VersionFiles"];
+        };
+        /**
+         * @description Stored generations of the version's files (the `Resource` items of `listResources?version=`) by state.
+         *     Generations waiting for deletion only count in `retired`; the other counts exclude them.
+         */
+        VersionFiles: {
+            complete: number;
+            /** @description `queued`, `downloading`, `resuming`, `retry_wait` and `verifying`. */
+            in_progress: number;
+            /** @description Partial copies left by a stopped download or a restart; the next read resumes them. */
+            interrupted: number;
+            /** @description `failed` and `invalid`. */
+            failed: number;
+            retired: number;
         };
         VersionPage: {
             items: components["schemas"]["Version"][];

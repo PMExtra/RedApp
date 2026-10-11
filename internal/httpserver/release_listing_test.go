@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/apps/codex"
+	"github.com/PMExtra/RedApp/internal/download"
 )
 
 // anyCodexRelease serves fixtureUpstream as a Codex source that has a release
@@ -66,7 +67,7 @@ func TestVersionListIsNewestFirstAndCursorBound(t *testing.T) {
 	if versionNames(first.Items) != "10.0.0,2.0.0,1.10.0" || first.NextCursor == nil {
 		t.Fatal("versions are not newest first", string(data))
 	}
-	if v := first.Items[0]; v.Requests != 1 || v.DownstreamBytes != int64(len("binary:10.0.0")) || v.FirstSeen.IsZero() {
+	if v := first.Items[0]; v.Requests != 1 || v.DownstreamBytes != int64(len("binary:10.0.0")) || v.FirstSeen.IsZero() || v.Files != (versionFilesDTO{Complete: 1}) {
 		t.Fatal("version statistics", v)
 	}
 	data, _ = h.request("GET", base+"?limit=3&cursor="+url.QueryEscape(*first.NextCursor), nil, 200, nil)
@@ -89,6 +90,22 @@ func TestVersionListIsNewestFirstAndCursorBound(t *testing.T) {
 	data, _ = h.request("GET", base, nil, 200, nil)
 	if page := decodeJSONBody[cursorPage[versionDTO]](t, data); len(page.Items) != 0 || page.NextCursor != nil {
 		t.Fatal("new source epoch listed old versions", string(data))
+	}
+}
+
+func TestVersionFilesCountGenerationsByState(t *testing.T) {
+	view := func(version, state string, retired bool) download.View {
+		var v download.View
+		v.Resource.Version, v.State, v.Retired = version, state, retired
+		return v
+	}
+	views := []download.View{view("1.0.0", "complete", false), view("1.0.0", "complete", true), view("1.0.0", "failed", true)}
+	for _, state := range []string{"queued", "downloading", "resuming", "retry_wait", "verifying", "interrupted", "failed", "invalid", "complete"} {
+		views = append(views, view("2.0.0", state, false))
+	}
+	got := versionFiles(views)
+	if got["1.0.0"] != (versionFilesDTO{Complete: 1, Retired: 2}) || got["2.0.0"] != (versionFilesDTO{Complete: 1, InProgress: 5, Interrupted: 1, Failed: 2}) || len(got) != 2 {
+		t.Fatal(got)
 	}
 }
 

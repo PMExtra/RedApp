@@ -59,6 +59,7 @@ export function version(overrides: Overrides<Schema<"Version">> = {}): Schema<"V
     first_seen: CREATED,
     requests: 42,
     downstream_bytes: 1024 * 1024 * 80,
+    files: { complete: 1, in_progress: 0, interrupted: 0, failed: 0, retired: 0 },
     ...overrides,
   };
 }

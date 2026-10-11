@@ -7120,7 +7120,7 @@ components:
     Version:
       type: object
       additionalProperties: false
-      required: [version, first_seen, requests, downstream_bytes]
+      required: [version, first_seen, requests, downstream_bytes, files]
       properties:
         version:
           type: string
@@ -7135,6 +7135,34 @@ components:
         downstream_bytes:
           type: integer
           format: int64
+          minimum: 0
+        files:
+          $ref: '#/components/schemas/VersionFiles'
+    VersionFiles:
+      type: object
+      additionalProperties: false
+      required: [complete, in_progress, interrupted, failed, retired]
+      description: |
+        Stored generations of the version's files (the `Resource` items of `listResources?version=`) by state.
+        Generations waiting for deletion only count in `retired`; the other counts exclude them.
+      properties:
+        complete:
+          type: integer
+          minimum: 0
+        in_progress:
+          type: integer
+          minimum: 0
+          description: '`queued`, `downloading`, `resuming`, `retry_wait` and `verifying`.'
+        interrupted:
+          type: integer
+          minimum: 0
+          description: Partial copies left by a stopped download or a restart; the next read resumes them.
+        failed:
+          type: integer
+          minimum: 0
+          description: '`failed` and `invalid`.'
+        retired:
+          type: integer
           minimum: 0
     VersionPage:
       type: object
