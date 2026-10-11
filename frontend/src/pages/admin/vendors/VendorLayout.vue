@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { Download } from "@lucide/vue";
+import { Download, Ellipsis } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink, RouterView, useRoute } from "vue-router";
 import { EnabledSwitch, useVendor } from "@/features/directory";
@@ -13,6 +13,8 @@ import {
   AsyncState,
   Badge,
   Button,
+  DropdownMenu,
+  DropdownMenuItem,
   EmptyState,
   EntityIcon,
   NavTabs,
@@ -23,7 +25,7 @@ import {
 
 /**
  * Vendor header (name, state, decorative logo) and the vendor tabs with the
- * enable switch and export at the tab row's end.
+ * enable switch and a menu with export at the tab row's end.
  */
 const { t, locale } = useI18n();
 const localized = useLocalized();
@@ -100,9 +102,16 @@ const tabs = computed<NavTabItem[]>(() => [
           <NavTabs :items="tabs" :label="t('adminShell.tabs.label')">
             <template v-if="!vendor.data.value.deleted_at" #end>
               <EnabledSwitch :entity="vendor.data.value" />
-              <Button size="sm" @click="exporting = true">
-                <Download aria-hidden="true" /> {{ t("exchange.export.action") }}
-              </Button>
+              <DropdownMenu>
+                <template #trigger>
+                  <Button size="sm" icon :aria-label="t('directory.moreActions')">
+                    <Ellipsis aria-hidden="true" />
+                  </Button>
+                </template>
+                <DropdownMenuItem @select="exporting = true">
+                  <Download aria-hidden="true" /> {{ t("exchange.export.action") }}
+                </DropdownMenuItem>
+              </DropdownMenu>
             </template>
           </NavTabs>
           <RouterView />

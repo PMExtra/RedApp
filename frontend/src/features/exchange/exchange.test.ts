@@ -179,13 +179,15 @@ describe("configuration export", () => {
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
 
     const { user } = await renderAdminPage("/admin/vendors/example/apps/tools/admin-notes");
-    await user.click(await screen.findByRole("button", { name: "Export configuration" }));
+    await user.click(await screen.findByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Export configuration" }));
     let dialog = await screen.findByRole("dialog", { name: "Export example/tools" });
     expect(within(dialog).getByRole("checkbox", { name: "Include admin notes" })).not.toBeChecked();
     await user.click(within(dialog).getByRole("checkbox", { name: "Include admin notes" }));
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
 
-    await user.click(screen.getByRole("button", { name: "Export configuration" }));
+    await user.click(await screen.findByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Export configuration" }));
     dialog = await screen.findByRole("dialog", { name: "Export example/tools" });
     expect(within(dialog).getByRole("checkbox", { name: "Include admin notes" })).not.toBeChecked();
     await user.click(within(dialog).getByRole("button", { name: "Download ZIP" }));
@@ -222,7 +224,8 @@ describe("application copy", () => {
       });
     expect(within(await categoryRow()).getByText("2")).toBeInTheDocument();
     await router.push("/admin/vendors/example/apps/tools/admin-notes");
-    await user.click(await screen.findByRole("button", { name: "Copy application" }));
+    await user.click(await screen.findByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Copy application" }));
     const dialog = await screen.findByRole("dialog", { name: "Copy example/tools" });
     // Without a template only an independent copy is possible.
     expect(within(dialog).getByRole("radio", { name: /Keep template link/ })).toBeDisabled();
@@ -268,7 +271,8 @@ describe("application copy failures", () => {
       }),
     );
     const { user } = await renderAdminPage("/admin/vendors/example/apps/tools/admin-notes");
-    await user.click(await screen.findByRole("button", { name: "Copy application" }));
+    await user.click(await screen.findByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Copy application" }));
     const dialog = await screen.findByRole("dialog", { name: "Copy example/tools" });
     const id = within(dialog).getByLabelText(/^New application ID/);
     await user.type(id, "tools-canary");

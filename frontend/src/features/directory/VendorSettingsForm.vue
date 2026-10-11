@@ -1,89 +1,46 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { z } from "zod";
 import {
   FieldReset,
-  isEmptyPatch,
-  OverlayFormActions,
+  OverlaySectionCard,
   TemplateMissingAlert,
-  useOverlayForm,
   useVendorConfiguration,
   useVendorConfigurationPatch,
-  type VendorConfigurationPatch,
 } from "@/features/configuration";
-import { ProxyFields } from "@/features/proxy";
-import { isApiError } from "@/shared/api";
-import { toast } from "@/shared/lib";
-import { AsyncState, Card, RevisionConflictAlert } from "@/shared/ui";
+import { AsyncState } from "@/shared/ui";
 import IconField from "./IconField.vue";
 import LocalizedTextFields from "./LocalizedTextFields.vue";
+import ProxyCard from "./ProxyCard.vue";
 import type { Vendor } from "./queries";
-import { descriptionSchema, iconSchema, nameSchema, proxySchema } from "./schemas";
+import { descriptionSchema, iconSchema, nameSchema } from "./schemas";
 
-/** Vendor presentation and proxy (the vendor configuration overlay). */
+/**
+ * Vendor details, logos and proxy: three cards over the vendor configuration
+ * overlay, each saved on its own.
+ */
 const props = defineProps<{ vendor: Vendor }>();
 const { t } = useI18n();
+const vendorId = () => props.vendor.id;
 
-const PATHS = [
-  "name.en",
-  "name.zh-CN",
-  "description.en",
-  "description.zh-CN",
-  "icon",
-  "localized_icons.en",
-  "localized_icons.zh-CN",
-  "proxy",
-] as const;
-
-const schema = z.object({
-  name: nameSchema,
-  description: descriptionSchema,
+const DETAILS_PATHS = ["name.en", "name.zh-CN", "description.en", "description.zh-CN"];
+const detailsSchema = z.object({ name: nameSchema, description: descriptionSchema });
+const LOGO_PATHS = ["icon", "localized_icons.en", "localized_icons.zh-CN"];
+const logosSchema = z.object({
   icon: iconSchema,
   localized_icons: z.object({ en: iconSchema, "zh-CN": iconSchema }),
-  proxy: proxySchema,
 });
 
-const configuration = useVendorConfiguration(() => props.vendor.id);
-const overlay = useOverlayForm({
-  configuration: configuration.data,
-  paths: PATHS,
-  schema,
-});
-const save = useVendorConfigurationPatch(() => props.vendor.id, configuration.data, {
-  handledCodes: ["PROXY_REDACTED_MISMATCH"],
-});
-const { form } = overlay;
-const [icon] = form.defineField("icon");
-const [iconEn] = form.defineField("localized_icons.en");
-const [iconZh] = form.defineField("localized_icons.zh-CN");
-const [proxy] = form.defineField("proxy");
+const configuration = useVendorConfiguration(vendorId);
+const data = computed(() => configuration.data.value);
+const reloading = computed(() => configuration.isFetching.value);
 const readOnly = computed(() => props.vendor.deleted_at !== null);
-// The proxy URL is a nested value of one field; its errors are shown here.
-const proxyServerError = ref<string>();
-watch(proxy, () => (proxyServerError.value = undefined), { deep: true });
-const proxyError = computed(() => {
-  if (proxyServerError.value) return proxyServerError.value;
-  const value = proxy.value;
-  const missing = value.mode === "url" && !value.url?.trim();
-  return form.submitCount.value > 0 && missing ? t("directory.validation.proxyUrl") : undefined;
-});
-
-const submit = form.handleSubmit(async (values) => {
-  const patch = overlay.patch(values);
-  if (isEmptyPatch(patch)) {
-    toast({ title: t("configuration.nothingToSave") });
-    return;
-  }
-  try {
-    const saved = await save.mutateAsync(patch as VendorConfigurationPatch);
-    overlay.load(saved);
-    toast({ tone: "success", title: t("configuration.saved") });
-  } catch (error) {
-    if (isApiError(error, "PROXY_REDACTED_MISMATCH")) {
-      proxyServerError.value = t("errors.codes.PROXY_REDACTED_MISMATCH");
-    }
-  }
+// One mutation per card: saving and conflicts stay per card.
+const detailsSave = useVendorConfigurationPatch(vendorId, configuration.data);
+const logosSave = useVendorConfigurationPatch(vendorId, configuration.data);
+const networkSave = useVendorConfigurationPatch(vendorId, configuration.data, {
+  handledCodes: ["PROXY_REDACTED_MISMATCH"],
 });
 </script>
 
@@ -93,109 +50,107 @@ const submit = form.handleSubmit(async (values) => {
     :error="configuration.error.value"
     @retry="configuration.refetch()"
   >
-    <form class="flex flex-col gap-6" novalidate @submit.prevent="submit">
-      <TemplateMissingAlert :missing="configuration.data.value?.template_missing" />
-      <RevisionConflictAlert
-        v-if="save.hasConflict.value"
-        :reloading="configuration.isFetching.value"
-        @reload="save.reload()"
-      />
+    <div class="flex flex-col gap-6">
+      <TemplateMissingAlert :missing="data?.template_missing" />
 
-      <Card :title="t('directory.sections.details')">
-        <div class="flex flex-col gap-5">
-          <dl class="text-sm">
-            <dt class="text-muted">{{ t("directory.fields.vendorId") }}</dt>
-            <dd class="font-mono">{{ vendor.id }}</dd>
-          </dl>
-          <p v-if="overlay.linked.value" class="text-sm text-muted">
-            {{ t("configuration.linkedHint") }}
-          </p>
-          <LocalizedTextFields
-            :disabled="readOnly"
-            :reset-binding="overlay.resetBinding"
-            @reset="overlay.reset"
-          />
-        </div>
-      </Card>
+      <OverlaySectionCard
+        v-slot="{ section }"
+        :title="t('directory.sections.details')"
+        :configuration="data"
+        :reloading="reloading"
+        :paths="DETAILS_PATHS"
+        :schema="detailsSchema"
+        :save="detailsSave"
+        :read-only="readOnly"
+      >
+        <dl class="text-sm">
+          <dt class="text-muted">{{ t("directory.fields.vendorId") }}</dt>
+          <dd class="font-mono">{{ vendor.id }}</dd>
+        </dl>
+        <p v-if="section.linked.value" class="text-sm text-muted">
+          {{ t("configuration.linkedHint") }}
+        </p>
+        <LocalizedTextFields
+          :disabled="readOnly"
+          :reset-binding="section.resetBinding"
+          @reset="section.reset"
+        />
+      </OverlaySectionCard>
 
-      <Card :title="t('directory.sections.logos')" :description="t('directory.icon.vendorHint')">
+      <OverlaySectionCard
+        v-slot="{ section }"
+        :title="t('directory.sections.logos')"
+        :description="t('directory.icon.vendorHint')"
+        :configuration="data"
+        :reloading="reloading"
+        :paths="LOGO_PATHS"
+        :schema="logosSchema"
+        :save="logosSave"
+        :read-only="readOnly"
+      >
         <fieldset class="grid gap-4 sm:grid-cols-3" :disabled="readOnly">
           <legend class="sr-only">{{ t("directory.sections.logos") }}</legend>
           <IconField
-            v-model="icon"
+            :model-value="section.form.values.icon"
             :label="t('directory.icon.defaultLogo')"
             :empty-text="t('directory.icon.none')"
             variant="logo"
             :disabled="readOnly"
+            @update:model-value="(value: string) => section.form.setFieldValue('icon', value)"
           >
             <template #reset>
               <FieldReset
-                v-bind="overlay.resetBinding('icon')"
+                v-bind="section.resetBinding('icon')"
                 :disabled="readOnly"
-                @reset="overlay.reset('icon')"
+                @reset="section.reset('icon')"
               />
             </template>
           </IconField>
           <IconField
-            v-model="iconEn"
+            :model-value="section.form.values.localized_icons.en"
             :label="t('directory.icon.englishLogo')"
             :empty-text="t('directory.icon.usesDefault')"
             variant="logo"
             :disabled="readOnly"
+            @update:model-value="
+              (value: string) => section.form.setFieldValue('localized_icons.en', value)
+            "
           >
             <template #reset>
               <FieldReset
-                v-bind="overlay.resetBinding('localized_icons.en')"
-                @reset="overlay.reset('localized_icons.en')"
+                v-bind="section.resetBinding('localized_icons.en')"
+                :disabled="readOnly"
+                @reset="section.reset('localized_icons.en')"
               />
             </template>
           </IconField>
           <IconField
-            v-model="iconZh"
+            :model-value="section.form.values.localized_icons['zh-CN']"
             :label="t('directory.icon.chineseLogo')"
             :empty-text="t('directory.icon.usesDefault')"
             variant="logo"
             :disabled="readOnly"
+            @update:model-value="
+              (value: string) => section.form.setFieldValue('localized_icons.zh-CN', value)
+            "
           >
             <template #reset>
               <FieldReset
-                v-bind="overlay.resetBinding('localized_icons.zh-CN')"
-                @reset="overlay.reset('localized_icons.zh-CN')"
+                v-bind="section.resetBinding('localized_icons.zh-CN')"
+                :disabled="readOnly"
+                @reset="section.reset('localized_icons.zh-CN')"
               />
             </template>
           </IconField>
         </fieldset>
-      </Card>
+      </OverlaySectionCard>
 
-      <Card :title="t('directory.sections.network')">
-        <div class="flex items-start gap-2">
-          <div class="min-w-0 flex-1">
-            <ProxyFields
-              v-model="proxy"
-              allow-inherit
-              :effective="configuration.data.value?.proxy_effective"
-              :url-error="proxyError"
-              :disabled="readOnly"
-            />
-          </div>
-          <FieldReset
-            v-bind="overlay.resetBinding('proxy')"
-            :disabled="readOnly"
-            @reset="overlay.reset('proxy')"
-          />
-        </div>
-      </Card>
-
-      <div
-        v-if="!readOnly"
-        class="sticky bottom-0 z-sticky -mx-1 rounded-lg border border-border bg-surface px-4 py-3 shadow-md"
-      >
-        <OverlayFormActions
-          :dirty="overlay.dirty.value"
-          :saving="save.isPending.value"
-          @discard="overlay.discard()"
-        />
-      </div>
-    </form>
+      <ProxyCard
+        :configuration="data"
+        :reloading="reloading"
+        :save="networkSave"
+        :read-only="readOnly"
+      />
+    </div>
   </AsyncState>
 </template>

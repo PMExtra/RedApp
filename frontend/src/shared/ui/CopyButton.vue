@@ -1,13 +1,20 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref } from "vue";
+import { nextTick, onBeforeUnmount, ref, type Component } from "vue";
 import { Check, Copy } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "@/shared/lib/toast";
 import Button from "./Button.vue";
 
 const props = withDefaults(
-  defineProps<{ text: string; label?: string; size?: "sm" | "md"; showLabel?: boolean }>(),
-  { size: "sm" },
+  defineProps<{
+    text: string;
+    label?: string;
+    size?: "sm" | "md";
+    showLabel?: boolean;
+    /** Glyph before copying (for example Share2 for "copy link to share"). */
+    icon?: Component;
+  }>(),
+  { size: "sm", icon: () => Copy },
 );
 const { t } = useI18n();
 const copied = ref(false);
@@ -45,7 +52,7 @@ onBeforeUnmount(() => clearTimeout(timer));
       @click="copy"
     >
       <Check v-if="copied" aria-hidden="true" class="text-success" />
-      <Copy v-else aria-hidden="true" />
+      <component :is="icon" v-else aria-hidden="true" />
       <span v-if="showLabel">{{
         copied ? t("ui.copy.copied") : (label ?? t("ui.copy.copy"))
       }}</span>

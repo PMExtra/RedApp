@@ -31,6 +31,7 @@ export default {
       firstSeen: "first seen {time}",
       versionUnknown: "No version seen yet",
       instructions: "Usage instructions",
+      share: "Copy link to share",
     },
     hosted: {
       title: "Downloads",

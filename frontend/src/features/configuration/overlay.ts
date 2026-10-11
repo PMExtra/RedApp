@@ -1,4 +1,4 @@
-import { computed, ref, toValue, watch, type MaybeRefOrGetter } from "vue";
+import { computed, ref, toValue, watch, type MaybeRefOrGetter, type Ref } from "vue";
 import { useForm } from "vee-validate";
 import type { z } from "zod";
 import type { Schema } from "@/shared/api";
@@ -200,4 +200,12 @@ export function useOverlayForm<Values extends Record<string, unknown>>(
 /** `true` when a patch would change nothing. */
 export function isEmptyPatch(patch: OverlayPatch): boolean {
   return Object.keys(patch.set).length === 0 && patch.unset.length === 0;
+}
+
+/** The PATCH mutation an independently saved configuration card uses. */
+export interface SectionSave<Patch> {
+  mutateAsync: (body: Patch) => Promise<OverlayConfiguration>;
+  isPending: Readonly<Ref<boolean>>;
+  hasConflict: Readonly<Ref<boolean>>;
+  reload: () => Promise<void>;
 }

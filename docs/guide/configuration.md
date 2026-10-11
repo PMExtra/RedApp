@@ -171,19 +171,21 @@ RedApp ships built-in presets for vendors, applications and categories. They are
 - A preset-based vendor or application stores only the fields you changed (overrides). All other fields follow the preset and pick up preset updates when you upgrade RedApp.
 - A value equal to the preset, an empty string and an empty list still count as your own override.
 - English and Chinese texts are separate fields. Lists (sources, cache rules, categories, tags) and the proxy, prewarm and retention settings are each replaced as a whole.
-- Built-in vendors and applications cannot be deleted. Disable them instead.
+- Built-in vendors and applications cannot be deleted (their delete button is disabled). Disable them instead.
 - A category cannot be renamed to a name that another category already uses in either language (ignoring case).
 
 ### Resetting a field
 
-In the editor, a **Reset** button appears next to a field only when the field has an override or an unsaved edit.
+In the editor, a **Reset** button appears at the end of a field's label only when the field has an override or an unsaved edit.
 
 1. Click **Reset**. The draft shows the preset value.
-2. Click **Save**. The override is removed, and the field follows the preset again.
+2. Click **Save** in the same card. The override is removed, and the field follows the preset again.
 
 Reset does not change the enabled state, private notes, IDs or provider. It never deletes cached files, hosted files or history.
 
 ### Saving and conflicts
+
+Each card of a settings page (for example details, upstream and network) has its own **Save** and sends only its own fields; unsaved edits in other cards are kept.
 
 Every save carries the revision that the editor loaded. If someone else saved in between, the save is rejected and your draft is kept. Reload to see the latest values before saving again.
 
@@ -193,7 +195,7 @@ Use these features to move configuration between RedApp instances or to duplicat
 
 ### Export
 
-Export creates a ZIP file from a vendor (optionally with its applications) or an application. Choose a mode:
+Export creates a ZIP file from a vendor (optionally with its applications) or an application. Open it from the **⋯** menu next to the enable switch of the vendor or application page. Choose a mode:
 
 - **Linked** keeps the preset reference and only your overrides.
 - **Independent** writes the complete effective configuration without a preset reference.
@@ -237,7 +239,7 @@ A preview expires after 10 minutes, and at most 8 previews are kept. Previews ar
 
 ### Copy
 
-**Copy** on an application page creates a new application from an existing one, in the same or another vendor.
+**Copy application** in the **⋯** menu of an application page creates a new application from an existing one, in the same or another vendor.
 
 - The copy is disabled and has a new internal identity.
 - No cached files, hosted files, history or tasks are copied.

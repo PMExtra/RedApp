@@ -159,7 +159,8 @@ const save = useRevisionedMutation({
 - 以某个 revision 为条件、但响应不是该资源的写操作（如保留策略的预览以配置 revision 为 `If-Match`）同样用 `useRevisionedMutation`，不传 `queryKey`；冲突时显示 `RevisionConflictAlert`，重新加载由页面自己读取基线并调用 `dismissConflict()`。
 - `ifMatch(revision)` / `ifMatchHeader(resource)` / `revisionFromEtag(etag)` 处理 `"7"` 格式。
 - 应用和厂商的配置覆盖是同一个 revision 资源，所有编辑区块必须通过 `@/features/configuration` 的 `useAppConfiguration` / `useAppConfigurationPatch` 读写，否则一个区块保存后其他区块会 409。
-- 配置覆盖表单用 `useOverlayForm({ configuration, paths, schema })`：草稿只含 `paths` 中的字段，未修改时跟随服务端，有修改时（含 409 重新加载后）保留；`patch(values)` 只包含改过的字段，`reset(path)` 恢复模板值并在原值为覆盖时发送 `unset`；保存成功后调用 `load(响应)`。`resetBinding(path)` 直接绑定到 `FieldReset`。
+- 配置覆盖表单用 `useOverlayForm({ configuration, paths, schema })`：草稿只含 `paths` 中的字段，未修改时跟随服务端，有修改时（含 409 重新加载后）保留；`patch(values)` 只包含改过的字段，`reset(path)` 恢复模板值并在原值为覆盖时发送 `unset`；保存成功后调用 `load(响应)`。`resetBinding(path)` 直接绑定到 `FieldReset`，放在 `Field`/`FormField` 的 `label-end` 插槽（标签行固定 24px 高，按钮出现与否不改变布局）。
+- 设置页按卡片独立保存：`OverlaySectionCard`（`paths`、`schema`、该卡片自己的 `save` 变更）在自身组件内创建表单，渲染冲突提示与保存栏，并通过插槽 `section` 暴露 `useOverlayForm` 的结果。vee-validate 每个组件只提供一个表单，所以同一组件里不能放多个 `useOverlayForm` 字段表单。
 - 不是字段表单的编辑器（规则列表、保留与预热策略）用 `useOverlayDraft(configuration, read)`：`read(spec)` 把配置映射为各路径的草稿值，`patch` 给出 `set`/`unset`，`restore(path)` 恢复模板值；调用方自己做校验并安装 `useDirtyGuard(draft.dirty)`。
 - 上传需要进度时用 `uploadWithProgress()`（XHR，自动加 CSRF，错误同样是 `ApiError`）。
 

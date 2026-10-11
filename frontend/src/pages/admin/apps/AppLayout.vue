@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { CopyPlus, Download, ExternalLink } from "@lucide/vue";
+import { CopyPlus, Download, Ellipsis, ExternalLink } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
-import { useBootstrap } from "@/features/bootstrap";
 import {
   appRoute,
   appTabFromRoute,
@@ -18,13 +17,14 @@ import {
 import { CopyAppDialog, ExportDialog } from "@/features/exchange";
 import { isApiError } from "@/shared/api";
 import { useLocalized } from "@/shared/i18n";
-import { publicUrl, useDocumentTitle } from "@/shared/lib";
+import { useDocumentTitle } from "@/shared/lib";
 import {
   Alert,
   AsyncState,
   Badge,
   Button,
-  CopyButton,
+  DropdownMenu,
+  DropdownMenuItem,
   EmptyState,
   EntityIcon,
   NavTabs,
@@ -34,8 +34,9 @@ import {
 } from "@/shared/ui";
 
 /**
- * Application header (icon, state, public link, download URL) and the tab
- * host; the tab row's end holds the enable switch, export and copy. Tabs follow the provider: files for `hosted`; cache and
+ * Application header (icon, state, public link) and the tab host; the tab
+ * row's end holds the enable switch and a menu with export and copy. Tabs
+ * follow the provider: files for `hosted`; cache and
  * metrics for `http-cache`, `codex` and `claude-code`; versions for `codex`
  * and `claude-code`. A tab the provider lacks shows "not available" instead.
  */
@@ -48,7 +49,6 @@ const appId = computed(() => String(route.params.app));
 const app = useApp(vendorId, appId);
 const vendor = useVendor(vendorId);
 const providers = useProviders();
-const bootstrap = useBootstrap();
 const exporting = ref(false);
 const copying = ref(false);
 
@@ -71,9 +71,6 @@ const published = computed(() =>
   app.data.value ? isPublished(app.data.value, vendor.data.value) : false,
 );
 const publicPath = computed(() => `/${vendorId.value}/${appId.value}`);
-const downloadUrl = computed(() =>
-  publicUrl(bootstrap.data.value?.public_url ?? window.location.origin, `${publicPath.value}/`),
-);
 
 const breadcrumbs = computed<Crumb[]>(() => [
   { label: t("adminShell.titles.vendors"), to: { name: "admin-vendors" } },
@@ -157,20 +154,11 @@ watch(
             <Badge v-if="app.data.value.builtin_template">{{ t("directory.builtin") }}</Badge>
           </template>
           <template #actions>
-            <template v-if="published">
-              <Button as-child>
-                <a :href="publicPath" target="_blank" rel="noopener">
-                  <ExternalLink aria-hidden="true" /> {{ t("directory.app.publicPage") }}
-                </a>
-              </Button>
-              <CopyButton
-                v-if="app.data.value.provider !== 'info'"
-                :text="downloadUrl"
-                :label="t('directory.app.copyUrl')"
-                show-label
-                size="md"
-              />
-            </template>
+            <Button v-if="published" as-child>
+              <a :href="publicPath" target="_blank" rel="noopener">
+                <ExternalLink aria-hidden="true" /> {{ t("directory.app.publicPage") }}
+              </a>
+            </Button>
           </template>
         </PageHeader>
         <Alert v-if="app.data.value.deleted_at" tone="warning">
@@ -179,14 +167,19 @@ watch(
         <NavTabs :items="tabs" :label="t('adminShell.tabs.label')">
           <template v-if="!app.data.value.deleted_at" #end>
             <EnabledSwitch :entity="app.data.value" />
-            <div class="flex gap-2">
-              <Button size="sm" @click="exporting = true">
+            <DropdownMenu>
+              <template #trigger>
+                <Button size="sm" icon :aria-label="t('directory.moreActions')">
+                  <Ellipsis aria-hidden="true" />
+                </Button>
+              </template>
+              <DropdownMenuItem @select="exporting = true">
                 <Download aria-hidden="true" /> {{ t("exchange.export.action") }}
-              </Button>
-              <Button size="sm" @click="copying = true">
+              </DropdownMenuItem>
+              <DropdownMenuItem @select="copying = true">
                 <CopyPlus aria-hidden="true" /> {{ t("exchange.copy.action") }}
-              </Button>
-            </div>
+              </DropdownMenuItem>
+            </DropdownMenu>
           </template>
         </NavTabs>
         <RouterView v-if="tabAvailable" />

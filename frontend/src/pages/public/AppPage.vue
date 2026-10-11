@@ -1,16 +1,21 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { Share2 } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink, useRoute } from "vue-router";
+import { useBootstrap } from "@/features/bootstrap";
 import { AppVersion, DownloadPrefix, HostedFiles, usePublicApp } from "@/features/catalog";
 import { InstructionsDocument } from "@/features/instructions";
 import { isApiError } from "@/shared/api";
 import { useLocalized, type Locale } from "@/shared/i18n";
-import { useDocumentTitle } from "@/shared/lib";
-import { AsyncState, Card, EntityIcon, PageHeader, Skeleton } from "@/shared/ui";
+import { publicUrl, useDocumentTitle } from "@/shared/lib";
+import { AsyncState, Card, CopyButton, EntityIcon, PageHeader, Skeleton } from "@/shared/ui";
 import NotFoundPage from "./NotFoundPage.vue";
 
-/** `/{vendor}/{app}`: identity, version, usage instructions and downloads. */
+/**
+ * `/{vendor}/{app}`: identity, version, usage instructions and downloads. The
+ * share button copies the page link (the only share target for now).
+ */
 const { t, locale } = useI18n();
 const localized = useLocalized();
 const route = useRoute();
@@ -18,6 +23,13 @@ const vendor = computed(() => (typeof route.params.vendor === "string" ? route.p
 const appId = computed(() => (typeof route.params.app === "string" ? route.params.app : ""));
 const query = usePublicApp(vendor, appId);
 const app = computed(() => query.data.value);
+const bootstrap = useBootstrap();
+const pageUrl = computed(() =>
+  publicUrl(
+    bootstrap.data.value?.public_url ?? window.location.origin,
+    `/${vendor.value}/${appId.value}`,
+  ),
+);
 
 const notFound = computed(
   () => isApiError(query.error.value) && query.error.value.code === "APPLICATION_NOT_FOUND",
@@ -76,6 +88,9 @@ const prefix = computed(
       >
         <template #media>
           <EntityIcon :src="app.icon" size="xl" />
+        </template>
+        <template #actions>
+          <CopyButton :text="pageUrl" :icon="Share2" :label="t('catalog.app.share')" size="md" />
         </template>
         <template v-if="capabilities?.versions || app.categories.length" #meta>
           <AppVersion :app="app" />

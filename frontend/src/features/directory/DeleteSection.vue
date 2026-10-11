@@ -10,7 +10,8 @@ import { useDeleteApp, useDeleteVendor, type App, type Vendor } from "./queries"
 
 /**
  * Permanent deletion of a custom vendor or application, after confirmation.
- * Built-in items cannot be deleted; the section explains that instead.
+ * Built-in items cannot be deleted: the button is disabled and the section
+ * explains why.
  */
 const props = defineProps<{ entity: Vendor | App }>();
 const { t } = useI18n();
@@ -69,7 +70,8 @@ async function remove(): Promise<void> {
           {{ t(isApp ? "directory.delete.appWarning" : "directory.delete.vendorWarning") }}
         </template>
       </p>
-      <Button v-if="!builtin" variant="danger" :loading="pending" @click="remove">
+      <!-- Built-in items keep the button, disabled, so the action stays discoverable. -->
+      <Button variant="danger" :disabled="builtin" :loading="pending" @click="remove">
         <Trash2 aria-hidden="true" />
         {{ t(isApp ? "directory.delete.appAction" : "directory.delete.vendorAction") }}
       </Button>

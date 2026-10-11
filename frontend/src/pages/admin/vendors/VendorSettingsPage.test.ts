@@ -5,6 +5,13 @@ import { recorder, renderAdminPage } from "@/test/directory";
 import { linkedVendorConfiguration, vendor, vendorConfiguration } from "@/test/factories/directory";
 import { apiError, mockApi, noContent, useHandlers } from "@/test/msw";
 
+/** The card (section) titled `title`; each card saves on its own. */
+function card(title: string): ReturnType<typeof within> {
+  const element = screen.getByRole("heading", { name: title }).closest<HTMLElement>("section");
+  if (!element) throw new Error(`no card for ${title}`);
+  return within(element);
+}
+
 const builtin = () =>
   vendor({ id: "openai", name: { en: "OpenAI", "zh-CN": "开放人工智能" }, has_template: true });
 
@@ -47,7 +54,7 @@ describe("vendor settings", () => {
     ).toBeNull();
 
     await user.type(english, " Labs");
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(card("Details").getByRole("button", { name: "Save" }));
 
     expect(await screen.findByText("Changed by someone else")).toBeInTheDocument();
     expect(english).toHaveValue("OpenAI Labs");
@@ -61,16 +68,17 @@ describe("vendor settings", () => {
       expect(screen.queryByText("Changed by someone else")).toBeNull();
     });
     expect(english).toHaveValue("OpenAI Labs");
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(card("Details").getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Changes saved.")).toBeInTheDocument();
     expect(patches.calls[1]).toMatchObject({
       ifMatch: '"4"',
       body: { set: { "name.en": "OpenAI Labs" }, unset: ["name.zh-CN"] },
     });
     expect(screen.getByText(/Built-in vendors cannot be deleted/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete vendor" })).toBeDisabled();
   });
 
-  it("validates names and a proxy URL before saving", async () => {
+  it("validates names and a proxy URL before saving each card", async () => {
     const patches = recorder();
     useHandlers(
       mockApi("get", "/admin/api/vendors/{vendor}", () => vendor()),
@@ -84,22 +92,31 @@ describe("vendor settings", () => {
     const english = await screen.findByLabelText(/^Name \(English\)/);
     await user.clear(english);
     await user.click(screen.getByRole("radio", { name: "Proxy URL" }));
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(card("Details").getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Enter a name.")).toBeInTheDocument();
-    expect(screen.getByText("Enter the proxy URL.")).toBeInTheDocument();
+    await user.click(card("Network").getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Enter the proxy URL.")).toBeInTheDocument();
     expect(patches.calls).toHaveLength(0);
 
+    // Each card sends only its own paths; the other card keeps its draft.
     await user.type(english, "Example Corp");
+    await user.click(card("Details").getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(patches.calls).toHaveLength(1);
+    });
+    expect(patches.calls[0]?.body).toEqual({ set: { "name.en": "Example Corp" }, unset: [] });
+    expect(screen.getByRole("radio", { name: "Proxy URL" })).toBeChecked();
+
     await user.type(
       screen.getByRole("textbox", { name: /^Proxy URL/ }),
       "http://proxy.internal:3128",
     );
-    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(card("Network").getByRole("button", { name: "Save" }));
     await waitFor(() => {
-      expect(patches.calls).toHaveLength(1);
+      expect(patches.calls).toHaveLength(2);
     });
-    expect(patches.calls[0]?.body).toEqual({
-      set: { "name.en": "Example Corp", proxy: { mode: "url", url: "http://proxy.internal:3128" } },
+    expect(patches.calls[1]?.body).toEqual({
+      set: { proxy: { mode: "url", url: "http://proxy.internal:3128" } },
       unset: [],
     });
   });

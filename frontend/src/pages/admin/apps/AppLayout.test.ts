@@ -78,14 +78,15 @@ describe("application tabs", () => {
     expect(screen.queryByRole("button", { name: "Export configuration" })).toBeNull();
   });
 
-  it("links published applications to the public page and copies the download URL", async () => {
+  it("links published applications to the public page", async () => {
     appServer({ provider: "http-cache" });
     await renderAdminPage("/admin/vendors/example/apps/tools/admin-notes");
     expect(await screen.findByRole("link", { name: "Public page" })).toHaveAttribute(
       "href",
       "/example/tools",
     );
-    expect(screen.getByRole("button", { name: "Copy download URL" })).toBeInTheDocument();
+    // The page link is copied from the public page itself (share button).
+    expect(screen.queryByRole("button", { name: "Copy download URL" })).toBeNull();
   });
 
   it("offers no public link while the vendor is disabled", async () => {

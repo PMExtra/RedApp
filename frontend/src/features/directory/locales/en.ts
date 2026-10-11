@@ -4,6 +4,7 @@ export default {
   directory: {
     builtin: "Built-in",
     backToList: "Back to vendors",
+    moreActions: "More actions",
     state: {
       label: "Availability",
       all: "All",
@@ -53,7 +54,6 @@ export default {
         "It may have been deleted. Check the address or open the vendor's applications.",
       backToVendor: "Applications of this vendor",
       publicPage: "Public page",
-      copyUrl: "Copy download URL",
       tabUnavailable: "Not available for this application",
       tabUnavailableHint: "Applications of the {provider} provider do not have this section.",
       openSettings: "Open settings",

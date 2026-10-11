@@ -56,9 +56,9 @@ describe("application settings", () => {
     const patches = settingsServer();
     const { user } = await renderAdminPage("/admin/vendors/example/apps/tools/settings");
 
-    // Upstream: only the changed strategy is sent.
+    // Upstream: only the changed strategy is sent, by the upstream card's own save.
     await user.click(await screen.findByRole("radio", { name: "Round robin" }));
-    await user.click(within(container("Network", "form")).getByRole("button", { name: "Save" }));
+    await user.click(within(container("Upstream")).getByRole("button", { name: "Save" }));
     await waitFor(() => {
       expect(patches.calls).toHaveLength(1);
     });
@@ -111,6 +111,7 @@ describe("application settings", () => {
       body: { set: {}, unset: ["instructions.en"] },
     });
     expect(screen.getByText(/Built-in applications cannot be deleted/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete application" })).toBeDisabled();
   });
 
   it.each([

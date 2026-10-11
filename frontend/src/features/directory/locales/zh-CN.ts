@@ -4,6 +4,7 @@ export default {
   directory: {
     builtin: "内置",
     backToList: "返回厂商列表",
+    moreActions: "更多操作",
     state: {
       label: "可用状态",
       all: "全部",
@@ -50,7 +51,6 @@ export default {
       notFoundHint: "它可能已被删除。请检查地址或打开该厂商的应用列表。",
       backToVendor: "该厂商的应用",
       publicPage: "公开页面",
-      copyUrl: "复制下载地址",
       tabUnavailable: "此应用没有该页面",
       tabUnavailableHint: "{provider} 类型的应用没有此部分。",
       openSettings: "打开设置",

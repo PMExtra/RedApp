@@ -31,6 +31,7 @@ export default {
       firstSeen: "首次发现于{time}",
       versionUnknown: "尚未发现版本",
       instructions: "使用说明",
+      share: "复制链接以分享",
     },
     hosted: {
       title: "下载",
