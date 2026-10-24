@@ -11,3 +11,24 @@ export function isPublicOrigin(value: string): boolean {
     return false;
   }
 }
+
+/** Navigation URLs are also checked authoritatively by the server. */
+export function validNavigationURL(raw: string): boolean {
+  if (!raw || new TextEncoder().encode(raw).length > 2048) return false;
+  try {
+    const decoded = decodeURIComponent(raw);
+    // eslint-disable-next-line no-control-regex
+    if ([raw, decoded].some((value) => /[\s\x00-\x1f\x7f-\x9f\\]/u.test(value))) return false;
+    if (raw.startsWith("/")) return !decoded.startsWith("//");
+    const url = new URL(raw);
+    return (
+      /^https?:\/\/[^/?#@\s]+/.test(raw) &&
+      ["http:", "https:"].includes(url.protocol) &&
+      !!url.hostname &&
+      !url.username &&
+      !url.password
+    );
+  } catch {
+    return false;
+  }
+}

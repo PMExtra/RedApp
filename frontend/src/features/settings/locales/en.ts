@@ -2,6 +2,19 @@ import type { LocaleModule } from "@/shared/i18n";
 
 export default {
   settings: {
+    navigation: {
+      title: "Custom navigation",
+      description:
+        "Up to 20 links, shown in this order on public pages. Titles are shown as entered in every language. Leave empty to keep only the built-in navigation.",
+      label: "Link title",
+      url: "Link URL",
+      newTab: "Open in a new tab",
+      untitled: "Untitled link",
+      remove: "Remove link",
+      add: "Add link",
+      invalidURL:
+        "Enter a root-relative path or an http/https URL without credentials, whitespace or backslashes.",
+    },
     discard: "Discard changes",
     site: {
       title: "Site texts",
