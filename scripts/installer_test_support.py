@@ -3,6 +3,7 @@ import hashlib
 import http.server
 import io
 import json
+from pathlib import Path
 import tarfile
 import threading
 
