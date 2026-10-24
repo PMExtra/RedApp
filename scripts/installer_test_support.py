@@ -3,6 +3,7 @@ import hashlib
 import http.server
 import io
 import json
+from pathlib import Path
 import tarfile
 import threading
 
@@ -194,3 +195,117 @@ def file_state(directory):
         for p in directory.rglob('*')
         if p.is_file()
     }
+
+
+CODEX_DAEMON_CASES = (
+    'absent', 'existing', 'legacy', 'matching', 'stopped', 'downgrade',
+    'failed', 'unsupported', 'malformed', 'external', 'daemon-only', 'deferred', 'background',
+    'latest-newer', 'latest-matching', 'latest-stopped', 'latest-legacy-newer',
+)
+
+
+def prepare_codex_daemon_case(home, env, scenario, existing_binary=None):
+    """Create only inert daemon state; lifecycle commands run in fixture binaries."""
+    daemon_root = home / 'codex-home/packages/app-server-daemon'
+    state = home / 'codex-home/app-server-daemon'
+    if scenario in ('legacy', 'daemon-only', 'deferred', 'latest-legacy-newer'):
+        state.mkdir(parents=True)
+        name = 'app-server.stderr.log' if scenario in ('legacy', 'latest-legacy-newer') else 'daemon.stderr.log'
+        (state / name).write_text('previous daemon launch')
+    elif scenario != 'absent':
+        (daemon_root / 'current').mkdir(parents=True)
+    if scenario == 'latest-legacy-newer':
+        prior = home / 'codex-home/packages/standalone/current/bin'
+        prior.mkdir(parents=True)
+        binary = prior / ('codex.exe' if existing_binary else 'codex')
+        binary.write_bytes(existing_binary or b"#!/bin/sh\necho 'codex-cli 0.159.3'\n")
+        binary.chmod(0o755)
+    version = '0.159.2' if scenario in ('matching', 'malformed', 'external', 'latest-matching') else (
+        '0.159.3' if scenario in ('downgrade', 'latest-newer') else '0.159.1'
+    )
+    status = {'backend': 'external' if scenario == 'external' else 'pid',
+              'managedCodexVersion': version}
+    if scenario not in ('stopped', 'latest-stopped'):
+        status['appServerVersion'] = version
+    if scenario not in ('absent', 'daemon-only', 'deferred', 'background'):
+        daemon_root.mkdir(parents=True, exist_ok=True)
+        (daemon_root / 'auto-update-version').write_text('eligible')
+    env.update(
+        REDAPP_DAEMON_LOG=str(home / 'daemon-calls.txt'),
+        REDAPP_DAEMON_STATUS=json.dumps(status)[:-1] if scenario == 'malformed' else json.dumps(status),
+        REDAPP_DAEMON_RESULT='42' if scenario in ('failed', 'unsupported') else '0',
+        REDAPP_DAEMON_PROBE_RESULT='2' if scenario == 'unsupported' else '0',
+    )
+    if scenario in ('daemon-only', 'deferred'):
+        env['CODEX_INSTALL_DAEMON_ONLY'] = '1'
+    if scenario == 'deferred':
+        env['CODEX_INSTALL_DEFER_SELECTION'] = '1'
+    if scenario == 'background':
+        env['CODEX_INSTALL_IF_LATEST'] = '1'
+
+
+def check_codex_daemon_case(home, result, scenario, executable):
+    """Verify exact lifecycle argv, the installed executable, and partial completion."""
+    log = home / 'daemon-calls.txt'
+    calls = log.read_text().splitlines() if log.exists() else []
+    if scenario == 'latest-legacy-newer':
+        require(not calls and result.returncode != 0, result)
+        require('refusing latest downgrade' in result.stdout + result.stderr, result)
+        prior = home / 'codex-home/packages/standalone/current/bin'
+        require(prior.is_dir() and not executable.exists(), 'legacy selection must remain untouched')
+        return
+    skipped = scenario in ('absent', 'daemon-only', 'deferred', 'background')
+    update = not skipped and scenario not in ('matching', 'latest-matching', 'latest-newer')
+    expected = [] if skipped else [str(executable), 'app-server daemon version']
+    if update:
+        expected += [str(executable), 'app-server daemon update --from-cli --yes']
+    detail = (scenario, calls, expected, result.stdout, result.stderr)
+    require(len(calls) == len(expected) and calls[1::2] == expected[1::2], detail)
+    for command in calls[::2]:
+        # Windows may spell the same file using an 8.3 or long directory name.
+        require(Path(command).is_absolute() and Path(command).samefile(executable), detail)
+    partial = scenario in ('failed', 'unsupported')
+    require((result.returncode != 0) == partial, (scenario, result.stdout, result.stderr))
+    output = " ".join((result.stdout + result.stderr).split())
+    if partial:
+        require('installation partially completed' in output, output)
+        require('installed successfully' not in output, output)
+    if update:
+        require('active sessions may be interrupted' in output, output)
+    if not skipped:
+        require(not (home / 'codex-home/packages/app-server-daemon/auto-update-version').exists())
+        require(executable.exists(), 'CLI must remain installed after daemon sync')
+
+
+CODEX_CONFIG_CASES = {
+    'missing': (None, b'check_for_update_on_startup = false\n'),
+    'table': (b'[profiles.work]\ncheck_for_update_on_startup = true',
+              b'check_for_update_on_startup = false\n[profiles.work]\ncheck_for_update_on_startup = true'),
+    'root': (b'"check_for_update_on_startup" = true # keep\r\n[profile]\r\nmodel="x"',
+             b'"check_for_update_on_startup" = false # keep\r\n[profile]\r\nmodel="x"'),
+    'false': (b'check_for_update_on_startup=false # = true',
+              b'check_for_update_on_startup=false # = true'),
+    'multiline': (b'note = """\n[fake]\ncheck_for_update_on_startup = true\n"""\ncheck_for_update_on_startup=true\n',
+                  b'note = """\n[fake]\ncheck_for_update_on_startup = true\n"""\ncheck_for_update_on_startup=false\n'),
+    'escaped': (b'"\\u0063heck_for_update_on_startup"=true\n', None),
+    'dotted': (b'check_for_update_on_startup.child=true\n', None),
+}
+
+
+def prepare_codex_config_case(home, scenario):
+    """Seed user TOML including table and multiline-string lookalikes."""
+    path = home / 'codex-home/config.toml'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    before, _ = CODEX_CONFIG_CASES[scenario]
+    if before is not None:
+        path.write_bytes(before)
+
+
+def check_codex_config_case(home, result, scenario):
+    """Require exact preservation outside the root setting, including final newline."""
+    before, after = CODEX_CONFIG_CASES[scenario]
+    expected = before if after is None else after
+    require((home / 'codex-home/config.toml').read_bytes() == expected, (scenario, result.stdout, result.stderr))
+    require((result.returncode == 0) == (after is not None), (scenario, result.stdout, result.stderr))
+    if after is None:
+        require('installation partially completed' in ' '.join((result.stdout + result.stderr).split()))

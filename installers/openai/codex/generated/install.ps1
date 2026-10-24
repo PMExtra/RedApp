@@ -466,7 +466,7 @@ function Move-OldStandaloneBinIfApproved {
 
 function Add-JunctionSupportType {
     # Older installer types remain loaded when users rerun irm | iex in one session.
-    if (([System.Management.Automation.PSTypeName]'CodexInstaller.JunctionV2').Type) {
+    if (([System.Management.Automation.PSTypeName]'CodexInstaller.JunctionV3').Type) {
         return
     }
 
@@ -480,7 +480,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace CodexInstaller
 {
-    public static class JunctionV2
+    public static class JunctionV3
     {
         private const uint GENERIC_WRITE = 0x40000000;
         private const uint FILE_SHARE_READ = 0x00000001;
@@ -517,6 +517,35 @@ namespace CodexInstaller
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern uint GetFinalPathNameByHandleW(
             SafeFileHandle file, StringBuilder path, uint length, uint flags);
+
+        // Read the journal entry for the junction itself, never the target.
+        // Unlike a timestamp this changes on an in-place retarget, including away and back.
+        public static string SelectionIdentity(string path)
+        {
+            using (SafeFileHandle handle = CreateFileW(
+                path, 0x80, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                IntPtr.Zero, OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, IntPtr.Zero))
+            {
+                if (handle.IsInvalid) { throw new Win32Exception(Marshal.GetLastWin32Error()); }
+                IntPtr buffer = Marshal.AllocHGlobal(1024);
+                try {
+                    int returned;
+                    // No input requests USN_RECORD_V2. current's filename fits in 1024 bytes.
+                    if (!DeviceIoControl(handle, 0x000900eb, null, 0, buffer, 1024, out returned, IntPtr.Zero)) {
+                        throw new Win32Exception(Marshal.GetLastWin32Error());
+                    }
+                    long usn = Marshal.ReadInt64(buffer, 24);
+                    if (returned < 32 || Marshal.ReadInt16(buffer, 4) != 2 || usn <= 0) {
+                        throw new IOException("No reliable daemon selection journal record.");
+                    }
+                    return Marshal.ReadInt64(buffer, 8).ToString("x")
+                        + " " + usn.ToString("x");
+                } finally {
+                    Marshal.FreeHGlobal(buffer);
+                }
+            }
+        }
 
         public static string ResolveDirectory(string path)
         {
@@ -604,7 +633,7 @@ function Set-JunctionTarget {
     )
 
     Add-JunctionSupportType
-    [CodexInstaller.JunctionV2]::SetTarget($LinkPath, $TargetPath)
+    [CodexInstaller.JunctionV3]::SetTarget($LinkPath, $TargetPath)
 }
 
 function Test-IsJunction {
@@ -635,14 +664,14 @@ function Ensure-Junction {
     $item = Get-Item -LiteralPath $LinkPath -Force
     if (Test-IsJunction -Path $LinkPath) {
         Add-JunctionSupportType
-        $existingTarget = [CodexInstaller.JunctionV2]::ResolveDirectory($LinkPath)
+        $existingTarget = [CodexInstaller.JunctionV3]::ResolveDirectory($LinkPath)
         if (-not [string]::IsNullOrWhiteSpace($InstallerOwnedTargetPrefix)) {
-            $ownedTargetPrefix = [CodexInstaller.JunctionV2]::ResolveDirectory($InstallerOwnedTargetPrefix) + "\"
+            $ownedTargetPrefix = [CodexInstaller.JunctionV3]::ResolveDirectory($InstallerOwnedTargetPrefix) + "\"
             if (-not $existingTarget.StartsWith($ownedTargetPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
                 throw "Refusing to retarget junction at $LinkPath because it is not managed by this installer."
             }
         }
-        if ($existingTarget.Equals([CodexInstaller.JunctionV2]::ResolveDirectory($TargetPath), [System.StringComparison]::OrdinalIgnoreCase)) {
+        if ($existingTarget.Equals([CodexInstaller.JunctionV3]::ResolveDirectory($TargetPath), [System.StringComparison]::OrdinalIgnoreCase)) {
             return
         }
 
@@ -908,6 +937,17 @@ $releaseMetadata = $resolvedRelease.Metadata
 $releaseName = "$resolvedVersion-$target"
 $releaseDir = Join-Path $releasesDir $releaseName
 
+# Legacy daemons share this selection with the CLI. Refuse before changing it.
+if ($Release -eq "latest" -and -not $daemonOnly -and
+    $currentVersion -match '^\d+\.\d+\.\d+$' -and [version]$currentVersion -gt [version]$resolvedVersion -and
+    -not (Get-Item -LiteralPath (Join-Path $codexHome "packages/app-server-daemon/current") -Force -ErrorAction SilentlyContinue)) {
+    foreach ($legacyState in @("app-server.pid", "app-server.stderr.log", "app-server-updater.pid", "app-server-updater.stderr.log")) {
+        if (Get-Item -LiteralPath (Join-Path $codexHome "app-server-daemon/$legacyState") -Force -ErrorAction SilentlyContinue) {
+            throw "RedApp: refusing latest downgrade of shared legacy daemon installation from $currentVersion to $resolvedVersion. Update the mirror or select an explicit release."
+        }
+    }
+}
+
 if (-not [string]::IsNullOrWhiteSpace($currentVersion) -and $currentVersion -ne $resolvedVersion) {
     Write-Step "Updating Codex CLI from $currentVersion to $resolvedVersion"
 } elseif (-not [string]::IsNullOrWhiteSpace($currentVersion)) {
@@ -930,6 +970,7 @@ $installLayout = $assetSelection.InstallLayout
 $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("codex-install-" + [System.Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
 $guardRejected = $false
+$backgroundInstall = $false
 
 try {
     Invoke-WithInstallLock -LockPath $lockPath -Script {
@@ -965,6 +1006,7 @@ try {
             }
         }
         if ($env:CODEX_INSTALL_IF_LATEST -eq "1" -or $env:CODEX_INSTALL_IF_CURRENT -eq "1" -or $oldUpdaterParent) {
+            $script:backgroundInstall = $true
             $previousRelease = if ($oldUpdaterParent -and (Test-Path -LiteralPath $autoUpdateVersion)) {
                 [System.IO.File]::ReadAllText($autoUpdateVersion)
             } else {
@@ -974,7 +1016,7 @@ try {
             $currentTarget = if (Test-Path -LiteralPath $currentDir) { (Get-Item -LiteralPath $currentDir).Target } else { $null }
             if ($Release -ne "latest" -or [string]::IsNullOrEmpty($previousRelease) -or [string]::IsNullOrEmpty($currentTarget) -or
                 -not (Test-Path -LiteralPath (Join-Path $releasesDir $previousRelease)) -or
-                [CodexInstaller.JunctionV2]::ResolveDirectory($currentDir) -ne [CodexInstaller.JunctionV2]::ResolveDirectory((Join-Path $releasesDir $previousRelease))) {
+                [CodexInstaller.JunctionV3]::ResolveDirectory($currentDir) -ne [CodexInstaller.JunctionV3]::ResolveDirectory((Join-Path $releasesDir $previousRelease))) {
                 if ($env:CODEX_INSTALL_IF_CURRENT -eq "1") { throw "Daemon selection changed; retry the update." }
                 $script:guardRejected = $true
                 return
@@ -1063,7 +1105,26 @@ try {
                 throw "The production release does not support daemon-owned packages; the current selection was left unchanged."
             }
         }
+        $previousDirectory = $null
+        if ($daemonOnly -and -not $deferSelection) {
+            Add-JunctionSupportType
+            if (Test-Path -LiteralPath $currentDir) {
+                $previousDirectory = [CodexInstaller.JunctionV3]::ResolveDirectory($currentDir)
+            }
+        }
         Ensure-Junction -LinkPath $currentDir -TargetPath $releaseDir -InstallerOwnedTargetPrefix $releasesDir
+        if ($daemonOnly -and -not $deferSelection -and
+            $previousDirectory -cne [CodexInstaller.JunctionV3]::ResolveDirectory($currentDir)) {
+            try {
+                $previousName = if ($null -eq $previousDirectory) { "" } else { Split-Path -Leaf $previousDirectory }
+                $selectionId = [CodexInstaller.JunctionV3]::SelectionIdentity($currentDir)
+                $history = Join-Path $standaloneRoot "selection-history"
+                [System.IO.File]::WriteAllText("$history.tmp.$PID", "$releaseName`n$previousName`n$selectionId`n")
+                Move-Item -LiteralPath "$history.tmp.$PID" -Destination $history -Force -ErrorAction Stop
+            } catch {
+                Write-WarningStep "Could not record daemon selection; pruning will be skipped."
+            }
+        }
         if (Test-Path -LiteralPath $autoUpdateVersion) {
             Remove-Item -LiteralPath $autoUpdateVersion -Force -ErrorAction Stop
         }
@@ -1137,6 +1198,151 @@ if ($prioritizeVisibleBin) {
 
 Write-Step "Current PowerShell session: codex"
 Write-Step "Future PowerShell windows: open a new PowerShell window and run: codex"
+function Disable-StartupUpdateCheck {
+    $configPath = Join-Path $codexHome "config.toml"
+    $item = Get-Item -LiteralPath $configPath -Force -ErrorAction SilentlyContinue
+    if ($null -ne $item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw "Refusing to replace linked Codex config: $configPath"
+    }
+    $encoding = [Text.UTF8Encoding]::new($false, $true)
+    $before = if ($null -ne $item) { $encoding.GetString([IO.File]::ReadAllBytes($configPath)) } else { "" }
+    $quote = ""
+    $depth = 0
+    $found = $null
+    $keyPattern = '(?:check_for_update_on_startup|"check_for_update_on_startup"|''check_for_update_on_startup'')'
+    foreach ($line in [regex]::Matches($before, '[^\n]*(?:\n|$)')) {
+        $text = $line.Value
+        if ($quote -eq "" -and $depth -eq 0) {
+            if ($text -match '^\s*\[') { break }
+            if ($text -match ('^[ \t]*' + $keyPattern + '[ \t]*[=.]')) {
+                if ($null -ne $found -or $text -notmatch ('^[ \t]*' + $keyPattern + '[ \t]*=[ \t]*(true|false)[ \t]*(?:#[^\r\n]*)?\r?\n?$')) {
+                    throw "Cannot safely edit root update-check setting in $configPath"
+                }
+                $found = $line
+            } elseif ($text -match '^[ \t]*["'']' -and ($text -split '=', 2)[0].Contains('\')) {
+                throw "Cannot safely edit escaped root TOML keys in $configPath"
+            }
+        }
+        for ($i = 0; $i -lt $text.Length; $i++) {
+            $c = $text.Substring($i, 1)
+            $triple = if ($i + 3 -le $text.Length) { $text.Substring($i, 3) } else { "" }
+            if ($quote -ne "") {
+                if ($quote.StartsWith('"') -and $c -eq '\') { $i++; continue }
+                if ($quote.Length -eq 3 -and $triple -eq $quote) {
+                    $i += 2
+                    while ($i + 1 -lt $text.Length -and $text.Substring($i + 1, 1) -eq $c) { $i++ }
+                    $quote = ""
+                } elseif ($quote.Length -eq 1 -and $c -eq $quote) { $quote = "" }
+                continue
+            }
+            if ($c -eq '#') { break }
+            if ($triple -eq '"""' -or $triple -eq "'''") { $quote = $triple; $i += 2 }
+            elseif ($c -eq '"' -or $c -eq "'") { $quote = $c }
+            elseif ($c -eq '[' -or $c -eq '{') { $depth++ }
+            elseif ($c -eq ']' -or $c -eq '}') { $depth-- }
+            if ($depth -lt 0) { throw "Cannot safely edit Codex TOML: $configPath" }
+        }
+        if ($quote.Length -eq 1) { throw "Cannot safely edit Codex TOML: $configPath" }
+    }
+    if ($quote -ne "" -or $depth -ne 0 -or $before.StartsWith([string][char]0xFEFF, [StringComparison]::Ordinal)) {
+        throw "Cannot safely edit Codex TOML: $configPath"
+    }
+    if ($null -eq $found) {
+        $after = "check_for_update_on_startup = false`n" + $before
+    } else {
+        $replacement = [regex]::Replace($found.Value, '^([^=]*=[ \t]*)true', '${1}false')
+        $after = $before.Substring(0, $found.Index) + $replacement + $before.Substring($found.Index + $found.Length)
+    }
+    if ($after -ceq $before) { return }
+    $stage = Join-Path $codexHome (".redapp-config." + [Guid]::NewGuid().ToString("N"))
+    try {
+        [IO.File]::WriteAllText($stage, $after, $encoding)
+        if ($null -ne $item) {
+            if ($encoding.GetString([IO.File]::ReadAllBytes($configPath)) -cne $before) {
+                throw "Codex config changed during installation; retry."
+            }
+            [IO.File]::Replace($stage, $configPath, [System.Management.Automation.Language.NullString]::Value)
+        } else {
+            [IO.File]::Move($stage, $configPath)
+        }
+    } finally {
+        Remove-Item -LiteralPath $stage -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# RedApp: synchronize only an existing daemon during an explicit CLI installation.
+# The installation lock has been released before invoking daemon lifecycle commands.
+if (-not $backgroundInstall -and -not $deferSelection) {
+    try { Disable-StartupUpdateCheck } catch {
+        throw "RedApp: installation partially completed: CLI installed, but disabling startup update checks failed. $($_.Exception.Message)"
+    }
+    $existingDaemon = $false
+    foreach ($artifact in @(
+        "packages/app-server-daemon/current",
+        "app-server-daemon/daemon.pid", "app-server-daemon/daemon.stderr.log",
+        "app-server-daemon/daemon-updater.pid", "app-server-daemon/daemon-updater.stderr.log",
+        "app-server-daemon/app-server.pid", "app-server-daemon/app-server.stderr.log",
+        "app-server-daemon/app-server-updater.pid", "app-server-daemon/app-server-updater.stderr.log"
+    )) {
+        if (Get-Item -LiteralPath (Join-Path $codexHome $artifact) -Force -ErrorAction SilentlyContinue) {
+            $existingDaemon = $true
+            break
+        }
+    }
+    if ($existingDaemon) {
+        try {
+            $daemonMarker = Join-Path $codexHome "packages/app-server-daemon/auto-update-version"
+            if (Test-Path -LiteralPath $daemonMarker) { Remove-Item -LiteralPath $daemonMarker -Force -ErrorAction Stop }
+        } catch {
+            throw "RedApp: installation partially completed: could not disable daemon scheduled updates. $($_.Exception.Message)"
+        }
+        $installedCodex = [System.IO.Path]::GetFullPath((Join-Path $releaseDir "codex.exe"))
+        if ($installLayout -eq "Package") {
+            $installedCodex = [System.IO.Path]::GetFullPath((Join-Path $releaseDir "bin/codex.exe"))
+        }
+        $daemonMatches = $false
+        $daemonStatus = $null
+        try {
+            $daemonStatusText = & $installedCodex app-server daemon version 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                $daemonStatus = ($daemonStatusText -join "`n") | ConvertFrom-Json
+                $daemonMatches = $daemonStatus.backend -eq "pid" -and
+                    $daemonStatus.managedCodexVersion -eq $resolvedVersion -and
+                    $daemonStatus.appServerVersion -eq $resolvedVersion
+            }
+        } catch {
+            # An unsupported or failed passive probe still requires an update attempt.
+        }
+        $keepDaemon = $false
+        if ($Release -eq "latest") {
+            if ($null -eq $daemonStatus) {
+                throw "RedApp: installation partially completed: daemon version could not be checked; refusing a possible downgrade. Retry or select an explicit release."
+            }
+            $knownVersions = @('managedCodexVersion', 'appServerVersion') | ForEach-Object {
+                $property = $daemonStatus.PSObject.Properties[$_]
+                if ($null -ne $property -and $property.Value) { $property.Value }
+            }
+            $keepDaemon = @($knownVersions).Count -eq 0
+            foreach ($version in $knownVersions) {
+                if ($version -notmatch '^\d+\.\d+\.\d+$' -or [version]$version -gt [version]$resolvedVersion) { $keepDaemon = $true }
+            }
+        }
+        if ($keepDaemon) {
+            Write-WarningStep "CLI $resolvedVersion installed; daemon version is newer or cannot be safely compared. Keeping its current package; scheduled official updates are disabled. Select an explicit release to replace it."
+        } elseif ($daemonMatches) {
+            Write-Step "Existing app-server daemon already matches Codex $resolvedVersion"
+        } else {
+            Write-WarningStep "Synchronizing existing app-server daemon from the installed CLI; a running daemon will restart and active sessions may be interrupted."
+            try {
+                & $installedCodex app-server daemon update --from-cli --yes
+                if ($LASTEXITCODE -ne 0) { throw "Daemon update exited with code $LASTEXITCODE." }
+            } catch {
+                throw "RedApp: installation partially completed: CLI $resolvedVersion installed, but app-server daemon synchronization failed. Retry with the installed CLI: & '$installedCodex' app-server daemon update --from-cli --yes. $($_.Exception.Message)"
+            }
+        }
+    }
+}
+
 Write-Host "Codex CLI $resolvedVersion installed successfully."
 
 $codexCommand = Join-Path $visibleBinDir "codex.exe"

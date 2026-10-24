@@ -160,8 +160,10 @@ parse_release_metadata() {
   # so the record boundaries inserted by fold do not change the document.
   LC_ALL=C fold -b -w 4096 | LC_ALL=C awk '
     function finish_string(value) {
-      if (object_depth == 1 && key == "tag_name") {
-        print "tag_name\t" value
+      if (object_depth == 1 &&
+          (key == "tag_name" || key == "version" || key == "target" || key == "entrypoint" ||
+           key == "backend" || key == "managedCodexVersion" || key == "appServerVersion")) {
+        print key "\t" value
       } else if (object_depth == asset_object_depth) {
         if (key == "name") {
           asset_name = value
@@ -650,7 +652,7 @@ release_install_lock() {
   if [ "$lock_kind" = "mkdir" ]; then
     rm -rf "$LOCK_DIR" 2>/dev/null || true
   elif [ "$lock_kind" = "flock" ] || [ "$lock_kind" = "lockf" ]; then
-    exec 9>&- 2>/dev/null || true
+    { exec 9>&-; } 2>/dev/null || true
   fi
   lock_kind=""
 }
@@ -665,6 +667,157 @@ cleanup_stale_install_artifacts() {
     find "$BIN_DIR" -mindepth 1 -maxdepth 1 -name '.codex.*' -exec rm -f {} +
   fi
 }
+
+record_standalone_releases_in_use() {
+  # /proc also catches old clients with no session records. On macOS lsof
+  # checks every open file in the release, including running helper programs.
+  if [ "$os" = "linux" ]; then
+    [ -r /proc/self/mountinfo ] && [ -L /proc/self/exe ] || return 1
+    # hidepid can omit other users' processes entirely; do not assume an
+    # incomplete process listing proves an older release is unused.
+    if grep -E '(^|[ ,])hidepid=[^0, ]' /proc/self/mountinfo >/dev/null; then
+      return 1
+    fi
+    : > "$tmp_dir/in-use" || return 1
+    for process in /proc/[0-9]*; do
+      if executable="$(readlink "$process/exe" 2>/dev/null)"; then
+        printf 'n%s\n' "$executable" >> "$tmp_dir/in-use" || return 1
+      elif [ -d "$process" ]; then
+        # Even same-user ssh-agent/systemd processes may deny exe inspection.
+        # Only an unreadable Codex or bundled helper prevents safe pruning.
+        process_name="$(cat "$process/comm" 2>/dev/null)" || {
+          [ ! -d "$process" ] && continue
+          return 1
+        }
+        # Linux truncates comm to 15 bytes, including the code-mode host.
+        case "$process_name" in
+          codex* | rg | bwrap)
+            # A zombie has no files left open, even if its parent never reaps it.
+            grep -Eq '^State:[[:space:]]*Z' "$process/status" 2>/dev/null && continue
+            [ ! -d "$process" ] && continue
+            return 1
+            ;;
+        esac
+      fi
+    done
+  else
+    # macOS lsof silently omits other users' processes, even with no errors.
+    # ps can still report their executable names. As on Linux, decline to
+    # prune when an uninspectable Codex or helper may be using a release.
+    current_uid="$(id -u)" || return 1
+    ps -axo uid=,comm= > "$tmp_dir/processes" || return 1
+    [ -s "$tmp_dir/processes" ] || return 1
+    while read -r process_uid process_name; do
+      [ "$process_uid" = "$current_uid" ] && continue
+      case "${process_name##*/}" in
+        codex* | rg | bwrap) return 1 ;;
+      esac
+    done < "$tmp_dir/processes"
+    if /usr/sbin/lsof -nP -F n +D "$releases" > "$tmp_dir/in-use" 2> "$tmp_dir/lsof-error"; then
+      :
+    else
+      # lsof returns 1 for an empty result as well as for errors.
+      [ ! -s "$tmp_dir/in-use" ] && [ ! -s "$tmp_dir/lsof-error" ] || return 1
+    fi
+    [ ! -s "$tmp_dir/lsof-error" ] || return 1
+  fi
+}
+
+# Run under the install lock, after the visible command has been verified.
+# Only retire ordinary, manifest-owned packages; never retry a retired tree.
+prune_standalone_releases() (
+  [ ! -L "$CODEX_HOME_DIR/packages" ] &&
+    [ ! -L "$STANDALONE_ROOT" ] && [ ! -L "$RELEASES_DIR" ] || return 1
+  releases="$(cd -P "$RELEASES_DIR" && pwd)" || return 1
+  # Local process inspection cannot establish whether a network home is in
+  # use on another host. df -l excludes remotely mounted filesystems.
+  df -lP "$releases" > /dev/null 2> "$tmp_dir/df-error" || return 1
+  [ ! -s "$tmp_dir/df-error" ] || return 1
+  selected="$(cd -P "$CURRENT_LINK" && pwd)" || return 1
+  history="$(cat "$STANDALONE_ROOT/selection-history")" || return 1
+  previous="$(printf '%s\n' "$history" | sed -n '2p')"
+  case "$previous" in
+    */* | . | ..) return 1 ;;
+  esac
+  identity="$(LC_ALL=C stat -c '%d %i %.9Z' "$CURRENT_LINK" 2>/dev/null ||
+    LC_ALL=C stat -f '%d %i %Fc' "$CURRENT_LINK")" || return 1
+  [ "$selected" = "$releases/${selected##*/}" ] &&
+    [ "$history" = "$(printf '%s\n%s\n%s' "${selected##*/}" "$previous" "$identity")" ] ||
+    return 1
+  record_standalone_releases_in_use || return 1
+  restore_candidate=""
+  # A stopped install must not strand a late-starting release in retirement.
+  trap 'if [ -n "$restore_candidate" ] && [ -d "$retired/release" ] &&
+    [ ! -e "$candidate" ] && [ ! -L "$candidate" ]; then
+    mv "$retired/release" "$candidate" && rmdir "$retired"
+  fi' EXIT
+  trap 'exit 1' HUP INT TERM
+
+  for candidate in "$releases"/*; do
+    [ -d "$candidate" ] && [ ! -L "$candidate" ] &&
+      [ "$candidate" != "$selected" ] && [ "${candidate##*/}" != "$previous" ] || continue
+    grep -F "n$candidate/" "$tmp_dir/in-use" >/dev/null && continue
+    [ -f "$candidate/codex-package.json" ] && [ ! -L "$candidate/codex-package.json" ] || continue
+    metadata="$(parse_release_metadata < "$candidate/codex-package.json")" || continue
+    version="$(printf '%s\n' "$metadata" | awk -F '\t' '$1 == "version" {print $2}')"
+    target="$(printf '%s\n' "$metadata" | awk -F '\t' '$1 == "target" {print $2}')"
+    entrypoint="$(printf '%s\n' "$metadata" | awk -F '\t' '$1 == "entrypoint" {print $2}')"
+    [ "${candidate##*/}" = "$version-$target" ] && [ "$version" != "latest" ] &&
+      [ "$entrypoint" = "bin/codex" ] && [ -f "$candidate/bin/codex" ] || continue
+    validate_version "$version" >/dev/null 2>&1 || continue
+    case "$target" in
+      aarch64-apple-darwin | x86_64-apple-darwin | aarch64-unknown-linux-musl | x86_64-unknown-linux-musl) ;;
+      *) continue ;;
+    esac
+
+    # Reject symlinks (except the installer's own alias), special files and
+    # mounts before rm -r. find -xdev alone would not protect nested mounts.
+    [ "$(readlink "$candidate/codex" 2>/dev/null)" = "bin/codex" ] || continue
+    if ! find "$candidate" -xdev ! -type f ! -type d ! -path "$candidate/codex" -print > "$tmp_dir/unowned"; then
+      continue
+    fi
+    [ ! -s "$tmp_dir/unowned" ] || continue
+    if [ "$os" = "linux" ]; then
+      # mountinfo escapes spaces, tabs, newlines, and backslashes in paths.
+      if ! CODEX_PRUNE_RELEASE="$candidate" LC_ALL=C awk '
+        BEGIN { release = ENVIRON["CODEX_PRUNE_RELEASE"] }
+        { path = $5; gsub(/\\040/, " ", path); gsub(/\\011/, "\t", path)
+          gsub(/\\012/, "\n", path); gsub(/\\134/, "\\", path)
+          if (path == release || index(path, release "/") == 1) found = 1 }
+        END { exit found ? 1 : 0 }
+      ' /proc/self/mountinfo; then
+        continue
+      fi
+    else
+      device="$(stat -f '%d' "$releases")" || return 1
+      if ! find "$candidate" -xdev -exec stat -f '%d' {} + > "$tmp_dir/devices"; then
+        continue
+      fi
+      grep -vxF "$device" "$tmp_dir/devices" >/dev/null && continue
+    fi
+
+    retired="$(mktemp -d "$releases/.retired.XXXXXXXX")" || return 1
+    restore_candidate=1
+    if mv "$candidate" "$retired/release"; then
+      # Block new launches at the original path before the final use check.
+      # Some systems report the old executable path, so check both names.
+      if ! record_standalone_releases_in_use ||
+        grep -F -e "n$candidate/" -e "n$retired/release/" "$tmp_dir/in-use" >/dev/null; then
+        [ ! -e "$candidate" ] && [ ! -L "$candidate" ] || return 1
+        mv "$retired/release" "$candidate" && rmdir "$retired" || return 1
+        restore_candidate=""
+        continue
+      fi
+      # Once proved unused, never restore a possibly partially deleted tree.
+      restore_candidate=""
+      find "$retired" -xdev -depth -delete || return 1
+    else
+      restore_candidate=""
+      rmdir "$retired"
+      return 1
+    fi
+  done
+)
 
 replace_path_with_symlink() {
   link_path="$1"
@@ -1049,6 +1202,24 @@ release_name="$resolved_version-$vendor_target"
 release_dir="$RELEASES_DIR/$release_name"
 current_version="$(current_installed_version)"
 
+# Legacy daemons share this selection with the CLI. Refuse before changing it.
+if [ "$RELEASE" = "latest" ] && [ "$DAEMON_ONLY" != "1" ] &&
+   [ ! -e "$CODEX_HOME_DIR/packages/app-server-daemon/current" ] &&
+   [ ! -L "$CODEX_HOME_DIR/packages/app-server-daemon/current" ]; then
+  for legacy_state in app-server.pid app-server.stderr.log app-server-updater.pid app-server-updater.stderr.log; do
+    if [ -e "$CODEX_HOME_DIR/app-server-daemon/$legacy_state" ] &&
+       awk -v installed="$current_version" -v selected="$resolved_version" 'BEGIN {
+         if (installed !~ /^[0-9]+\.[0-9]+\.[0-9]+$/) exit 1
+         split(installed, a, "."); split(selected, b, ".")
+         for (i=1; i<=3; i++) { if (a[i]+0 > b[i]+0) exit 0; if (a[i]+0 < b[i]+0) exit 1 }
+         exit 1
+       }'; then
+      echo "RedApp: refusing latest downgrade of shared legacy daemon installation from $current_version to $resolved_version. Update the mirror or select an explicit release." >&2
+      exit 1
+    fi
+  done
+fi
+
 if [ -n "$current_version" ] && [ "$current_version" != "$resolved_version" ]; then
   step "Updating Codex CLI from $current_version to $resolved_version"
 elif [ -n "$current_version" ]; then
@@ -1176,7 +1347,27 @@ if [ "$DAEMON_ONLY" = "1" ] && [ "${CODEX_INSTALL_DEFER_SELECTION:-0}" != "1" ];
     exit 1
   fi
 fi
-update_current_link "$release_dir"
+if [ "${CODEX_INSTALL_DEFER_SELECTION:-0}" != "1" ]; then
+  # A no-op must not replace the selection link: history is bound to it.
+  selected_dir="$(cd -P "$release_dir" && pwd)"
+  previous_dir="$(cd -P "$CURRENT_LINK" 2>/dev/null && pwd)" || previous_dir=""
+  if [ "$previous_dir" != "$selected_dir" ]; then
+    update_current_link "$release_dir"
+    if ! (
+      history="$STANDALONE_ROOT/selection-history"
+      # GNU and BSD stat both inspect the link itself by default.
+      selection_id="$(LC_ALL=C stat -c '%d %i %.9Z' "$CURRENT_LINK" 2>/dev/null ||
+        LC_ALL=C stat -f '%d %i %Fc' "$CURRENT_LINK")"
+      printf '%s\n%s\n%s\n' "$release_name" "${previous_dir##*/}" "$selection_id" > "$history.tmp.$$"
+      mv -f "$history.tmp.$$" "$history"
+    ); then
+      warn "Could not record installation selection; pruning will be skipped."
+    fi
+  fi
+else
+  # Do not publish history for a migration until Rust has committed the cutover.
+  update_current_link "$release_dir"
+fi
 rm -f "$AUTO_UPDATE_VERSION"
 if [ "$DAEMON_ONLY" = "1" ]; then
   release_install_lock
@@ -1185,6 +1376,9 @@ fi
 update_visible_command "$release_dir"
 add_to_path
 verify_visible_command
+if ! prune_standalone_releases; then
+  warn "Could not safely inspect old Codex releases; skipped remaining cleanup."
+fi
 release_install_lock
 handle_conflicting_install
 
@@ -1203,6 +1397,149 @@ case "$path_action" in
     print_launch_instructions
     ;;
 esac
+
+# Preserve user TOML verbatim except for the supported root update-check setting.
+disable_startup_update_check() (
+  config="$CODEX_HOME_DIR/config.toml"
+  [ ! -L "$config" ] || { echo "Refusing to replace symlinked Codex config: $config" >&2; return 1; }
+  config_stage="$(mktemp "$CODEX_HOME_DIR/.redapp-config.XXXXXX")" || return 1
+  config_before="$(mktemp "$CODEX_HOME_DIR/.redapp-config.XXXXXX")" || { rm -f "$config_stage"; return 1; }
+  trap 'rm -f "$config_stage" "$config_before"' EXIT
+  if [ -e "$config" ]; then
+    cp -p "$config" "$config_before" || return 1
+    cp -p "$config" "$config_stage" || return 1
+  fi
+  if ! config_line="$(LC_ALL=C awk '
+# Locate a simple root boolean without interpreting strings as TOML keys/tables.
+BEGIN { quote = ""; depth = 0; found = 0 }
+{
+  if (quote == "" && depth == 0) {
+    if ($0 ~ /^[ \t]*\[/) { print found; done = 1; exit }
+    line = $0
+    if (NR == 1 && substr(line, 1, 3) == "\357\273\277") exit 2
+    if (line ~ /^[ \t]*(check_for_update_on_startup|"check_for_update_on_startup"|'\''check_for_update_on_startup'\'')[ \t]*\./) exit 2
+    if (line ~ /^[ \t]*(check_for_update_on_startup|"check_for_update_on_startup"|'\''check_for_update_on_startup'\'')[ \t]*=/) {
+      if (found || line !~ /^[ \t]*(check_for_update_on_startup|"check_for_update_on_startup"|'\''check_for_update_on_startup'\'')[ \t]*=[ \t]*(true|false)[ \t]*(#.*)?\r?$/) exit 2
+      found = NR
+    } else if (line ~ /^[ \t]*["'\'']/) {
+      # Escaped root keys may spell the same key; do not guess or duplicate them.
+      key = line; sub(/=.*/, "", key)
+      if (index(key, "\\")) exit 2
+    }
+  }
+  for (i = 1; i <= length($0); i++) {
+    c = substr($0, i, 1); triple = substr($0, i, 3)
+    if (quote != "") {
+      if ((quote == "\"" || quote == "\"\"\"") && c == "\\") { i++; continue }
+      if (length(quote) == 3 && triple == quote) {
+        i += 2
+        while (substr($0, i + 1, 1) == c) i++
+        quote = ""
+      } else if (length(quote) == 1 && c == quote) quote = ""
+      continue
+    }
+    if (c == "#") break
+    if (triple == "\"\"\"" || triple == "\047\047\047") { quote = triple; i += 2 }
+    else if (c == "\"" || c == "\047") quote = c
+    else if (c == "[" || c == "{") depth++
+    else if (c == "]" || c == "}") depth--
+    if (depth < 0) exit 2
+  }
+  if (length(quote) == 1) exit 2
+}
+END { if (!done) { if (quote != "" || depth != 0) exit 2; print found } }
+  ' "$config_before")"; then
+    echo "Cannot safely edit Codex TOML; set root check_for_update_on_startup = false manually: $config" >&2
+    return 1
+  fi
+  if [ "$config_line" = "0" ]; then
+    { printf 'check_for_update_on_startup = false\n'; cat "$config_before"; } > "$config_stage" || return 1
+  else
+    sed "${config_line}s/^\([^=]*=[[:space:]]*\)true/\1false/" "$config_before" > "$config_stage" || return 1
+  fi
+  if [ -e "$config" ]; then
+    cmp -s "$config" "$config_before" || { echo "Codex config changed during installation; retry." >&2; return 1; }
+    cmp -s "$config" "$config_stage" && return 0
+  fi
+  if [ -e "$config" ]; then
+    mv -f "$config_stage" "$config"
+  else
+    ln "$config_stage" "$config"
+  fi
+)
+
+# RedApp: synchronize only an existing daemon during an explicit CLI installation.
+# Run outside the installer lock: daemon update acquires its own package locks.
+sync_existing_daemon() (
+  if [ "${CODEX_INSTALL_DEFER_SELECTION:-0}" = "1" ] ||
+     [ "${CODEX_INSTALL_IF_LATEST:-}" = "1" ] ||
+     [ "${CODEX_INSTALL_IF_CURRENT:-}" = "1" ] || [ "$old_updater_parent" = "true" ]; then
+    return 0
+  fi
+  if ! disable_startup_update_check; then
+    echo "RedApp: installation partially completed: CLI installed, but disabling startup update checks failed." >&2
+    return 1
+  fi
+  existing=false
+  for artifact in packages/app-server-daemon/current \
+    app-server-daemon/daemon.pid app-server-daemon/daemon.stderr.log \
+    app-server-daemon/daemon-updater.pid app-server-daemon/daemon-updater.stderr.log \
+    app-server-daemon/app-server.pid app-server-daemon/app-server.stderr.log \
+    app-server-daemon/app-server-updater.pid app-server-daemon/app-server-updater.stderr.log; do
+    if [ -e "$CODEX_HOME_DIR/$artifact" ] || [ -L "$CODEX_HOME_DIR/$artifact" ]; then
+      existing=true
+      break
+    fi
+  done
+  [ "$existing" = "true" ] || return 0
+  # Pin the known daemon root even when a matching version needs no restart.
+  if ! rm -f "$CODEX_HOME_DIR/packages/app-server-daemon/auto-update-version"; then
+    echo "RedApp: installation partially completed: could not disable daemon scheduled updates." >&2
+    return 1
+  fi
+  installed_codex="$(cd -P "$release_dir" && pwd)/codex"
+  if [ "$install_layout" = "package" ]; then
+    installed_codex="$(cd -P "$release_dir" && pwd)/bin/codex"
+  fi
+  # A passive probe avoids restarting an already matching running daemon.
+  # Missing/unsupported status is not evidence that synchronization succeeded.
+  if daemon_status="$("$installed_codex" app-server daemon version 2>/dev/null)" &&
+     daemon_metadata="$(printf '%s\n' "$daemon_status" | parse_release_metadata)"; then
+    if [ "$RELEASE" = "latest" ]; then
+      if ! printf '%s\n' "$daemon_metadata" | awk -F '\t' -v expected="$resolved_version" '
+        $1 == "managedCodexVersion" || $1 == "appServerVersion" {
+          if ($2 !~ /^[0-9]+\.[0-9]+\.[0-9]+$/) exit 2
+          n++; split($2, v, "."); split(expected, e, ".")
+          for (j=1; j<=3; j++) { if (v[j]+0 > e[j]+0) exit 1; if (v[j]+0 < e[j]+0) break }
+        }
+        END { if (!n) exit 2 }
+      '; then
+        warn "CLI $resolved_version installed; daemon version is newer or cannot be safely compared. Keeping its current package; scheduled official updates are disabled. Select an explicit release to replace it."
+        return 0
+      fi
+    fi
+    if printf '%s\n' "$daemon_metadata" |
+      awk -F '\t' -v expected="$resolved_version" '
+        $1 == "backend" { backend = $2 }
+        $1 == "managedCodexVersion" { installed = $2 }
+        $1 == "appServerVersion" { running = $2 }
+        END { exit !(backend == "pid" && installed == expected && running == expected) }
+      '; then
+      step "Existing app-server daemon already matches Codex $resolved_version"
+      return 0
+    fi
+  elif [ "$RELEASE" = "latest" ]; then
+    echo "RedApp: installation partially completed: daemon version could not be checked; refusing a possible downgrade. Retry or select an explicit release." >&2
+    return 1
+  fi
+  warn "Synchronizing existing app-server daemon from the installed CLI; a running daemon will restart and active sessions may be interrupted."
+  if ! "$installed_codex" app-server daemon update --from-cli --yes </dev/null; then
+    echo "RedApp: installation partially completed: CLI $resolved_version installed, but app-server daemon synchronization failed. Retry with the installed CLI: $installed_codex app-server daemon update --from-cli --yes" >&2
+    return 1
+  fi
+)
+
+sync_existing_daemon
 
 printf 'Codex CLI %s installed successfully.\n' "$resolved_version"
 maybe_launch_codex_now

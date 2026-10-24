@@ -7,7 +7,11 @@ import shutil
 import subprocess
 import tempfile
 
-from installer_test_support import InstallerServer, codex_fixture
+from installer_test_support import (
+    InstallerServer, codex_fixture, CODEX_DAEMON_CASES,
+    prepare_codex_daemon_case, check_codex_daemon_case, CODEX_CONFIG_CASES,
+    prepare_codex_config_case, check_codex_config_case,
+)
 
 
 def test_shell(directory, application):
@@ -49,13 +53,24 @@ def test_shell(directory, application):
                 redirect=True,
             )
             count += 1
+            for scenario in CODEX_DAEMON_CASES:
+                run_case(root, directory, base, curl, config, seen, *variants[0],
+                         False, "0.159.2", "", daemon=scenario)
+                count += 1
+            run_case(root, directory, base, curl, config, seen, *variants[0],
+                     True, "0.159.2", "", daemon='existing')
+            count += 1
+            for scenario in CODEX_CONFIG_CASES:
+                run_case(root, directory, base, curl, config, seen, *variants[0],
+                         False, 'latest', '', config_case=scenario)
+                count += 1
     finally:
         fixture.__exit__()
     print(f'Codex Shell: {count} offline cases PASS; platform selection simulated')
 
 
 def run_case(root, directory, base, curl, config, seen, osname, arch, target, npm,
-             legacy, requested, failure, redirect=False):
+             legacy, requested, failure, redirect=False, daemon=None, config_case=None):
     """Run one install.sh case with stubbed tools and verify its outcome and traffic."""
     case = root / (str(len(list(root.iterdir()))) + "-case")
     wrapper = case / "tools"
@@ -88,7 +103,19 @@ def run_case(root, directory, base, curl, config, seen, osname, arch, target, np
     if failure == 'tag':
         requested = '0.159.2'
     config.clear()
-    config.update(codex_fixture(target, npm, legacy, failure=failure))
+    body = None
+    if daemon:
+        body = b'''#!/bin/sh
+if [ "$1" = "--version" ]; then echo 'codex-cli 0.159.2'; exit 0; fi
+if [ "$*" = "app-server daemon pid-update-loop --check-package-ownership" ]; then exit 0; fi
+printf '%s\\n%s\\n' "$0" "$*" >> "$REDAPP_DAEMON_LOG"
+if [ "$*" = "app-server daemon version" ]; then
+  printf '%s\\n' "$REDAPP_DAEMON_STATUS"
+  exit "$REDAPP_DAEMON_PROBE_RESULT"
+fi
+exit "$REDAPP_DAEMON_RESULT"
+'''
+    config.update(codex_fixture(target, npm, legacy, body=body, failure=failure))
     config["redirect"] = redirect
     seen.clear()
     script = case / "install.sh"
@@ -102,9 +129,23 @@ def run_case(root, directory, base, curl, config, seen, osname, arch, target, np
         CODEX_INSTALLER_USE_RELEASES_OPENAI_COM="0",
         PATH=str(wrapper) + ":" + str(bindir) + ":/usr/bin:/bin",
     )
+    if daemon:
+        prepare_codex_daemon_case(case, env, daemon)
+    if daemon and daemon.startswith('latest-'):
+        env['CODEX_RELEASE'] = 'latest'
+    if config_case:
+        prepare_codex_config_case(case, config_case)
     result = subprocess.run(["sh", str(script)], env=env, capture_output=True, text=True, timeout=30)
     installed = bindir / "codex"
-    if failure:
+    if config_case:
+        check_codex_config_case(case, result, config_case)
+        repeated = subprocess.run(["sh", str(script)], env=env, capture_output=True, text=True, timeout=30)
+        check_codex_config_case(case, repeated, config_case)
+    elif daemon:
+        executable = case / f"codex-home/packages/standalone/releases/0.159.2-{target}"
+        executable /= "codex" if legacy else "bin/codex"
+        check_codex_daemon_case(case, result, daemon, executable)
+    elif failure:
         if result.returncode == 0 or installed.exists():
             raise AssertionError(f"失败场景仍安装成功: {failure}\n{result.stdout}\n{result.stderr}")
     elif result.returncode != 0 or not installed.exists():
