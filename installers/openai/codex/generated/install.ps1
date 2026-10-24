@@ -1233,7 +1233,7 @@ function Disable-StartupUpdateCheck {
         }
         if ($quote.Length -eq 1) { throw "Cannot safely edit Codex TOML: $configPath" }
     }
-    if ($quote -ne "" -or $depth -ne 0 -or $before.StartsWith([string][char]0xFEFF)) {
+    if ($quote -ne "" -or $depth -ne 0 -or $before.StartsWith([string][char]0xFEFF, [StringComparison]::Ordinal)) {
         throw "Cannot safely edit Codex TOML: $configPath"
     }
     if ($null -eq $found) {
