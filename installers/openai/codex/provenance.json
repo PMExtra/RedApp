@@ -1,7 +1,7 @@
 {
   "version": "0.164.0",
   "commit": "ff6aec96948b70d94983af2641a6b67c94faeff5",
-  "retrieved_at": "2026-10-24T17:23:39.840961+00:00",
+  "retrieved_at": "2026-10-24T17:32:27.382600+00:00",
   "source": "https://github.com/openai/codex",
   "auto_update_policy": "suppress_installer_marker_unmodified_cli",
   "files": {

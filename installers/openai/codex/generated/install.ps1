@@ -1250,7 +1250,7 @@ function Disable-StartupUpdateCheck {
             if ($encoding.GetString([IO.File]::ReadAllBytes($configPath)) -cne $before) {
                 throw "Codex config changed during installation; retry."
             }
-            [IO.File]::Replace($stage, $configPath, $null)
+            [IO.File]::Replace($stage, $configPath, [System.Management.Automation.Language.NullString]::Value)
         } else {
             [IO.File]::Move($stage, $configPath)
         }
