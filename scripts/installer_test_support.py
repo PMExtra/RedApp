@@ -246,7 +246,11 @@ def check_codex_daemon_case(home, result, scenario, executable):
     expected = [] if skipped else [str(executable), 'app-server daemon version']
     if update:
         expected += [str(executable), 'app-server daemon update --from-cli --yes']
-    require(calls == expected, (scenario, calls, expected, result.stdout, result.stderr))
+    detail = (scenario, calls, expected, result.stdout, result.stderr)
+    require(len(calls) == len(expected) and calls[1::2] == expected[1::2], detail)
+    for command in calls[::2]:
+        # Windows may spell the same file using an 8.3 or long directory name.
+        require(Path(command).is_absolute() and Path(command).samefile(executable), detail)
     partial = scenario in ('failed', 'unsupported')
     require((result.returncode != 0) == partial, (scenario, result.stdout, result.stderr))
     output = result.stdout + result.stderr
