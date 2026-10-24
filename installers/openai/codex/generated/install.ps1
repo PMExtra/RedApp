@@ -1187,9 +1187,84 @@ if ($prioritizeVisibleBin) {
 
 Write-Step "Current PowerShell session: codex"
 Write-Step "Future PowerShell windows: open a new PowerShell window and run: codex"
+function Disable-StartupUpdateCheck {
+    $configPath = Join-Path $codexHome "config.toml"
+    $item = Get-Item -LiteralPath $configPath -Force -ErrorAction SilentlyContinue
+    if ($null -ne $item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw "Refusing to replace linked Codex config: $configPath"
+    }
+    $encoding = [Text.UTF8Encoding]::new($false, $true)
+    $before = if ($null -ne $item) { $encoding.GetString([IO.File]::ReadAllBytes($configPath)) } else { "" }
+    $quote = ""
+    $depth = 0
+    $found = $null
+    $keyPattern = '(?:check_for_update_on_startup|"check_for_update_on_startup"|''check_for_update_on_startup'')'
+    foreach ($line in [regex]::Matches($before, '[^\n]*(?:\n|$)')) {
+        $text = $line.Value
+        if ($quote -eq "" -and $depth -eq 0) {
+            if ($text -match '^\s*\[') { break }
+            if ($text -match ('^[ \t]*' + $keyPattern + '[ \t]*[=.]')) {
+                if ($null -ne $found -or $text -notmatch ('^[ \t]*' + $keyPattern + '[ \t]*=[ \t]*(true|false)[ \t]*(?:#[^\r\n]*)?\r?\n?$')) {
+                    throw "Cannot safely edit root update-check setting in $configPath"
+                }
+                $found = $line
+            } elseif ($text -match '^[ \t]*["'']' -and ($text -split '=', 2)[0].Contains('\')) {
+                throw "Cannot safely edit escaped root TOML keys in $configPath"
+            }
+        }
+        for ($i = 0; $i -lt $text.Length; $i++) {
+            $c = $text.Substring($i, 1)
+            $triple = if ($i + 3 -le $text.Length) { $text.Substring($i, 3) } else { "" }
+            if ($quote -ne "") {
+                if ($quote.StartsWith('"') -and $c -eq '\') { $i++; continue }
+                if ($quote.Length -eq 3 -and $triple -eq $quote) {
+                    $i += 2
+                    while ($i + 1 -lt $text.Length -and $text.Substring($i + 1, 1) -eq $c) { $i++ }
+                    $quote = ""
+                } elseif ($quote.Length -eq 1 -and $c -eq $quote) { $quote = "" }
+                continue
+            }
+            if ($c -eq '#') { break }
+            if ($triple -eq '"""' -or $triple -eq "'''") { $quote = $triple; $i += 2 }
+            elseif ($c -eq '"' -or $c -eq "'") { $quote = $c }
+            elseif ($c -eq '[' -or $c -eq '{') { $depth++ }
+            elseif ($c -eq ']' -or $c -eq '}') { $depth-- }
+            if ($depth -lt 0) { throw "Cannot safely edit Codex TOML: $configPath" }
+        }
+        if ($quote.Length -eq 1) { throw "Cannot safely edit Codex TOML: $configPath" }
+    }
+    if ($quote -ne "" -or $depth -ne 0 -or $before.StartsWith([string][char]0xFEFF)) {
+        throw "Cannot safely edit Codex TOML: $configPath"
+    }
+    if ($null -eq $found) {
+        $after = "check_for_update_on_startup = false`n" + $before
+    } else {
+        $replacement = [regex]::Replace($found.Value, '^([^=]*=[ \t]*)true', '${1}false')
+        $after = $before.Substring(0, $found.Index) + $replacement + $before.Substring($found.Index + $found.Length)
+    }
+    if ($after -ceq $before) { return }
+    $stage = Join-Path $codexHome (".redapp-config." + [Guid]::NewGuid().ToString("N"))
+    try {
+        [IO.File]::WriteAllText($stage, $after, $encoding)
+        if ($null -ne $item) {
+            if ($encoding.GetString([IO.File]::ReadAllBytes($configPath)) -cne $before) {
+                throw "Codex config changed during installation; retry."
+            }
+            [IO.File]::Replace($stage, $configPath, $null)
+        } else {
+            [IO.File]::Move($stage, $configPath)
+        }
+    } finally {
+        Remove-Item -LiteralPath $stage -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # RedApp: synchronize only an existing daemon during an explicit CLI installation.
 # The installation lock has been released before invoking daemon lifecycle commands.
 if (-not $backgroundInstall -and -not $deferSelection) {
+    try { Disable-StartupUpdateCheck } catch {
+        throw "RedApp: installation partially completed: CLI installed, but disabling startup update checks failed. $($_.Exception.Message)"
+    }
     $existingDaemon = $false
     foreach ($artifact in @(
         "packages/app-server-daemon/current",
@@ -1204,11 +1279,18 @@ if (-not $backgroundInstall -and -not $deferSelection) {
         }
     }
     if ($existingDaemon) {
+        try {
+            $daemonMarker = Join-Path $codexHome "packages/app-server-daemon/auto-update-version"
+            if (Test-Path -LiteralPath $daemonMarker) { Remove-Item -LiteralPath $daemonMarker -Force -ErrorAction Stop }
+        } catch {
+            throw "RedApp: installation partially completed: could not disable daemon scheduled updates. $($_.Exception.Message)"
+        }
         $installedCodex = [System.IO.Path]::GetFullPath((Join-Path $releaseDir "codex.exe"))
         if ($installLayout -eq "Package") {
             $installedCodex = [System.IO.Path]::GetFullPath((Join-Path $releaseDir "bin/codex.exe"))
         }
         $daemonMatches = $false
+        $daemonStatus = $null
         try {
             $daemonStatusText = & $installedCodex app-server daemon version 2>$null
             if ($LASTEXITCODE -eq 0) {
@@ -1220,7 +1302,23 @@ if (-not $backgroundInstall -and -not $deferSelection) {
         } catch {
             # An unsupported or failed passive probe still requires an update attempt.
         }
-        if ($daemonMatches) {
+        $keepDaemon = $false
+        if ($Release -eq "latest") {
+            if ($null -eq $daemonStatus) {
+                throw "RedApp: installation partially completed: daemon version could not be checked; refusing a possible downgrade. Retry or select an explicit release."
+            }
+            $knownVersions = @('managedCodexVersion', 'appServerVersion') | ForEach-Object {
+                $property = $daemonStatus.PSObject.Properties[$_]
+                if ($null -ne $property -and $property.Value) { $property.Value }
+            }
+            $keepDaemon = @($knownVersions).Count -eq 0
+            foreach ($version in $knownVersions) {
+                if ($version -notmatch '^\d+\.\d+\.\d+$' -or [version]$version -gt [version]$resolvedVersion) { $keepDaemon = $true }
+            }
+        }
+        if ($keepDaemon) {
+            Write-WarningStep "CLI $resolvedVersion installed; daemon version is newer or cannot be safely compared. Keeping its current package; scheduled official updates are disabled. Select an explicit release to replace it."
+        } elseif ($daemonMatches) {
             Write-Step "Existing app-server daemon already matches Codex $resolvedVersion"
         } else {
             Write-WarningStep "Synchronizing existing app-server daemon from the installed CLI; a running daemon will restart and active sessions may be interrupted."

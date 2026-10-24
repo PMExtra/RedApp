@@ -256,10 +256,80 @@
  if [ "$DAEMON_ONLY" = "1" ]; then
    release_install_lock
    exit 0
-@@ -1476,5 +1380,53 @@
+@@ -1476,5 +1380,148 @@
      ;;
  esac
  
++# Preserve user TOML verbatim except for the supported root update-check setting.
++disable_startup_update_check() (
++  config="$CODEX_HOME_DIR/config.toml"
++  [ ! -L "$config" ] || { echo "Refusing to replace symlinked Codex config: $config" >&2; return 1; }
++  config_stage="$(mktemp "$CODEX_HOME_DIR/.redapp-config.XXXXXX")" || return 1
++  config_before="$(mktemp "$CODEX_HOME_DIR/.redapp-config.XXXXXX")" || { rm -f "$config_stage"; return 1; }
++  trap 'rm -f "$config_stage" "$config_before"' EXIT
++  if [ -e "$config" ]; then
++    cp -p "$config" "$config_before" || return 1
++    cp -p "$config" "$config_stage" || return 1
++  fi
++  if ! config_line="$(LC_ALL=C awk '
++# Locate a simple root boolean without interpreting strings as TOML keys/tables.
++BEGIN { quote = ""; depth = 0; found = 0 }
++{
++  if (quote == "" && depth == 0) {
++    if ($0 ~ /^[ \t]*\[/) { print found; done = 1; exit }
++    line = $0
++    if (NR == 1 && substr(line, 1, 3) == "\357\273\277") exit 2
++    if (line ~ /^[ \t]*(check_for_update_on_startup|"check_for_update_on_startup"|'\''check_for_update_on_startup'\'')[ \t]*\./) exit 2
++    if (line ~ /^[ \t]*(check_for_update_on_startup|"check_for_update_on_startup"|'\''check_for_update_on_startup'\'')[ \t]*=/) {
++      if (found || line !~ /^[ \t]*(check_for_update_on_startup|"check_for_update_on_startup"|'\''check_for_update_on_startup'\'')[ \t]*=[ \t]*(true|false)[ \t]*(#.*)?\r?$/) exit 2
++      found = NR
++    } else if (line ~ /^[ \t]*["'\'']/) {
++      # Escaped root keys may spell the same key; do not guess or duplicate them.
++      key = line; sub(/=.*/, "", key)
++      if (index(key, "\\")) exit 2
++    }
++  }
++  for (i = 1; i <= length($0); i++) {
++    c = substr($0, i, 1); triple = substr($0, i, 3)
++    if (quote != "") {
++      if ((quote == "\"" || quote == "\"\"\"") && c == "\\") { i++; continue }
++      if (length(quote) == 3 && triple == quote) {
++        i += 2
++        while (substr($0, i + 1, 1) == c) i++
++        quote = ""
++      } else if (length(quote) == 1 && c == quote) quote = ""
++      continue
++    }
++    if (c == "#") break
++    if (triple == "\"\"\"" || triple == "\047\047\047") { quote = triple; i += 2 }
++    else if (c == "\"" || c == "\047") quote = c
++    else if (c == "[" || c == "{") depth++
++    else if (c == "]" || c == "}") depth--
++    if (depth < 0) exit 2
++  }
++  if (length(quote) == 1) exit 2
++}
++END { if (!done) { if (quote != "" || depth != 0) exit 2; print found } }
++  ' "$config_before")"; then
++    echo "Cannot safely edit Codex TOML; set root check_for_update_on_startup = false manually: $config" >&2
++    return 1
++  fi
++  if [ "$config_line" = "0" ]; then
++    { printf 'check_for_update_on_startup = false\n'; cat "$config_before"; } > "$config_stage" || return 1
++  else
++    sed "${config_line}s/^\([^=]*=[[:space:]]*\)true/\1false/" "$config_before" > "$config_stage" || return 1
++  fi
++  if [ -e "$config" ]; then
++    cmp -s "$config" "$config_before" || { echo "Codex config changed during installation; retry." >&2; return 1; }
++    cmp -s "$config" "$config_stage" && return 0
++  fi
++  if [ -e "$config" ]; then
++    mv -f "$config_stage" "$config"
++  else
++    ln "$config_stage" "$config"
++  fi
++)
++
 +# RedApp: synchronize only an existing daemon during an explicit CLI installation.
 +# Run outside the installer lock: daemon update acquires its own package locks.
 +sync_existing_daemon() (
@@ -267,6 +337,10 @@
 +     [ "${CODEX_INSTALL_IF_LATEST:-}" = "1" ] ||
 +     [ "${CODEX_INSTALL_IF_CURRENT:-}" = "1" ] || [ "$old_updater_parent" = "true" ]; then
 +    return 0
++  fi
++  if ! disable_startup_update_check; then
++    echo "RedApp: installation partially completed: CLI installed, but disabling startup update checks failed." >&2
++    return 1
 +  fi
 +  existing=false
 +  for artifact in packages/app-server-daemon/current \
@@ -280,6 +354,11 @@
 +    fi
 +  done
 +  [ "$existing" = "true" ] || return 0
++  # Pin the known daemon root even when a matching version needs no restart.
++  if ! rm -f "$CODEX_HOME_DIR/packages/app-server-daemon/auto-update-version"; then
++    echo "RedApp: installation partially completed: could not disable daemon scheduled updates." >&2
++    return 1
++  fi
 +  installed_codex="$(cd -P "$release_dir" && pwd)/codex"
 +  if [ "$install_layout" = "package" ]; then
 +    installed_codex="$(cd -P "$release_dir" && pwd)/bin/codex"
@@ -288,6 +367,19 @@
 +  # Missing/unsupported status is not evidence that synchronization succeeded.
 +  if daemon_status="$("$installed_codex" app-server daemon version 2>/dev/null)" &&
 +     daemon_metadata="$(printf '%s\n' "$daemon_status" | parse_release_metadata)"; then
++    if [ "$RELEASE" = "latest" ]; then
++      if ! printf '%s\n' "$daemon_metadata" | awk -F '\t' -v expected="$resolved_version" '
++        $1 == "managedCodexVersion" || $1 == "appServerVersion" {
++          if ($2 !~ /^[0-9]+\.[0-9]+\.[0-9]+$/) exit 2
++          n++; split($2, v, "."); split(expected, e, ".")
++          for (j=1; j<=3; j++) { if (v[j]+0 > e[j]+0) exit 1; if (v[j]+0 < e[j]+0) break }
++        }
++        END { if (!n) exit 2 }
++      '; then
++        warn "CLI $resolved_version installed; daemon version is newer or cannot be safely compared. Keeping its current package; scheduled official updates are disabled. Select an explicit release to replace it."
++        return 0
++      fi
++    fi
 +    if printf '%s\n' "$daemon_metadata" |
 +      awk -F '\t' -v expected="$resolved_version" '
 +        $1 == "backend" { backend = $2 }
@@ -298,6 +390,9 @@
 +      step "Existing app-server daemon already matches Codex $resolved_version"
 +      return 0
 +    fi
++  elif [ "$RELEASE" = "latest" ]; then
++    echo "RedApp: installation partially completed: daemon version could not be checked; refusing a possible downgrade. Retry or select an explicit release." >&2
++    return 1
 +  fi
 +  warn "Synchronizing existing app-server daemon from the installed CLI; a running daemon will restart and active sessions may be interrupted."
 +  if ! "$installed_codex" app-server daemon update --from-cli --yes </dev/null; then

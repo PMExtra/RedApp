@@ -9,7 +9,8 @@ import tempfile
 
 from installer_test_support import (
     InstallerServer, codex_fixture, CODEX_DAEMON_CASES,
-    prepare_codex_daemon_case, check_codex_daemon_case,
+    prepare_codex_daemon_case, check_codex_daemon_case, CODEX_CONFIG_CASES,
+    prepare_codex_config_case, check_codex_config_case,
 )
 
 
@@ -59,13 +60,17 @@ def test_shell(directory, application):
             run_case(root, directory, base, curl, config, seen, *variants[0],
                      True, "0.159.2", "", daemon='existing')
             count += 1
+            for scenario in CODEX_CONFIG_CASES:
+                run_case(root, directory, base, curl, config, seen, *variants[0],
+                         False, 'latest', '', config_case=scenario)
+                count += 1
     finally:
         fixture.__exit__()
     print(f'Codex Shell: {count} offline cases PASS; platform selection simulated')
 
 
 def run_case(root, directory, base, curl, config, seen, osname, arch, target, npm,
-             legacy, requested, failure, redirect=False, daemon=None):
+             legacy, requested, failure, redirect=False, daemon=None, config_case=None):
     """Run one install.sh case with stubbed tools and verify its outcome and traffic."""
     case = root / (str(len(list(root.iterdir()))) + "-case")
     wrapper = case / "tools"
@@ -126,9 +131,17 @@ exit "$REDAPP_DAEMON_RESULT"
     )
     if daemon:
         prepare_codex_daemon_case(case, env, daemon)
+    if daemon and daemon.startswith('latest-'):
+        env['CODEX_RELEASE'] = 'latest'
+    if config_case:
+        prepare_codex_config_case(case, config_case)
     result = subprocess.run(["sh", str(script)], env=env, capture_output=True, text=True, timeout=30)
     installed = bindir / "codex"
-    if daemon:
+    if config_case:
+        check_codex_config_case(case, result, config_case)
+        repeated = subprocess.run(["sh", str(script)], env=env, capture_output=True, text=True, timeout=30)
+        check_codex_config_case(case, repeated, config_case)
+    elif daemon:
         executable = case / f"codex-home/packages/standalone/releases/0.159.2-{target}"
         executable /= "codex" if legacy else "bin/codex"
         check_codex_daemon_case(case, result, daemon, executable)

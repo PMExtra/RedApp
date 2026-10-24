@@ -199,6 +199,7 @@ def file_state(directory):
 CODEX_DAEMON_CASES = (
     'absent', 'existing', 'legacy', 'matching', 'stopped', 'downgrade',
     'failed', 'unsupported', 'malformed', 'external', 'daemon-only', 'deferred', 'background',
+    'latest-newer', 'latest-matching', 'latest-stopped',
 )
 
 
@@ -212,13 +213,16 @@ def prepare_codex_daemon_case(home, env, scenario):
         (state / name).write_text('previous daemon launch')
     elif scenario != 'absent':
         (daemon_root / 'current').mkdir(parents=True)
-    version = '0.159.2' if scenario in ('matching', 'malformed', 'external') else (
-        '0.159.3' if scenario == 'downgrade' else '0.159.1'
+    version = '0.159.2' if scenario in ('matching', 'malformed', 'external', 'latest-matching') else (
+        '0.159.3' if scenario in ('downgrade', 'latest-newer') else '0.159.1'
     )
     status = {'backend': 'external' if scenario == 'external' else 'pid',
               'managedCodexVersion': version}
-    if scenario != 'stopped':
+    if scenario not in ('stopped', 'latest-stopped'):
         status['appServerVersion'] = version
+    if scenario not in ('absent', 'daemon-only', 'deferred', 'background'):
+        daemon_root.mkdir(parents=True, exist_ok=True)
+        (daemon_root / 'auto-update-version').write_text('eligible')
     env.update(
         REDAPP_DAEMON_LOG=str(home / 'daemon-calls.txt'),
         REDAPP_DAEMON_STATUS=json.dumps(status)[:-1] if scenario == 'malformed' else json.dumps(status),
@@ -238,7 +242,7 @@ def check_codex_daemon_case(home, result, scenario, executable):
     log = home / 'daemon-calls.txt'
     calls = log.read_text().splitlines() if log.exists() else []
     skipped = scenario in ('absent', 'daemon-only', 'deferred', 'background')
-    update = not skipped and scenario != 'matching'
+    update = not skipped and scenario not in ('matching', 'latest-matching', 'latest-newer')
     expected = [] if skipped else [str(executable), 'app-server daemon version']
     if update:
         expected += [str(executable), 'app-server daemon update --from-cli --yes']
@@ -252,4 +256,39 @@ def check_codex_daemon_case(home, result, scenario, executable):
     if update:
         require('active sessions may be interrupted' in output, output)
     if not skipped:
+        require(not (home / 'codex-home/packages/app-server-daemon/auto-update-version').exists())
         require(executable.exists(), 'CLI must remain installed after daemon sync')
+
+
+CODEX_CONFIG_CASES = {
+    'missing': (None, b'check_for_update_on_startup = false\n'),
+    'table': (b'[profiles.work]\ncheck_for_update_on_startup = true',
+              b'check_for_update_on_startup = false\n[profiles.work]\ncheck_for_update_on_startup = true'),
+    'root': (b'"check_for_update_on_startup" = true # keep\r\n[profile]\r\nmodel="x"',
+             b'"check_for_update_on_startup" = false # keep\r\n[profile]\r\nmodel="x"'),
+    'false': (b'check_for_update_on_startup=false # = true',
+              b'check_for_update_on_startup=false # = true'),
+    'multiline': (b'note = """\n[fake]\ncheck_for_update_on_startup = true\n"""\ncheck_for_update_on_startup=true\n',
+                  b'note = """\n[fake]\ncheck_for_update_on_startup = true\n"""\ncheck_for_update_on_startup=false\n'),
+    'escaped': (b'"\\u0063heck_for_update_on_startup"=true\n', None),
+    'dotted': (b'check_for_update_on_startup.child=true\n', None),
+}
+
+
+def prepare_codex_config_case(home, scenario):
+    """Seed user TOML including table and multiline-string lookalikes."""
+    path = home / 'codex-home/config.toml'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    before, _ = CODEX_CONFIG_CASES[scenario]
+    if before is not None:
+        path.write_bytes(before)
+
+
+def check_codex_config_case(home, result, scenario):
+    """Require exact preservation outside the root setting, including final newline."""
+    before, after = CODEX_CONFIG_CASES[scenario]
+    expected = before if after is None else after
+    require((home / 'codex-home/config.toml').read_bytes() == expected, (scenario, result.stdout, result.stderr))
+    require((result.returncode == 0) == (after is not None), (scenario, result.stdout, result.stderr))
+    if after is None:
+        require('installation partially completed' in result.stdout + result.stderr)

@@ -7,7 +7,8 @@ import tempfile
 from contextlib import contextmanager
 from installer_test_support import (
     InstallerServer, codex_fixture, file_state, require, sha, CODEX_DAEMON_CASES,
-    prepare_codex_daemon_case, check_codex_daemon_case,
+    prepare_codex_daemon_case, check_codex_daemon_case, CODEX_CONFIG_CASES,
+    prepare_codex_config_case, check_codex_config_case,
 )
 
 
@@ -192,6 +193,8 @@ def test_windows(apps, installer_root, directory=None, requested_shell=None):
                         for scenario in CODEX_DAEMON_CASES:
                             codex_case(root, rendered, fixtures, shell, server,
                                        requested='0.159.2', daemon=scenario)
+                        for scenario in CODEX_CONFIG_CASES:
+                            codex_case(root, rendered, fixtures, shell, server, config_case=scenario)
                         codex_case(root, rendered, fixtures, shell, server, legacy=True,
                                    requested='0.159.2', daemon='existing')
                         print(
@@ -364,7 +367,7 @@ def claude_case(root, script, body, shell, config, seen, arch="AMD64", platform=
 
 
 def codex_case(root, script, fixtures, shell, server, legacy=False, requested='latest',
-               failure='', lifecycle=False, redirect=False, daemon=None):
+               failure='', lifecycle=False, redirect=False, daemon=None, config_case=None):
     """Run one Codex install.ps1 case and verify release layout and failures."""
     home = root / ('codex user home ' + str(len(list(root.iterdir()))))
     home.mkdir()
@@ -399,11 +402,18 @@ def codex_case(root, script, fixtures, shell, server, legacy=False, requested='l
         marker.write_text('old version')
     if daemon:
         prepare_codex_daemon_case(home, env, daemon)
+    if daemon and daemon.startswith('latest-'):
+        requested = 'latest'
+    if config_case:
+        prepare_codex_config_case(home, config_case)
     configure(version, failure)
     server.config["redirect"] = redirect
     with preserve_user_path():
         result = install(requested)
-        if daemon:
+        if config_case:
+            check_codex_config_case(home, result, config_case)
+            check_codex_config_case(home, install(requested), config_case)
+        elif daemon:
             executable = releases / f'{version}-{target}'
             executable /= 'codex.exe' if legacy else 'bin/codex.exe'
             check_codex_daemon_case(home, result, daemon, executable)
