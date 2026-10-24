@@ -200,20 +200,26 @@ def file_state(directory):
 CODEX_DAEMON_CASES = (
     'absent', 'existing', 'legacy', 'matching', 'stopped', 'downgrade',
     'failed', 'unsupported', 'malformed', 'external', 'daemon-only', 'deferred', 'background',
-    'latest-newer', 'latest-matching', 'latest-stopped',
+    'latest-newer', 'latest-matching', 'latest-stopped', 'latest-legacy-newer',
 )
 
 
-def prepare_codex_daemon_case(home, env, scenario):
+def prepare_codex_daemon_case(home, env, scenario, existing_binary=None):
     """Create only inert daemon state; lifecycle commands run in fixture binaries."""
     daemon_root = home / 'codex-home/packages/app-server-daemon'
     state = home / 'codex-home/app-server-daemon'
-    if scenario in ('legacy', 'daemon-only', 'deferred'):
+    if scenario in ('legacy', 'daemon-only', 'deferred', 'latest-legacy-newer'):
         state.mkdir(parents=True)
-        name = 'app-server.stderr.log' if scenario == 'legacy' else 'daemon.stderr.log'
+        name = 'app-server.stderr.log' if scenario in ('legacy', 'latest-legacy-newer') else 'daemon.stderr.log'
         (state / name).write_text('previous daemon launch')
     elif scenario != 'absent':
         (daemon_root / 'current').mkdir(parents=True)
+    if scenario == 'latest-legacy-newer':
+        prior = home / 'codex-home/packages/standalone/current/bin'
+        prior.mkdir(parents=True)
+        binary = prior / ('codex.exe' if existing_binary else 'codex')
+        binary.write_bytes(existing_binary or b"#!/bin/sh\necho 'codex-cli 0.159.3'\n")
+        binary.chmod(0o755)
     version = '0.159.2' if scenario in ('matching', 'malformed', 'external', 'latest-matching') else (
         '0.159.3' if scenario in ('downgrade', 'latest-newer') else '0.159.1'
     )
@@ -242,6 +248,12 @@ def check_codex_daemon_case(home, result, scenario, executable):
     """Verify exact lifecycle argv, the installed executable, and partial completion."""
     log = home / 'daemon-calls.txt'
     calls = log.read_text().splitlines() if log.exists() else []
+    if scenario == 'latest-legacy-newer':
+        require(not calls and result.returncode != 0, result)
+        require('refusing latest downgrade' in result.stdout + result.stderr, result)
+        prior = home / 'codex-home/packages/standalone/current/bin'
+        require(prior.is_dir() and not executable.exists(), 'legacy selection must remain untouched')
+        return
     skipped = scenario in ('absent', 'daemon-only', 'deferred', 'background')
     update = not skipped and scenario not in ('matching', 'latest-matching', 'latest-newer')
     expected = [] if skipped else [str(executable), 'app-server daemon version']
@@ -254,7 +266,7 @@ def check_codex_daemon_case(home, result, scenario, executable):
         require(Path(command).is_absolute() and Path(command).samefile(executable), detail)
     partial = scenario in ('failed', 'unsupported')
     require((result.returncode != 0) == partial, (scenario, result.stdout, result.stderr))
-    output = result.stdout + result.stderr
+    output = " ".join((result.stdout + result.stderr).split())
     if partial:
         require('installation partially completed' in output, output)
         require('installed successfully' not in output, output)
@@ -296,4 +308,4 @@ def check_codex_config_case(home, result, scenario):
     require((home / 'codex-home/config.toml').read_bytes() == expected, (scenario, result.stdout, result.stderr))
     require((result.returncode == 0) == (after is not None), (scenario, result.stdout, result.stderr))
     if after is None:
-        require('installation partially completed' in result.stdout + result.stderr)
+        require('installation partially completed' in ' '.join((result.stdout + result.stderr).split()))

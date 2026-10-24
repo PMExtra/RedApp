@@ -135,7 +135,25 @@
  }
  
  function Get-VersionFromBinary {
-@@ -1015,6 +959,7 @@
+@@ -993,6 +937,17 @@
+ $releaseName = "$resolvedVersion-$target"
+ $releaseDir = Join-Path $releasesDir $releaseName
+ 
++# Legacy daemons share this selection with the CLI. Refuse before changing it.
++if ($Release -eq "latest" -and -not $daemonOnly -and
++    $currentVersion -match '^\d+\.\d+\.\d+$' -and [version]$currentVersion -gt [version]$resolvedVersion -and
++    -not (Get-Item -LiteralPath (Join-Path $codexHome "packages/app-server-daemon/current") -Force -ErrorAction SilentlyContinue)) {
++    foreach ($legacyState in @("app-server.pid", "app-server.stderr.log", "app-server-updater.pid", "app-server-updater.stderr.log")) {
++        if (Get-Item -LiteralPath (Join-Path $codexHome "app-server-daemon/$legacyState") -Force -ErrorAction SilentlyContinue) {
++            throw "RedApp: refusing latest downgrade of shared legacy daemon installation from $currentVersion to $resolvedVersion. Update the mirror or select an explicit release."
++        }
++    }
++}
++
+ if (-not [string]::IsNullOrWhiteSpace($currentVersion) -and $currentVersion -ne $resolvedVersion) {
+     Write-Step "Updating Codex CLI from $currentVersion to $resolvedVersion"
+ } elseif (-not [string]::IsNullOrWhiteSpace($currentVersion)) {
+@@ -1015,6 +970,7 @@
  $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("codex-install-" + [System.Guid]::NewGuid().ToString("N"))
  New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
  $guardRejected = $false
@@ -143,7 +161,7 @@
  
  try {
      Invoke-WithInstallLock -LockPath $lockPath -Script {
-@@ -1050,6 +995,7 @@
+@@ -1050,6 +1006,7 @@
              }
          }
          if ($env:CODEX_INSTALL_IF_LATEST -eq "1" -or $env:CODEX_INSTALL_IF_CURRENT -eq "1" -or $oldUpdaterParent) {
@@ -151,7 +169,7 @@
              $previousRelease = if ($oldUpdaterParent -and (Test-Path -LiteralPath $autoUpdateVersion)) {
                  [System.IO.File]::ReadAllText($autoUpdateVersion)
              } else {
-@@ -1168,14 +1114,8 @@
+@@ -1168,14 +1125,8 @@
                  Write-WarningStep "Could not record daemon selection; pruning will be skipped."
              }
          }
@@ -168,7 +186,7 @@
          }
  
          if ($daemonOnly) { return }
-@@ -1247,6 +1187,151 @@
+@@ -1247,6 +1198,151 @@
  
  Write-Step "Current PowerShell session: codex"
  Write-Step "Future PowerShell windows: open a new PowerShell window and run: codex"

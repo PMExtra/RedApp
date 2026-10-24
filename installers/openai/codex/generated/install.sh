@@ -1202,6 +1202,24 @@ release_name="$resolved_version-$vendor_target"
 release_dir="$RELEASES_DIR/$release_name"
 current_version="$(current_installed_version)"
 
+# Legacy daemons share this selection with the CLI. Refuse before changing it.
+if [ "$RELEASE" = "latest" ] && [ "$DAEMON_ONLY" != "1" ] &&
+   [ ! -e "$CODEX_HOME_DIR/packages/app-server-daemon/current" ] &&
+   [ ! -L "$CODEX_HOME_DIR/packages/app-server-daemon/current" ]; then
+  for legacy_state in app-server.pid app-server.stderr.log app-server-updater.pid app-server-updater.stderr.log; do
+    if [ -e "$CODEX_HOME_DIR/app-server-daemon/$legacy_state" ] &&
+       awk -v installed="$current_version" -v selected="$resolved_version" 'BEGIN {
+         if (installed !~ /^[0-9]+\.[0-9]+\.[0-9]+$/) exit 1
+         split(installed, a, "."); split(selected, b, ".")
+         for (i=1; i<=3; i++) { if (a[i]+0 > b[i]+0) exit 0; if (a[i]+0 < b[i]+0) exit 1 }
+         exit 1
+       }'; then
+      echo "RedApp: refusing latest downgrade of shared legacy daemon installation from $current_version to $resolved_version. Update the mirror or select an explicit release." >&2
+      exit 1
+    fi
+  done
+fi
+
 if [ -n "$current_version" ] && [ "$current_version" != "$resolved_version" ]; then
   step "Updating Codex CLI from $current_version to $resolved_version"
 elif [ -n "$current_version" ]; then

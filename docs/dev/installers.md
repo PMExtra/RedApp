@@ -40,7 +40,7 @@ RedApp 向终端分发的是官方安装脚本的企业改版：初始下载地�
 | Codex | 企业 URL；下载地址约束；移除 GitHub 回退和重新获取摘要的分支；保留清单/包的哈希校验；抑制自动更新 marker；普通主动安装后同步已有受管 daemon |
 | Claude Code | 企业 URL；直接解析所选目标；安全临时目录；以版本目录 + 受管入口替代官方二阶段 `claude install`；入口为子进程设置 `DISABLE_UPDATES=1` |
 
-- Codex 普通主动安装完成后，用新安装的 CLI 绝对路径执行 `app-server daemon update --from-cli --yes`，同步已有受管 daemon。执行前提示运行中的 daemon 会重启，活动会话可能中断；确认运行版本与受管包版本均相同时跳过。无 daemon、daemon-only、deferred selection 和后台条件更新不执行同步。同步失败以非零状态报告部分完成，已安装的 CLI 保留；不降级为公网下载。`latest` 不替换已知更高版本的 daemon，版本不可比较时保留并提示；探测失败则报告部分完成。显式安装旧版本才按所选 CLI 降级同步。
+- Codex 普通主动安装完成后，用新安装的 CLI 绝对路径执行 `app-server daemon update --from-cli --yes`，同步已有受管 daemon。执行前提示运行中的 daemon 会重启，活动会话可能中断；确认运行版本与受管包版本均相同时跳过。无 daemon、daemon-only、deferred selection 和后台条件更新不执行同步。同步失败以非零状态报告部分完成，已安装的 CLI 保留；不降级为公网下载。旧布局的 daemon 与 CLI 共用安装目录时，`latest` 在切换目录前拒绝已知的降级。独立 daemon 的 `latest` 不替换已知更高版本的 daemon，版本不可比较时保留并提示；探测失败则报告部分完成。显式安装旧版本才按所选 CLI 降级同步。
 - CLI 二进制和官方交互确认不改动。无人值守安装 Codex 时显式设置 `CODEX_NON_INTERACTIVE=1`。
 - Claude 的 manifest 签名由服务端验证（见 [architecture.md](architecture.md#提供者provider)），客户端只校验下载摘要。
 

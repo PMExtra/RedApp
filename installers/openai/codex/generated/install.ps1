@@ -937,6 +937,17 @@ $releaseMetadata = $resolvedRelease.Metadata
 $releaseName = "$resolvedVersion-$target"
 $releaseDir = Join-Path $releasesDir $releaseName
 
+# Legacy daemons share this selection with the CLI. Refuse before changing it.
+if ($Release -eq "latest" -and -not $daemonOnly -and
+    $currentVersion -match '^\d+\.\d+\.\d+$' -and [version]$currentVersion -gt [version]$resolvedVersion -and
+    -not (Get-Item -LiteralPath (Join-Path $codexHome "packages/app-server-daemon/current") -Force -ErrorAction SilentlyContinue)) {
+    foreach ($legacyState in @("app-server.pid", "app-server.stderr.log", "app-server-updater.pid", "app-server-updater.stderr.log")) {
+        if (Get-Item -LiteralPath (Join-Path $codexHome "app-server-daemon/$legacyState") -Force -ErrorAction SilentlyContinue) {
+            throw "RedApp: refusing latest downgrade of shared legacy daemon installation from $currentVersion to $resolvedVersion. Update the mirror or select an explicit release."
+        }
+    }
+}
+
 if (-not [string]::IsNullOrWhiteSpace($currentVersion) -and $currentVersion -ne $resolvedVersion) {
     Write-Step "Updating Codex CLI from $currentVersion to $resolvedVersion"
 } elseif (-not [string]::IsNullOrWhiteSpace($currentVersion)) {

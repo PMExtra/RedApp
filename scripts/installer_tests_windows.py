@@ -401,7 +401,7 @@ def codex_case(root, script, fixtures, shell, server, legacy=False, requested='l
         marker.parent.mkdir(parents=True)
         marker.write_text('old version')
     if daemon:
-        prepare_codex_daemon_case(home, env, daemon)
+        prepare_codex_daemon_case(home, env, daemon, fixtures['codex', '0.159.3'])
     if daemon and daemon.startswith('latest-'):
         requested = 'latest'
     if config_case:
