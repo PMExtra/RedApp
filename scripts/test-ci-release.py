@@ -5,6 +5,7 @@ import importlib.util
 import json
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -21,6 +22,111 @@ def module(name):
 
 selection = module('select-release-ci')
 artifact = module('ci-image-artifact')
+notes = module('create-github-release')
+
+
+class ReleaseNotesTests(unittest.TestCase):
+    """Exercise idempotence and failure boundaries without GitHub writes."""
+
+    def setUp(self):
+        self.release = dict(tag_name='v1.2.3', draft=False, prerelease=False,
+                            html_url='https://github.com/PMExtra/RedApp/releases/tag/v1.2.3')
+        self.ref = {'object': {'type': 'tag', 'sha': 'b' * 40}}
+        self.target = {'object': {'type': 'commit', 'sha': 'a' * 40}}
+        self.args = ('1.2.3', 'a' * 40, 'sha256:' + 'c' * 64,
+                     'v1.2.3', 'PMExtra/RedApp', '123')
+
+    def missing(self):
+        return urllib.error.HTTPError('https://api.github.com', 404, 'missing', {}, None)
+
+    def test_create_and_read_back(self):
+        """New notes include immutable provenance and GitHub-generated changes."""
+        with patch.object(notes, 'api', side_effect=[
+            self.ref, self.target, self.missing(), self.release, self.release,
+        ]) as api:
+            self.assertEqual(notes.create(*self.args), self.release)
+        writes = [call.args for call in api.call_args_list if len(call.args) == 2]
+        self.assertEqual(len(writes), 1)
+        path, payload = writes[0]
+        self.assertEqual(path, 'releases')
+        self.assertTrue(payload['generate_release_notes'])
+        self.assertEqual(payload['target_commitish'], 'a' * 40)
+        self.assertIn('sha256:' + 'c' * 64, payload['body'])
+        self.assertIn('/actions/runs/123', payload['body'])
+
+    def test_existing_release_preserved(self):
+        """A retry never edits an existing release or its custom notes."""
+        release = {**self.release, 'body': 'Maintainer-written notes'}
+        with patch.object(notes, 'api', side_effect=[self.ref, self.target, release]) as api:
+            self.assertEqual(notes.create(*self.args), release)
+        self.assertTrue(all(len(call.args) == 1 for call in api.call_args_list))
+
+    def test_conflicting_state_never_written(self):
+        """Drafts, prereleases and changed tags require explicit intervention."""
+        for release in [
+            {**self.release, 'draft': True}, {**self.release, 'prerelease': True},
+            {**self.release, 'tag_name': 'v1.2.4'},
+        ]:
+            with patch.object(notes, 'api', side_effect=[self.ref, self.target, release]) as api:
+                with self.assertRaises(SystemExit):
+                    notes.create(*self.args)
+                self.assertTrue(all(len(call.args) == 1 for call in api.call_args_list))
+        for ref, target in [
+            ({'object': {'type': 'commit', 'sha': 'a' * 40}}, self.target),
+            (self.ref, {'object': {'type': 'commit', 'sha': 'd' * 40}}),
+        ]:
+            with patch.object(notes, 'api', side_effect=[ref, target]) as api:
+                with self.assertRaises(SystemExit):
+                    notes.create(*self.args)
+                self.assertTrue(all(len(call.args) == 1 for call in api.call_args_list))
+
+    def test_lookup_failures_are_not_absence(self):
+        """Forbidden, server and transport failures cannot trigger creation."""
+        for error in [
+            urllib.error.HTTPError('https://api.github.com', code, 'failure', {}, None)
+            for code in (401, 403, 500)
+        ] + [urllib.error.URLError('offline')]:
+            with patch.object(notes, 'api', side_effect=[self.ref, self.target, error]) as api:
+                with self.assertRaises(urllib.error.URLError):
+                    notes.create(*self.args)
+                self.assertTrue(all(len(call.args) == 1 for call in api.call_args_list))
+
+    def test_failed_creation_or_verification_fails_job(self):
+        """A write failure or missing read-back never reports successful publication."""
+        for tail in [
+            [urllib.error.URLError('connection lost')],
+            [self.release, self.missing()],
+        ]:
+            with patch.object(notes, 'api', side_effect=[
+                self.ref, self.target, self.missing(), *tail,
+            ]):
+                with self.assertRaises((urllib.error.URLError, SystemExit)):
+                    notes.create(*self.args)
+
+    def test_invalid_identity_fails_before_network(self):
+        """Workflow inputs cannot silently create notes for another release."""
+        for index, value in [(0, 'invalid'), (1, 'short'), (2, ''), (3, 'v1.2.4'),
+                             (4, 'other/repo'), (5, 'bad')]:
+            args = list(self.args)
+            args[index] = value
+            with patch.object(notes, 'api') as api:
+                with self.assertRaises(SystemExit):
+                    notes.create(*args)
+                api.assert_not_called()
+
+    def test_workflow_privilege_and_dependency(self):
+        """Only the notes job has contents write, after the full publishing job."""
+        workflow = (ROOT.parent / '.github/workflows/publish.yml').read_text()
+        publish, release = workflow.split('\n  release:\n')
+        self.assertNotIn('contents: write', publish)
+        self.assertIn('      packages: write', publish)
+        self.assertIn('    needs: publish\n', release)
+        self.assertIn('    permissions:\n      contents: write\n', release)
+        self.assertNotIn('always()', release)
+        self.assertNotIn('continue-on-error', workflow)
+        self.assertIn('IMAGE_DIGEST: ${{ needs.publish.outputs.digest }}', release)
+        self.assertIn('digest: ${{ steps.candidate.outputs.digest }}', publish)
+        self.assertIn('run: python3 scripts/create-github-release.py', release)
 
 
 class ReleaseTests(unittest.TestCase):

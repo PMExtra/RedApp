@@ -127,6 +127,7 @@ python3 scripts/check-docs.py --base main     # 另外要求成对文档同时�
    - 下载产物，校验 SHA256、元数据、实际镜像平台和 labels。
    - push 两个架构镜像，组装候选 manifest，按不可变摘要在双架构上验收（含无 AVX CPU 测试）。
    - `promote-release-image.py` 再次确认 main 仍等于该 SHA，然后推广 `v<版本>`、`<版本>`、`<主.次>`、`latest` 四个标签。版本标签已存在且摘要不同时失败。
+   - 独立 `release` job 仅在镜像发布 job 成功后运行；只有该 job 获得 `contents: write`，仓库默认权限和镜像 job 权限不变。它复核 annotated tag 的提交，创建 GitHub Release，附上镜像摘要、源码与发布 run 链接，并由 GitHub 生成变更说明。已有正式 Release 保留原文；已有草稿或预发布状态要求人工处理，不自动覆盖或发布。
 4. `verify-published.yml`（main 上发布相关文件变化时）重新拉取已发布的版本标签并验证。
 
 失败恢复：
@@ -135,6 +136,8 @@ python3 scripts/check-docs.py --base main     # 另外要求成对文档同时�
 - 注册表多标签写入不是原子的。推广中途网络失败时，核对四个标签后重跑同一任务，不重新编译或更换产物。
 - 发布 runner 必须先安装 `qemu-user`/`binutils`，再注册 Docker binfmt；顺序颠倒会让 ARM 容器验收时报 exec format error。
 - 候选和 `ci-<SHA>` 架构标签没有自动清理策略。
+- Release 创建失败会让整个工作流失败，但不会回滚已发布镜像；只重跑失败的 `release` job 即可，不必重新构建或推广镜像。创建成功但响应丢失时，重跑读取并保留已存在的正式 Release。
+- 旧 tag 对应的工作流不会因 main 更新而改变。补齐旧版本说明需要单独授权的受限手动流程，先核验旧 tag、成功发布记录及镜像身份；不能靠移动或重推 tag 加载新工作流。
 
 ## Schema 迁移
 
