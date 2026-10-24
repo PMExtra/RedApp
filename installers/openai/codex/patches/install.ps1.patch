@@ -135,10 +135,26 @@
  }
  
  function Get-VersionFromBinary {
-@@ -1120,14 +1064,8 @@
+@@ -1015,6 +959,7 @@
+ $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("codex-install-" + [System.Guid]::NewGuid().ToString("N"))
+ New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
+ $guardRejected = $false
++$backgroundInstall = $false
+ 
+ try {
+     Invoke-WithInstallLock -LockPath $lockPath -Script {
+@@ -1050,6 +995,7 @@
              }
          }
-         Ensure-Junction -LinkPath $currentDir -TargetPath $releaseDir -InstallerOwnedTargetPrefix $releasesDir
+         if ($env:CODEX_INSTALL_IF_LATEST -eq "1" -or $env:CODEX_INSTALL_IF_CURRENT -eq "1" -or $oldUpdaterParent) {
++            $script:backgroundInstall = $true
+             $previousRelease = if ($oldUpdaterParent -and (Test-Path -LiteralPath $autoUpdateVersion)) {
+                 [System.IO.File]::ReadAllText($autoUpdateVersion)
+             } else {
+@@ -1168,14 +1114,8 @@
+                 Write-WarningStep "Could not record daemon selection; pruning will be skipped."
+             }
+         }
 -        if ($Release -eq "latest") {
 -            $tempMarker = "$autoUpdateVersion.tmp.$PID"
 -            [System.IO.File]::WriteAllText($tempMarker, $releaseName)
@@ -152,3 +168,57 @@
          }
  
          if ($daemonOnly) { return }
+@@ -1247,6 +1187,53 @@
+ 
+ Write-Step "Current PowerShell session: codex"
+ Write-Step "Future PowerShell windows: open a new PowerShell window and run: codex"
++# RedApp: synchronize only an existing daemon during an explicit CLI installation.
++# The installation lock has been released before invoking daemon lifecycle commands.
++if (-not $backgroundInstall -and -not $deferSelection) {
++    $existingDaemon = $false
++    foreach ($artifact in @(
++        "packages/app-server-daemon/current",
++        "app-server-daemon/daemon.pid", "app-server-daemon/daemon.stderr.log",
++        "app-server-daemon/daemon-updater.pid", "app-server-daemon/daemon-updater.stderr.log",
++        "app-server-daemon/app-server.pid", "app-server-daemon/app-server.stderr.log",
++        "app-server-daemon/app-server-updater.pid", "app-server-daemon/app-server-updater.stderr.log"
++    )) {
++        if (Get-Item -LiteralPath (Join-Path $codexHome $artifact) -Force -ErrorAction SilentlyContinue) {
++            $existingDaemon = $true
++            break
++        }
++    }
++    if ($existingDaemon) {
++        $installedCodex = [System.IO.Path]::GetFullPath((Join-Path $releaseDir "codex.exe"))
++        if ($installLayout -eq "Package") {
++            $installedCodex = [System.IO.Path]::GetFullPath((Join-Path $releaseDir "bin/codex.exe"))
++        }
++        $daemonMatches = $false
++        try {
++            $daemonStatusText = & $installedCodex app-server daemon version 2>$null
++            if ($LASTEXITCODE -eq 0) {
++                $daemonStatus = ($daemonStatusText -join "`n") | ConvertFrom-Json
++                $daemonMatches = $daemonStatus.backend -eq "pid" -and
++                    $daemonStatus.managedCodexVersion -eq $resolvedVersion -and
++                    $daemonStatus.appServerVersion -eq $resolvedVersion
++            }
++        } catch {
++            # An unsupported or failed passive probe still requires an update attempt.
++        }
++        if ($daemonMatches) {
++            Write-Step "Existing app-server daemon already matches Codex $resolvedVersion"
++        } else {
++            Write-WarningStep "Synchronizing existing app-server daemon from the installed CLI; a running daemon will restart and active sessions may be interrupted."
++            try {
++                & $installedCodex app-server daemon update --from-cli --yes
++                if ($LASTEXITCODE -ne 0) { throw "Daemon update exited with code $LASTEXITCODE." }
++            } catch {
++                throw "RedApp: installation partially completed: CLI $resolvedVersion installed, but app-server daemon synchronization failed. Retry with the installed CLI: & '$installedCodex' app-server daemon update --from-cli --yes. $($_.Exception.Message)"
++            }
++        }
++    }
++}
++
+ Write-Host "Codex CLI $resolvedVersion installed successfully."
+ 
+ $codexCommand = Join-Path $visibleBinDir "codex.exe"

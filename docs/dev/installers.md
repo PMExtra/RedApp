@@ -17,15 +17,30 @@ RedApp 向终端分发的是官方安装脚本的企业改版：初始下载地�
 - Codex `provenance.json` 的 `commit` 指最初固定的源码提交（LICENSE/NOTICE 的出处），不代表后来从 live 地址获取的脚本字节。
 - Go 包 `installers`（`installers/assets.go`）只嵌入 generated 脚本、许可证/NOTICE 和固定公钥，不暴露 upstream 原文、patch 或 provenance。渲染时把 `@REDAPP_BASE_URL@` 替换为安全的公共 origin 加规范应用路径，例如 `https://downloads.example/openai/codex`。
 
+## 官方自动更新策略
+
+通过 RedApp 安装的应用默认不使用官方渠道自动更新。具体厂商、应用有更明确规则时优先执行具体规则；静态文件、HTTP Cache 等通用 Provider 不强制套用本策略。
+
+按以下顺序选择适配方式：
+
+1. 官方支持自定义更新检查地址时，提供兼容接口并将更新地址指向 RedApp。
+2. 否则，官方支持用参数或配置禁用自动更新检查时，默认禁用。
+3. 两者都不支持时，仅接受成本低且可预期长期稳定的适配，例如边界明确的模式替换；成本高或无法稳定适配时不强行屏蔽，并明确说明保留的官方检查。
+
+必须分别核实更新检查、自动下载安装和手动更新，不能把禁用自动安装等同于禁用检查；不为应用静默删除用户配置或假定替换域名就完成适配。
+
+当前具体约束：Codex 保持官方 CLI 二进制不变，安装器抑制本次安装根的自动更新 marker，并在普通主动安装后同步已有 daemon。此行为不覆盖 TUI 的官方版本检查；官方配置 `check_for_update_on_startup = false` 可禁用启动检查，但当前安装器不写入用户的 `config.toml`。既有独立 daemon 的 marker 也不会因普通 CLI 安装而直接删除；执行 `--from-cli` 时由官方 CLI 将 daemon 固定到所选包。Claude Code 的受管入口设置 `DISABLE_UPDATES=1`；[官方变更记录](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21118) 明确该变量阻止全部更新路径，包括手动更新。此规则要求所安装版本支持该变量；离线测试只验证传递，未执行官方闭源 CLI。直接绕过受管入口启动二进制不在该保证范围内。
+
 ## 企业变换的范围
 
 坚持最小修改：保留上游函数结构、格式、参数声明和有价值的注释；不做全文件格式化、无关重构或批量删注释。generated 脚本只带简短的修改声明，维护过程说明放在本文和工具里。
 
 | 应用 | 必要变换 |
 | --- | --- |
-| Codex | 企业 URL；下载地址约束；移除 GitHub 回退和重新获取摘要的分支；保留清单/包的哈希校验；抑制自动更新 marker |
+| Codex | 企业 URL；下载地址约束；移除 GitHub 回退和重新获取摘要的分支；保留清单/包的哈希校验；抑制自动更新 marker；普通主动安装后同步已有受管 daemon |
 | Claude Code | 企业 URL；直接解析所选目标；安全临时目录；以版本目录 + 受管入口替代官方二阶段 `claude install`；入口为子进程设置 `DISABLE_UPDATES=1` |
 
+- Codex 普通主动安装完成后，用新安装的 CLI 绝对路径执行 `app-server daemon update --from-cli --yes`，同步已有受管 daemon。执行前提示运行中的 daemon 会重启，活动会话可能中断；确认运行版本与受管包版本均相同时跳过。无 daemon、daemon-only、deferred selection 和后台条件更新不执行同步。同步失败以非零状态报告部分完成，已安装的 CLI 保留；不降级为公网下载。显式安装旧版本也按所选 CLI 同步。
 - CLI 二进制和官方交互确认不改动。无人值守安装 Codex 时显式设置 `CODEX_NON_INTERACTIVE=1`。
 - Claude 的 manifest 签名由服务端验证（见 [architecture.md](architecture.md#提供者provider)），客户端只校验下载摘要。
 

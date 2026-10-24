@@ -39,12 +39,10 @@
 -        curl -fsSL "$url" -o "$output"
 -        ;;
 -    esac
--    return
--  fi
--
 +    curl -fsSL --connect-timeout "$RELEASES_CONNECT_TIMEOUT" --max-time "$RELEASES_ASSET_TIMEOUT" "$url" -o "$output"
-+    return
-+  fi
+     return
+   fi
+-
    if command -v wget >/dev/null 2>&1; then
 -    case "$url" in
 -      "$RELEASES_BASE_URL"/*)
@@ -54,14 +52,12 @@
 -        wget -q -O "$output" "$url"
 -        ;;
 -    esac
--    return
--  fi
++    wget -q -t 1 -T "$RELEASES_ASSET_TIMEOUT" -O "$output" "$url"
+     return
+   fi
 -
 -  echo "curl or wget is required to install Codex." >&2
 -  exit 1
-+    wget -q -t 1 -T "$RELEASES_ASSET_TIMEOUT" -O "$output" "$url"
-+    return
-+  fi
 +  echo "curl or wget is required" >&2
 +  return 1
  }
@@ -79,12 +75,10 @@
 -        curl -fsSL "$url"
 -        ;;
 -    esac
--    return
--  fi
--
 +    curl -fsSL --connect-timeout "$RELEASES_CONNECT_TIMEOUT" --max-time "$RELEASES_METADATA_TIMEOUT" "$url"
-+    return
-+  fi
+     return
+   fi
+-
    if command -v wget >/dev/null 2>&1; then
 -    case "$url" in
 -      "$RELEASES_BASE_URL"/*)
@@ -94,14 +88,12 @@
 -        wget -q -O - "$url"
 -        ;;
 -    esac
--    return
--  fi
++    wget -q -t 1 -T "$RELEASES_ASSET_TIMEOUT" -O - "$url"
+     return
+   fi
 -
 -  echo "curl or wget is required to install Codex." >&2
 -  exit 1
-+    wget -q -t 1 -T "$RELEASES_ASSET_TIMEOUT" -O - "$url"
-+    return
-+  fi
 +  echo "curl or wget is required" >&2
 +  return 1
  }
@@ -142,7 +134,17 @@
  }
  
  parse_release_metadata() {
-@@ -316,10 +262,7 @@
+@@ -215,7 +161,8 @@
+   LC_ALL=C fold -b -w 4096 | LC_ALL=C awk '
+     function finish_string(value) {
+       if (object_depth == 1 &&
+-          (key == "tag_name" || key == "version" || key == "target" || key == "entrypoint")) {
++          (key == "tag_name" || key == "version" || key == "target" || key == "entrypoint" ||
++           key == "backend" || key == "managedCodexVersion" || key == "appServerVersion")) {
+         print key "\t" value
+       } else if (object_depth == asset_object_depth) {
+         if (key == "name") {
+@@ -317,10 +264,7 @@
  }
  
  release_url_for_asset() {
@@ -154,7 +156,7 @@
  }
  
  releases_url_for_asset() {
-@@ -330,9 +273,7 @@
+@@ -331,9 +275,7 @@
  }
  
  release_metadata_url() {
@@ -165,7 +167,7 @@
  }
  
  parse_downloaded_release_metadata() {
-@@ -358,29 +299,8 @@
+@@ -359,29 +301,8 @@
  }
  
  resolve_release_from_github() {
@@ -197,7 +199,7 @@
  }
  
  resolve_release_from_releases() {
-@@ -415,19 +335,7 @@
+@@ -416,19 +337,7 @@
  resolve_release() {
    normalized_version="$(normalize_version "$RELEASE")"
    validate_version "$normalized_version"
@@ -218,7 +220,7 @@
  }
  
  release_asset_digest_or_empty() {
-@@ -492,10 +400,10 @@
+@@ -493,10 +402,10 @@
  
    if [ "$release_source" = "releases.openai.com" ]; then
      download_url="$(releases_url_for_asset "$asset" "$resolved_version")"
@@ -231,10 +233,19 @@
      fi
    else
      download_url="$(release_url_for_asset "$asset" "$resolved_version")"
-@@ -1269,12 +1177,7 @@
+@@ -743,7 +652,7 @@
+   if [ "$lock_kind" = "mkdir" ]; then
+     rm -rf "$LOCK_DIR" 2>/dev/null || true
+   elif [ "$lock_kind" = "flock" ] || [ "$lock_kind" = "lockf" ]; then
+-    exec 9>&- 2>/dev/null || true
++    { exec 9>&-; } 2>/dev/null || true
    fi
+   lock_kind=""
+ }
+@@ -1441,12 +1350,7 @@
+   # Do not publish history for a migration until Rust has committed the cutover.
+   update_current_link "$release_dir"
  fi
- update_current_link "$release_dir"
 -if [ "$RELEASE" = "latest" ]; then
 -  printf '%s' "$release_name" > "$AUTO_UPDATE_VERSION.tmp.$$"
 -  mv -f "$AUTO_UPDATE_VERSION.tmp.$$" "$AUTO_UPDATE_VERSION"
@@ -245,3 +256,57 @@
  if [ "$DAEMON_ONLY" = "1" ]; then
    release_install_lock
    exit 0
+@@ -1476,5 +1380,53 @@
+     ;;
+ esac
+ 
++# RedApp: synchronize only an existing daemon during an explicit CLI installation.
++# Run outside the installer lock: daemon update acquires its own package locks.
++sync_existing_daemon() (
++  if [ "${CODEX_INSTALL_DEFER_SELECTION:-0}" = "1" ] ||
++     [ "${CODEX_INSTALL_IF_LATEST:-}" = "1" ] ||
++     [ "${CODEX_INSTALL_IF_CURRENT:-}" = "1" ] || [ "$old_updater_parent" = "true" ]; then
++    return 0
++  fi
++  existing=false
++  for artifact in packages/app-server-daemon/current \
++    app-server-daemon/daemon.pid app-server-daemon/daemon.stderr.log \
++    app-server-daemon/daemon-updater.pid app-server-daemon/daemon-updater.stderr.log \
++    app-server-daemon/app-server.pid app-server-daemon/app-server.stderr.log \
++    app-server-daemon/app-server-updater.pid app-server-daemon/app-server-updater.stderr.log; do
++    if [ -e "$CODEX_HOME_DIR/$artifact" ] || [ -L "$CODEX_HOME_DIR/$artifact" ]; then
++      existing=true
++      break
++    fi
++  done
++  [ "$existing" = "true" ] || return 0
++  installed_codex="$(cd -P "$release_dir" && pwd)/codex"
++  if [ "$install_layout" = "package" ]; then
++    installed_codex="$(cd -P "$release_dir" && pwd)/bin/codex"
++  fi
++  # A passive probe avoids restarting an already matching running daemon.
++  # Missing/unsupported status is not evidence that synchronization succeeded.
++  if daemon_status="$("$installed_codex" app-server daemon version 2>/dev/null)" &&
++     daemon_metadata="$(printf '%s\n' "$daemon_status" | parse_release_metadata)"; then
++    if printf '%s\n' "$daemon_metadata" |
++      awk -F '\t' -v expected="$resolved_version" '
++        $1 == "backend" { backend = $2 }
++        $1 == "managedCodexVersion" { installed = $2 }
++        $1 == "appServerVersion" { running = $2 }
++        END { exit !(backend == "pid" && installed == expected && running == expected) }
++      '; then
++      step "Existing app-server daemon already matches Codex $resolved_version"
++      return 0
++    fi
++  fi
++  warn "Synchronizing existing app-server daemon from the installed CLI; a running daemon will restart and active sessions may be interrupted."
++  if ! "$installed_codex" app-server daemon update --from-cli --yes </dev/null; then
++    echo "RedApp: installation partially completed: CLI $resolved_version installed, but app-server daemon synchronization failed. Retry with the installed CLI: $installed_codex app-server daemon update --from-cli --yes" >&2
++    return 1
++  fi
++)
++
++sync_existing_daemon
++
+ printf 'Codex CLI %s installed successfully.\n' "$resolved_version"
+ maybe_launch_codex_now

@@ -194,3 +194,62 @@ def file_state(directory):
         for p in directory.rglob('*')
         if p.is_file()
     }
+
+
+CODEX_DAEMON_CASES = (
+    'absent', 'existing', 'legacy', 'matching', 'stopped', 'downgrade',
+    'failed', 'unsupported', 'malformed', 'external', 'daemon-only', 'deferred', 'background',
+)
+
+
+def prepare_codex_daemon_case(home, env, scenario):
+    """Create only inert daemon state; lifecycle commands run in fixture binaries."""
+    daemon_root = home / 'codex-home/packages/app-server-daemon'
+    state = home / 'codex-home/app-server-daemon'
+    if scenario in ('legacy', 'daemon-only', 'deferred'):
+        state.mkdir(parents=True)
+        name = 'app-server.stderr.log' if scenario == 'legacy' else 'daemon.stderr.log'
+        (state / name).write_text('previous daemon launch')
+    elif scenario != 'absent':
+        (daemon_root / 'current').mkdir(parents=True)
+    version = '0.159.2' if scenario in ('matching', 'malformed', 'external') else (
+        '0.159.3' if scenario == 'downgrade' else '0.159.1'
+    )
+    status = {'backend': 'external' if scenario == 'external' else 'pid',
+              'managedCodexVersion': version}
+    if scenario != 'stopped':
+        status['appServerVersion'] = version
+    env.update(
+        REDAPP_DAEMON_LOG=str(home / 'daemon-calls.txt'),
+        REDAPP_DAEMON_STATUS=json.dumps(status)[:-1] if scenario == 'malformed' else json.dumps(status),
+        REDAPP_DAEMON_RESULT='42' if scenario in ('failed', 'unsupported') else '0',
+        REDAPP_DAEMON_PROBE_RESULT='2' if scenario == 'unsupported' else '0',
+    )
+    if scenario in ('daemon-only', 'deferred'):
+        env['CODEX_INSTALL_DAEMON_ONLY'] = '1'
+    if scenario == 'deferred':
+        env['CODEX_INSTALL_DEFER_SELECTION'] = '1'
+    if scenario == 'background':
+        env['CODEX_INSTALL_IF_LATEST'] = '1'
+
+
+def check_codex_daemon_case(home, result, scenario, executable):
+    """Verify exact lifecycle argv, the installed executable, and partial completion."""
+    log = home / 'daemon-calls.txt'
+    calls = log.read_text().splitlines() if log.exists() else []
+    skipped = scenario in ('absent', 'daemon-only', 'deferred', 'background')
+    update = not skipped and scenario != 'matching'
+    expected = [] if skipped else [str(executable), 'app-server daemon version']
+    if update:
+        expected += [str(executable), 'app-server daemon update --from-cli --yes']
+    require(calls == expected, (scenario, calls, expected, result.stdout, result.stderr))
+    partial = scenario in ('failed', 'unsupported')
+    require((result.returncode != 0) == partial, (scenario, result.stdout, result.stderr))
+    output = result.stdout + result.stderr
+    if partial:
+        require('installation partially completed' in output, output)
+        require('installed successfully' not in output, output)
+    if update:
+        require('active sessions may be interrupted' in output, output)
+    if not skipped:
+        require(executable.exists(), 'CLI must remain installed after daemon sync')
