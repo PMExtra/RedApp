@@ -3,6 +3,8 @@ import type { LocaleModule } from "@/shared/i18n";
 export default {
   publicShell: {
     nav: {
+      custom: "Custom navigation",
+      newTab: "(opens in a new tab)",
       all: "All applications",
       admin: "Administration",
     },

@@ -2437,16 +2437,27 @@ export interface components {
             items: components["schemas"]["Event"][];
             next_cursor: components["schemas"]["NextCursor"];
         };
+        NavigationItem: {
+            /** @description Plain-text title, trimmed, without control characters. */
+            title: string;
+            /** @description Root-relative path or absolute HTTP(S) URL; no credentials, whitespace, controls, backslashes or scheme-relative URLs, including encoded forms. */
+            url: string;
+            new_tab: boolean;
+        };
         /**
          * @description Title 1..80 characters per language (required), subtitle up to 160, disclaimer up to 500.
-         *     No control characters except newline and tab.
+         *     No control characters except newline and tab. Navigation defaults to an empty list; omission on replacement clears it.
          */
         SiteSettings: {
+            /** @default [] */
+            navigation?: components["schemas"]["NavigationItem"][];
             title: components["schemas"]["LocalizedText"];
             subtitle: components["schemas"]["LocalizedText"];
             disclaimer: components["schemas"]["LocalizedText"];
         };
         SiteSettingsState: {
+            /** @default [] */
+            navigation?: components["schemas"]["NavigationItem"][];
             title: components["schemas"]["LocalizedText"];
             subtitle: components["schemas"]["LocalizedText"];
             disclaimer: components["schemas"]["LocalizedText"];

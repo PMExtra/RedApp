@@ -246,3 +246,5 @@ A preview expires after 10 minutes, and at most 8 previews are kept. Previews ar
 - Private notes are copied only if selected.
 - If the copy's proxy is `inherit`, it follows the target vendor.
 - Copies of built-in applications can be deleted.
+
+For an existing Nginx archive, see [Coexisting with a static archive](legacy-static.md).

@@ -10,14 +10,21 @@ function publicServer() {
   const searches: string[] = [];
   useHandlers(
     mockApi("get", "/api/bootstrap", () => bootstrap({ version: "1.4.0" })),
-    mockApi("get", "/api/home", () => home({ ranking: [{ app: publicApp(), download_clients: 3 }] })),
+    mockApi("get", "/api/home", () =>
+      home({ ranking: [{ app: publicApp(), download_clients: 3 }] }),
+    ),
     mockApi("get", "/api/catalog", () => catalogPage()),
     mockApi("get", "/api/search", ({ request }) => {
       const q = new URL(request.url).searchParams.get("q") ?? "";
       searches.push(q);
       return {
         items: [
-          searchHit({ kind: "vendor", key: "anthropic", name: localized("Anthropic"), localized_icons: { en: "", "zh-CN": "" } }),
+          searchHit({
+            kind: "vendor",
+            key: "anthropic",
+            name: localized("Anthropic"),
+            localized_icons: { en: "", "zh-CN": "" },
+          }),
           searchHit({ key: "anthropic/claude-code", name: localized("Claude Code") }),
         ],
       };
@@ -27,9 +34,52 @@ function publicServer() {
 }
 
 describe("public shell", () => {
+  it("renders ordered full-page links with safe new-tab behavior", async () => {
+    publicServer();
+    useHandlers(
+      mockApi("get", "/api/bootstrap", () =>
+        bootstrap({
+          site: {
+            ...bootstrap().site,
+            navigation: [
+              { title: "Archive", url: "/legacy/", new_tab: false },
+              { title: "Docs", url: "https://example.com/", new_tab: true },
+            ],
+          },
+        }),
+      ),
+    );
+    const { router } = await renderEntry("public", "/");
+    const nav = await screen.findByRole("navigation", { name: "Custom navigation" });
+    const links = within(nav).getAllByRole("link");
+    expect(links.map((link) => link.getAttribute("href"))).toEqual([
+      "/legacy/",
+      "https://example.com/",
+    ]);
+    expect(links[0]).not.toHaveAttribute("target");
+    expect(links[1]).toHaveAttribute("target", "_blank");
+    expect(links[1]).toHaveAttribute("rel", "noopener noreferrer");
+    const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+    let intercepted = true;
+    document.addEventListener(
+      "click",
+      (click) => {
+        intercepted = click.defaultPrevented;
+        click.preventDefault(); // Stop the test DOM from actually fetching the legacy URL.
+      },
+      { once: true },
+    );
+    const archive = links[0];
+    if (!archive) throw new Error("missing archive link");
+    archive.dispatchEvent(event);
+    expect(intercepted).toBe(false);
+    expect(router.currentRoute.value.path).toBe("/");
+  });
+
   it("shows site texts and the version", async () => {
     publicServer();
     await renderEntry("public", "/");
+    expect(screen.queryByRole("navigation", { name: "Custom navigation" })).toBeNull();
     const banner = screen.getByRole("banner");
     expect(await within(banner).findByText("RedApp Mirror")).toBeInTheDocument();
     const footer = screen.getByRole("contentinfo");
@@ -124,6 +174,8 @@ describe("public shell", () => {
   it("shows the not-found page for invalid paths", async () => {
     publicServer();
     await renderEntry("public", "/Not_A_Vendor");
-    expect(await screen.findByRole("heading", { level: 1, name: "Page not found" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Page not found" }),
+    ).toBeInTheDocument();
   });
 });

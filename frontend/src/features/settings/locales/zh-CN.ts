@@ -2,6 +2,18 @@ import type { LocaleModule } from "@/shared/i18n";
 
 export default {
   settings: {
+    navigation: {
+      title: "自定义导航",
+      description:
+        "最多 20 个链接，按此顺序显示在公开页面。标题在各语言下均原样显示。留空则只保留内置导航。",
+      label: "链接标题",
+      url: "链接地址",
+      newTab: "在新标签页打开",
+      untitled: "未命名链接",
+      remove: "删除链接",
+      add: "添加链接",
+      invalidURL: "请输入根相对路径或 http/https 地址，不允许凭据、空白或反斜杠。",
+    },
     discard: "放弃更改",
     site: {
       title: "站点文本",

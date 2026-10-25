@@ -1,11 +1,23 @@
 <script setup lang="ts">
-import { useForm } from "vee-validate";
+import { computed } from "vue";
+import { useFieldArray, useForm } from "vee-validate";
 import { useI18n } from "vue-i18n";
 import { z } from "zod";
 import { FormField, formError, zodSchema } from "@/shared/forms";
 import { toast } from "@/shared/lib";
-import { AsyncState, Button, Card, Input, RevisionConflictAlert, Textarea } from "@/shared/ui";
+import {
+  AsyncState,
+  Button,
+  Card,
+  Checkbox,
+  Input,
+  RevisionConflictAlert,
+  SortableList,
+  Textarea,
+} from "@/shared/ui";
 import { useSaveSiteSettings, useSiteSettings, type SiteSettings } from "./queries";
+import { validNavigationURL } from "./validation";
+import type { Schema } from "@/shared/api";
 import { useServerDraft } from "./serverDraft";
 
 const LANGUAGES = ["en", "zh-CN"] as const;
@@ -27,6 +39,20 @@ function localized(max: number, required = false) {
   return z.object({ en: text(max, required), "zh-CN": text(max, required) });
 }
 const schema = z.object({
+  navigation: z
+    .array(
+      z.object({
+        title: z
+          .string()
+          .trim()
+          .min(1, formError("settings.site.titleRequired"))
+          .max(80, formError("ui.form.tooLong", { max: 80 })),
+        url: z.string().refine(validNavigationURL, formError("settings.navigation.invalidURL")),
+        new_tab: z.boolean(),
+      }),
+    )
+    .max(20)
+    .default([]),
   title: localized(LIMITS.title, true),
   subtitle: localized(LIMITS.subtitle),
   disclaimer: localized(LIMITS.disclaimer),
@@ -38,6 +64,7 @@ const save = useSaveSiteSettings(settings.data);
 
 function draftOf(state: SiteSettings): SiteSettings {
   return {
+    navigation: (state.navigation ?? []).map((item) => ({ ...item })),
     title: { ...state.title },
     subtitle: { ...state.subtitle },
     disclaimer: { ...state.disclaimer },
@@ -45,6 +72,17 @@ function draftOf(state: SiteSettings): SiteSettings {
 }
 
 const { handleSubmit, resetForm, meta } = useForm({ validationSchema: zodSchema(schema) });
+const entries = useFieldArray<Schema<"NavigationItem">>("navigation");
+const fields = entries.fields;
+const navigation = computed({
+  get: () => [...fields.value],
+  set: (ordered) => {
+    ordered.forEach((item, index) => {
+      const from = fields.value.findIndex((field) => field.key === item.key);
+      if (from !== index) entries.move(from, index);
+    });
+  },
+});
 const baseline = useServerDraft({
   state: () => settings.data.value,
   dirty: () => meta.value.dirty,
@@ -116,6 +154,56 @@ function discard() {
             </FormField>
           </fieldset>
         </div>
+        <fieldset class="flex min-w-0 flex-col gap-4" :disabled="save.isPending.value">
+          <legend class="mb-2 text-sm font-semibold">{{ t("settings.navigation.title") }}</legend>
+          <p class="text-sm text-muted">{{ t("settings.navigation.description") }}</p>
+          <SortableList
+            v-model="navigation"
+            :item-key="(item) => String(item.key)"
+            :item-label="(item) => item.value.title || t('settings.navigation.untitled')"
+            :disabled="save.isPending.value"
+          >
+            <template #item="{ index }">
+              <div class="flex min-w-0 flex-1 flex-col gap-3">
+                <FormField
+                  v-slot="{ field }"
+                  :name="`navigation[${index}].title`"
+                  :label="t('settings.navigation.label')"
+                  required
+                >
+                  <Input v-bind="field" :maxlength="80" />
+                </FormField>
+                <FormField
+                  v-slot="{ field }"
+                  :name="`navigation[${index}].url`"
+                  :label="t('settings.navigation.url')"
+                  required
+                >
+                  <Input v-bind="field" :maxlength="2048" />
+                </FormField>
+                <FormField
+                  v-slot="{ field }"
+                  :name="`navigation[${index}].new_tab`"
+                  :label="t('settings.navigation.newTab')"
+                >
+                  <Checkbox
+                    :id="field.id"
+                    :model-value="field.modelValue"
+                    @update:model-value="field['onUpdate:modelValue']"
+                  />
+                </FormField>
+                <Button @click="entries.remove(index)">{{
+                  t("settings.navigation.remove")
+                }}</Button>
+              </div>
+            </template>
+          </SortableList>
+          <Button
+            :disabled="navigation.length >= 20 || save.isPending.value"
+            @click="entries.push({ title: '', url: '', new_tab: false })"
+            >{{ t("settings.navigation.add") }}</Button
+          >
+        </fieldset>
         <div class="flex flex-wrap justify-end gap-2">
           <Button v-if="meta.dirty" :disabled="save.isPending.value" @click="discard">
             {{ t("settings.discard") }}

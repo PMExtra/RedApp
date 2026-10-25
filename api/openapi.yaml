@@ -1360,7 +1360,7 @@ paths:
       security:
         - sessionCookie: []
           csrfToken: []
-      x-max-body-bytes: 8192
+      x-max-body-bytes: 65536
       requestBody:
         required: true
         content:
@@ -5860,14 +5860,36 @@ components:
           $ref: '#/components/schemas/NextCursor'
 
     # ------------------------------------------------------------ settings
+    NavigationItem:
+      type: object
+      additionalProperties: false
+      required: [title, url, new_tab]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 80
+          description: Plain-text title, trimmed, without control characters.
+        url:
+          type: string
+          maxLength: 2048
+          description: Root-relative path or absolute HTTP(S) URL; no credentials, whitespace, controls, backslashes or scheme-relative URLs, including encoded forms.
+        new_tab:
+          type: boolean
     SiteSettings:
       type: object
       additionalProperties: false
       required: [title, subtitle, disclaimer]
       description: |
         Title 1..80 characters per language (required), subtitle up to 160, disclaimer up to 500.
-        No control characters except newline and tab.
+        No control characters except newline and tab. Navigation defaults to an empty list; omission on replacement clears it.
       properties:
+        navigation:
+          type: array
+          maxItems: 20
+          default: []
+          items:
+            $ref: '#/components/schemas/NavigationItem'
         title:
           $ref: '#/components/schemas/LocalizedText'
         subtitle:
@@ -5879,6 +5901,12 @@ components:
       additionalProperties: false
       required: [title, subtitle, disclaimer, revision]
       properties:
+        navigation:
+          type: array
+          maxItems: 20
+          default: []
+          items:
+            $ref: '#/components/schemas/NavigationItem'
         title:
           $ref: '#/components/schemas/LocalizedText'
         subtitle:

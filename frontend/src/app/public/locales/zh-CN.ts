@@ -3,6 +3,8 @@ import type { LocaleModule } from "@/shared/i18n";
 export default {
   publicShell: {
     nav: {
+      custom: "自定义导航",
+      newTab: "（在新标签页打开）",
       all: "全部应用",
       admin: "管理后台",
     },

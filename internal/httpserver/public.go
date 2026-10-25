@@ -21,14 +21,15 @@ func (s *Server) publicURL(r *http.Request) string {
 }
 
 type siteSettingsDTO struct {
-	Title      localizedText `json:"title"`
-	Subtitle   localizedText `json:"subtitle"`
-	Disclaimer localizedText `json:"disclaimer"`
+	Navigation []site.NavigationItem `json:"navigation"`
+	Title      localizedText         `json:"title"`
+	Subtitle   localizedText         `json:"subtitle"`
+	Disclaimer localizedText         `json:"disclaimer"`
 }
 
 func siteSettings(v site.Settings) siteSettingsDTO {
 	text := func(t site.Text) localizedText { return localizedText{En: t.EN, ZhCN: t.ZHCN} }
-	return siteSettingsDTO{Title: text(v.Title), Subtitle: text(v.Subtitle), Disclaimer: text(v.Disclaimer)}
+	return siteSettingsDTO{Navigation: v.Navigation, Title: text(v.Title), Subtitle: text(v.Subtitle), Disclaimer: text(v.Disclaimer)}
 }
 
 type bootstrapDTO struct {

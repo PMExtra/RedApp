@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -61,6 +62,7 @@ func (s *Server) replaceSiteSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
+		Navigation json.RawMessage `json:"navigation"`
 		Title      *localizedInput `json:"title"`
 		Subtitle   *localizedInput `json:"subtitle"`
 		Disclaimer *localizedInput `json:"disclaimer"`
@@ -76,9 +78,31 @@ func (s *Server) replaceSiteSettings(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, codeInvalidRequest, nil, "title, subtitle and disclaimer are required in en and zh-CN")
 		return
 	}
-	value := site.Settings{Title: title, Subtitle: subtitle, Disclaimer: disclaimer}
+	navigation := []site.NavigationItem{}
+	if len(input.Navigation) > 0 {
+		var items []struct {
+			Title  *string `json:"title"`
+			URL    *string `json:"url"`
+			NewTab *bool   `json:"new_tab"`
+		}
+		decoder := json.NewDecoder(bytes.NewReader(input.Navigation))
+		decoder.DisallowUnknownFields()
+		if string(input.Navigation) == "null" || decoder.Decode(&items) != nil {
+			s.fail(w, r, codeInvalidRequest, nil, "navigation must be an array")
+			return
+		}
+		// decodeJSON validates unknown fields at the outer level; validate item fields here.
+		for _, item := range items {
+			if item.Title == nil || item.URL == nil || item.NewTab == nil {
+				s.fail(w, r, codeInvalidRequest, nil, "navigation items require title, url and new_tab")
+				return
+			}
+			navigation = append(navigation, site.NavigationItem{Title: *item.Title, URL: *item.URL, NewTab: *item.NewTab})
+		}
+	}
+	value := site.Settings{Navigation: navigation, Title: title, Subtitle: subtitle, Disclaimer: disclaimer}
 	if err := value.Validate(); err != nil {
-		s.fail(w, r, codeValidationFailed, nil, "Title needs 1 to 80 characters, subtitle at most 160 and disclaimer at most 500, without control characters other than newline and tab")
+		s.fail(w, r, codeValidationFailed, nil, "Invalid site text or navigation: at most 20 links, titles 1–80 characters, and safe root-relative or HTTP(S) URLs up to 2048 bytes")
 		return
 	}
 	saved, err := site.SaveCAS(s.store, value, revision)

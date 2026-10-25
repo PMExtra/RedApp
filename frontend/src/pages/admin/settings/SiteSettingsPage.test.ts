@@ -102,6 +102,65 @@ async function siteCard() {
 }
 
 describe("site texts", () => {
+  it("adds, edits, reorders and removes custom navigation", async () => {
+    const server = settingsServer();
+    await renderPage();
+    const card = await siteCard();
+    const user = userEvent.setup();
+    await waitFor(() =>
+      expect(within(card).getAllByLabelText(/^Site title/)[0]).toHaveValue("RedApp Mirror"),
+    );
+    await user.click(within(card).getByRole("button", { name: "Add link" }));
+    await user.type(within(card).getByLabelText(/^Link title/), "Archive");
+    await user.type(within(card).getByLabelText(/^Link URL/), "/legacy/");
+    await user.click(within(card).getByRole("checkbox", { name: "Open in a new tab" }));
+    await user.click(within(card).getByRole("button", { name: "Add link" }));
+    const secondTitle = within(card).getAllByLabelText(/^Link title/)[1];
+    const secondURL = within(card).getAllByLabelText(/^Link URL/)[1];
+    if (!secondTitle || !secondURL) throw new Error("missing second navigation item");
+    await user.type(secondTitle, "Docs");
+    await user.type(secondURL, "https://example.com/");
+    const handle = within(card).getByRole("button", { name: "Reorder Docs" });
+    handle.focus();
+    await user.keyboard("{ArrowUp}");
+    await user.click(within(card).getByRole("button", { name: "Save site texts" }));
+    await screen.findByText("Site texts saved.");
+    expect(server.puts.site[0]?.body).toMatchObject({
+      navigation: [
+        { title: "Docs", url: "https://example.com/", new_tab: false },
+        { title: "Archive", url: "/legacy/", new_tab: true },
+      ],
+    });
+    const title = within(card).getAllByLabelText(/^Link title/)[0];
+    if (!title) throw new Error("missing navigation title");
+    await user.clear(title);
+    await user.type(title, "Help");
+    const remove = within(card).getAllByRole("button", { name: "Remove link" })[1];
+    if (!remove) throw new Error("missing remove button");
+    await user.click(remove);
+    await user.click(within(card).getByRole("button", { name: "Save site texts" }));
+    await waitFor(() => expect(server.puts.site).toHaveLength(2));
+    expect(server.puts.site[1]?.body).toMatchObject({
+      navigation: [{ title: "Help", url: "https://example.com/", new_tab: false }],
+    });
+  });
+
+  it("rejects dangerous navigation before saving", async () => {
+    const server = settingsServer();
+    await renderPage();
+    const card = await siteCard();
+    const user = userEvent.setup();
+    await waitFor(() =>
+      expect(within(card).getAllByLabelText(/^Site title/)[0]).toHaveValue("RedApp Mirror"),
+    );
+    await user.click(within(card).getByRole("button", { name: "Add link" }));
+    await user.type(within(card).getByLabelText(/^Link title/), "Bad");
+    await user.type(within(card).getByLabelText(/^Link URL/), "javascript:alert(1)");
+    await user.click(within(card).getByRole("button", { name: "Save site texts" }));
+    expect(await within(card).findByText(/Enter a root-relative path/)).toBeVisible();
+    expect(server.puts.site).toEqual([]);
+  });
+
   it("saves with If-Match and refreshes the site title in the shell", async () => {
     const server = settingsServer();
     let bootstraps = 0;
@@ -133,6 +192,7 @@ describe("site texts", () => {
       {
         ifMatch: '"3"',
         body: {
+          navigation: [],
           title: localized("Downloads", "RedApp 镜像"),
           subtitle: localized("Internal application mirror", "内部应用镜像"),
           disclaimer: localized("For internal use only.", "仅供内部使用。"),

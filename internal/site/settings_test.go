@@ -68,3 +68,67 @@ func TestDefaultsPartialRecordsAndRestart(t *testing.T) {
 		t.Fatal("corrupt settings silently accepted")
 	}
 }
+
+func TestNavigationValidationAndPersistence(t *testing.T) {
+	for _, raw := range []string{"/legacy/", "/tools/a.zip?x=1#download", "https://example.com/files", "http://localhost:8080/"} {
+		if !ValidNavigationURL(raw) {
+			t.Errorf("valid URL rejected: %q", raw)
+		}
+	}
+	for _, raw := range []string{"", "javascript:alert(1)", "data:text/html,test", "//evil.test", "/%2fevil.test", "/\\evil.test", "/%5cevil.test", "https://user:pass@example.com", "https:example.com", "https:///example.com", " /legacy", "/bad\npath", "/bad%0apath", "/bad path", "/bad%20path", "https://example.com:bad", "https://", "relative/path", "/bad%zz"} {
+		if ValidNavigationURL(raw) {
+			t.Errorf("unsafe URL accepted: %q", raw)
+		}
+	}
+	directory := t.TempDir()
+	db, err := store.Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	before, err := LoadSnapshot(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before.Navigation = []NavigationItem{{Title: "  旧版资源  ", URL: "/legacy/"}, {Title: "Docs", URL: "https://example.com/", NewTab: true}}
+	saved, err := SaveCAS(db, before.Settings, before.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = store.Open(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	loaded, err := LoadSnapshot(db)
+	if err != nil || !reflect.DeepEqual(loaded, saved) || loaded.Navigation[0].Title != "旧版资源" {
+		t.Fatalf("navigation persistence: %+v %v", loaded, err)
+	}
+	for _, items := range [][]NavigationItem{{{Title: "", URL: "/"}}, {{Title: "bad\nname", URL: "/"}}, {{Title: "unsafe", URL: "javascript:alert(1)"}}, make([]NavigationItem, 21)} {
+		invalid := saved.Settings
+		invalid.Navigation = items
+		if _, err := SaveCAS(db, invalid, saved.Revision); err == nil {
+			t.Fatal("invalid navigation accepted")
+		}
+	}
+	after, err := LoadSnapshot(db)
+	if err != nil || !reflect.DeepEqual(after, saved) {
+		t.Fatal("invalid save changed settings")
+	}
+	saved.Navigation = []NavigationItem{saved.Navigation[1], saved.Navigation[0]}
+	reordered, err := SaveCAS(db, saved.Settings, saved.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reordered.Navigation[0].Title != "Docs" {
+		t.Fatal("order lost")
+	}
+	reordered.Navigation = nil
+	cleared, err := SaveCAS(db, reordered.Settings, reordered.Revision)
+	if err != nil || len(cleared.Navigation) != 0 || cleared.Navigation == nil {
+		t.Fatal("clear must produce empty array")
+	}
+}

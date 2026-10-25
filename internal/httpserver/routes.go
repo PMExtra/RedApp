@@ -127,7 +127,7 @@ func (s *Server) routeTable() []route {
 		{method: "GET", path: "/admin/api/apps/{vendor}/{app}/status", operation: "getAppStatus", serve: s.getAppStatus, auth: authAdmin},
 		{method: "GET", path: "/admin/api/apps/{vendor}/{app}/history", operation: "getAppHistory", serve: s.getAppHistory, auth: authAdmin, query: []string{"metric", "range"}},
 		{method: "GET", path: "/admin/api/settings/site", operation: "getSiteSettings", serve: s.getSiteSettings, auth: authAdmin},
-		{method: "PUT", path: "/admin/api/settings/site", operation: "replaceSiteSettings", serve: s.replaceSiteSettings, auth: authAdmin, maxBody: 8192},
+		{method: "PUT", path: "/admin/api/settings/site", operation: "replaceSiteSettings", serve: s.replaceSiteSettings, auth: authAdmin, maxBody: 65536},
 		{method: "GET", path: "/admin/api/settings/public-url", operation: "getPublicUrlSettings", serve: s.getPublicUrlSettings, auth: authAdmin},
 		{method: "PUT", path: "/admin/api/settings/public-url", operation: "replacePublicUrlSettings", serve: s.replacePublicUrlSettings, auth: authAdmin, maxBody: 8192},
 		{method: "GET", path: "/admin/api/settings/proxy", operation: "getGlobalProxySettings", serve: s.getGlobalProxySettings, auth: authAdmin},

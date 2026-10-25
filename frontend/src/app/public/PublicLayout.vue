@@ -65,6 +65,25 @@ const adminHref = useAdminLink(() => {
         </Tooltip>
       </template>
     </TopNav>
+    <nav
+      v-if="bootstrap.data.value?.site.navigation?.length"
+      :aria-label="t('publicShell.nav.custom')"
+      class="border-b border-border bg-surface"
+    >
+      <div class="mx-auto flex max-w-7xl flex-wrap gap-x-5 gap-y-2 px-4 py-3 text-sm sm:px-6">
+        <a
+          v-for="(item, index) in bootstrap.data.value.site.navigation"
+          :key="index"
+          :href="item.url"
+          :target="item.new_tab ? '_blank' : undefined"
+          :rel="item.new_tab ? 'noopener noreferrer' : undefined"
+          class="max-w-full break-words rounded-sm text-primary hover:underline focus-ring"
+        >
+          {{ item.title
+          }}<span v-if="item.new_tab" class="sr-only"> {{ t("publicShell.nav.newTab") }}</span>
+        </a>
+      </div>
+    </nav>
     <div v-if="bootstrap.isError.value" class="mx-auto w-full max-w-7xl px-4 pt-4 sm:px-6">
       <Alert tone="warning" :title="t('publicShell.siteUnavailable')">
         <template #actions>
