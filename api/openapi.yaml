@@ -5869,7 +5869,19 @@ components:
           type: string
           minLength: 1
           maxLength: 80
-          description: Plain-text title, trimmed, without control characters.
+          description: Legacy fallback title, trimmed, without control characters.
+        localized_title:
+          type: object
+          additionalProperties: false
+          required: [en, zh-CN]
+          description: Optional localized titles. Use the current language, then the other language, then title.
+          properties:
+            en:
+              type: string
+              maxLength: 80
+            zh-CN:
+              type: string
+              maxLength: 80
         url:
           type: string
           maxLength: 2048

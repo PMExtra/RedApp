@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -59,17 +60,21 @@ func TestSiteSettingsRequireRevisionAndPublishPlainText(t *testing.T) {
 func TestNavigationPublishedAndRejectsInvalidInputs(t *testing.T) {
 	h := newHarness(t)
 	h.login("")
-	input := map[string]any{"title": site.Text{EN: "Mirror", ZHCN: "镜像"}, "subtitle": site.Text{}, "disclaimer": site.Text{}, "navigation": []site.NavigationItem{{Title: "Archive", URL: "/legacy/", NewTab: true}}}
+	input := map[string]any{"title": site.Text{EN: "Mirror", ZHCN: "镜像"}, "subtitle": site.Text{}, "disclaimer": site.Text{}, "navigation": []site.NavigationItem{{Title: "Archive", LocalizedTitle: &site.Text{EN: "Archive", ZHCN: "旧版资源"}, URL: "/legacy/", NewTab: true}}}
 	body, _ := h.request("PUT", "/admin/api/settings/site", input, 200, map[string]string{"If-Match": `"1"`})
 	saved := decodeJSONBody[siteSettingsStateDTO](t, body)
 	body, _ = h.request("GET", "/api/bootstrap", nil, 200, nil)
 	public := decodeJSONBody[bootstrapDTO](t, body)
-	if len(public.Site.Navigation) != 1 || public.Site.Navigation[0] != saved.Navigation[0] {
+	if len(public.Site.Navigation) != 1 || !reflect.DeepEqual(public.Site.Navigation[0], saved.Navigation[0]) {
 		t.Fatal("navigation missing from bootstrap")
 	}
 	h.expectError("PUT", "/admin/api/settings/site", input, 409, codeRevisionConflict, map[string]string{"If-Match": `"1"`})
 	for _, invalid := range []any{nil, []any{map[string]any{"title": "a", "url": "/"}}, []any{map[string]any{"title": "a", "url": "/", "new_tab": false, "extra": true}}} {
 		input["navigation"] = invalid
+		h.expectError("PUT", "/admin/api/settings/site", input, 400, codeInvalidRequest, map[string]string{"If-Match": `"2"`})
+	}
+	for _, localized := range []any{nil, map[string]any{"en": "Docs"}, map[string]any{"en": "Docs", "zh-CN": nil}, map[string]any{"en": "Docs", "zh-CN": "文档", "extra": true}} {
+		input["navigation"] = []any{map[string]any{"title": "Docs", "url": "/", "new_tab": false, "localized_title": localized}}
 		h.expectError("PUT", "/admin/api/settings/site", input, 400, codeInvalidRequest, map[string]string{"If-Match": `"2"`})
 	}
 	input["navigation"] = []site.NavigationItem{{Title: "Unsafe", URL: "//evil.test"}}

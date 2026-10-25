@@ -52,7 +52,7 @@ Mount the old root read-only in the Nginx container, if using containers; RedApp
 
 ## Navigation entry
 
-In **Administration → Site settings → Custom navigation**, add a title, URL `/legacy/`, and choose whether to open a new tab. Save the site settings. Add, edit, remove or reorder links using the existing drag handles or keyboard controls. Up to 20 entries are supported, each with a plain-text title of 1–80 characters. Titles are shared across languages. An empty list leaves the built-in navigation unchanged.
+In **Administration → Site settings → Custom navigation**, add Chinese and English titles, URL `/legacy/`, and check **External link** to open a new tab (also allowed for local paths). Save the site settings. Add, edit, remove or reorder links using the existing drag handles or keyboard controls. Up to 20 entries are supported, with plain-text titles up to 80 characters per language; at least one title is required. A missing translation falls back to the other language, then the legacy title. Existing single titles populate both fields when edited. An empty list leaves the built-in navigation unchanged.
 
 URLs must be root-relative paths or absolute HTTP(S) URLs, up to 2048 UTF-8 bytes. Credentials, scheme-relative URLs, whitespace, controls and backslashes (including encoded forms) are rejected. Links use full-page navigation, so `/legacy/` reaches Nginx rather than the Vue router. New-tab links use `noopener noreferrer`. Navigation changes share the site settings revision and conflict protection.
 

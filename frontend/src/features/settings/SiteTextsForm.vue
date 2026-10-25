@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Trash2 } from "@lucide/vue";
 import { computed } from "vue";
 import { useFieldArray, useForm } from "vee-validate";
 import { useI18n } from "vue-i18n";
@@ -11,13 +12,13 @@ import {
   Card,
   Checkbox,
   Input,
+  IconButton,
   RevisionConflictAlert,
   SortableList,
   Textarea,
 } from "@/shared/ui";
 import { useSaveSiteSettings, useSiteSettings, type SiteSettings } from "./queries";
 import { validNavigationURL } from "./validation";
-import type { Schema } from "@/shared/api";
 import { useServerDraft } from "./serverDraft";
 
 const LANGUAGES = ["en", "zh-CN"] as const;
@@ -42,11 +43,21 @@ const schema = z.object({
   navigation: z
     .array(
       z.object({
-        title: z
-          .string()
-          .trim()
-          .min(1, formError("settings.site.titleRequired"))
-          .max(80, formError("ui.form.tooLong", { max: 80 })),
+        localized_title: z
+          .object({
+            en: text(80, false).refine(
+              (value) => !/[\r\n\t]/.test(value),
+              formError("settings.site.controlCharacters"),
+            ),
+            "zh-CN": text(80, false).refine(
+              (value) => !/[\r\n\t]/.test(value),
+              formError("settings.site.controlCharacters"),
+            ),
+          })
+          .refine((value) => Boolean(value.en || value["zh-CN"]), {
+            message: formError("settings.site.titleRequired"),
+            path: ["zh-CN"],
+          }),
         url: z.string().refine(validNavigationURL, formError("settings.navigation.invalidURL")),
         new_tab: z.boolean(),
       }),
@@ -62,9 +73,15 @@ const { t } = useI18n();
 const settings = useSiteSettings();
 const save = useSaveSiteSettings(settings.data);
 
-function draftOf(state: SiteSettings): SiteSettings {
+function draftOf(state: SiteSettings) {
   return {
-    navigation: (state.navigation ?? []).map((item) => ({ ...item })),
+    navigation: (state.navigation ?? []).map((item) => ({
+      ...item,
+      localized_title:
+        item.localized_title && (item.localized_title.en || item.localized_title["zh-CN"])
+          ? { ...item.localized_title }
+          : { en: item.title, "zh-CN": item.title },
+    })),
     title: { ...state.title },
     subtitle: { ...state.subtitle },
     disclaimer: { ...state.disclaimer },
@@ -72,7 +89,7 @@ function draftOf(state: SiteSettings): SiteSettings {
 }
 
 const { handleSubmit, resetForm, meta } = useForm({ validationSchema: zodSchema(schema) });
-const entries = useFieldArray<Schema<"NavigationItem">>("navigation");
+const entries = useFieldArray<z.infer<typeof schema>["navigation"][number]>("navigation");
 const fields = entries.fields;
 const navigation = computed({
   get: () => [...fields.value],
@@ -92,12 +109,21 @@ const baseline = useServerDraft({
 });
 
 const submit = handleSubmit((values) => {
-  save.mutate(values, {
-    onSuccess: (state) => {
-      baseline.reset(state);
-      toast({ tone: "success", title: t("settings.site.saved") });
+  save.mutate(
+    {
+      ...values,
+      navigation: values.navigation.map((item) => ({
+        ...item,
+        title: item.localized_title["zh-CN"] || item.localized_title.en,
+      })),
     },
-  });
+    {
+      onSuccess: (state) => {
+        baseline.reset(state);
+        toast({ tone: "success", title: t("settings.site.saved") });
+      },
+    },
+  );
 });
 
 async function reload() {
@@ -160,18 +186,26 @@ function discard() {
           <SortableList
             v-model="navigation"
             :item-key="(item) => String(item.key)"
-            :item-label="(item) => item.value.title || t('settings.navigation.untitled')"
+            :item-label="
+              (item) =>
+                item.value.localized_title?.['zh-CN'] ||
+                item.value.localized_title?.en ||
+                t('settings.navigation.untitled')
+            "
             :disabled="save.isPending.value"
           >
             <template #item="{ index }">
-              <div class="flex min-w-0 flex-1 flex-col gap-3">
+              <div
+                class="grid min-w-0 grid-cols-1 items-start gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,2fr)_auto_auto]"
+              >
                 <FormField
+                  v-for="language in ['zh-CN', 'en'] as const"
+                  :key="language"
                   v-slot="{ field }"
-                  :name="`navigation[${index}].title`"
-                  :label="t('settings.navigation.label')"
-                  required
+                  :name="`navigation[${index}].localized_title.${language}`"
+                  :label="t(`settings.navigation.labels.${language}`)"
                 >
-                  <Input v-bind="field" :maxlength="80" />
+                  <Input v-bind="field" :lang="language" :maxlength="80" />
                 </FormField>
                 <FormField
                   v-slot="{ field }"
@@ -186,21 +220,30 @@ function discard() {
                   :name="`navigation[${index}].new_tab`"
                   :label="t('settings.navigation.newTab')"
                 >
-                  <Checkbox
-                    :id="field.id"
-                    :model-value="field.modelValue"
-                    @update:model-value="field['onUpdate:modelValue']"
-                  />
+                  <div class="flex h-9 items-center">
+                    <Checkbox
+                      :id="field.id"
+                      :model-value="field.modelValue"
+                      @update:model-value="field['onUpdate:modelValue']"
+                    />
+                  </div>
                 </FormField>
-                <Button @click="entries.remove(index)">{{
-                  t("settings.navigation.remove")
-                }}</Button>
+                <IconButton
+                  class="self-end"
+                  :label="t('settings.navigation.remove')"
+                  :disabled="save.isPending.value"
+                  @click="entries.remove(index)"
+                >
+                  <Trash2 aria-hidden="true" />
+                </IconButton>
               </div>
             </template>
           </SortableList>
           <Button
             :disabled="navigation.length >= 20 || save.isPending.value"
-            @click="entries.push({ title: '', url: '', new_tab: false })"
+            @click="
+              entries.push({ localized_title: { en: '', 'zh-CN': '' }, url: '', new_tab: false })
+            "
             >{{ t("settings.navigation.add") }}</Button
           >
         </fieldset>

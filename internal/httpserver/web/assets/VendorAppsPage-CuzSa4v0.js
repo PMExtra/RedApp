@@ -1,1 +1,0 @@
-import{$t as e,Mn as t,fn as n,or as r,pn as i,un as a,vn as o}from"./ui-BPZUux7n.js";import{S as s,l as c}from"./directory-3V8Y0lCT.js";var l=o({__name:`VendorAppsPage`,setup(o){let l=e(),u=s(a(()=>String(l.params.vendor)));return(e,a)=>r(u).data.value?(t(),n(r(c),{key:r(u).data.value.uid,vendor:r(u).data.value},null,8,[`vendor`])):i(``,!0)}});export{l as default};

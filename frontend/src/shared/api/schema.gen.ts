@@ -2438,8 +2438,13 @@ export interface components {
             next_cursor: components["schemas"]["NextCursor"];
         };
         NavigationItem: {
-            /** @description Plain-text title, trimmed, without control characters. */
+            /** @description Legacy fallback title, trimmed, without control characters. */
             title: string;
+            /** @description Optional localized titles. Use the current language, then the other language, then title. */
+            localized_title?: {
+                en: string;
+                "zh-CN": string;
+            };
             /** @description Root-relative path or absolute HTTP(S) URL; no credentials, whitespace, controls, backslashes or scheme-relative URLs, including encoded forms. */
             url: string;
             new_tab: boolean;

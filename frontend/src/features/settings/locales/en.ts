@@ -5,10 +5,10 @@ export default {
     navigation: {
       title: "Custom navigation",
       description:
-        "Up to 20 links, shown in this order on public pages. Titles are shown as entered in every language. Leave empty to keep only the built-in navigation.",
-      label: "Link title",
+        "Up to 20 links, shown in this order on public pages. Enter at least one title; a missing translation uses the other language. External link opens a new tab, including for local paths. Leave empty to keep only the built-in navigation.",
+      labels: { en: "English title", "zh-CN": "Chinese title" },
       url: "Link URL",
-      newTab: "Open in a new tab",
+      newTab: "External link",
       untitled: "Untitled link",
       remove: "Remove link",
       add: "Add link",
