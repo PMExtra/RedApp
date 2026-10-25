@@ -16,8 +16,8 @@ interface Put {
 }
 
 /** A settings server: GETs return the stored state, PUTs store and bump the revision. */
-function settingsServer(pins = homepageState()) {
-  let site = siteSettingsState();
+function settingsServer(pins = homepageState(), initialSite = siteSettingsState()) {
+  let site = initialSite;
   let publicUrl = publicUrlState();
   let homepage = pins;
   const puts: Record<"site" | "publicUrl" | "homepage", Put[]> = {
@@ -111,11 +111,12 @@ describe("site texts", () => {
       expect(within(card).getAllByLabelText(/^Site title/)[0]).toHaveValue("RedApp Mirror"),
     );
     await user.click(within(card).getByRole("button", { name: "Add link" }));
-    await user.type(within(card).getByLabelText(/^Link title/), "Archive");
+    await user.type(within(card).getByLabelText(/^English title/), "Archive");
+    await user.type(within(card).getByLabelText(/^Chinese title/), "旧版资源");
     await user.type(within(card).getByLabelText(/^Link URL/), "/legacy/");
-    await user.click(within(card).getByRole("checkbox", { name: "Open in a new tab" }));
+    await user.click(within(card).getByRole("checkbox", { name: "External link" }));
     await user.click(within(card).getByRole("button", { name: "Add link" }));
-    const secondTitle = within(card).getAllByLabelText(/^Link title/)[1];
+    const secondTitle = within(card).getAllByLabelText(/^English title/)[1];
     const secondURL = within(card).getAllByLabelText(/^Link URL/)[1];
     if (!secondTitle || !secondURL) throw new Error("missing second navigation item");
     await user.type(secondTitle, "Docs");
@@ -128,10 +129,15 @@ describe("site texts", () => {
     expect(server.puts.site[0]?.body).toMatchObject({
       navigation: [
         { title: "Docs", url: "https://example.com/", new_tab: false },
-        { title: "Archive", url: "/legacy/", new_tab: true },
+        {
+          title: "旧版资源",
+          localized_title: { en: "Archive", "zh-CN": "旧版资源" },
+          url: "/legacy/",
+          new_tab: true,
+        },
       ],
     });
-    const title = within(card).getAllByLabelText(/^Link title/)[0];
+    const title = within(card).getAllByLabelText(/^English title/)[0];
     if (!title) throw new Error("missing navigation title");
     await user.clear(title);
     await user.type(title, "Help");
@@ -145,6 +151,34 @@ describe("site texts", () => {
     });
   });
 
+  it("edits legacy titles without losing existing links", async () => {
+    const server = settingsServer(
+      homepageState(),
+      siteSettingsState({ navigation: [{ title: "Archive", url: "/legacy/", new_tab: true }] }),
+    );
+    await renderPage();
+    const card = await siteCard();
+    await waitFor(() =>
+      expect(within(card).getByLabelText("Chinese title")).toHaveValue("Archive"),
+    );
+    expect(within(card).getByLabelText("English title")).toHaveValue("Archive");
+    const user = userEvent.setup();
+    await user.clear(within(card).getByLabelText("Chinese title"));
+    await user.type(within(card).getByLabelText("Chinese title"), "旧版资源");
+    await user.click(within(card).getByRole("button", { name: "Save site texts" }));
+    await waitFor(() => expect(server.puts.site).toHaveLength(1));
+    expect(server.puts.site[0]?.body).toMatchObject({
+      navigation: [
+        {
+          title: "旧版资源",
+          localized_title: { en: "Archive", "zh-CN": "旧版资源" },
+          url: "/legacy/",
+          new_tab: true,
+        },
+      ],
+    });
+  });
+
   it("rejects dangerous navigation before saving", async () => {
     const server = settingsServer();
     await renderPage();
@@ -154,7 +188,7 @@ describe("site texts", () => {
       expect(within(card).getAllByLabelText(/^Site title/)[0]).toHaveValue("RedApp Mirror"),
     );
     await user.click(within(card).getByRole("button", { name: "Add link" }));
-    await user.type(within(card).getByLabelText(/^Link title/), "Bad");
+    await user.type(within(card).getByLabelText(/^English title/), "Bad");
     await user.type(within(card).getByLabelText(/^Link URL/), "javascript:alert(1)");
     await user.click(within(card).getByRole("button", { name: "Save site texts" }));
     expect(await within(card).findByText(/Enter a root-relative path/)).toBeVisible();

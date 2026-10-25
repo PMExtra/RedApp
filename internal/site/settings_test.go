@@ -90,7 +90,7 @@ func TestNavigationValidationAndPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before.Navigation = []NavigationItem{{Title: "  旧版资源  ", URL: "/legacy/"}, {Title: "Docs", URL: "https://example.com/", NewTab: true}}
+	before.Navigation = []NavigationItem{{Title: "  旧版资源  ", URL: "/legacy/"}, {Title: "Docs", LocalizedTitle: &Text{EN: " Documentation ", ZHCN: " 文档 "}, URL: "https://example.com/", NewTab: true}}
 	saved, err := SaveCAS(db, before.Settings, before.Revision)
 	if err != nil {
 		t.Fatal(err)
@@ -104,10 +104,10 @@ func TestNavigationValidationAndPersistence(t *testing.T) {
 	}
 	defer db.Close()
 	loaded, err := LoadSnapshot(db)
-	if err != nil || !reflect.DeepEqual(loaded, saved) || loaded.Navigation[0].Title != "旧版资源" {
+	if err != nil || !reflect.DeepEqual(loaded, saved) || loaded.Navigation[0].Title != "旧版资源" || loaded.Navigation[1].LocalizedTitle.EN != "Documentation" || loaded.Navigation[1].LocalizedTitle.ZHCN != "文档" {
 		t.Fatalf("navigation persistence: %+v %v", loaded, err)
 	}
-	for _, items := range [][]NavigationItem{{{Title: "", URL: "/"}}, {{Title: "bad\nname", URL: "/"}}, {{Title: "unsafe", URL: "javascript:alert(1)"}}, make([]NavigationItem, 21)} {
+	for _, items := range [][]NavigationItem{{{Title: "", URL: "/"}}, {{Title: "bad\nname", URL: "/"}}, {{Title: "safe", LocalizedTitle: &Text{EN: "bad\nname"}, URL: "/"}}, {{Title: "unsafe", URL: "javascript:alert(1)"}}, make([]NavigationItem, 21)} {
 		invalid := saved.Settings
 		invalid.Navigation = items
 		if _, err := SaveCAS(db, invalid, saved.Revision); err == nil {

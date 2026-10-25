@@ -17,7 +17,7 @@ import {
   TopNav,
 } from "@/shared/ui";
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const { bootstrap, title, subtitle } = useSiteTexts();
 useSiteTitle(title);
 const route = useRoute();
@@ -79,7 +79,10 @@ const adminHref = useAdminLink(() => {
           :rel="item.new_tab ? 'noopener noreferrer' : undefined"
           class="max-w-full break-words rounded-sm text-primary hover:underline focus-ring"
         >
-          {{ item.title
+          {{
+            item.localized_title?.[locale === "zh-CN" ? "zh-CN" : "en"] ||
+            item.localized_title?.[locale === "zh-CN" ? "en" : "zh-CN"] ||
+            item.title
           }}<span v-if="item.new_tab" class="sr-only"> {{ t("publicShell.nav.newTab") }}</span>
         </a>
       </div>

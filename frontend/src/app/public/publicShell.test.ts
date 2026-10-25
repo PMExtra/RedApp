@@ -76,6 +76,49 @@ describe("public shell", () => {
     expect(router.currentRoute.value.path).toBe("/");
   });
 
+  it("localizes navigation with translation and legacy fallbacks", async () => {
+    publicServer();
+    useHandlers(
+      mockApi("get", "/api/bootstrap", () =>
+        bootstrap({
+          site: {
+            ...bootstrap().site,
+            navigation: [
+              {
+                title: "Legacy",
+                localized_title: { en: "Archive", "zh-CN": "旧版资源" },
+                url: "/legacy/",
+                new_tab: false,
+              },
+              {
+                title: "Fallback",
+                localized_title: { en: "", "zh-CN": "中文帮助" },
+                url: "/help/",
+                new_tab: false,
+              },
+              { title: "Old title", url: "/old/", new_tab: false },
+            ],
+          },
+        }),
+      ),
+    );
+    await renderEntry("public", "/");
+    const nav = await screen.findByRole("navigation", { name: "Custom navigation" });
+    expect(
+      within(nav)
+        .getAllByRole("link")
+        .map((link) => link.textContent.trim()),
+    ).toEqual(["Archive", "中文帮助", "Old title"]);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Language" }));
+    await user.click(await screen.findByRole("menuitemradio", { name: "简体中文" }));
+    expect(
+      within(nav)
+        .getAllByRole("link")
+        .map((link) => link.textContent.trim()),
+    ).toEqual(["旧版资源", "中文帮助", "Old title"]);
+  });
+
   it("shows site texts and the version", async () => {
     publicServer();
     await renderEntry("public", "/");

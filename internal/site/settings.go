@@ -22,9 +22,10 @@ type Text struct {
 	ZHCN string `json:"zh-CN"`
 }
 type NavigationItem struct {
-	Title  string `json:"title"`
-	URL    string `json:"url"`
-	NewTab bool   `json:"new_tab"`
+	Title          string `json:"title"`
+	LocalizedTitle *Text  `json:"localized_title,omitempty"`
+	URL            string `json:"url"`
+	NewTab         bool   `json:"new_tab"`
 }
 
 type Settings struct {
@@ -53,6 +54,14 @@ func (s *Settings) Validate() error {
 		item.Title = strings.TrimSpace(item.Title)
 		if item.Title == "" || !utf8.ValidString(item.Title) || utf8.RuneCountInString(item.Title) > 80 || strings.IndexFunc(item.Title, unicode.IsControl) >= 0 {
 			return errors.New("navigation title needs 1 to 80 characters without controls")
+		}
+		if item.LocalizedTitle != nil {
+			for _, title := range []*string{&item.LocalizedTitle.EN, &item.LocalizedTitle.ZHCN} {
+				*title = strings.TrimSpace(*title)
+				if !utf8.ValidString(*title) || utf8.RuneCountInString(*title) > 80 || strings.IndexFunc(*title, unicode.IsControl) >= 0 {
+					return errors.New("localized navigation title exceeds 80 characters or contains controls")
+				}
+			}
 		}
 		if !ValidNavigationURL(item.URL) {
 			return errors.New("navigation URL must be a root-relative path or HTTP(S) URL without credentials, whitespace or backslashes")

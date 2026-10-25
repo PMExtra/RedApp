@@ -81,9 +81,10 @@ func (s *Server) replaceSiteSettings(w http.ResponseWriter, r *http.Request) {
 	navigation := []site.NavigationItem{}
 	if len(input.Navigation) > 0 {
 		var items []struct {
-			Title  *string `json:"title"`
-			URL    *string `json:"url"`
-			NewTab *bool   `json:"new_tab"`
+			Title          *string         `json:"title"`
+			LocalizedTitle json.RawMessage `json:"localized_title"`
+			URL            *string         `json:"url"`
+			NewTab         *bool           `json:"new_tab"`
 		}
 		decoder := json.NewDecoder(bytes.NewReader(input.Navigation))
 		decoder.DisallowUnknownFields()
@@ -97,7 +98,23 @@ func (s *Server) replaceSiteSettings(w http.ResponseWriter, r *http.Request) {
 				s.fail(w, r, codeInvalidRequest, nil, "navigation items require title, url and new_tab")
 				return
 			}
-			navigation = append(navigation, site.NavigationItem{Title: *item.Title, URL: *item.URL, NewTab: *item.NewTab})
+			var localizedTitle *site.Text
+			if len(item.LocalizedTitle) > 0 {
+				var localized localizedInput
+				decoder := json.NewDecoder(bytes.NewReader(item.LocalizedTitle))
+				decoder.DisallowUnknownFields()
+				if err := decoder.Decode(&localized); err != nil {
+					s.fail(w, r, codeInvalidRequest, nil, "localized_title requires en and zh-CN")
+					return
+				}
+				value, ok := localized.text()
+				if !ok {
+					s.fail(w, r, codeInvalidRequest, nil, "localized_title requires en and zh-CN")
+					return
+				}
+				localizedTitle = &value
+			}
+			navigation = append(navigation, site.NavigationItem{Title: *item.Title, LocalizedTitle: localizedTitle, URL: *item.URL, NewTab: *item.NewTab})
 		}
 	}
 	value := site.Settings{Navigation: navigation, Title: title, Subtitle: subtitle, Disclaimer: disclaimer}
