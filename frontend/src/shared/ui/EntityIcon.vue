@@ -10,7 +10,7 @@ import { cn } from "./cn";
  * drawn for light backgrounds: the light theme shows them on the page itself,
  * the dark theme on a dimmed light tile. A `decorative` logo (mood only, next
  * to the vendor name) stays transparent and dimmed instead, and the dark theme
- * draws it as a light silhouette.
+ * renders it in grayscale while preserving the original brightness.
  */
 const props = withDefaults(
   defineProps<{
@@ -44,7 +44,7 @@ const heights = { xs: "h-5", sm: "h-7", md: "h-9", lg: "h-12", xl: "h-16" };
         cn(
           'w-auto max-w-48 object-contain',
           decorative
-            ? 'opacity-60 dark:opacity-50 dark:brightness-0 dark:invert'
+            ? 'opacity-60 dark:opacity-50 dark:grayscale'
             : 'rounded-lg bg-icon-bg dark:box-content dark:px-2 dark:py-1',
           heights[size],
         )
