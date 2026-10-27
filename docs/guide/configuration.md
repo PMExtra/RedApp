@@ -167,21 +167,22 @@ Behavior:
 
 RedApp ships built-in presets for vendors, applications and categories. They are compiled into the binary.
 
-- On startup, missing built-in vendors and applications are added **disabled**. Existing records are never overwritten.
+- On startup, missing built-in vendors and applications are added **disabled**. An existing independent application at the same `vendor/app` path is associated with the preset: its provider, identity and enabled state stay unchanged. Existing explicit settings become overrides, including values equal to the preset. Display names are not matching keys. Existing bindings to other templates are not changed.
 - A preset-based vendor or application stores only the fields you changed (overrides). All other fields follow the preset and pick up preset updates when you upgrade RedApp.
-- A value equal to the preset, an empty string and an empty list still count as your own override.
-- English and Chinese texts are separate fields. Lists (sources, cache rules, categories, tags) and the proxy, prewarm and retention settings are each replaced as a whole.
+- A value equal to the preset, a valid empty string/list, `false` and `0` still count as your own override. Historic values whose intent is unknown are preserved; genuinely absent fields may inherit.
+- Common settings inherit across providers. Provider-specific settings inherit only from a template with the same provider; otherwise only that provider's own defaults apply. The provider itself is immutable. The editor shows both the current and template providers.
+- English and Chinese texts are separate fields. Lists (sources, cache rules, categories, tags) and the proxy, prewarm, retention and complete JSON release configuration are each replaced as a whole. JSON request/query/source blocks are never recursively combined with the template.
 - Built-in vendors and applications cannot be deleted (their delete button is disabled). Disable them instead.
 - A category cannot be renamed to a name that another category already uses in either language (ignoring case).
 
 ### Resetting a field
 
-In the editor, a **Reset** button appears at the end of a field's label only when the field has an override or an unsaved edit.
+In the editor, a **Reset** button appears at the end of a field's label only when a compatible template value exists and the field has an override or an unsaved edit. A provider-specific field cannot reset to a different provider's template.
 
 1. Click **Reset**. The draft shows the preset value.
 2. Click **Save** in the same card. The override is removed, and the field follows the preset again.
 
-Reset does not change the enabled state, private notes, IDs or provider. It never deletes cached files, hosted files or history.
+Reset does not change the enabled state, private notes, IDs or provider. It never deletes cached files, hosted files or history. A changed source configuration creates a new source epoch; old cached data remains in its original namespace.
 
 ### Saving and conflicts
 
@@ -210,6 +211,8 @@ Export creates a ZIP file from a vendor (optionally with its applications) or an
 | Proxy credentials, only if selected | Credentials of parent proxy settings |
 
 The two sensitive options (notes and proxy credentials) are off every time the dialog opens. If proxy credentials are excluded and a proxy URL contains them, the whole proxy setting is left out and marked as omitted.
+
+Linked application exports use configuration document version 2 with an explicit `provider_key` that scopes their overrides. Version 1 linked documents are still accepted under their original template provider; they cannot change an existing application's provider. An import replaces the supplied overrides, rather than guessing which existing settings to keep.
 
 ### Import
 

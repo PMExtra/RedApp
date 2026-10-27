@@ -150,6 +150,9 @@ func entriesFromConfiguration(snapshot store.DirectorySnapshot, pool *distributo
 				return nil, errors.New("provider has no reviewed release template")
 			}
 			entry, err = releaseEntry(template, client)
+			if err == nil && entry.Provider != app.Provider {
+				return nil, errors.New("template protocol does not match application provider")
+			}
 			if err != nil {
 				return nil, err
 			}

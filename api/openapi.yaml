@@ -6561,11 +6561,14 @@ components:
       properties:
         source:
           type: string
-          enum: [inherited, custom]
-          description: '`inherited` follows the template; `custom` is an override (or any field without template).'
+          enum: [inherited, custom, default]
+          description: '`inherited` follows a compatible template; `custom` is explicit; `default` uses the current provider or common default.'
+        resettable:
+          type: boolean
+          description: Whether a compatible template value exists for this field.
         differs_from_template:
           type: [boolean, 'null']
-          description: '`null` without template.'
+          description: '`null` without a compatible template value.'
     VendorSpec:
       type: object
       additionalProperties: false
@@ -6902,6 +6905,9 @@ components:
         template_ref:
           type: [string, 'null']
           description: Preset key (`vendor/app`) when linked to a template.
+        template_provider:
+          type: string
+          description: Provider of the associated template; may differ from effective.provider.
         template_hash:
           type: [string, 'null']
         template_missing:
@@ -6912,7 +6918,7 @@ components:
             - type: 'null'
         overrides:
           type: object
-          description: Sparse nested object of overridden leaves (same shape as `AppSpec`). `{}` without template.
+          description: Sparse overridden leaves scoped to the immutable effective.provider. Provider-specific values never inherit from a different template provider. `{}` without template.
         effective:
           $ref: '#/components/schemas/AppSpec'
         fields:

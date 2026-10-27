@@ -70,7 +70,7 @@ The data directory holds all runtime state:
 - Never delete `instance.lock`. The operating system releases it when the process exits.
 - The directory must be an absolute path. RedApp creates it with mode `0700` if it does not exist.
 
-This build supports an in-place upgrade from schema 15 to 16, preserving existing configuration, administrator credentials, cache and hosted-file references, history and object files. Older schemas and databases written by a newer build are refused without modification. Pre-1.0 breaking changes are allowed, but do not prohibit migrations when a bounded upgrade is practical.
+This build supports an in-place upgrade from schemas 15 and 16 to 17, preserving existing configuration, administrator credentials, cache and hosted-file references, history and object files. Older schemas and databases written by a newer build are refused without modification. Pre-1.0 breaking changes are allowed, but do not prohibit migrations when a bounded upgrade is practical.
 
 Stop the old instance and retain a consistent backup of the **whole data directory** before upgrading. Under the instance lock, RedApp checks available space (at least twice the database's used size), writes a database backup named `state.sqlite.schema15-<UTC time>.backup`, then migrates in one transaction with foreign-key and schema checks. Existing backup files are never overwritten. Insufficient space or backup failure stops the upgrade; failure before commit rolls back. A failure after commit, such as checkpoint failure, requires checking the actual database version before retrying. Migration logs use `component=migration`.
 

@@ -60,7 +60,7 @@ func TestTaxonomyLanguageOverlayMissingAndRuntimeIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if item.Fields["name.en"].Source != "custom" || *item.Fields["name.en"].Differs {
+	if item.Fields["name.en"].Source != "custom" || *item.Fields["name.en"].Differs || !item.Fields["name.en"].Resettable {
 		t.Fatal("same value override lost", item)
 	}
 	after, _ := s.Application(before.Key)

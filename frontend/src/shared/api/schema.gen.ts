@@ -2755,11 +2755,13 @@ export interface components {
         };
         FieldOrigin: {
             /**
-             * @description `inherited` follows the template; `custom` is an override (or any field without template).
+             * @description `inherited` follows a compatible template; `custom` is explicit; `default` uses the current provider or common default.
              * @enum {string}
              */
-            source: "inherited" | "custom";
-            /** @description `null` without template. */
+            source: "inherited" | "custom" | "default";
+            /** @description Whether a compatible template value exists for this field. */
+            resettable?: boolean;
+            /** @description `null` without a compatible template value. */
             differs_from_template: boolean | null;
         };
         VendorSpec: {
@@ -2914,10 +2916,12 @@ export interface components {
             revision: components["schemas"]["Revision"];
             /** @description Preset key (`vendor/app`) when linked to a template. */
             template_ref: string | null;
+            /** @description Provider of the associated template; may differ from effective.provider. */
+            template_provider?: string;
             template_hash: string | null;
             template_missing: boolean;
             defaults: components["schemas"]["AppSpec"] | null;
-            /** @description Sparse nested object of overridden leaves (same shape as `AppSpec`). `{}` without template. */
+            /** @description Sparse overridden leaves scoped to the immutable effective.provider. Provider-specific values never inherit from a different template provider. `{}` without template. */
             overrides: Record<string, never>;
             effective: components["schemas"]["AppSpec"];
             fields: {

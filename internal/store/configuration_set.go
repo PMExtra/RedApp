@@ -171,7 +171,7 @@ func (w *configSet) loadVendors(where string, args ...any) ([]*vendorEntry, erro
 	return out, rows.Err()
 }
 
-const appEntryQuery = `SELECT ` + applicationColumns + `,c.template_ref,c.overrides_json,c.spec_json,i.revision,i.en,i.zh_cn,p.payload,d.requested_revision FROM applications a JOIN vendors v ON v.uid=a.vendor_uid LEFT JOIN application_config c ON c.entity_uid=a.uid LEFT JOIN application_instructions i ON i.app_uid=a.uid LEFT JOIN application_http_policies p ON p.app_uid=a.uid LEFT JOIN pending_application_deletes d ON d.app_uid=a.uid`
+const appEntryQuery = `SELECT ` + applicationColumns + `,c.template_ref,c.overrides_json,c.spec_json,c.provider_key,i.revision,i.en,i.zh_cn,p.payload,d.requested_revision FROM applications a JOIN vendors v ON v.uid=a.vendor_uid LEFT JOIN application_config c ON c.entity_uid=a.uid LEFT JOIN application_instructions i ON i.app_uid=a.uid LEFT JOIN application_http_policies p ON p.app_uid=a.uid LEFT JOIN pending_application_deletes d ON d.app_uid=a.uid`
 
 func (w *configSet) loadApps(where string, args ...any) ([]*appEntry, error) {
 	rows, err := w.q.Query(appEntryQuery+` WHERE `+where+` ORDER BY v.id,a.id`, args...)
@@ -182,9 +182,10 @@ func (w *configSet) loadApps(where string, args ...any) ([]*appEntry, error) {
 	var out []*appEntry
 	for rows.Next() {
 		var ref, en, zh sql.NullString
+		var providerKey string
 		var overrides, spec, policy []byte
 		var instructions, pending sql.NullInt64
-		a, err := scanApplication(extraScanner{rows, []any{&ref, &overrides, &spec, &instructions, &en, &zh, &policy, &pending}})
+		a, err := scanApplication(extraScanner{rows, []any{&ref, &overrides, &spec, &providerKey, &instructions, &en, &zh, &policy, &pending}})
 		if err != nil {
 			return nil, err
 		}
@@ -198,7 +199,9 @@ func (w *configSet) loadApps(where string, args ...any) ([]*appEntry, error) {
 		if e.config, err = decodeOwnedConfig(a.UID, ref, overrides, spec); err != nil {
 			return nil, err
 		}
+		e.config.ProviderKey = providerKey
 		e.configBefore, _ = decodeOwnedConfig(a.UID, ref, overrides, spec)
+		e.configBefore.ProviderKey = providerKey
 		if instructions.Valid {
 			e.instructions = Instructions{LocalizedText: LocalizedText{En: en.String, ZhCN: zh.String}, Revision: instructions.Int64}
 		}
@@ -327,6 +330,9 @@ func (w *configSet) addVendor(v Vendor, c ownedConfig) *vendorEntry {
 	return e
 }
 func (w *configSet) addApp(a Application, c ownedConfig) *appEntry {
+	if c.ProviderKey == "" {
+		c.ProviderKey = a.Provider
+	}
 	e := &appEntry{Application: a, config: c, changed: true}
 	w.apps[a.UID], w.appKeys[a.Key] = e, a.UID
 	return e
@@ -365,6 +371,9 @@ func (w *configSet) setConfig(kind, uid string, c ownedConfig) {
 		v.config, v.changed = c, true
 	} else {
 		a := w.apps[uid]
+		if c.ProviderKey == "" {
+			c.ProviderKey = a.Provider
+		}
 		a.config, a.changed = c, true
 	}
 }
@@ -755,7 +764,7 @@ func (w *configSet) materializeApp(a *appEntry) error {
 	} else {
 		a.Categories, a.Tags = []string{}, []string{}
 	}
-	if typed.Provider != a.Provider {
+	if typed.Provider != a.Provider || a.config.ProviderKey != a.Provider {
 		return invalidf("Provider is immutable")
 	}
 	in := ApplicationInput{ID: a.ID, Name: LocalizedText{typed.Name.En, typed.Name.ZhCN}, Description: LocalizedText{typed.Description.En, typed.Description.ZhCN}, Icon: typed.Icon, Provider: typed.Provider, JSONRelease: typed.JSONRelease, BaseURL: typed.BaseURL, BaseURLs: typed.BaseURLs, SourceStrategy: typed.SourceStrategy, CacheTTLSeconds: typed.CacheTTLSeconds, Enabled: a.Enabled}
@@ -796,7 +805,10 @@ func (w *configSet) materializeApp(a *appEntry) error {
 	}
 	_, builtin := BuiltinApplicationTemplate(a.Key)
 	a.BuiltinTemplate = template != nil || builtin
-	key := distributionKey(a)
+	key, err := w.distributionKey(a)
+	if err != nil {
+		return err
+	}
 	d, err := w.distribution(key)
 	if err != nil {
 		return err
@@ -845,6 +857,8 @@ func (w *configSet) materializeInstructions(a *appEntry, instructions LocalizedT
 	for _, p := range []string{"instructions.en", "instructions.zh-CN"} {
 		_, was := leaf(prev.Overrides, p)
 		_, now := leaf(cur.Overrides, p)
+		was = was || prev.Ref == nil
+		now = now || cur.Ref == nil
 		if a.before != nil && was != now {
 			changed = true
 		}
@@ -872,7 +886,7 @@ func (w *configSet) materializeInstructions(a *appEntry, instructions LocalizedT
 		old.Revision++
 	}
 	old.LocalizedText = instructions
-	if cur.Ref == nil && a.instructionsBefore.Revision == 0 && instructions == (LocalizedText{}) {
+	if (cur.Ref == nil || a.before != nil && !changed) && a.instructionsBefore.Revision == 0 && instructions == (LocalizedText{}) {
 		a.instructions = Instructions{}
 	} else {
 		a.instructions = old
@@ -900,7 +914,11 @@ func (w *configSet) checkContracts() error {
 		if !presets.VersionsProvider(a.Provider) {
 			continue
 		}
-		d, err := w.distribution(distributionKey(a))
+		key, err := w.distributionKey(a)
+		if err != nil {
+			return err
+		}
+		d, err := w.distribution(key)
 		if err != nil {
 			return err
 		}
@@ -1061,6 +1079,10 @@ func writeConfig(tx *sql.Tx, table, uid string, c ownedConfig) error {
 	var spec any
 	if c.Spec != nil {
 		spec = encode(c.Spec)
+	}
+	if table == "application_config" {
+		_, err := tx.Exec(`INSERT INTO application_config(entity_uid,template_ref,overrides_json,spec_json,provider_key) VALUES(?,?,?,?,?) ON CONFLICT(entity_uid) DO UPDATE SET template_ref=excluded.template_ref,overrides_json=excluded.overrides_json,spec_json=excluded.spec_json,provider_key=excluded.provider_key`, uid, c.Ref, encode(c.Overrides), spec, c.ProviderKey)
+		return err
 	}
 	_, err := tx.Exec(`INSERT INTO `+table+`(entity_uid,template_ref,overrides_json,spec_json) VALUES(?,?,?,?) ON CONFLICT(entity_uid) DO UPDATE SET template_ref=excluded.template_ref,overrides_json=excluded.overrides_json,spec_json=excluded.spec_json`, uid, c.Ref, encode(c.Overrides), spec)
 	return err

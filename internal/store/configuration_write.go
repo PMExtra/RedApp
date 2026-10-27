@@ -309,7 +309,9 @@ func (v *directoryView) snapshot() DirectorySnapshot {
 		proxy := networkproxy.Resolve(v.appProxy[app.UID], app.Key, v.vendorProxy[app.VendorUID], vendor.ID, v.globalProxy)
 		out.ProxyScopes[app.UID] = networkproxy.Scope{VendorUID: app.VendorUID, Proxy: proxy, Allowed: app.DeletedAt == nil && vendor.DeletedAt == nil}
 		if ref, ok := v.appRef[app.UID]; ok {
-			out.TemplateBindings[app.UID] = ref
+			if d, ok := v.distributions[ref]; ok && d.Provider == app.Provider {
+				out.TemplateBindings[app.UID] = ref
+			}
 		}
 	}
 	keys := make([]string, 0, len(v.distributions))

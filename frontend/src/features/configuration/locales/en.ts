@@ -10,7 +10,8 @@ export default {
     nothingToSave: "There are no changes to save.",
     templateMissing:
       "The built-in template of this item is no longer available; the last accepted template values stay in use.",
+    templateProvider: "Template provider",
     linkedHint:
-      "Built-in item: fields follow the template until you change them. Use the restore button next to a field to follow the template again.",
+      "Linked template: local values take precedence. Provider-specific settings inherit only when providers match. Restore buttons appear only for compatible template fields.",
   },
 } satisfies LocaleModule;

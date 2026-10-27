@@ -137,3 +137,41 @@ func TestInvalidTrustedContractsRollbackReconciliation(t *testing.T) {
 		})
 	}
 }
+
+func TestForeignTemplateAssociationKeepsCurrentProtocol(t *testing.T) {
+	db, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.CreateVendor(store.VendorInput{ID: "microsoft", Name: store.LocalizedText{En: "Local", ZhCN: "本地"}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := db.CreateApplication("microsoft", store.ApplicationInput{ID: "vscode", Name: store.LocalizedText{En: "Local Codex", ZhCN: "本地"}, Provider: "codex", BaseURL: "https://local.example/codex", CacheTTLSeconds: 60, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.EnsureEntityTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := db.DirectoryConfigurationSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := snapshot.TemplateBindings[before.UID]; ok {
+		t.Fatal("foreign display association became protocol binding")
+	}
+	entries, err := EntriesFromConfiguration(snapshot, distributor.NewPool())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.UID == before.UID {
+			if entry.Provider != application.Codex || entry.TemplateID != "openai/codex" || entry.StorageID() != before.StorageID() {
+				t.Fatal(entry)
+			}
+			return
+		}
+	}
+	t.Fatal("missing instance")
+}

@@ -167,7 +167,7 @@ func TestMigration15FailurePreservesOriginal(t *testing.T) {
 						return err
 					}
 					return errors.New("injected before commit")
-				}}}
+				}}, {From: 16, Name: "provider scope", Up: migrate16To17}}
 			case "disk-space":
 				plan.freeSpace = func(string) (uint64, error) { return 0, nil }
 			case "backup-collision":

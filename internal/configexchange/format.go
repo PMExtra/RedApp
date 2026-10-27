@@ -36,6 +36,7 @@ type Document struct {
 	Kind          string            `json:"kind"`
 	Metadata      *presets.Metadata `json:"metadata,omitempty"`
 	Spec          map[string]any    `json:"spec,omitempty"`
+	ProviderKey   string            `json:"provider_key,omitempty"`
 	Template      *string           `json:"template,omitempty"`
 	TemplateHash  string            `json:"template_hash,omitempty"`
 	Overrides     map[string]any    `json:"overrides,omitempty"`
@@ -63,7 +64,7 @@ func (d Document) Path() string {
 	return "presets/" + d.Key() + ".yaml"
 }
 func (d Document) Validate() error {
-	if d.SchemaVersion != 1 {
+	if d.SchemaVersion != 1 && d.SchemaVersion != 2 {
 		return ErrPackage
 	}
 	if d.Kind == "Taxonomy" {
@@ -80,6 +81,19 @@ func (d Document) Validate() error {
 		return ErrPackage
 	}
 	if d.Kind == "Vendor" && (!identity.ValidVendor(d.Metadata.ID) || d.Metadata.Vendor != "") || d.Kind == "App" && !identity.ValidVendor(d.Metadata.Vendor) {
+		return ErrPackage
+	}
+	if d.ProviderKey != "" {
+		switch d.ProviderKey {
+		case "info", "hosted", "http-cache", "codex", "claude-code", "json-release":
+		default:
+			return ErrPackage
+		}
+	}
+	if d.ProviderKey != "" && (d.SchemaVersion != 2 || d.Kind != "App" || d.Template == nil) {
+		return ErrPackage
+	}
+	if d.SchemaVersion == 2 && d.Kind == "App" && d.Template != nil && d.ProviderKey == "" {
 		return ErrPackage
 	}
 	if d.Template != nil {

@@ -98,6 +98,7 @@ CREATE TABLE vendor_config(
 CREATE TABLE application_config(
   entity_uid TEXT PRIMARY KEY REFERENCES applications(uid) ON DELETE CASCADE,
   template_ref TEXT,
+  provider_key TEXT NOT NULL CHECK(provider_key IN ('info','hosted','http-cache','codex','claude-code','json-release')),
   overrides_json BLOB NOT NULL,
   spec_json BLOB,
   CHECK((template_ref IS NOT NULL AND spec_json IS NULL) OR (template_ref IS NULL AND spec_json IS NOT NULL))

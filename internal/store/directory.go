@@ -480,6 +480,11 @@ func (s *Store) UpdateApplication(key string, revision int64, in ApplicationChan
 	if a.Provider == "json-release" {
 		set["json_release"] = encode(validated.JSONRelease)
 	}
+	for path := range set {
+		if !AppPathApplies(a.Provider, path) {
+			delete(set, path)
+		}
+	}
 	return s.PatchApplicationFields(key, revision, set, &in.Enabled)
 }
 

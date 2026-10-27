@@ -176,6 +176,10 @@ func exportConfiguration(w *configSet, options ExportOptions) (configexchange.Pa
 				return p, err
 			}
 			d.Template = &ref
+			if entry.kind == "App" {
+				d.SchemaVersion = 2
+				d.ProviderKey = cfg.ProviderKey
+			}
 			d.TemplateHash = templateHash(t)
 			d.Overrides = map[string]any(cloneObject(cfg.Overrides))
 			if d.Overrides == nil {
@@ -361,7 +365,7 @@ func makeImportPlan(base, w *configSet, documents []configexchange.Document, cho
 			}
 			before, _ = base.effective(d.Kind, base.config(d.Kind, uid))
 		}
-		cfg := ownedConfig{Ref: d.Template, Spec: cloneObject(Object(d.Spec)), Overrides: cloneObject(Object(d.Overrides))}
+		cfg := ownedConfig{ProviderKey: d.ProviderKey, Ref: d.Template, Spec: cloneObject(Object(d.Spec)), Overrides: cloneObject(Object(d.Overrides))}
 		if cfg.Overrides == nil {
 			cfg.Overrides = Object{}
 		}
@@ -379,7 +383,25 @@ func makeImportPlan(base, w *configSet, documents []configexchange.Document, cho
 			if err := validateOverrides(d.Kind, cfg.Overrides); err != nil {
 				return plan, ErrInvalidDirectory
 			}
-			proposed = merge(t.Spec, cfg.Overrides)
+			baseSpec := t.Spec
+			if d.Kind == "App" {
+				// v1 linked documents implicitly selected the template provider. They
+				// cannot use a foreign instance's provider to reinterpret old options.
+				if cfg.ProviderKey == "" {
+					cfg.ProviderKey = fmt.Sprint(t.Spec["provider"])
+				}
+				if err := validateProviderOverrides(cfg.ProviderKey, cfg.Overrides); err != nil {
+					return plan, err
+				}
+				if d.SchemaVersion == 1 {
+					if block, ok := cfg.Overrides["json_release"].(map[string]any); ok {
+						old, _ := t.Spec["json_release"].(map[string]any)
+						cfg.Overrides["json_release"] = legacyOverlay17(old, block)
+					}
+				}
+				baseSpec = templateBase(t, cfg.ProviderKey)
+			}
+			proposed = merge(baseSpec, cfg.Overrides)
 		} else {
 			check := cloneObject(cfg.Spec)
 			if len(d.OmittedFields) > 0 {
@@ -389,6 +411,9 @@ func makeImportPlan(base, w *configSet, documents []configexchange.Document, cho
 				return plan, err
 			}
 			proposed = cloneObject(cfg.Spec)
+			if d.Kind == "App" {
+				cfg.ProviderKey = fmt.Sprint(proposed["provider"])
+			}
 		}
 		if d.AdminNotes != nil && !validNotes(*d.AdminNotes) {
 			return plan, ErrInvalidDirectory
@@ -540,7 +565,7 @@ func makeImportPlan(base, w *configSet, documents []configexchange.Document, cho
 		}
 		// Review the route the new binding would select without silently
 		// choosing an effective-value override on the administrator's behalf.
-		alternate := ownedConfig{Ref: newCfg.Ref, Overrides: cloneObject(newCfg.Overrides), Spec: cloneObject(newCfg.Spec)}
+		alternate := ownedConfig{ProviderKey: newCfg.ProviderKey, Ref: newCfg.Ref, Overrides: cloneObject(newCfg.Overrides), Spec: cloneObject(newCfg.Spec)}
 		if alternate.Ref != nil {
 			delete(alternate.Overrides, "proxy")
 		} else {
@@ -815,7 +840,7 @@ func (s *Store) CopyApplication(source string, input CopyApplicationInput) (Appl
 			return ErrDirectoryDeleted
 		}
 		old := src.config
-		cfg := ownedConfig{Overrides: Object{}}
+		cfg := ownedConfig{ProviderKey: src.Provider, Overrides: Object{}}
 		if input.Mode == "linked" {
 			if old.Ref == nil {
 				return invalidf("linked copies need a source linked to a template")
