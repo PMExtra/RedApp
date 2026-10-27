@@ -279,6 +279,7 @@ Prewarm downloads files before clients ask for them.
 - Cancelling a task does not cancel downloads that public clients also wait for.
 - A restart marks a running task as interrupted. It is not resumed.
 - Finished tasks are kept for 24 hours.
+- For an unknown-length stream exactly at the task read budget, RedApp probes at most one additional byte to distinguish EOF from overflow. EOF succeeds; an extra byte is counted and stops the task as limited, so reported task bytes may exceed the budget by one. This reader budget is not an upstream traffic cap; download workers and shared readers are accounted separately.
 - Prewarm does not count as public downloads in metrics or rankings. Bytes actually fetched from upstream are counted.
 
 ## Hosted files
