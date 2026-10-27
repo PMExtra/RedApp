@@ -24,7 +24,7 @@ test("browses from the home page through the catalog search to an application", 
   const name = (await firstApp.textContent())?.trim() ?? "";
   expect(name).not.toBe("");
 
-  await page.getByRole("searchbox", { name: /Search applications|搜索应用/ }).fill(name);
+  await page.getByRole("searchbox", { name: /Search apps|搜索应用/ }).fill(name);
   // The URL follows the search box once typing pauses.
   await expect.poll(() => new URL(page.url()).searchParams.get("q")).toBe(name);
   const match = page.getByRole("main").getByRole("link", { name, exact: true });

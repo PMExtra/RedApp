@@ -12,7 +12,7 @@ export default {
     list: {
       title: "全部应用",
       search: "搜索应用",
-      placeholder: "按名称或 ID 搜索",
+      placeholder: "搜索应用",
       results: "没有应用 | 1 个应用 | {n} 个应用",
       noMatches: "没有与“{q}”匹配的应用。",
       clearSearch: "清除搜索",
