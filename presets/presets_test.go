@@ -217,3 +217,24 @@ func TestVSCodeStableIconPreservesOfficialBytes(t *testing.T) {
 	}
 	t.Fatal("missing VS Code preset")
 }
+
+func TestMicrosoftIconPreservesSpecifiedCommonsBytes(t *testing.T) {
+	s := Embedded()
+	for _, vendor := range s.Vendors {
+		if vendor.Metadata.ID != "microsoft" {
+			continue
+		}
+		for _, ref := range []string{vendor.Spec.Icon, vendor.Spec.LocalizedIcons.En, vendor.Spec.LocalizedIcons.ZhCN} {
+			url, err := s.Icon(ref)
+			if err != nil || url != "/assets/presets/builtin/microsoft.svg" {
+				t.Fatal(url, err)
+			}
+			image, ok := s.Image(url)
+			if !ok || image.ContentType != "image/svg+xml" || len(image.Body) != 272 || fmt.Sprintf("%x", sha256.Sum256(image.Body)) != "3d41251f93127b4b42c2f69fa423d204946cf9c307d786ea36b8d9bef4179282" {
+				t.Fatal("specified Commons icon bytes changed")
+			}
+		}
+		return
+	}
+	t.Fatal("missing Microsoft preset")
+}

@@ -13,10 +13,10 @@
       "en": "Microsoft develops software, cloud services and developer tools.",
       "zh-CN": "Microsoft 提供软件、云服务和开发工具。"
     },
-    "icon": "",
+    "icon": "assets/builtin/microsoft.svg",
     "localized_icons": {
-      "en": "",
-      "zh-CN": ""
+      "en": "assets/builtin/microsoft.svg",
+      "zh-CN": "assets/builtin/microsoft.svg"
     }
   }
 }
