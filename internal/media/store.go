@@ -237,12 +237,30 @@ func parsePath(path string) (name, contentType string, ok bool) {
 }
 
 // ValidateStaticImage validates reviewed image bytes without changing their identity.
-// Uploads continue to normalize; embedded assets retain their original bytes.
+// Uploads continue to normalize; static assets retain their original bytes.
 func ValidateStaticImage(input []byte, extension string) (string, error) {
+	return validateStaticImage(input, extension, false)
+}
+
+// ValidatePresetImage additionally permits bounded static SVG effects in reviewed,
+// embedded preset assets. It must not be used for uploads or configuration imports.
+func ValidatePresetImage(input []byte, extension string) (string, error) {
+	return validateStaticImage(input, extension, true)
+}
+
+func validateStaticImage(input []byte, extension string, staticEffects bool) (string, error) {
 	if len(input) > MaxBytes {
 		return "", ErrTooLarge
 	}
-	_, detected, err := normalize(input)
+	var detected string
+	var err error
+	if extension == ".svg" && staticEffects {
+		_, err = normalizeSVGMode(bytes.TrimSpace(bytes.TrimPrefix(input, []byte{0xef, 0xbb, 0xbf})), true)
+		detected = ".svg"
+	} else {
+		_, detected, err = normalize(input)
+	}
+
 	if err != nil {
 		return "", err
 	}

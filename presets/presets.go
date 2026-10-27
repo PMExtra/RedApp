@@ -301,7 +301,7 @@ func LoadFS(input fs.FS) (Set, error) {
 		if err != nil {
 			return err
 		}
-		contentType, err := media.ValidateStaticImage(body, path.Ext(file))
+		contentType, err := media.ValidatePresetImage(body, path.Ext(file))
 		if err != nil {
 			return fmt.Errorf("%s: %w", file, err)
 		}

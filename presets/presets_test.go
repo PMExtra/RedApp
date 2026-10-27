@@ -198,3 +198,22 @@ func TestEmbeddedCallersCannotMutateReviewedDefaults(t *testing.T) {
 		t.Fatal("caller changed reviewed shared defaults")
 	}
 }
+
+func TestVSCodeStableIconPreservesOfficialBytes(t *testing.T) {
+	s := Embedded()
+	for _, app := range s.Apps {
+		if app.Key() != "microsoft/vscode" {
+			continue
+		}
+		url, err := s.Icon(app.Spec.Icon)
+		if err != nil || url != "/assets/presets/microsoft/vscode/icon.svg" {
+			t.Fatal(url, err)
+		}
+		image, ok := s.Image(url)
+		if !ok || image.ContentType != "image/svg+xml" || fmt.Sprintf("%x", sha256.Sum256(image.Body)) != "74ad401c6487a0dc5af1f6b2935556ab2d3553ae45effc7e1697b4d117d046b6" {
+			t.Fatal("official stable icon bytes changed")
+		}
+		return
+	}
+	t.Fatal("missing VS Code preset")
+}

@@ -34,7 +34,6 @@ JetBrains 及上述产品的名称和标识属于 JetBrains s.r.o.；版权与�
 ## 未嵌入的官方候选与缺口
 
 - Microsoft：官方 [SVG](https://code.visualstudio.com/assets/icons/microsoft.svg) 可下载，但[通用商标指南](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks)要求 logo 使用获得明确许可；本项目未有此许可记录，因此厂商图标保留为空。
-- Visual Studio Code：官方[图标包](https://code.visualstudio.com/assets/branding/visual-studio-code-icons.zip)包含 `vscode.svg` 和 PNG；[专属指南](https://code.visualstudio.com/brand)允许文档、教程及指向官网等用途，但禁止将图标与产品名称组合为 logo lock-up。尚未确认当前下载目录卡片的展示方式获准，因此未嵌入，未改用 PNG 绕开相同限制。
 
 所有新增资源仅做 CLI HTTP、XML/格式、安全性与嵌入引用检查，未作 GUI 或视觉验收。未配置图标的实体按现有组件回退，不代表存在已验证的品牌图像。产品介绍依据对应官方产品页面；不包含免费许可或完整安装验证的承诺。
 
@@ -52,3 +51,13 @@ SHA256：`cda0680d23fc88a313a593481bf62ba2780b4f55bb1d63dca3a6571f6791e41d`。�
 - [JetBrains](https://www.jetbrains.com/)、[IntelliJ IDEA](https://www.jetbrains.com/idea/)、[PyCharm](https://www.jetbrains.com/pycharm/)、[CLion](https://www.jetbrains.com/clion/)。
 - [WebStorm](https://www.jetbrains.com/webstorm/)、[PhpStorm](https://www.jetbrains.com/phpstorm/)、[GoLand](https://www.jetbrains.com/go/)、[Rider](https://www.jetbrains.com/rider/)。
 - [DataGrip](https://www.jetbrains.com/datagrip/)、[RubyMine](https://www.jetbrains.com/ruby/)、[RustRover](https://www.jetbrains.com/rust/)、[dotUltimate](https://www.jetbrains.com/dotnet/)。
+
+## Visual Studio Code stable 图标
+
+`assets/microsoft/vscode/icon.svg` 是[官方图标包](https://code.visualstudio.com/assets/branding/visual-studio-code-icons.zip)中的 `visual-studio-code-icons/vscode.svg`，原始字节不变。只用于目录中识别 Visual Studio Code 产品，独立于 RedApp 标识；没有合成 logo lock-up、重绘或添加颜色滤镜。前端沿用方形应用图标组件，保持比例，与普通标题文字分开。
+
+[官方专属指南](https://code.visualstudio.com/brand)说明蓝色 stable 图标代表 Visual Studio Code，并列出介绍产品、链接官网等允许用途及品牌组合、修改图形等限制。目录未被逐项列举，不据此认定禁止；本项目不宣称获得单独商标授权或 Microsoft 背书。Microsoft 厂商 logo 的缺口独立保留。
+
+官方 SVG 包含 alpha 遮罩与阴影；构建时静态资源校验仅允许有界的本地遮罩/滤镜子集，拒绝外部引用、脚本、图片嵌入和超大滤镜，用户上传与配置导入的 SVG 白名单不变。未进行 GUI 或视觉验收。
+
+SHA256：`74ad401c6487a0dc5af1f6b2935556ab2d3553ae45effc7e1697b4d117d046b6`。

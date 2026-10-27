@@ -14,7 +14,7 @@
       "en": "Visual Studio Code is an extensible code editor with debugging and source control tools.",
       "zh-CN": "Visual Studio Code 是可扩展的代码编辑器，提供调试和源代码管理工具。"
     },
-    "icon": "",
+    "icon": "assets/microsoft/vscode/icon.svg",
     "provider": "json-release",
     "categories": [],
     "tags": [],
