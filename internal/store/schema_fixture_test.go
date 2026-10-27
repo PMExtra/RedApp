@@ -22,8 +22,8 @@ import (
 //
 //	go test ./internal/store -run TestSchemaFixtureOfCurrentVersion -update-schema-fixture
 //
-// and committed whenever SchemaVersion changes. Older fixtures stay: from 1.0
-// on they are the "from" databases every migration is tested against.
+// and committed whenever SchemaVersion changes. Supported older fixtures stay
+// as the "from" databases every migration is tested against.
 var updateSchemaFixture = flag.Bool("update-schema-fixture", false, "regenerate testdata/schema/v<SchemaVersion>.sql")
 
 var fixtureName = regexp.MustCompile(`^v([0-9]+)\.sql$`)
@@ -184,7 +184,7 @@ func TestSchemaFixtureOfCurrentVersion(t *testing.T) {
 
 // Every fixture of an older version is either migrated by the production plan
 // to a schema identical to a fresh one, or refused without modification
-// (before 1.0, and below MinimumMigratableVersion afterwards).
+// (outside the explicitly supported compatibility window).
 func TestSchemaFixturesOfOlderVersions(t *testing.T) {
 	entries, err := os.ReadDir(filepath.Join("testdata", "schema"))
 	if err != nil {

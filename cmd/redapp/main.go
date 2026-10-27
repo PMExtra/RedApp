@@ -193,7 +193,7 @@ func serve(c config.Deployment, logger *slog.Logger) error {
 	sources := snapshot.Sources
 	clients := make(map[string]*distributor.Client, len(sources))
 	for _, source := range sources {
-		client, e := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, snapshot.ProviderDefaults[source.Provider], source.AppUID, snapshot.ProxyScopes[source.AppUID].VendorUID, upstream)
+		client, e := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, snapshot.ProviderDefaults[source.Provider], source.AppUID, snapshot.ProxyScopes[source.AppUID].VendorUID, upstream, source.JSONRelease)
 		if e != nil {
 			return e
 		}
@@ -268,6 +268,10 @@ func serve(c config.Deployment, logger *slog.Logger) error {
 	retentionDone := make(chan struct{})
 	go func() { defer close(retentionDone); maintenance.Run(retentionCtx) }()
 	defer func() { cancelRetention(); <-retentionDone }()
+	refreshCtx, cancelRefresh := context.WithCancel(ctx)
+	refreshDone := make(chan struct{})
+	go func() { defer close(refreshDone); catalogService.RunRefresh(refreshCtx, prewarmer.WarmSnapshot) }()
+	defer func() { cancelRefresh(); <-refreshDone }()
 	cleanupCtx, cancelCleanup := context.WithCancel(ctx)
 	cleanupDone := make(chan struct{})
 	go func() {

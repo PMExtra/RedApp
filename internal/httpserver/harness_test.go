@@ -74,6 +74,8 @@ type harnessConfig struct {
 	maxDownloadsPerClient int
 	// embeddedFrontend serves the committed build instead of frontendFixture.
 	embeddedFrontend bool
+	// preserveTemplateDefaults keeps fresh presets disabled, as in production.
+	preserveTemplateDefaults bool
 }
 
 type harnessOption func(*harnessConfig)
@@ -135,7 +137,7 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 	existing, err := db.Vendors(true)
 	must(err)
 	must(db.EnsureEntityTemplates())
-	if len(existing) == 0 {
+	if len(existing) == 0 && !cfg.preserveTemplateDefaults {
 		vendors, err := db.Vendors(false)
 		must(err)
 		for _, v := range vendors {
@@ -176,7 +178,7 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 	must(err)
 	clients := map[string]*distributor.Client{}
 	for _, source := range snapshot.Sources {
-		client, err := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, snapshot.ProviderDefaults[source.Provider], source.AppUID, snapshot.ProxyScopes[source.AppUID].VendorUID, pool)
+		client, err := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, snapshot.ProviderDefaults[source.Provider], source.AppUID, snapshot.ProxyScopes[source.AppUID].VendorUID, pool, source.JSONRelease)
 		must(err)
 		clients[source.StorageID()] = client
 	}
@@ -361,7 +363,7 @@ func (h *harness) createApp(vendor, id, provider string, options map[string]any)
 			h.t.Fatal(err)
 		}
 	}
-	config, err := application.NormalizeConfig(provider, application.ProviderConfig{BaseURL: input.BaseURL, BaseURLs: input.BaseURLs, SourceStrategy: input.SourceStrategy, CacheTTLSeconds: input.CacheTTLSeconds})
+	config, err := application.NormalizeConfig(provider, application.ProviderConfig{JSONRelease: input.JSONRelease, BaseURL: input.BaseURL, BaseURLs: input.BaseURLs, SourceStrategy: input.SourceStrategy, CacheTTLSeconds: input.CacheTTLSeconds})
 	if err != nil {
 		h.t.Fatal(err)
 	}

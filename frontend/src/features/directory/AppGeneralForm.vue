@@ -99,6 +99,10 @@ const providerName = computed(() => {
           <dd class="font-mono">{{ app.key }}</dd>
           <dt class="text-muted">{{ t("directory.fields.provider") }}</dt>
           <dd>{{ providerName }}</dd>
+          <template v-if="data?.template_provider">
+            <dt class="text-muted">{{ t("configuration.templateProvider") }}</dt>
+            <dd>{{ data.template_provider }}</dd>
+          </template>
         </dl>
         <p class="text-xs text-muted">{{ t("directory.fields.fixedAfterCreate") }}</p>
         <p v-if="section.linked.value" class="text-sm text-muted">

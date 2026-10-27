@@ -31,7 +31,7 @@ func fixture(t *testing.T) fstest.MapFS {
 }
 func TestReviewedEquivalence(t *testing.T) {
 	s := Embedded()
-	if len(s.Vendors) != 2 || len(s.Apps) != 2 {
+	if len(s.Vendors) != 4 || len(s.Apps) != 14 {
 		t.Fatalf("unexpected entity count: %+v", s)
 	}
 	expected := map[string][2]string{
@@ -39,7 +39,13 @@ func TestReviewedEquivalence(t *testing.T) {
 		"anthropic/claude-code": {"b378f7fb967d15ef3e9de248dfb5e284cbfe2ce2e23317aede7e30f8ebbf08d2", "4e3bd42eb271ab8f94ac33b1df44eccd1c64142724ebab0a0e1916e10313e08b"},
 	}
 	for _, a := range s.Apps {
-		h := expected[a.Key()]
+		h, reviewed := expected[a.Key()]
+		if !reviewed {
+			if a.Spec.Provider != "json-release" || a.Spec.JSONRelease == nil || a.Spec.JSONRelease.Validate() != nil {
+				t.Fatalf("invalid JSON preset %s", a.Key())
+			}
+			continue
+		}
 		for i, text := range []string{a.Spec.Instructions.En, a.Spec.Instructions.ZhCN} {
 			if fmt.Sprintf("%x", sha256.Sum256([]byte(text))) != h[i] {
 				t.Fatalf("%s language %d instructions changed", a.Key(), i)
@@ -191,4 +197,44 @@ func TestEmbeddedCallersCannotMutateReviewedDefaults(t *testing.T) {
 	if b.Apps[0].Spec.Name.En == "changed" || b.Apps[0].Distribution.Channels[0] == "changed" || strings.Contains(b.Apps[0].Distribution.Installers[0].Source, "changed.invalid") {
 		t.Fatal("caller changed reviewed shared defaults")
 	}
+}
+
+func TestVSCodeStableIconPreservesOfficialBytes(t *testing.T) {
+	s := Embedded()
+	for _, app := range s.Apps {
+		if app.Key() != "microsoft/vscode" {
+			continue
+		}
+		url, err := s.Icon(app.Spec.Icon)
+		if err != nil || url != "/assets/presets/microsoft/vscode/icon.svg" {
+			t.Fatal(url, err)
+		}
+		image, ok := s.Image(url)
+		if !ok || image.ContentType != "image/svg+xml" || fmt.Sprintf("%x", sha256.Sum256(image.Body)) != "74ad401c6487a0dc5af1f6b2935556ab2d3553ae45effc7e1697b4d117d046b6" {
+			t.Fatal("official stable icon bytes changed")
+		}
+		return
+	}
+	t.Fatal("missing VS Code preset")
+}
+
+func TestMicrosoftIconPreservesSpecifiedCommonsBytes(t *testing.T) {
+	s := Embedded()
+	for _, vendor := range s.Vendors {
+		if vendor.Metadata.ID != "microsoft" {
+			continue
+		}
+		for _, ref := range []string{vendor.Spec.Icon, vendor.Spec.LocalizedIcons.En, vendor.Spec.LocalizedIcons.ZhCN} {
+			url, err := s.Icon(ref)
+			if err != nil || url != "/assets/presets/builtin/microsoft.svg" {
+				t.Fatal(url, err)
+			}
+			image, ok := s.Image(url)
+			if !ok || image.ContentType != "image/svg+xml" || len(image.Body) != 272 || fmt.Sprintf("%x", sha256.Sum256(image.Body)) != "3d41251f93127b4b42c2f69fa423d204946cf9c307d786ea36b8d9bef4179282" {
+				t.Fatal("specified Commons icon bytes changed")
+			}
+		}
+		return
+	}
+	t.Fatal("missing Microsoft preset")
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/media"
 	"github.com/PMExtra/RedApp/internal/networkproxy"
+	"github.com/PMExtra/RedApp/internal/releaseconfig"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -235,19 +236,20 @@ func (s *Server) getApp(w http.ResponseWriter, r *http.Request) {
 }
 
 type appCreateRequest struct {
-	Vendor          *string        `json:"vendor"`
-	ID              *string        `json:"id"`
-	Provider        *string        `json:"provider"`
-	Name            *localizedText `json:"name"`
-	Description     *localizedText `json:"description"`
-	Icon            *string        `json:"icon"`
-	Enabled         *bool          `json:"enabled"`
-	Categories      []string       `json:"categories"`
-	Tags            []string       `json:"tags"`
-	BaseURL         *string        `json:"base_url"`
-	BaseURLs        []string       `json:"base_urls"`
-	SourceStrategy  *string        `json:"source_strategy"`
-	CacheTTLSeconds *int           `json:"cache_ttl_seconds"`
+	JSONRelease     *releaseconfig.Config `json:"json_release"`
+	Vendor          *string               `json:"vendor"`
+	ID              *string               `json:"id"`
+	Provider        *string               `json:"provider"`
+	Name            *localizedText        `json:"name"`
+	Description     *localizedText        `json:"description"`
+	Icon            *string               `json:"icon"`
+	Enabled         *bool                 `json:"enabled"`
+	Categories      []string              `json:"categories"`
+	Tags            []string              `json:"tags"`
+	BaseURL         *string               `json:"base_url"`
+	BaseURLs        []string              `json:"base_urls"`
+	SourceStrategy  *string               `json:"source_strategy"`
+	CacheTTLSeconds *int                  `json:"cache_ttl_seconds"`
 }
 
 // applicationInput validates the provider-specific fields of a create request.
@@ -260,7 +262,7 @@ func (in appCreateRequest) applicationInput() (store.ApplicationInput, *apiError
 		return store.ApplicationInput{}, newError(codeValidationFailed, nil, "Unknown provider")
 	}
 	provider := definition.Key
-	for path, present := range map[string]bool{"base_url": in.BaseURL != nil, "base_urls": in.BaseURLs != nil, "source_strategy": in.SourceStrategy != nil, "cache_ttl_seconds": in.CacheTTLSeconds != nil} {
+	for path, present := range map[string]bool{"json_release": in.JSONRelease != nil, "base_url": in.BaseURL != nil, "base_urls": in.BaseURLs != nil, "source_strategy": in.SourceStrategy != nil, "cache_ttl_seconds": in.CacheTTLSeconds != nil} {
 		if present && !store.AppPathApplies(provider, path) {
 			return store.ApplicationInput{}, newError(codeValidationFailed, nil, fmt.Sprintf("%s does not apply to the %s provider", path, provider))
 		}
@@ -268,7 +270,7 @@ func (in appCreateRequest) applicationInput() (store.ApplicationInput, *apiError
 	if provider == application.HttpCache && len(in.BaseURLs) == 0 {
 		return store.ApplicationInput{}, newError(codeValidationFailed, nil, "base_urls requires 1..16 URLs for the http-cache provider")
 	}
-	a := store.ApplicationInput{ID: *in.ID, Name: store.LocalizedText(*in.Name), Provider: provider, Enabled: *in.Enabled, CacheTTLSeconds: definition.DefaultCacheTTLSeconds,
+	a := store.ApplicationInput{ID: *in.ID, Name: store.LocalizedText(*in.Name), Provider: provider, JSONRelease: in.JSONRelease, Enabled: *in.Enabled, CacheTTLSeconds: definition.DefaultCacheTTLSeconds,
 		Categories: nonNil(in.Categories), Tags: nonNil(in.Tags), BaseURLs: in.BaseURLs}
 	if in.Description != nil {
 		a.Description = store.LocalizedText(*in.Description)
@@ -285,7 +287,7 @@ func (in appCreateRequest) applicationInput() (store.ApplicationInput, *apiError
 	if in.CacheTTLSeconds != nil {
 		a.CacheTTLSeconds = *in.CacheTTLSeconds
 	}
-	config, err := application.NormalizeConfig(provider, application.ProviderConfig{BaseURL: a.BaseURL, BaseURLs: a.BaseURLs, SourceStrategy: a.SourceStrategy, CacheTTLSeconds: a.CacheTTLSeconds})
+	config, err := application.NormalizeConfig(provider, application.ProviderConfig{JSONRelease: a.JSONRelease, BaseURL: a.BaseURL, BaseURLs: a.BaseURLs, SourceStrategy: a.SourceStrategy, CacheTTLSeconds: a.CacheTTLSeconds})
 	if err != nil {
 		return a, newError(codeValidationFailed, err, sentence(err.Error()))
 	}

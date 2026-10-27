@@ -13,6 +13,7 @@ RedApp 中每个应用都有一个 **Provider**。Provider 决定应用提供什
 | HTTP 缓存 | `http-cache` | 必填；1–16 个来源 | 来源 URL 下的任意文件 | 路径规则，默认 TTL 300 秒，手动和自动清理 |
 | Codex | `codex` | `https://releases.openai.com/codex`（可修改） | 经过校验的 Codex 发布和安装器 | 渠道 TTL 60 秒，版本清理，可选保留和预热 |
 | Claude Code | `claude-code` | `https://downloads.claude.ai/claude-code-releases`（可修改） | 经过校验的 Claude Code 发布和安装器 | 渠道 TTL 60 秒，版本清理，可选保留和预热 |
+| JSON Release | `json-release` | 显式元数据、制品和校验文件来源策略 | JSON + jq 配置生成的规范发布下载 | 独立元数据刷新与精确制品 key 预热；见 [JSON Release](json-release.zh-CN.md) |
 
 所有 Provider 共用[部署配置](configuration.zh-CN.md#字段参考)中的下载限额。
 
@@ -278,6 +279,7 @@ HTTP 缓存应用可以列出 1 到 16 个来源 URL。
 - 取消任务不会取消公共客户端也在等待的下载。
 - 重启会把运行中的任务标记为已中断，不会恢复。
 - 已结束的任务保留 24 小时。
+- 未知长度的数据流恰好达到任务读取预算时，RedApp 最多额外探测 1 字节以区分 EOF 和超额。EOF 视为成功；若存在额外字节，则计入读取量并将任务标为受限，因此任务报告字节数最多可比预算多 1。这是读取预算，并非上游流量硬上限；下载工作线程和共享读取另行计量。
 - 预热不计入指标和排行中的公开下载。实际从上游获取的字节会计入。
 
 ## 托管文件

@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "kind": "App",
+  "metadata": {
+    "id": "datagrip",
+    "vendor": "jetbrains"
+  },
+  "spec": {
+    "name": {
+      "en": "DataGrip",
+      "zh-CN": "DataGrip"
+    },
+    "description": {
+      "en": "DataGrip is a database development tool for working with SQL and managing databases.",
+      "zh-CN": "DataGrip 是用于编写 SQL 和管理数据库的数据库开发工具。"
+    },
+    "icon": "assets/jetbrains/datagrip/icon.svg",
+    "provider": "json-release",
+    "categories": [],
+    "tags": [],
+    "json_release": {
+      "default_channel": "stable",
+      "refresh_seconds": 3600,
+      "channels": {
+        "stable": {
+          "requests": [
+            {
+              "url": "https://data.services.jetbrains.com/products/releases?code=DG&latest=true&type=release",
+              "context": {
+                "product": "DG"
+              }
+            }
+          ],
+          "query": "{\"windows\":{\"key\":\"windows-x64-exe\",\"os\":\"windows\",\"arch\":\"x64\",\"format\":\"exe\"},\"windowsARM64\":{\"key\":\"windows-arm64-exe\",\"os\":\"windows\",\"arch\":\"arm64\",\"format\":\"exe\"},\"linux\":{\"key\":\"linux-x64-tar\",\"os\":\"linux\",\"arch\":\"x64\",\"format\":\"tar.gz\"},\"linuxARM64\":{\"key\":\"linux-arm64-tar\",\"os\":\"linux\",\"arch\":\"arm64\",\"format\":\"tar.gz\"},\"mac\":{\"key\":\"macos-x64-dmg\",\"os\":\"macos\",\"arch\":\"x64\",\"format\":\"dmg\"},\"macM1\":{\"key\":\"macos-arm64-dmg\",\"os\":\"macos\",\"arch\":\"arm64\",\"format\":\"dmg\"}} as $platforms | .body[.context.product][0] as $r | {version:$r.version,build:$r.build,artifacts:[$r.downloads | to_entries[] | select($platforms[.key] != null) | $platforms[.key] + {url:.value.link,size:.value.size,checksum_url:.value.checksumLink,checksum_filename:(.value.link | split(\"?\")[0] | split(\"/\") | last)}]}"
+        }
+      },
+      "sources": {
+        "metadata": [
+          {
+            "origin": "https://data.services.jetbrains.com",
+            "prefix": "/products/"
+          }
+        ],
+        "artifacts": [
+          {
+            "origin": "https://download.jetbrains.com",
+            "prefix": "/datagrip/"
+          },
+          {
+            "origin": "https://download-cdn.jetbrains.com",
+            "prefix": "/datagrip/"
+          }
+        ],
+        "checksums": [
+          {
+            "origin": "https://download.jetbrains.com",
+            "prefix": "/datagrip/"
+          },
+          {
+            "origin": "https://download-cdn.jetbrains.com",
+            "prefix": "/datagrip/"
+          }
+        ]
+      },
+      "prewarm": []
+    },
+    "instructions": {
+      "en": "Metadata, query mappings and official download response headers have been checked. These checks do not verify every package’s full contents or installation behavior. These downloads do not reconfigure the IDE’s built-in updater. Validate packages and installation in your environment before enabling automatic prewarm.",
+      "zh-CN": "元数据、查询映射和官方下载响应头已经核对。这些检查不代表所有安装包的完整内容或安装行为均已验证。这些下载不会修改 IDE 自带更新器。启用自动预热前，应在自己的环境中验证安装包与安装行为。"
+    }
+  }
+}

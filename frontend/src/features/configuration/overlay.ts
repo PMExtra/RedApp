@@ -150,7 +150,7 @@ export function useOverlayForm<Values extends Record<string, unknown>>(
   /** Restores the template value of `path` (see FieldReset). */
   function reset(path: string): void {
     const config = configuration.value;
-    if (!config?.defaults) return;
+    if (!config?.defaults || origin(path)?.resettable === false) return;
     form.setFieldValue(path as never, copy(templateValue(path)) as never);
     if (origin(path)?.source === "custom" && !unsets.value.includes(path)) {
       unsets.value = [...unsets.value, path];

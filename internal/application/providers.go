@@ -5,14 +5,16 @@ import (
 	"github.com/PMExtra/RedApp/presets"
 
 	"github.com/PMExtra/RedApp/internal/distributor"
+	"github.com/PMExtra/RedApp/internal/releaseconfig"
 )
 
 const (
-	Info       = "info"
-	Hosted     = "hosted"
-	HttpCache  = "http-cache"
-	Codex      = "codex"
-	ClaudeCode = "claude-code"
+	JSONRelease = "json-release"
+	Info        = "info"
+	Hosted      = "hosted"
+	HttpCache   = "http-cache"
+	Codex       = "codex"
+	ClaudeCode  = "claude-code"
 )
 
 // InfoCapabilities is the shared content layer composed by every provider.
@@ -48,6 +50,7 @@ func Definitions() []Definition {
 		{Key: HttpCache, Name: Localized{"en": "HTTP Cache", "zh-CN": "HTTP 缓存"}, Description: Localized{"en": "Fetch and cache HTTP upstream files on demand.", "zh-CN": "按需获取并缓存 HTTP 上游文件。"}, DefaultCacheTTLSeconds: 300, Capabilities: contentCapabilities(true, false, false, true)},
 		{Key: Codex, Name: Localized{"en": "Codex", "zh-CN": "Codex"}, Description: Localized{"en": "Distribute Codex releases and installation resources.", "zh-CN": "分发 Codex 版本及安装资源。"}, DefaultBaseURL: presetDefault(Codex).BaseURL, DefaultCacheTTLSeconds: presetDefault(Codex).CacheTTLSeconds, Capabilities: contentCapabilities(true, true, true, false)},
 		{Key: ClaudeCode, Name: Localized{"en": "Claude Code", "zh-CN": "Claude Code"}, Description: Localized{"en": "Distribute Claude Code releases and installation resources.", "zh-CN": "分发 Claude Code 版本及安装资源。"}, DefaultBaseURL: presetDefault(ClaudeCode).BaseURL, DefaultCacheTTLSeconds: presetDefault(ClaudeCode).CacheTTLSeconds, Capabilities: contentCapabilities(true, true, true, false)},
+		{Key: JSONRelease, Name: Localized{"en": "JSON Releases", "zh-CN": "JSON 发布"}, Description: Localized{"en": "Discover verified releases with administrator JSON queries.", "zh-CN": "通过管理员 JSON 查询发现并分发校验过的版本。"}, DefaultCacheTTLSeconds: 300, Capabilities: contentCapabilities(true, true, false, false)},
 	}
 }
 
@@ -69,10 +72,11 @@ func ProviderDefinition(key string) (Definition, bool) {
 }
 
 type ProviderConfig struct {
-	BaseURL         string   `json:"base_url"`
-	BaseURLs        []string `json:"base_urls,omitempty"`
-	SourceStrategy  string   `json:"source_strategy,omitempty"`
-	CacheTTLSeconds int      `json:"cache_ttl_seconds"`
+	JSONRelease     *releaseconfig.Config `json:"json_release,omitempty"`
+	BaseURL         string                `json:"base_url"`
+	BaseURLs        []string              `json:"base_urls,omitempty"`
+	SourceStrategy  string                `json:"source_strategy,omitempty"`
+	CacheTTLSeconds int                   `json:"cache_ttl_seconds"`
 }
 
 const MaxSources = 16
@@ -84,6 +88,20 @@ func NormalizeConfig(provider string, config ProviderConfig) (ProviderConfig, er
 	definition, ok := ProviderDefinition(provider)
 	if !ok {
 		return ProviderConfig{}, errors.New("unknown provider")
+	}
+	if provider == JSONRelease {
+		if config.JSONRelease == nil {
+			return ProviderConfig{}, errors.New("json_release is required")
+		}
+		if err := config.JSONRelease.Validate(); err != nil {
+			return ProviderConfig{}, err
+		}
+		config.BaseURL = config.JSONRelease.Sources.Metadata[0].Origin
+		config.CacheTTLSeconds = config.JSONRelease.RefreshSeconds
+		return config, nil
+	}
+	if config.JSONRelease != nil {
+		return ProviderConfig{}, errors.New("json_release requires JSON release provider")
 	}
 	if provider == Info || provider == Hosted {
 		if config.BaseURL != "" || len(config.BaseURLs) != 0 || config.SourceStrategy != "" || config.CacheTTLSeconds != 0 {

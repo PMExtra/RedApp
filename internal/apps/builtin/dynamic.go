@@ -8,16 +8,27 @@ import (
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/identity"
+	"github.com/PMExtra/RedApp/internal/jsonrelease"
+	"github.com/PMExtra/RedApp/internal/releaseconfig"
 	"github.com/PMExtra/RedApp/internal/store"
+	"sort"
 )
 
 // NewScopedSourceClient builds the upstream client of a current or historical
 // application source, bound to its owner's proxy scope.
-func NewScopedSourceClient(provider, baseURL, defaultBase, appUID, vendorUID string, pool *distributor.Pool) (*distributor.Client, error) {
+func NewScopedSourceClient(provider, baseURL, defaultBase, appUID, vendorUID string, pool *distributor.Pool, configs ...*releaseconfig.Config) (*distributor.Client, error) {
 	if appUID == "" || vendorUID == "" {
 		return nil, errors.New("application transport scope required")
 	}
-	return newSourceClient(provider, baseURL, defaultBase, appUID, vendorUID, pool)
+	client, err := newSourceClient(provider, baseURL, defaultBase, appUID, vendorUID, pool)
+	if err != nil || provider != application.JSONRelease {
+		return client, err
+	}
+	if len(configs) != 1 || configs[0] == nil {
+		return nil, errors.New("JSON release source snapshot required")
+	}
+	sources := append([]releaseconfig.Source(nil), configs[0].Sources.Artifacts...)
+	return client.WithReleaseSources(func(raw string) bool { return releaseconfig.Allows(sources, raw) })
 }
 func newSourceClient(provider, baseURL, defaultBase, appUID, vendorUID string, pool *distributor.Pool) (*distributor.Client, error) {
 	if provider == application.Info || provider == application.Hosted {
@@ -79,7 +90,7 @@ func entriesFromConfiguration(snapshot store.DirectorySnapshot, pool *distributo
 		if !ok || !identity.ValidUID(app.UID) || !identity.ValidUID(vendor.UID) || vendor.UID != app.VendorUID || app.Key != app.VendorID+"/"+app.ID {
 			return nil, fmt.Errorf("application vendor binding is invalid for %s", app.Key)
 		}
-		config, err := application.NormalizeConfig(app.Provider, application.ProviderConfig{BaseURL: app.BaseURL, BaseURLs: app.BaseURLs, SourceStrategy: app.SourceStrategy, CacheTTLSeconds: app.CacheTTLSeconds})
+		config, err := application.NormalizeConfig(app.Provider, application.ProviderConfig{JSONRelease: app.JSONRelease, BaseURL: app.BaseURL, BaseURLs: app.BaseURLs, SourceStrategy: app.SourceStrategy, CacheTTLSeconds: app.CacheTTLSeconds})
 		if err != nil {
 			return nil, fmt.Errorf("invalid provider configuration for %s: %w", app.Key, err)
 		}
@@ -99,6 +110,23 @@ func entriesFromConfiguration(snapshot store.DirectorySnapshot, pool *distributo
 		entry := application.Entry{Provider: app.Provider, Upstream: client}
 		if app.Provider == application.Info || app.Provider == application.Hosted {
 			entry.Descriptor = application.Descriptor{Protocol: app.Provider}
+		} else if app.Provider == application.JSONRelease {
+			protocol, e := jsonrelease.NewProtocol(*config.JSONRelease, jsonrelease.NewDiscoverer(jsonQueryRunner, client))
+			if e != nil {
+				return nil, e
+			}
+			entry.Protocol = protocol
+			channels := []string{"latest"}
+			for name := range config.JSONRelease.Channels {
+				channels = append(channels, name)
+			}
+			sort.Strings(channels)
+			entry.Descriptor = application.Descriptor{Protocol: "json-release-v1", TrustRevision: 1, Channels: channels}
+			sources := append([]releaseconfig.Source(nil), config.JSONRelease.Sources.Artifacts...)
+			entry.Upstream, err = client.WithReleaseSources(func(raw string) bool { return releaseconfig.Allows(sources, raw) })
+			if err != nil {
+				return nil, err
+			}
 		} else if app.Provider == application.HttpCache {
 			entry.Descriptor = application.Descriptor{Protocol: application.HttpCache}
 			entry.SourceStrategy = config.SourceStrategy
@@ -122,6 +150,9 @@ func entriesFromConfiguration(snapshot store.DirectorySnapshot, pool *distributo
 				return nil, errors.New("provider has no reviewed release template")
 			}
 			entry, err = releaseEntry(template, client)
+			if err == nil && entry.Provider != app.Provider {
+				return nil, errors.New("template protocol does not match application provider")
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -186,3 +217,8 @@ func canonicalTemplates(descriptors []application.Descriptor) (map[string]string
 func localized(value store.LocalizedText) application.Localized {
 	return application.Localized{"en": value.En, "zh-CN": value.ZhCN}
 }
+
+// One runner bounds query concurrency across all registered applications and previews.
+var jsonQueryRunner = jsonrelease.NewRunner()
+
+func JSONQueryRunner() *jsonrelease.Runner { return jsonQueryRunner }

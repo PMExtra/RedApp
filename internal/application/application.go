@@ -40,12 +40,13 @@ type Descriptor = presets.Descriptor
 type OperationKind string
 
 const (
-	InstallerOperation OperationKind = "installer"
-	StaticOperation    OperationKind = "static"
-	ChannelOperation   OperationKind = "channel"
-	MetadataOperation  OperationKind = "metadata"
-	ArtifactOperation  OperationKind = "artifact"
-	HTTPOperation      OperationKind = "http"
+	DownloadAliasOperation OperationKind = "download_alias"
+	InstallerOperation     OperationKind = "installer"
+	StaticOperation        OperationKind = "static"
+	ChannelOperation       OperationKind = "channel"
+	MetadataOperation      OperationKind = "metadata"
+	ArtifactOperation      OperationKind = "artifact"
+	HTTPOperation          OperationKind = "http"
 )
 
 type Operation struct {

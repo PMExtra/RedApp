@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"github.com/PMExtra/RedApp/internal/jsonrelease"
 	"regexp"
 	"time"
 
@@ -152,6 +154,36 @@ func (s *Server) latestKnownVersion(e application.Entry) (string, *time.Time, er
 	versions, err := s.store.VersionsFor(e.StorageID())
 	if err != nil {
 		return "", nil, err
+	}
+	if p, ok := e.Protocol.(application.SnapshotProtocol); ok {
+		channel, err := p.CanonicalChannel("latest")
+		if err != nil {
+			return "", nil, err
+		}
+		head, err := s.store.Channel(e.StorageID(), channel)
+		if errors.Is(err, store.ErrNotFound) {
+			return "", nil, nil
+		}
+		if err != nil {
+			return "", nil, err
+		}
+		metadata, err := s.store.Release(e.StorageID(), head.Version)
+		if err != nil {
+			return "", nil, err
+		}
+		verified, err := p.VerifyRelease(head.Version, application.Envelope{Raw: metadata.Raw, Signature: metadata.Signature})
+		if err != nil {
+			return "", nil, err
+		}
+		data, err := jsonrelease.DecodeRelease(verified.Envelope.Raw, true)
+		if err != nil {
+			return "", nil, err
+		}
+		var first *time.Time
+		if at, err := time.Parse(time.RFC3339, versions[head.Version]); err == nil {
+			first = &at
+		}
+		return data.Version, first, nil
 	}
 	var latest string
 	for version := range versions {

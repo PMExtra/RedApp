@@ -9,6 +9,7 @@ import {
   useApp,
   type ProviderKey,
 } from "@/features/directory";
+import { JSONReleaseSection } from "@/features/json-release";
 import { AppTaxonomyForm } from "@/features/taxonomy";
 
 /**
@@ -37,6 +38,7 @@ interface ProviderSection {
  * channel TTL section is for the release providers only.
  */
 const providerSections: readonly ProviderSection[] = [
+  { id: "json-release", providers: ["json-release"], component: JSONReleaseSection },
   { id: "cache-policy", providers: ["http-cache"], component: CachePolicySection },
   { id: "channel-ttl", providers: ["codex", "claude-code"], component: ChannelTtlSection },
 ];

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "kind": "Vendor",
+  "metadata": {
+    "id": "microsoft"
+  },
+  "spec": {
+    "name": {
+      "en": "Microsoft",
+      "zh-CN": "Microsoft"
+    },
+    "description": {
+      "en": "Microsoft develops software, cloud services and developer tools.",
+      "zh-CN": "Microsoft 提供软件、云服务和开发工具。"
+    },
+    "icon": "assets/builtin/microsoft.svg",
+    "localized_icons": {
+      "en": "assets/builtin/microsoft.svg",
+      "zh-CN": "assets/builtin/microsoft.svg"
+    }
+  }
+}

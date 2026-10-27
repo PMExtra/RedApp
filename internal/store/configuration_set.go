@@ -14,6 +14,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/cachepolicy"
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/networkproxy"
+	"github.com/PMExtra/RedApp/internal/releaseconfig"
 	"github.com/PMExtra/RedApp/presets"
 )
 
@@ -170,7 +171,7 @@ func (w *configSet) loadVendors(where string, args ...any) ([]*vendorEntry, erro
 	return out, rows.Err()
 }
 
-const appEntryQuery = `SELECT ` + applicationColumns + `,c.template_ref,c.overrides_json,c.spec_json,i.revision,i.en,i.zh_cn,p.payload,d.requested_revision FROM applications a JOIN vendors v ON v.uid=a.vendor_uid LEFT JOIN application_config c ON c.entity_uid=a.uid LEFT JOIN application_instructions i ON i.app_uid=a.uid LEFT JOIN application_http_policies p ON p.app_uid=a.uid LEFT JOIN pending_application_deletes d ON d.app_uid=a.uid`
+const appEntryQuery = `SELECT ` + applicationColumns + `,c.template_ref,c.overrides_json,c.spec_json,c.provider_key,i.revision,i.en,i.zh_cn,p.payload,d.requested_revision FROM applications a JOIN vendors v ON v.uid=a.vendor_uid LEFT JOIN application_config c ON c.entity_uid=a.uid LEFT JOIN application_instructions i ON i.app_uid=a.uid LEFT JOIN application_http_policies p ON p.app_uid=a.uid LEFT JOIN pending_application_deletes d ON d.app_uid=a.uid`
 
 func (w *configSet) loadApps(where string, args ...any) ([]*appEntry, error) {
 	rows, err := w.q.Query(appEntryQuery+` WHERE `+where+` ORDER BY v.id,a.id`, args...)
@@ -181,9 +182,10 @@ func (w *configSet) loadApps(where string, args ...any) ([]*appEntry, error) {
 	var out []*appEntry
 	for rows.Next() {
 		var ref, en, zh sql.NullString
+		var providerKey string
 		var overrides, spec, policy []byte
 		var instructions, pending sql.NullInt64
-		a, err := scanApplication(extraScanner{rows, []any{&ref, &overrides, &spec, &instructions, &en, &zh, &policy, &pending}})
+		a, err := scanApplication(extraScanner{rows, []any{&ref, &overrides, &spec, &providerKey, &instructions, &en, &zh, &policy, &pending}})
 		if err != nil {
 			return nil, err
 		}
@@ -197,7 +199,9 @@ func (w *configSet) loadApps(where string, args ...any) ([]*appEntry, error) {
 		if e.config, err = decodeOwnedConfig(a.UID, ref, overrides, spec); err != nil {
 			return nil, err
 		}
+		e.config.ProviderKey = providerKey
 		e.configBefore, _ = decodeOwnedConfig(a.UID, ref, overrides, spec)
+		e.configBefore.ProviderKey = providerKey
 		if instructions.Valid {
 			e.instructions = Instructions{LocalizedText: LocalizedText{En: en.String, ZhCN: zh.String}, Revision: instructions.Int64}
 		}
@@ -326,6 +330,9 @@ func (w *configSet) addVendor(v Vendor, c ownedConfig) *vendorEntry {
 	return e
 }
 func (w *configSet) addApp(a Application, c ownedConfig) *appEntry {
+	if c.ProviderKey == "" {
+		c.ProviderKey = a.Provider
+	}
 	e := &appEntry{Application: a, config: c, changed: true}
 	w.apps[a.UID], w.appKeys[a.Key] = e, a.UID
 	return e
@@ -364,6 +371,9 @@ func (w *configSet) setConfig(kind, uid string, c ownedConfig) {
 		v.config, v.changed = c, true
 	} else {
 		a := w.apps[uid]
+		if c.ProviderKey == "" {
+			c.ProviderKey = a.Provider
+		}
 		a.config, a.changed = c, true
 	}
 }
@@ -754,10 +764,10 @@ func (w *configSet) materializeApp(a *appEntry) error {
 	} else {
 		a.Categories, a.Tags = []string{}, []string{}
 	}
-	if typed.Provider != a.Provider {
+	if typed.Provider != a.Provider || a.config.ProviderKey != a.Provider {
 		return invalidf("Provider is immutable")
 	}
-	in := ApplicationInput{ID: a.ID, Name: LocalizedText{typed.Name.En, typed.Name.ZhCN}, Description: LocalizedText{typed.Description.En, typed.Description.ZhCN}, Icon: typed.Icon, Provider: typed.Provider, BaseURL: typed.BaseURL, BaseURLs: typed.BaseURLs, SourceStrategy: typed.SourceStrategy, CacheTTLSeconds: typed.CacheTTLSeconds, Enabled: a.Enabled}
+	in := ApplicationInput{ID: a.ID, Name: LocalizedText{typed.Name.En, typed.Name.ZhCN}, Description: LocalizedText{typed.Description.En, typed.Description.ZhCN}, Icon: typed.Icon, Provider: typed.Provider, JSONRelease: typed.JSONRelease, BaseURL: typed.BaseURL, BaseURLs: typed.BaseURLs, SourceStrategy: typed.SourceStrategy, CacheTTLSeconds: typed.CacheTTLSeconds, Enabled: a.Enabled}
 	if err = validateApplication(&in); err != nil {
 		return err
 	}
@@ -784,9 +794,10 @@ func (w *configSet) materializeApp(a *appEntry) error {
 	if a.proxy, err = decodeProxy(spec["proxy"]); err != nil {
 		return ErrInvalidDirectory
 	}
-	if a.before != nil && (a.BaseURL != in.BaseURL || !reflect.DeepEqual(a.BaseURLs, in.BaseURLs) || a.SourceStrategy != in.SourceStrategy) {
+	if a.before != nil && (a.BaseURL != in.BaseURL || !reflect.DeepEqual(a.BaseURLs, in.BaseURLs) || a.SourceStrategy != in.SourceStrategy || !releaseconfig.SameSource(a.JSONRelease, in.JSONRelease)) {
 		a.SourceEpoch++
 	}
+	a.JSONRelease = in.JSONRelease
 	a.Name, a.Description, a.Icon, a.BaseURL, a.BaseURLs, a.SourceStrategy, a.CacheTTLSeconds = in.Name, in.Description, in.Icon, in.BaseURL, in.BaseURLs, in.SourceStrategy, in.CacheTTLSeconds
 	template, err := w.template("App", a.Key)
 	if err != nil {
@@ -794,7 +805,10 @@ func (w *configSet) materializeApp(a *appEntry) error {
 	}
 	_, builtin := BuiltinApplicationTemplate(a.Key)
 	a.BuiltinTemplate = template != nil || builtin
-	key := distributionKey(a)
+	key, err := w.distributionKey(a)
+	if err != nil {
+		return err
+	}
 	d, err := w.distribution(key)
 	if err != nil {
 		return err
@@ -802,7 +816,7 @@ func (w *configSet) materializeApp(a *appEntry) error {
 	a.RuntimeRevision = 1
 	if prev := a.before; prev != nil {
 		a.RuntimeRevision = prev.RuntimeRevision
-		changed := prev.Enabled != a.Enabled || !reflect.DeepEqual(prev.DeletedAt, a.DeletedAt) || prev.BaseURL != a.BaseURL || !reflect.DeepEqual(prev.BaseURLs, a.BaseURLs) || prev.SourceStrategy != a.SourceStrategy || prev.CacheTTLSeconds != a.CacheTTLSeconds || !reflect.DeepEqual(policyValue(a.policyBefore), policyValue(a.policy))
+		changed := prev.Enabled != a.Enabled || !reflect.DeepEqual(prev.DeletedAt, a.DeletedAt) || prev.BaseURL != a.BaseURL || !reflect.DeepEqual(prev.BaseURLs, a.BaseURLs) || prev.SourceStrategy != a.SourceStrategy || prev.CacheTTLSeconds != a.CacheTTLSeconds || !reflect.DeepEqual(prev.JSONRelease, a.JSONRelease) || !reflect.DeepEqual(policyValue(a.policyBefore), policyValue(a.policy))
 		if key != "" && distributionDigestOf(w.distributionsBefore[key]) != distributionDigestOf(d) {
 			changed = true
 		}
@@ -822,7 +836,7 @@ func (w *configSet) materializeApp(a *appEntry) error {
 			exists = err == nil
 		}
 		if !exists {
-			a.newSource = &SourceRecord{AppUID: a.UID, Epoch: a.SourceEpoch, Provider: a.Provider, BaseURL: a.BaseURL, BaseURLs: a.BaseURLs, SourceStrategy: a.SourceStrategy, CreatedAt: time.Now().UTC()}
+			a.newSource = &SourceRecord{AppUID: a.UID, Epoch: a.SourceEpoch, Provider: a.Provider, JSONRelease: a.JSONRelease, BaseURL: a.BaseURL, BaseURLs: a.BaseURLs, SourceStrategy: a.SourceStrategy, CreatedAt: time.Now().UTC()}
 		}
 	}
 	return nil
@@ -843,6 +857,8 @@ func (w *configSet) materializeInstructions(a *appEntry, instructions LocalizedT
 	for _, p := range []string{"instructions.en", "instructions.zh-CN"} {
 		_, was := leaf(prev.Overrides, p)
 		_, now := leaf(cur.Overrides, p)
+		was = was || prev.Ref == nil
+		now = now || cur.Ref == nil
 		if a.before != nil && was != now {
 			changed = true
 		}
@@ -870,7 +886,7 @@ func (w *configSet) materializeInstructions(a *appEntry, instructions LocalizedT
 		old.Revision++
 	}
 	old.LocalizedText = instructions
-	if cur.Ref == nil && a.instructionsBefore.Revision == 0 && instructions == (LocalizedText{}) {
+	if (cur.Ref == nil || a.before != nil && !changed) && a.instructionsBefore.Revision == 0 && instructions == (LocalizedText{}) {
 		a.instructions = Instructions{}
 	} else {
 		a.instructions = old
@@ -898,7 +914,11 @@ func (w *configSet) checkContracts() error {
 		if !presets.VersionsProvider(a.Provider) {
 			continue
 		}
-		d, err := w.distribution(distributionKey(a))
+		key, err := w.distributionKey(a)
+		if err != nil {
+			return err
+		}
+		d, err := w.distribution(key)
 		if err != nil {
 			return err
 		}
@@ -1060,6 +1080,10 @@ func writeConfig(tx *sql.Tx, table, uid string, c ownedConfig) error {
 	if c.Spec != nil {
 		spec = encode(c.Spec)
 	}
+	if table == "application_config" {
+		_, err := tx.Exec(`INSERT INTO application_config(entity_uid,template_ref,overrides_json,spec_json,provider_key) VALUES(?,?,?,?,?) ON CONFLICT(entity_uid) DO UPDATE SET template_ref=excluded.template_ref,overrides_json=excluded.overrides_json,spec_json=excluded.spec_json,provider_key=excluded.provider_key`, uid, c.Ref, encode(c.Overrides), spec, c.ProviderKey)
+		return err
+	}
 	_, err := tx.Exec(`INSERT INTO `+table+`(entity_uid,template_ref,overrides_json,spec_json) VALUES(?,?,?,?) ON CONFLICT(entity_uid) DO UPDATE SET template_ref=excluded.template_ref,overrides_json=excluded.overrides_json,spec_json=excluded.spec_json`, uid, c.Ref, encode(c.Overrides), spec)
 	return err
 }
@@ -1080,10 +1104,10 @@ func (v *vendorEntry) write(tx *sql.Tx) error {
 
 func (a *appEntry) write(tx *sql.Tx) error {
 	if a.before == nil {
-		if _, err := tx.Exec(`INSERT INTO applications(uid,vendor_uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,provider,base_url,base_urls_json,source_strategy,cache_ttl_seconds,enabled,revision,runtime_revision,source_epoch,deleted_at_s) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.UID, a.VendorUID, a.ID, a.Name.En, a.Name.ZhCN, a.Description.En, a.Description.ZhCN, a.Icon, a.Provider, a.BaseURL, string(encode(a.BaseURLs)), a.SourceStrategy, a.CacheTTLSeconds, a.Enabled, a.Revision, a.RuntimeRevision, a.SourceEpoch, unixPointer(a.DeletedAt)); err != nil {
+		if _, err := tx.Exec(`INSERT INTO applications(uid,vendor_uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,provider,base_url,base_urls_json,json_release_json,source_strategy,cache_ttl_seconds,enabled,revision,runtime_revision,source_epoch,deleted_at_s) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.UID, a.VendorUID, a.ID, a.Name.En, a.Name.ZhCN, a.Description.En, a.Description.ZhCN, a.Icon, a.Provider, a.BaseURL, string(encode(a.BaseURLs)), string(encode(a.JSONRelease)), a.SourceStrategy, a.CacheTTLSeconds, a.Enabled, a.Revision, a.RuntimeRevision, a.SourceEpoch, unixPointer(a.DeletedAt)); err != nil {
 			return err
 		}
-	} else if err := casExec(tx, false, "", nil, `UPDATE applications SET name_en=?,name_zh_cn=?,description_en=?,description_zh_cn=?,icon=?,base_url=?,base_urls_json=?,source_strategy=?,cache_ttl_seconds=?,enabled=?,revision=?,source_epoch=?,deleted_at_s=?,runtime_revision=? WHERE uid=? AND revision=?`, []any{a.Name.En, a.Name.ZhCN, a.Description.En, a.Description.ZhCN, a.Icon, a.BaseURL, string(encode(a.BaseURLs)), a.SourceStrategy, a.CacheTTLSeconds, a.Enabled, a.Revision, a.SourceEpoch, unixPointer(a.DeletedAt), a.RuntimeRevision, a.UID, a.before.Revision}); err != nil {
+	} else if err := casExec(tx, false, "", nil, `UPDATE applications SET name_en=?,name_zh_cn=?,description_en=?,description_zh_cn=?,icon=?,base_url=?,base_urls_json=?,json_release_json=?,source_strategy=?,cache_ttl_seconds=?,enabled=?,revision=?,source_epoch=?,deleted_at_s=?,runtime_revision=? WHERE uid=? AND revision=?`, []any{a.Name.En, a.Name.ZhCN, a.Description.En, a.Description.ZhCN, a.Icon, a.BaseURL, string(encode(a.BaseURLs)), string(encode(a.JSONRelease)), a.SourceStrategy, a.CacheTTLSeconds, a.Enabled, a.Revision, a.SourceEpoch, unixPointer(a.DeletedAt), a.RuntimeRevision, a.UID, a.before.Revision}); err != nil {
 		return err
 	}
 	if a.before == nil || !bytes.Equal(encode(a.config), encode(a.configBefore)) {
@@ -1107,7 +1131,7 @@ func (a *appEntry) write(tx *sql.Tx) error {
 		}
 	}
 	if s := a.newSource; s != nil {
-		if _, err := tx.Exec(`INSERT INTO application_sources(app_uid,epoch,provider,base_url,base_urls_json,source_strategy,created_at_s) VALUES(?,?,?,?,?,?,?)`, s.AppUID, s.Epoch, s.Provider, s.BaseURL, string(encode(s.BaseURLs)), s.SourceStrategy, s.CreatedAt.Unix()); err != nil {
+		if _, err := tx.Exec(`INSERT INTO application_sources(app_uid,epoch,provider,base_url,base_urls_json,json_release_json,source_strategy,created_at_s) VALUES(?,?,?,?,?,?,?,?)`, s.AppUID, s.Epoch, s.Provider, s.BaseURL, string(encode(s.BaseURLs)), string(encode(s.JSONRelease)), s.SourceStrategy, s.CreatedAt.Unix()); err != nil {
 			return err
 		}
 	}

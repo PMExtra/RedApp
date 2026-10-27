@@ -15,6 +15,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/logging"
 	"github.com/PMExtra/RedApp/internal/pathmatch"
+	"github.com/PMExtra/RedApp/internal/releaseconfig"
 	"github.com/PMExtra/RedApp/internal/store"
 	"github.com/PMExtra/RedApp/internal/warmplan"
 	"github.com/PMExtra/RedApp/presets"
@@ -108,6 +109,27 @@ func validate(entry application.Entry, in *warmplan.Input) error {
 	if !in.Limits.Valid() {
 		return ErrInvalid
 	}
+	if _, ok := entry.Protocol.(application.ArtifactKeyProtocol); ok {
+		if in.Target == "" || len(in.ArtifactKeys) == 0 || len(in.ArtifactKeys) > releaseconfig.MaxArtifacts || len(in.Platforms) > 0 || len(in.Paths) > 0 || len(in.Indexes) > 0 || in.Manifest != "" || in.Match != nil {
+			return ErrInvalid
+		}
+		seen := map[string]bool{}
+		for _, key := range in.ArtifactKeys {
+			if !releaseconfig.ValidKey(key) || seen[key] {
+				return ErrInvalid
+			}
+			seen[key] = true
+		}
+		if !entry.HasChannel(in.Target) {
+			if _, err := entry.Protocol.ValidateVersion(in.Target); err != nil {
+				return ErrInvalid
+			}
+		}
+		return nil
+	}
+	if len(in.ArtifactKeys) > 0 {
+		return ErrInvalid
+	}
 	if entry.Protocol != nil {
 		platform, ok := entry.Protocol.(application.PlatformProtocol)
 		if !ok || in.Target == "" || len(in.Platforms) == 0 || len(in.Paths) > 0 || len(in.Indexes) > 0 || in.Manifest != "" || in.Match != nil {
@@ -165,8 +187,12 @@ func validate(entry application.Entry, in *warmplan.Input) error {
 // Start starts a job. A repeated request ID returns the existing job with
 // created false.
 func (s *Service) Start(ctx context.Context, key string, in warmplan.Input, automatic bool) (store.PrewarmJob, bool, error) {
+	return s.start(ctx, key, in, automatic, "")
+}
+
+func (s *Service) start(ctx context.Context, key string, in warmplan.Input, automatic bool, expectedStorage string) (store.PrewarmJob, bool, error) {
 	e, ok := s.Registry.Lookup(key)
-	if !ok || !e.Active() {
+	if !ok || !e.Active() || expectedStorage != "" && e.StorageID() != expectedStorage {
 		return store.PrewarmJob{}, false, store.ErrSourceInactive
 	}
 	if err := s.DB.PrunePrewarm(); err != nil {
@@ -371,8 +397,13 @@ func (s *Service) run(ctx context.Context, entry application.Entry, job store.Pr
 		if resolveErr != nil {
 			err = resolveErr
 		} else {
-			selector := entry.Protocol.(application.PlatformProtocol)
-			keys, selectErr := selector.SelectArtifacts(release, job.Input.Platforms)
+			var keys []string
+			var selectErr error
+			if selector, ok := entry.Protocol.(application.ArtifactKeyProtocol); ok {
+				keys, selectErr = selector.SelectArtifactKeys(release, job.Input.ArtifactKeys)
+			} else {
+				keys, selectErr = entry.Protocol.(application.PlatformProtocol).SelectArtifacts(release, job.Input.Platforms)
+			}
 			if selectErr != nil {
 				err = selectErr
 			} else {
@@ -655,4 +686,16 @@ func (s *Service) complete(entry application.Entry, release application.Release,
 		}
 	}
 	return len(wanted) == 0
+}
+
+// WarmSnapshot uses the same single worker, budgets, recovery and immutable
+// version binding as manual prewarm. A refresh never waits for a new metadata
+// query or resolves a channel again while selecting its exact artifact keys.
+func (s *Service) WarmSnapshot(ctx context.Context, app, storage, version string, keys []string) error {
+	id, err := fsutil.RandomID()
+	if err != nil {
+		return err
+	}
+	_, _, err = s.start(ctx, app, warmplan.Input{RequestID: id, Target: version, ArtifactKeys: keys, Limits: warmplan.DefaultLimits()}, true, storage)
+	return err
 }

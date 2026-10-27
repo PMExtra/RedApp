@@ -24,7 +24,7 @@ func TestTemplateInsertionProtectionAndSelectiveCAS(t *testing.T) {
 		t.Fatal(err)
 	}
 	same, _ := s.Application(a.Key)
-	if same.UID != a.UID || same.Provider != "info" || same.Name != a.Name || same.Revision != a.Revision || !same.Enabled {
+	if same.UID != a.UID || same.Provider != "info" || same.Name != a.Name || same.Revision <= a.Revision || !same.Enabled {
 		t.Fatal("existing template key overwritten", same)
 	}
 	blank, _ := s.Instructions(a.UID)
@@ -42,16 +42,17 @@ func TestTemplateInsertionProtectionAndSelectiveCAS(t *testing.T) {
 	if err = s.PermanentlyDeleteVendor(v.ID, v.Revision); !errors.Is(err, ErrBuiltinTemplate) {
 		t.Fatal("vendor bypassed protection", err)
 	}
-	// Field-level reset is a configuration unset; an independent entity has nothing to inherit.
-	if _, err = s.PatchApplicationConfiguration(a.Key, ConfigurationPatch{Revision: a.Revision, Unset: []string{"name.en", "instructions.en"}}); !errors.Is(err, ErrInvalidDirectory) {
-		t.Fatal("independent entity must not acquire inheritance through reset", err)
+	// Association enables common resets without adopting the template provider.
+	if _, err = s.PatchApplicationConfiguration(a.Key, ConfigurationPatch{Revision: same.Revision, Unset: []string{"name.en", "instructions.en"}}); err != nil {
+		t.Fatal(err)
 	}
+
 	after, _ := s.Application(a.Key)
 	if after.Provider != a.Provider || after.SourceEpoch != a.SourceEpoch || after.Enabled != a.Enabled || after.UID != a.UID {
 		t.Fatal("unselected fields changed", after)
 	}
 	blank, _ = s.Instructions(a.UID)
-	if blank.En != "" || blank.Revision != 0 {
+	if blank.En == "" || blank.Revision == 0 {
 		t.Fatal("unselected instructions changed")
 	}
 	if err = s.EnsureEntityTemplates(); err != nil {

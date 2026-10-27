@@ -24,7 +24,10 @@ const props = defineProps<{
 const emit = defineEmits<{ reset: [] }>();
 const { t } = useI18n();
 const visible = computed(
-  () => props.linked && (props.modified || props.origin?.source === "custom"),
+  () =>
+    props.linked &&
+    props.origin?.resettable !== false &&
+    (props.modified || props.origin?.source === "custom"),
 );
 const label = computed(() =>
   props.templateValue

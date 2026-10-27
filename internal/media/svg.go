@@ -44,7 +44,9 @@ var svgElementAttrs = map[string]string{
 
 const svgCommonAttrs = "id fill fill-rule fill-opacity stroke stroke-width stroke-linecap stroke-linejoin stroke-miterlimit stroke-dasharray stroke-dashoffset stroke-opacity opacity color transform clip-path clip-rule vector-effect"
 
-func normalizeSVG(input []byte) ([]byte, error) {
+func normalizeSVG(input []byte) ([]byte, error) { return normalizeSVGMode(input, false) }
+
+func normalizeSVGMode(input []byte, staticEffects bool) ([]byte, error) {
 	decoder := xml.NewDecoder(bytes.NewReader(input))
 	output := &boundedBuffer{limit: MaxStoredBytes}
 	encoder := xml.NewEncoder(output)
@@ -52,6 +54,7 @@ func normalizeSVG(input []byte) ([]byte, error) {
 	ids := make(map[string]bool)
 	var references []string
 	rootSeen, rootDone, nodes := false, false, 0
+	effects := 0
 	invalid := func(reason string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: SVG %s", ErrInvalidIcon, reason)
 	}
@@ -74,6 +77,28 @@ func normalizeSVG(input []byte) ([]byte, error) {
 			}
 			name := node.Name.Local
 			allowed, ok := svgElementAttrs[name]
+			if staticEffects {
+				parent := ""
+				if len(stack) > 0 {
+					parent = stack[len(stack)-1]
+				}
+				if extra, exists := staticSVGEffects[name]; exists {
+					effects++
+					if effects > 32 {
+						return nil, ErrTooLarge
+					}
+					if name == "filter" && parent != "defs" || name == "mask" && parent != "defs" && parent != "svg" || strings.HasPrefix(name, "fe") && parent != "filter" {
+						return invalid("invalid effect nesting")
+					}
+					allowed, ok = extra, true
+				}
+				if parent == "filter" && !strings.HasPrefix(name, "fe") || parent == "mask" && name != "path" {
+					return invalid("invalid effect child")
+				}
+				if name == "g" {
+					allowed += " mask filter style"
+				}
+			}
 			if !ok || (node.Name.Space != "" && node.Name.Space != svgNamespace) {
 				return invalid("contains an unsupported element")
 			}
@@ -105,7 +130,11 @@ func normalizeSVG(input []byte) ([]byte, error) {
 				}
 				attributes[key] = true
 				value := strings.TrimSpace(attr.Value)
-				if !validSVGAttribute(key, value) {
+				valid := validSVGAttribute(key, value)
+				if staticEffects && (wordIn(staticSVGEffects[name], key) || key == "mask" || key == "filter" || key == "style") {
+					valid = validStaticSVGEffectAttribute(key, value)
+				}
+				if !valid {
 					return invalid("contains an unsupported attribute value")
 				}
 				if len(stack) == 0 && (key == "width" || key == "height") {
@@ -283,4 +312,57 @@ func svgNumeric(value string, percent bool) (float64, bool) {
 
 func localSVGReference(value string) bool {
 	return strings.HasPrefix(value, "url(#") && strings.HasSuffix(value, ")") && svgID.MatchString(value[5:len(value)-1])
+}
+
+// Only reviewed build-time assets may use this bounded, inert effect subset.
+// Uploads retain their existing allowlist. No images, scripts, hrefs or arbitrary CSS.
+var staticSVGEffects = map[string]string{
+	"mask":           "mask-type maskUnits x y width height",
+	"filter":         "x y width height filterUnits color-interpolation-filters",
+	"feFlood":        "flood-opacity result",
+	"feColorMatrix":  "in type values",
+	"feOffset":       "dx dy",
+	"feGaussianBlur": "stdDeviation",
+	"feBlend":        "mode in in2 result",
+}
+
+func validStaticSVGEffectAttribute(key, value string) bool {
+	switch key {
+	case "style":
+		return value == "mix-blend-mode:overlay"
+	case "mask", "filter":
+		return localSVGReference(value)
+	case "mask-type":
+		return value == "alpha"
+	case "maskUnits", "filterUnits":
+		return value == "userSpaceOnUse"
+	case "color-interpolation-filters":
+		return value == "sRGB"
+	case "in", "in2", "result":
+		return svgID.MatchString(value)
+	case "type":
+		return value == "matrix"
+	case "mode":
+		return value == "normal" || value == "overlay"
+	case "values":
+		parts := strings.Fields(value)
+		if len(parts) != 20 {
+			return false
+		}
+		for _, p := range parts {
+			n, ok := svgNumeric(p, false)
+			if !ok || n < -128 || n > 128 {
+				return false
+			}
+		}
+		return true
+	case "stdDeviation":
+		n, ok := svgNumeric(value, false)
+		return ok && n >= 0 && n <= 8
+	case "x", "y", "dx", "dy", "width", "height":
+		n, ok := svgNumeric(value, false)
+		return ok && n >= -512 && n <= 512 && (key != "width" && key != "height" || n > 0)
+	default:
+		return validSVGAttribute(key, value)
+	}
 }

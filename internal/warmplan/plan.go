@@ -23,15 +23,16 @@ func (l Limits) Valid() bool {
 }
 
 type Input struct {
-	RetrySkip []string        `json:"retry_skip,omitempty"`
-	RequestID string          `json:"request_id"`
-	Target    string          `json:"target,omitempty"`
-	Platforms []string        `json:"platforms,omitempty"`
-	Paths     []string        `json:"paths,omitempty"`
-	Indexes   []string        `json:"indexes,omitempty"`
-	Manifest  string          `json:"manifest,omitempty"`
-	Match     *pathmatch.Spec `json:"match,omitempty"`
-	Limits    Limits          `json:"limits"`
+	ArtifactKeys []string        `json:"artifact_keys,omitempty"`
+	RetrySkip    []string        `json:"retry_skip,omitempty"`
+	RequestID    string          `json:"request_id"`
+	Target       string          `json:"target,omitempty"`
+	Platforms    []string        `json:"platforms,omitempty"`
+	Paths        []string        `json:"paths,omitempty"`
+	Indexes      []string        `json:"indexes,omitempty"`
+	Manifest     string          `json:"manifest,omitempty"`
+	Match        *pathmatch.Spec `json:"match,omitempty"`
+	Limits       Limits          `json:"limits"`
 }
 type Item struct {
 	Key    string `json:"key"`
@@ -39,6 +40,11 @@ type Item struct {
 	Reason string `json:"reason,omitempty"`
 	Bytes  int64  `json:"bytes"`
 }
+
+// Budget counts bytes consumed by the single prewarm worker, not upstream
+// traffic. An exhausted unknown-length stream may consume one extra byte to
+// distinguish EOF from overflow; Used includes that byte (at most Max+1).
+// Reader calls are serialized by the worker; atomic fields allow progress reads.
 type Budget struct {
 	Max     int64
 	used    atomic.Int64
@@ -70,27 +76,62 @@ func (b *Budget) CheckLength(n int64) error {
 }
 
 type reader struct {
-	ctx context.Context
-	r   io.Reader
-	b   *Budget
+	ctx      context.Context
+	r        io.Reader
+	b        *Budget
+	terminal error
 }
 
-func (b *Budget) Reader(ctx context.Context, r io.Reader) io.Reader { return &reader{ctx, r, b} }
+func (b *Budget) Reader(ctx context.Context, r io.Reader) io.Reader {
+	return &reader{ctx: ctx, r: r, b: b}
+}
 func (r *reader) Read(p []byte) (int, error) {
 	if err := r.ctx.Err(); err != nil {
 		return 0, err
 	}
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if r.terminal != nil {
+		return 0, r.terminal
+	}
+	if r.b.Limited() {
+		return 0, ErrLimited
+	}
 	remaining := r.b.Remaining()
 	if remaining == 0 {
-		r.b.limited.Store(true)
-		return 0, ErrLimited
+		// Do not fabricate EOF: one bounded probe distinguishes an exact fit
+		// from a truncated stream. Never expose the overflow byte to the caller.
+		var probe [1]byte
+		n, err := r.r.Read(probe[:])
+		if n > 0 {
+			r.b.used.Add(int64(n))
+			r.b.limited.Store(true)
+			r.terminal = ErrLimited
+			if err != nil && err != io.EOF {
+				r.terminal = errors.Join(ErrLimited, err)
+			}
+		} else if err != nil {
+			r.terminal = err
+		} else {
+			// A reader making no progress must not trigger unbounded EOF probes.
+			r.terminal = io.ErrNoProgress
+		}
+		return 0, r.terminal
 	}
 	if int64(len(p)) > remaining {
 		p = p[:remaining]
 	}
 	n, err := r.r.Read(p)
 	if e := r.b.Consume(int64(n)); e != nil {
+		if err != nil && err != io.EOF {
+			e = errors.Join(e, err)
+		}
+		r.terminal = e
 		return n, e
+	}
+	if err != nil {
+		r.terminal = err
 	}
 	return n, err
 }

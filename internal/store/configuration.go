@@ -50,6 +50,7 @@ type Configuration struct {
 	ProxyEffective       networkproxy.Effective `json:"proxy_effective"`
 	TemplateRef          *string                `json:"template_ref"`
 	TemplateHash         *string                `json:"template_hash"`
+	TemplateProvider     *string                `json:"template_provider,omitempty"`
 	TemplateMissing      bool                   `json:"template_missing"`
 	Defaults             Object                 `json:"defaults"`
 	Overrides            Object                 `json:"overrides"`
@@ -57,8 +58,9 @@ type Configuration struct {
 	Fields               map[string]FieldOrigin `json:"fields"`
 }
 type FieldOrigin struct {
-	Source  string `json:"source"`
-	Differs *bool  `json:"differs_from_template"`
+	Resettable bool   `json:"resettable"`
+	Source     string `json:"source"`
+	Differs    *bool  `json:"differs_from_template"`
 }
 type ConfigurationPatch struct {
 	Revision int64                      `json:"revision"`
@@ -94,9 +96,10 @@ func (p *ConfigurationPatch) UnmarshalJSON(raw []byte) error {
 // ownedConfig is an entity's authoritative configuration: a template reference
 // with sparse overrides, or an independent spec.
 type ownedConfig struct {
-	Ref       *string
-	Overrides Object
-	Spec      Object
+	ProviderKey string // Immutable namespace, persisted separately from template_ref.
+	Ref         *string
+	Overrides   Object
+	Spec        Object
 }
 type trustedDistribution struct {
 	Provider   string
@@ -186,7 +189,7 @@ func paths(kind string) []string {
 	if kind == "Vendor" {
 		return append(out, "localized_icons.en", "localized_icons.zh-CN")
 	}
-	return append(out, "instructions.en", "instructions.zh-CN", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "retention", "prewarm", "categories", "tags")
+	return append(out, "instructions.en", "instructions.zh-CN", "json_release", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "retention", "prewarm", "categories", "tags")
 }
 
 // AppPathApplies reports whether an application configuration path (or a
@@ -197,6 +200,8 @@ func paths(kind string) []string {
 func AppPathApplies(provider, path string) bool {
 	field, _, _ := strings.Cut(path, ".")
 	switch field {
+	case "json_release":
+		return provider == "json-release"
 	case "base_url", "retention", "prewarm":
 		return presets.VersionsProvider(provider)
 	case "base_urls", "source_strategy", "http_policy":
@@ -255,14 +260,15 @@ func unsetLeaf(in Object, path string) {
 }
 
 // merge overlays sparse overrides on a template spec. Ordered lists, proxy,
-// prewarm and retention are whole leaves; other objects merge per key.
+// Provider query/source configuration, proxy, prewarm and retention are atomic.
+// Presentation objects and HTTP policy leaf settings merge per key.
 func merge(base, over Object) Object {
 	out := cloneObject(base)
 	if out == nil {
 		out = Object{}
 	}
 	for key, value := range over {
-		if key == "proxy" || key == "prewarm" || key == "retention" {
+		if key == "proxy" || key == "prewarm" || key == "retention" || key == "json_release" {
 			out[key] = cloneValue(value)
 			continue
 		}
@@ -361,7 +367,17 @@ func (w *configSet) effective(kind string, c ownedConfig) (Object, error) {
 		if t == nil {
 			return nil, invalidf("unknown template %s", *c.Ref)
 		}
-		effective = merge(t.Spec, c.Overrides)
+		base := t.Spec
+		if kind == "App" {
+			if c.ProviderKey == "" {
+				return nil, invalidf("missing provider namespace")
+			}
+			if err := validateProviderOverrides(c.ProviderKey, c.Overrides); err != nil {
+				return nil, err
+			}
+			base = templateBase(t, c.ProviderKey)
+		}
+		effective = merge(base, c.Overrides)
 	}
 	if effective == nil {
 		return nil, ErrInvalidDirectory
@@ -393,10 +409,11 @@ func (w *configSet) effective(kind string, c ownedConfig) (Object, error) {
 		} else if presets.VersionsProvider(spec.Provider) {
 			effective["retention"] = object(presets.DefaultRetention())
 		}
-		input := ApplicationInput{ID: "effective", Name: LocalizedText{spec.Name.En, spec.Name.ZhCN}, Description: LocalizedText{spec.Description.En, spec.Description.ZhCN}, Icon: spec.Icon, Provider: spec.Provider, BaseURL: spec.BaseURL, BaseURLs: spec.BaseURLs, SourceStrategy: spec.SourceStrategy, CacheTTLSeconds: spec.CacheTTLSeconds}
+		input := ApplicationInput{ID: "effective", Name: LocalizedText{spec.Name.En, spec.Name.ZhCN}, Description: LocalizedText{spec.Description.En, spec.Description.ZhCN}, Icon: spec.Icon, Provider: spec.Provider, JSONRelease: spec.JSONRelease, BaseURL: spec.BaseURL, BaseURLs: spec.BaseURLs, SourceStrategy: spec.SourceStrategy, CacheTTLSeconds: spec.CacheTTLSeconds}
 		if err := validateApplication(&input); err != nil {
 			return nil, err
 		}
+		effective["cache_ttl_seconds"] = input.CacheTTLSeconds
 		effective["base_url"], effective["base_urls"], effective["source_strategy"] = input.BaseURL, input.BaseURLs, input.SourceStrategy
 		if input.BaseURLs == nil {
 			effective["base_urls"] = []string{}
@@ -522,6 +539,11 @@ func (w *configSet) view(kind, uid string) (Configuration, error) {
 		}
 		hash := t.Hash
 		out.Defaults = cloneObject(t.Spec)
+		if kind == "App" {
+			p := fmt.Sprint(t.Spec["provider"])
+			out.TemplateProvider = &p
+			out.Defaults = templateBase(t, c.ProviderKey)
+		}
 		out.TemplateHash = &hash
 		out.TemplateMissing = !t.Present
 	}
@@ -529,6 +551,9 @@ func (w *configSet) view(kind, uid string) (Configuration, error) {
 		provider = fmt.Sprint(effective["provider"])
 	}
 	for _, p := range paths(kind) {
+		if kind == "App" && !AppPathApplies(provider, p) {
+			continue
+		}
 		if (p == "retention" || p == "prewarm") && !presets.VersionsProvider(provider) {
 			continue
 		}
@@ -536,14 +561,25 @@ func (w *configSet) view(kind, uid string) (Configuration, error) {
 			continue
 		}
 		f := FieldOrigin{Source: "custom"}
+		var err error
+		f.Resettable, err = w.canReset(kind, c, p)
+		if err != nil {
+			return Configuration{}, err
+		}
 		if c.Ref != nil {
 			if _, ok := leaf(c.Overrides, p); !ok {
-				f.Source = "inherited"
+				if f.Resettable {
+					f.Source = "inherited"
+				} else {
+					f.Source = "default"
+				}
 			}
 			a, _ := leaf(effective, p)
 			b, _ := leaf(out.Defaults, p)
 			diff := !reflect.DeepEqual(a, b)
-			f.Differs = &diff
+			if f.Resettable {
+				f.Differs = &diff
+			}
 		}
 		out.Fields[p] = f
 	}
@@ -617,7 +653,7 @@ func vendorSpec(v Vendor) Object {
 }
 
 func appSpec(a Application, instructions LocalizedText, policy cachepolicy.Config) Object {
-	spec := presets.AppSpec{Categories: append([]string{}, a.Categories...), Tags: append([]string{}, a.Tags...), Proxy: networkproxy.Inherit(), Name: presets.Text{En: a.Name.En, ZhCN: a.Name.ZhCN}, Description: presets.Text{En: a.Description.En, ZhCN: a.Description.ZhCN}, Icon: a.Icon, Provider: a.Provider, BaseURL: a.BaseURL, BaseURLs: a.BaseURLs, SourceStrategy: a.SourceStrategy, CacheTTLSeconds: a.CacheTTLSeconds, Instructions: presets.Text{En: instructions.En, ZhCN: instructions.ZhCN}}
+	spec := presets.AppSpec{Categories: append([]string{}, a.Categories...), Tags: append([]string{}, a.Tags...), Proxy: networkproxy.Inherit(), Name: presets.Text{En: a.Name.En, ZhCN: a.Name.ZhCN}, Description: presets.Text{En: a.Description.En, ZhCN: a.Description.ZhCN}, Icon: a.Icon, Provider: a.Provider, JSONRelease: a.JSONRelease, BaseURL: a.BaseURL, BaseURLs: a.BaseURLs, SourceStrategy: a.SourceStrategy, CacheTTLSeconds: a.CacheTTLSeconds, Instructions: presets.Text{En: instructions.En, ZhCN: instructions.ZhCN}}
 	if presets.VersionsProvider(a.Provider) {
 		spec.Retention = presets.DefaultRetention()
 		spec.Prewarm = presets.DefaultPrewarm()
@@ -761,6 +797,15 @@ func (s *Store) patchConfiguration(kind, key string, patch ConfigurationPatch, e
 			}
 			c, revision, setEnabled, changed, app = &a.config, &a.Revision, &a.Enabled, &a.changed, a
 		}
+		for _, path := range patch.Unset {
+			ok, err := w.canReset(kind, *c, path)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return invalidf("%s has no compatible template value", path)
+			}
+		}
 		if *revision != patch.Revision {
 			return ErrConflict
 		}
@@ -901,7 +946,7 @@ func snapshots(set presets.Set) ([]templateSnapshot, error) {
 		normalized.Categories, _ = presets.NormalizeCategories(normalized.Categories)
 		normalized.Tags, _ = presets.NormalizeTags(normalized.Tags)
 		normalized.Proxy = normalizedProxy(normalized.Proxy)
-		input := ApplicationInput{ID: a.Metadata.ID, Name: LocalizedText{a.Spec.Name.En, a.Spec.Name.ZhCN}, Description: LocalizedText{a.Spec.Description.En, a.Spec.Description.ZhCN}, Provider: a.Spec.Provider, BaseURL: a.Spec.BaseURL, BaseURLs: a.Spec.BaseURLs, SourceStrategy: a.Spec.SourceStrategy, CacheTTLSeconds: a.Spec.CacheTTLSeconds}
+		input := ApplicationInput{ID: a.Metadata.ID, Name: LocalizedText{a.Spec.Name.En, a.Spec.Name.ZhCN}, Description: LocalizedText{a.Spec.Description.En, a.Spec.Description.ZhCN}, Provider: a.Spec.Provider, JSONRelease: a.Spec.JSONRelease, BaseURL: a.Spec.BaseURL, BaseURLs: a.Spec.BaseURLs, SourceStrategy: a.Spec.SourceStrategy, CacheTTLSeconds: a.Spec.CacheTTLSeconds}
 		if err := validateApplication(&input); err != nil {
 			return nil, err
 		}
@@ -1031,16 +1076,34 @@ func (s *Store) ReconcileTemplates(set presets.Set) error {
 			}
 		}
 		for _, a := range w.sortedApps() {
+			associated := false
+			if a.config.Ref == nil && a.DeletedAt == nil {
+				if t := w.templates[templateKey("App", a.Key)]; t != nil && t.Present {
+					ref := a.Key
+					a.config.Overrides = independentOverrides(a.config.Spec, a.Provider)
+					a.config.Spec = nil
+					a.config.Ref = &ref
+					associated = true
+					a.changed = true
+					a.Revision++
+				}
+			}
 			changed := false
 			if a.config.Ref != nil {
 				key := templateKey("App", *a.config.Ref)
 				changed = templateHash(previous[key]) != templateHash(w.templates[key])
 			}
-			if key := distributionKey(a); key != "" && previousDistributions[key] != distributionDigestOf(w.distributions[key]) {
+			key, err := w.distributionKey(a)
+			if err != nil {
+				return err
+			}
+			if key != "" && previousDistributions[key] != distributionDigestOf(w.distributions[key]) {
 				changed = true
 			}
 			if changed {
-				a.Revision++
+				if !associated {
+					a.Revision++
+				}
 				a.changed = true
 			}
 		}
@@ -1153,15 +1216,24 @@ func (s *Store) CreateConfiguredApplication(vendor string, in ApplicationInput, 
 		if err != nil {
 			return err
 		}
-		a := Application{Categories: in.Categories, Tags: in.Tags, UID: uid, ID: in.ID, Key: vendor + "/" + in.ID, VendorID: vendor, VendorUID: parent.UID, Name: in.Name, Description: in.Description, Icon: in.Icon, Provider: in.Provider, BaseURL: in.BaseURL, BaseURLs: in.BaseURLs, SourceStrategy: in.SourceStrategy, CacheTTLSeconds: in.CacheTTLSeconds, Enabled: in.Enabled, Revision: 1, SourceEpoch: 1}
+		a := Application{Categories: in.Categories, Tags: in.Tags, UID: uid, ID: in.ID, Key: vendor + "/" + in.ID, VendorID: vendor, VendorUID: parent.UID, Name: in.Name, Description: in.Description, Icon: in.Icon, Provider: in.Provider, JSONRelease: in.JSONRelease, BaseURL: in.BaseURL, BaseURLs: in.BaseURLs, SourceStrategy: in.SourceStrategy, CacheTTLSeconds: in.CacheTTLSeconds, Enabled: in.Enabled, Revision: 1, SourceEpoch: 1}
 		c := ownedConfig{Overrides: Object{}, Spec: appSpec(a, LocalizedText{}, cachepolicy.Empty())}
 		if ref != nil {
 			t, err := w.template("App", *ref)
 			if err != nil {
 				return err
 			}
-			if t == nil || !t.Present || t.Spec["provider"] != in.Provider {
+			if t == nil || !t.Present {
 				return invalidf("unknown or incompatible template")
+			}
+			if t.Spec["provider"] != in.Provider {
+				// Common fields may follow the template; the new instance's
+				// explicitly supplied provider settings stay in its own scope.
+				for key, value := range independentOverrides(c.Spec, in.Provider) {
+					if providerPath(key) {
+						c.Overrides[key] = value
+					}
+				}
 			}
 			c.Ref = ref
 			c.Spec = nil
@@ -1210,17 +1282,6 @@ func distributionDigest(d presets.Descriptor) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// distributionKey names the trusted distribution an application runs with: its
-// template reference, or the provider's built-in template for an independent
-// configuration. Applications of content providers without a template have none.
-func distributionKey(a *appEntry) string {
-	if a.config.Ref != nil {
-		return *a.config.Ref
-	}
-	key, _ := presets.ReleaseTemplateKey(a.Provider)
-	return key
-}
-
 // acceptMissingContract gives an independent release instance the canonical
 // compiled contract when no trusted build record exists yet. It never changes
 // an existing snapshot.
@@ -1228,7 +1289,10 @@ func (w *configSet) acceptMissingContract(a *appEntry) error {
 	if !presets.VersionsProvider(a.Provider) {
 		return nil
 	}
-	key := distributionKey(a)
+	key, err := w.distributionKey(a)
+	if err != nil {
+		return err
+	}
 	if d, err := w.distribution(key); err != nil || d != nil {
 		return err
 	}

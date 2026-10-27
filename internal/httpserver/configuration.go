@@ -38,7 +38,7 @@ type configurationDTO struct {
 }
 
 var vendorSpecFields = []string{"name", "description", "icon", "localized_icons", "proxy"}
-var appSpecFields = []string{"name", "description", "icon", "provider", "proxy", "categories", "tags", "instructions", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy", "retention", "prewarm"}
+var appSpecFields = []string{"name", "description", "icon", "provider", "proxy", "categories", "tags", "instructions", "json_release", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy", "retention", "prewarm"}
 
 // specDocument keeps the spec fields of the kind that apply to provider
 // ("" for vendors). Lists that are absent or null become []. A nil spec

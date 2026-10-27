@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "kind": "Vendor",
+  "metadata": {
+    "id": "jetbrains"
+  },
+  "spec": {
+    "name": {
+      "en": "JetBrains",
+      "zh-CN": "JetBrains"
+    },
+    "description": {
+      "en": "JetBrains develops integrated development environments and tools for software teams.",
+      "zh-CN": "JetBrains 为软件团队开发集成开发环境和工具。"
+    },
+    "icon": "assets/builtin/jetbrains.svg",
+    "localized_icons": {
+      "en": "assets/builtin/jetbrains.svg",
+      "zh-CN": "assets/builtin/jetbrains.svg"
+    }
+  }
+}

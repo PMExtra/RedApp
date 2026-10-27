@@ -87,7 +87,7 @@ func (item *TaxonomyItem) decorate() {
 			diff := !reflect.DeepEqual(a, b)
 			differs = &diff
 		}
-		item.Fields[p] = FieldOrigin{Source: source, Differs: differs}
+		item.Fields[p] = FieldOrigin{Source: source, Differs: differs, Resettable: item.Builtin && item.Default != nil}
 	}
 }
 

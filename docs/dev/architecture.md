@@ -83,6 +83,12 @@ RedApp 是单进程 Go 服务：一个二进制、一个 SQLite 数据库、一�
 
 不符合理想方向、待重构的依赖：`store` 引用 `configexchange` 和根目录的 `presets`；`distributor` 引用 `store`。
 
+## Provider 配置作用域
+
+`application_config.provider_key` 与不可变的应用 Provider 一致，为扁平配置路径提供命名空间；`template_ref` 仅表示配置关联，不代表采用模板 Provider。解析先合并通用字段，再仅对相同 Provider 合并专属字段，最后按当前 Provider 校验。数据库加载、导入导出、默认值、字段来源与 reset 都遵守这一作用域。不同 Provider 关联不能成为运行协议的模板绑定。
+
+旧独立应用按完整路径自动关联，保存已有字段（包括合法空值、false、0）为覆盖；真正缺省才继承，已有绑定不改写。JSON 发布配置整体替换；schema 16 的旧部分 JSON 覆盖在迁移中物化为原有效整块。配置交换版本 2 的链接应用显式携带 `provider_key`，版本 1 仍只按模板 Provider 解释。新增 source 身份仅由有效来源变化决定。
+
 ## 身份模型
 
 - **厂商（vendor）与应用（app）**：ID 都满足 `^[a-z0-9]+(?:-[a-z0-9]+)*$`，最长 63 字节。应用的完整键是 `<vendor>/<app>`，所有 API 和 UI 都用完整键，不推断默认应用。
@@ -196,9 +202,9 @@ HTTP 层只有一处映射（`previews.go`）：未知、其他应用或其他�
 
 - schema 内嵌在 `internal/store/schema.sql`，版本写入 `PRAGMA user_version`，常量为 `store.SchemaVersion`（当前为 15）。`PRAGMA application_id` 固定为 RedApp 的标识，用来拒绝版本号碰巧相同的其他 SQLite 文件。
 - 新目录（为空或只含实例锁）创建全新 schema，并在首次启动前 checkpoint 到主文件。已有数据库以只读、immutable 方式检查 `application_id` 与 `user_version`，任一不符就拒绝启动，不改写、不删除，也不创建 WAL/SHM 文件。不比较表结构：1.0 前每次 schema 变化都提升版本。
-- 迁移框架（`migrate.go`）在 1.0 前处于休眠状态：`MinimumMigratableVersion` 为 0，任何其他版本都被拒绝。启用后先用 `VACUUM INTO` 在数据目录写备份，再在一个事务中执行迁移步骤、外键检查并与全新 schema 比对；流程和发布 1.0 的步骤见 [development.md](development.md#schema-迁移)。每个 schema 版本的 golden fixture 在 `internal/store/testdata/schema/`。
+- 迁移框架（`migrate.go`）按明确兼容窗口运行，目前支持 schema 15→16→17，窗口外版本只读拒绝。迁移先用 `VACUUM INTO` 在数据目录写备份，再在一个事务中执行迁移步骤、外键检查并与全新 schema 比对；流程见 [development.md](development.md#schema-迁移)。每个 schema 版本的 golden fixture 在 `internal/store/testdata/schema/`。
 - 属于厂商或应用的行以 UID 引用父行并 `ON DELETE CASCADE`；应用引用厂商不级联，因为必须先删除应用并登记其对象文件。发布、缓存和指标数据以存储命名空间或指标命名空间为键，永久删除应用时按前缀删除；同一版本的元数据、渠道、资源和下载代际随版本级联删除。
-- 1.0 前不运行迁移，规则见 [ADR 0001](adr/0001-pre-1.0-no-migrations.md)。
+- 1.0 前允许不兼容变更，合理成本下提供迁移，规则见 [ADR 0001](adr/0001-pre-1.0-no-migrations.md)。
 - 连接：WAL、`synchronous=FULL`、外键开启。写连接只有一个（`_txlock=immediate`），所有写入和读改写事务都在它上面串行；只读查询和只读快照事务走独立的 `query_only` 读连接池（8 个），WAL 下不等待正在进行的写事务，看到的是最近一次提交。持有写事务时（包括 `finalize`、`beforeCommit` 和删除包装回调）只能使用该事务，不能调用会写的 `Store` 方法，否则会等待调用者自己占用的写连接；只读方法可以调用，但看不到事务内未提交的修改。
 - 其他包不能拿到底层连接：读写都通过 `Store` 的类型化方法，找不到行时返回 `store.ErrNotFound`。跨包测试用 `storetest.Open` 另开连接做故障注入。
 - 流量与请求计数先在内存累加，每秒、每次传输结束、每次读取计数前以及关闭时批量写入一个事务；写入失败保留增量重试，不影响传输。异常退出最多丢失约 1 秒的计数。

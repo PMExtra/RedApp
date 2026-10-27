@@ -105,6 +105,9 @@ type Client struct {
 	mode       ClientMode
 	pool       *Pool
 	transports *transportSwitch
+	// releaseSource authorizes explicit administrator-configured origins and
+	// paths for JSON release sources, including every redirect hop.
+	releaseSource func(string) bool
 }
 
 // NormalizeBase validates a directory-like base without fetching it. Configured
@@ -198,6 +201,12 @@ func sameOrigin(a, b *url.URL) bool {
 }
 
 func (c *Client) Validate(u *url.URL) error {
+	if c.releaseSource != nil {
+		if u == nil || u.Opaque != "" || u.User != nil || u.Fragment != "" || (u.Scheme != "https" && u.Scheme != "http") || !c.releaseSource(u.String()) {
+			return errors.New("release source is not authorized")
+		}
+		return validatePath(u)
+	}
 	if c.Base == nil || u == nil || u.Opaque != "" || !sameOrigin(u, c.Base) || u.User != nil || u.Fragment != "" || u.RawQuery != "" || u.ForceQuery {
 		return errors.New("only the fixed upstream without query parameters is allowed")
 	}
@@ -249,6 +258,12 @@ func (c *Client) checkRedirect(r *http.Request, via []*http.Request) error {
 	}
 	if previous.Scheme == "https" && r.URL.Scheme != "https" {
 		return errors.New("upstream HTTPS downgrade is not allowed")
+	}
+	if c.releaseSource != nil {
+		if !sameOrigin(previous, r.URL) && r.URL.Scheme != "https" {
+			return errors.New("cross-origin release redirects require HTTPS")
+		}
+		return c.Validate(r.URL)
 	}
 	if c.mode != GeneralHTTP || sameOrigin(r.URL, c.Base) {
 		return c.Validate(r.URL)

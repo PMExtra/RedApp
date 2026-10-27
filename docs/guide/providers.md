@@ -13,6 +13,7 @@ Every application in RedApp has a **provider**. The provider decides what the ap
 | HTTP cache | `http-cache` | Required; 1–16 sources | Any file below the source URL | Path rules, default TTL 300 s, manual and automatic cleanup |
 | Codex | `codex` | `https://releases.openai.com/codex` (can be changed) | Verified Codex releases and installers | Channel TTL 60 s, version cleanup, optional retention and prewarm |
 | Claude Code | `claude-code` | `https://downloads.claude.ai/claude-code-releases` (can be changed) | Verified Claude Code releases and installers | Channel TTL 60 s, version cleanup, optional retention and prewarm |
+| JSON Release | `json-release` | Explicit metadata/artifact/checksum source policies | Normalized release downloads from JSON + jq configuration | Independent metadata refresh and exact artifact-key prewarm; see [JSON Release](json-release.md) |
 
 All providers share the download limits from the [deployment configuration](configuration.md#field-reference).
 
@@ -278,6 +279,7 @@ Prewarm downloads files before clients ask for them.
 - Cancelling a task does not cancel downloads that public clients also wait for.
 - A restart marks a running task as interrupted. It is not resumed.
 - Finished tasks are kept for 24 hours.
+- For an unknown-length stream exactly at the task read budget, RedApp probes at most one additional byte to distinguish EOF from overflow. EOF succeeds; an extra byte is counted and stops the task as limited, so reported task bytes may exceed the budget by one. This reader budget is not an upstream traffic cap; download workers and shared readers are accounted separately.
 - Prewarm does not count as public downloads in metrics or rankings. Bytes actually fetched from upstream are counted.
 
 ## Hosted files

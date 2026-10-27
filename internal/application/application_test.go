@@ -117,7 +117,7 @@ func TestRegistryPublicationIsAtomicForReaders(t *testing.T) {
 
 func TestProviderConfigurationsHaveExplicitCapabilities(t *testing.T) {
 	definitions := Definitions()
-	if len(definitions) != 5 || definitions[0].Capabilities.Files || !definitions[0].Capabilities.Instructions || !definitions[1].Capabilities.HostedFiles || !definitions[2].Capabilities.TimeCleanup {
+	if len(definitions) != 6 || definitions[0].Capabilities.Files || !definitions[0].Capabilities.Instructions || !definitions[1].Capabilities.HostedFiles || !definitions[2].Capabilities.TimeCleanup {
 		t.Fatal("unexpected provider capability contract")
 	}
 	for _, provider := range []string{Codex, ClaudeCode} {

@@ -1,5 +1,5 @@
 -- RedApp state database. Open writes store.SchemaVersion to PRAGMA user_version
--- and refuses any database with another version (ADR 0001).
+-- and migrates only explicitly supported older versions (ADR 0001).
 --
 -- Rows that belong to an application or vendor reference it by UID with
 -- ON DELETE CASCADE. Release, cache and metric rows are keyed by the private
@@ -38,9 +38,10 @@ CREATE TABLE applications(
   description_en TEXT NOT NULL,
   description_zh_cn TEXT NOT NULL,
   icon TEXT NOT NULL,
-  provider TEXT NOT NULL CHECK(provider IN ('info','hosted','http-cache','codex','claude-code')),
+  provider TEXT NOT NULL CHECK(provider IN ('info','hosted','http-cache','codex','claude-code','json-release')),
   base_url TEXT NOT NULL,
   base_urls_json TEXT NOT NULL,
+  json_release_json TEXT NOT NULL DEFAULT 'null',
   source_strategy TEXT NOT NULL CHECK(source_strategy IN ('','ordered','round_robin','random')),
   cache_ttl_seconds INTEGER NOT NULL CHECK(cache_ttl_seconds BETWEEN 0 AND 86400),
   enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
@@ -54,9 +55,10 @@ CREATE TABLE applications(
 CREATE TABLE application_sources(
   app_uid TEXT NOT NULL REFERENCES applications(uid) ON DELETE CASCADE,
   epoch INTEGER NOT NULL CHECK(epoch>=1),
-  provider TEXT NOT NULL CHECK(provider IN ('http-cache','codex','claude-code')),
+  provider TEXT NOT NULL CHECK(provider IN ('http-cache','codex','claude-code','json-release')),
   base_url TEXT NOT NULL,
   base_urls_json TEXT NOT NULL,
+  json_release_json TEXT NOT NULL DEFAULT 'null',
   source_strategy TEXT NOT NULL CHECK(source_strategy IN ('','ordered','round_robin','random')),
   created_at_s INTEGER NOT NULL,
   PRIMARY KEY(app_uid,epoch)
@@ -96,6 +98,7 @@ CREATE TABLE vendor_config(
 CREATE TABLE application_config(
   entity_uid TEXT PRIMARY KEY REFERENCES applications(uid) ON DELETE CASCADE,
   template_ref TEXT,
+  provider_key TEXT NOT NULL CHECK(provider_key IN ('info','hosted','http-cache','codex','claude-code','json-release')),
   overrides_json BLOB NOT NULL,
   spec_json BLOB,
   CHECK((template_ref IS NOT NULL AND spec_json IS NULL) OR (template_ref IS NULL AND spec_json IS NOT NULL))
@@ -494,3 +497,15 @@ INSERT INTO catalog_state(id,revision,ranking_salt) VALUES(1,1,randomblob(32));
 -- Settings documents exist from creation so that every editable revision is at least 1.
 INSERT INTO settings(key,revision,payload) VALUES('site',1,'{}'),('public_url',1,'{"override_url":null}'),('upstream_proxy',1,'{"mode":"direct"}');
 INSERT INTO metric_history_state(id,aggregated_before_s) VALUES(1,0);
+
+-- Metadata refresh is independent of file prewarm and survives restarts.
+CREATE TABLE release_refresh_status(
+ app_uid TEXT NOT NULL,
+ source_epoch INTEGER NOT NULL,
+ channel TEXT NOT NULL,
+ attempted_at_s INTEGER NOT NULL,
+ succeeded_at_s INTEGER,
+ failed INTEGER NOT NULL CHECK(failed IN (0,1)),
+ PRIMARY KEY(app_uid,source_epoch,channel),
+ FOREIGN KEY(app_uid,source_epoch) REFERENCES application_sources(app_uid,epoch) ON DELETE CASCADE
+);

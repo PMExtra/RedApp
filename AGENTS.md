@@ -77,7 +77,7 @@
 
 ## 硬性约束
 
-- **Schema**：1.0 前不写数据迁移。任何 schema 变化都提升 `store.SchemaVersion`，旧数据目录被拒绝。1.0 起每次 schema 变化必须附带迁移和 golden fixture 测试（[ADR 0001](docs/dev/adr/0001-pre-1.0-no-migrations.md)）。
+- **Schema**：1.0 前允许 breaking changes，不强制兼容所有历史版本；能够以合理成本平滑升级时应提供有界迁移。任何 schema 变化都提升 `store.SchemaVersion`，明确支持范围，范围外目录只读拒绝。1.0 起每次 schema 变化必须附带迁移和 golden fixture 测试（[ADR 0001](docs/dev/adr/0001-pre-1.0-no-migrations.md)）。
 - **安装器**：禁止编辑 `installers/*/*/upstream/`。只改 `patches/`，用 `scripts/update-installers.py` 重新生成 `generated/`；patch 不允许 fuzz（[installers.md](docs/dev/installers.md)）。
 - **前端产物**：`internal/httpserver/web` 是提交的构建产物。前端源码或依赖变化必须重新构建并提交，且必须能由锁定的工具链逐字节复现。
 - **SPA 路由**：新增前端路由必须同时加入规范的 `x-spa-routes` 和 `internal/httpserver/spa.go` 的 `adminSPARoutes`（后台）或对应的公开页面操作（前后端测试分别检查与规范一致）；服务端按它返回 `index.html` 或 `admin.html`，否则直接访问会 404。

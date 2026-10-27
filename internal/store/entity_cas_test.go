@@ -386,7 +386,7 @@ func bulkApplications(t *testing.T, s *Store, source Application, n int) {
 	t.Helper()
 	for _, query := range []string{
 		`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?) INSERT INTO applications(uid,vendor_uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,provider,base_url,base_urls_json,source_strategy,cache_ttl_seconds,enabled,revision,runtime_revision,source_epoch,deleted_at_s) SELECT printf('%032x',i),vendor_uid,printf('bulk-%04d',i),name_en,name_zh_cn,description_en,description_zh_cn,icon,provider,base_url,base_urls_json,source_strategy,cache_ttl_seconds,enabled,revision,runtime_revision,source_epoch,deleted_at_s FROM applications,n WHERE uid=?`,
-		`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?) INSERT INTO application_config(entity_uid,template_ref,overrides_json,spec_json) SELECT printf('%032x',i),template_ref,overrides_json,spec_json FROM application_config,n WHERE entity_uid=?`,
+		`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?) INSERT INTO application_config(entity_uid,template_ref,overrides_json,spec_json,provider_key) SELECT printf('%032x',i),template_ref,overrides_json,spec_json,provider_key FROM application_config,n WHERE entity_uid=?`,
 	} {
 		if _, err := s.db.Exec(query, n, source.UID); err != nil {
 			t.Fatal(err)

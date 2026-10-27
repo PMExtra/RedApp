@@ -9,6 +9,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/media"
 	"github.com/PMExtra/RedApp/internal/networkproxy"
+	"github.com/PMExtra/RedApp/internal/releaseconfig"
 	"github.com/PMExtra/RedApp/internal/yamlconfig"
 	"io"
 	"io/fs"
@@ -79,21 +80,22 @@ func ReleaseTemplateKey(provider string) (string, bool) {
 func DefaultRetention() *Retention { return &Retention{KeepLatest: 3} }
 
 type AppSpec struct {
-	Categories      []string            `json:"categories"`
-	Tags            []string            `json:"tags"`
-	Prewarm         *Prewarm            `json:"prewarm,omitempty"`
-	Retention       *Retention          `json:"retention,omitempty"`
-	Proxy           networkproxy.Config `json:"proxy"`
-	Name            Text                `json:"name"`
-	Description     Text                `json:"description"`
-	Icon            string              `json:"icon"`
-	Provider        string              `json:"provider"`
-	BaseURL         string              `json:"base_url"`
-	BaseURLs        []string            `json:"base_urls"`
-	SourceStrategy  string              `json:"source_strategy"`
-	CacheTTLSeconds int                 `json:"cache_ttl_seconds"`
-	Instructions    Text                `json:"instructions"`
-	HTTPPolicy      *cachepolicy.Config `json:"http_policy,omitempty"`
+	Categories      []string              `json:"categories"`
+	Tags            []string              `json:"tags"`
+	Prewarm         *Prewarm              `json:"prewarm,omitempty"`
+	Retention       *Retention            `json:"retention,omitempty"`
+	Proxy           networkproxy.Config   `json:"proxy"`
+	Name            Text                  `json:"name"`
+	Description     Text                  `json:"description"`
+	Icon            string                `json:"icon"`
+	Provider        string                `json:"provider"`
+	JSONRelease     *releaseconfig.Config `json:"json_release,omitempty"`
+	BaseURL         string                `json:"base_url"`
+	BaseURLs        []string              `json:"base_urls"`
+	SourceStrategy  string                `json:"source_strategy"`
+	CacheTTLSeconds int                   `json:"cache_ttl_seconds"`
+	Instructions    Text                  `json:"instructions"`
+	HTTPPolicy      *cachepolicy.Config   `json:"http_policy,omitempty"`
 }
 type Distribution struct {
 	Protocol           string      `json:"protocol"`
@@ -174,6 +176,19 @@ func presentation(name, desc Text, icon string) error {
 	return nil
 }
 func source(s AppSpec) error {
+	if s.Provider == "json-release" {
+		if s.JSONRelease == nil {
+			return fmt.Errorf("json_release is required")
+		}
+		if len(s.BaseURLs) != 0 || s.SourceStrategy != "" {
+			return fmt.Errorf("JSON release sources are declared in json_release")
+		}
+		return s.JSONRelease.Validate()
+	}
+	if s.JSONRelease != nil {
+		return fmt.Errorf("json_release requires JSON release provider")
+	}
+
 	switch s.Provider {
 	case "info", "hosted":
 		if s.BaseURL != "" || len(s.BaseURLs) > 0 || s.SourceStrategy != "" || s.CacheTTLSeconds != 0 {
@@ -286,7 +301,7 @@ func LoadFS(input fs.FS) (Set, error) {
 		if err != nil {
 			return err
 		}
-		contentType, err := media.ValidateStaticImage(body, path.Ext(file))
+		contentType, err := media.ValidatePresetImage(body, path.Ext(file))
 		if err != nil {
 			return fmt.Errorf("%s: %w", file, err)
 		}

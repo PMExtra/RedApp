@@ -7,7 +7,7 @@
 ## 决定
 
 - Provider 的种类和实现编译进二进制，由代码中的注册表选择。
-- 预置与导入的 YAML 只能引用已有 Provider 并填写其参数，不能携带可执行声明、命令字符串或可加载代码。
+- 预置与导入的 YAML 只能引用已有 Provider 并填写其参数，不能携带命令字符串或可加载代码。纯 JSON 数据查询的限定例外见 [ADR 0010](0010-declarative-release-queries.md)，网络和授权仍由编译期 Provider 控制。
 - 新增 Provider 需要修改代码并经过代码审查。
 
 ## 后果

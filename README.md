@@ -6,7 +6,7 @@ RedApp is a self-hosted redistribution service for software downloads. It serves
 
 ## Features
 
-- Five providers: app information pages, hosted uploads, a general HTTP cache, and verified Codex and Claude Code releases.
+- Six providers: app information pages, hosted uploads, a general HTTP cache, verified Codex and Claude Code releases, and configurable JSON releases.
 - HTTP cache with ordered path rules, stale fallback, 1–16 mirror sources, refresh, and manual or automatic cleanup.
 - Codex and Claude Code release metadata and binaries checked against upstream digests and signatures.
 - Official installers with minimal patches that download from your RedApp server.
@@ -72,6 +72,7 @@ These commands run downloaded scripts. Review them first if your policy requires
 
 - [Configuration](docs/guide/configuration.md): deployment settings, public address, proxies, presets, export and import.
 - [Operations](docs/guide/operations.md): Docker, data directory, reverse proxy, health checks, backups, troubleshooting.
+- [JSON releases](docs/guide/json-release.md): query configuration, precise package prewarm and platform downloads.
 - [Providers](docs/guide/providers.md): provider types, HTTP cache rules, release distribution, usage instructions.
 - [Security](docs/guide/security.md): trust model, authentication, sandboxing, upstream verification.
 - [Metrics](docs/guide/metrics.md): metric names, sampling, retention and gaps.
