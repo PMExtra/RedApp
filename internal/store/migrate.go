@@ -17,15 +17,11 @@ import (
 	"github.com/PMExtra/RedApp/internal/fsutil"
 )
 
-// MinimumMigratableVersion is the oldest schema version that Open upgrades in
-// place. Zero disables migrations: before 1.0 every other version is refused
-// unchanged (ADR 0001). Releasing 1.0 sets it to that release's SchemaVersion;
-// see "Schema migrations" in docs/dev/development.md.
-const MinimumMigratableVersion = 0
+// MinimumMigratableVersion bounds explicitly supported upgrades. Pre-1.0
+// releases may choose a limited compatibility window; zero disables migration.
+const MinimumMigratableVersion = 15
 
-// migrations are the production steps in order: migrations[i] upgrades schema
-// MinimumMigratableVersion+i to the next version. Empty before 1.0.
-var migrations = []migrationStep{}
+var migrations = []migrationStep{{From: 15, Name: "JSON release configuration and refresh state", Up: migrate15To16}}
 
 // migrationStep upgrades schema From to From+1 inside the migration
 // transaction. Foreign key enforcement is off, so a step may rebuild tables
@@ -96,7 +92,7 @@ func (p migrationPlan) classify(app, version int) (bool, error) {
 	case version == p.target:
 		return false, nil
 	case p.minimum == 0:
-		// Before 1.0 every other version is refused with the plain error.
+		// A plan with no supported migration refuses every other version.
 		return false, ErrIncompatibleDirectory
 	case version > p.target:
 		return false, fmt.Errorf("%w: %w (database schema %d, this build %d)", ErrIncompatibleDirectory, errSchemaNewer, version, p.target)
@@ -125,7 +121,8 @@ func readHeader(ctx context.Context, db rowQuerier) (app, version int, err error
 // instance lock and no other connection is open. It first writes a backup
 // next to the database with VACUUM INTO, then runs every step, the foreign key
 // check, the schema comparison and the version update in one transaction: a
-// failure or crash leaves the original database as it was, plus the backup.
+// failure before commit leaves the original logical database plus the backup.
+// After commit, checkpoint failure must not be reported as an unapplied migration.
 func (p migrationPlan) migrate(dir, path string, log *slog.Logger) error {
 	if err := p.validate(); err != nil {
 		return err

@@ -51,7 +51,7 @@ func TestOpenRefusesIncompatibleDirectoriesWithoutModification(t *testing.T) {
 	for name, prepare := range map[string]func(t *testing.T, dir string){
 		"other schema version": func(t *testing.T, dir string) {
 			createDirectory(t, dir)
-			rewriteHeader(t, dir, fmt.Sprintf("PRAGMA user_version=%d", SchemaVersion-1))
+			rewriteHeader(t, dir, fmt.Sprintf("PRAGMA user_version=%d", MinimumMigratableVersion-1))
 		},
 		"foreign sqlite file with the same version": func(t *testing.T, dir string) {
 			createDirectory(t, dir)

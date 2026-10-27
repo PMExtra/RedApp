@@ -44,7 +44,7 @@
 - 外键声明 `ON DELETE CASCADE`（或明确说明为什么不级联）；连接上启用外键约束。
 - 多步写入放在一个事务里；配置类写入用 revision 做乐观并发控制，冲突返回 sentinel 错误，由 HTTP 层转换成 409。
 - store 只有一个写连接：写事务内只用该事务，不调用会写的 `Store` 方法（会自锁）；只读方法走读连接池，可以调用但看不到未提交的修改。只读查询不要开在写连接上。
-- schema 变化遵守 [ADR 0001](adr/0001-pre-1.0-no-migrations.md)：1.0 前提升 schema 版本并拒绝旧目录，不写迁移。
+- schema 变化遵守 [ADR 0001](adr/0001-pre-1.0-no-migrations.md)：1.0 前允许不兼容变更，但合理成本下提供有界迁移；明确支持范围并保留测试 fixture。
 - 配置写入按实体做 CAS：只读写涉及的行，以 `UPDATE … WHERE … AND revision=?` 提交，影响行数为 0 即冲突；不读取或比较整份配置。需要全局串行的只有发布顺序（`Store.writeMu`，见 [architecture.md](architecture.md#写入cas-与发布)）。
 
 ### 文件

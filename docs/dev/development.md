@@ -146,7 +146,7 @@ python3 scripts/check-docs.py --base main     # 另外要求成对文档同时�
 | 内容 | 位置 |
 | --- | --- |
 | 当前 schema 与版本 | `schema.sql`、`store.SchemaVersion` |
-| 最低可迁移版本（`0` 表示不支持迁移，1.0 前保持 `0`） | `store.MinimumMigratableVersion` |
+| 最低可迁移版本（`0` 表示不支持迁移；当前为 `15`） | `store.MinimumMigratableVersion` |
 | 迁移步骤（`{From, Name, Up(tx)}`，按版本顺序，每步升一个版本） | `migrate.go` 的 `migrations` |
 | 每个 schema 版本的 golden fixture（带代表性数据的 SQL dump） | `internal/store/testdata/schema/v<N>.sql` |
 
@@ -156,9 +156,9 @@ python3 scripts/check-docs.py --base main     # 另外要求成对文档同时�
 2. 在实例锁下检查剩余空间（至少为数据库有效大小的两倍：一份备份、一份迁移 WAL），不足时拒绝，不写任何文件。
 3. 用 `VACUUM INTO` 写备份 `<data>/state.sqlite.schema<旧版本>-<UTC 时间>.backup`（`0600`，fsync 文件和目录）。不覆盖已有文件；写入失败（含磁盘满）时删除不完整的备份并拒绝启动。备份从不自动删除。
 4. 关闭外键约束，在一个事务中执行全部步骤，然后 `PRAGMA foreign_key_check`、写入新的 `user_version`、把 `sqlite_schema`（去掉注释、多余空白和普通标识符的引号）与全新创建的 schema 逐项比对，全部通过才提交；随后重新开启外键并 checkpoint 到主文件。
-5. 任何一步失败都回滚，数据库文件逐字节不变；进程在事务中崩溃时同样只留下原数据库和备份。
+5. 提交前步骤失败会回滚；进程在事务中崩溃由 SQLite 恢复旧状态。提交后 checkpoint 失败不能当成未提交，应重新检查版本。备份保留。
 
-1.0 前 schema 变化时：修改 `schema.sql`，提升 `SchemaVersion`，用下面的命令生成新版本的 fixture，删除旧版本的 fixture（1.0 前的旧 fixture 只验证被拒绝，没有保留价值）。
+schema 变化时修改 `schema.sql`、提升 `SchemaVersion`，生成新 fixture。合理成本下为支持的旧版本提供迁移并保留其 fixture；当前支持 15→16，不承诺更早版本。
 
 ```sh
 go test ./internal/store -run TestSchemaFixtureOfCurrentVersion -update-schema-fixture
@@ -166,14 +166,9 @@ go test ./internal/store -run TestSchemaFixtureOfCurrentVersion -update-schema-f
 
 `TestSchemaFixtureOfCurrentVersion` 要求当前版本的 fixture 存在且与 `schema.sql` 一致；`TestSchemaFixturesOfOlderVersions` 对每个旧 fixture 验证：可迁移的迁移后与全新 schema 一致且数据可读，其余被拒绝且文件不变。
 
-### 发布 1.0
+### 新增迁移
 
-1. 确认 `testdata/schema/v<SchemaVersion>.sql` 存在且测试通过；从此不再删除任何 fixture。
-2. 把 `MinimumMigratableVersion` 设为当前的 `SchemaVersion`。
-3. 改写 `store.ErrIncompatibleDirectory` 的文本（去掉“Data is never migrated”），在用户运维文档（中英）中说明升级时的自动备份文件、所需空间、被拒绝的情形（降级、过旧版本）和 `component=migration` 日志。
-4. 在 ADR 0001 顶部注明 1.0 已发布、迁移已启用。
-
-### 1.0 后新增迁移
+1.0 前按合理成本选择明确兼容窗口，1.0 起每次变化必须提供迁移；进入 1.0 本身不重置最低版本。
 
 1. 修改 `schema.sql`，`SchemaVersion` 加 1。
 2. 在 `migrations` 末尾追加 `{From: <旧版本>, Name: ..., Up: ...}`。表结构变化按 SQLite 的重建流程写（建新表、复制、删旧表、改名、重建索引）；步骤里不提交事务、不改 `user_version`、不碰文件。

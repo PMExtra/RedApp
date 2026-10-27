@@ -132,7 +132,7 @@ class DataDirectoryCLITest(unittest.TestCase):
         redapp_application_id = 0x52644170
         kinds = [
             # Another RedApp schema version: same application_id, different user_version.
-            ("other-schema", (redapp_application_id, SCHEMA_VERSION - 1)),
+            ("other-schema", (redapp_application_id, 0)),
             # A foreign SQLite file that happens to carry the current user_version.
             ("foreign-sqlite", (0, SCHEMA_VERSION)),
             ("unknown", None),
@@ -158,7 +158,7 @@ class DataDirectoryCLITest(unittest.TestCase):
                 # File-free startup must refuse to modify old data as well.
                 result = self.invoke([], {"REDAPP_DATA": str(data)})
                 self.assertEqual(result.returncode, 1, result.stderr)
-                self.assertIn("new empty data directory", result.stderr)
+                self.assertIn("refused directory is left unchanged", result.stderr)
                 self.assertEqual(fingerprint(data), before, "refused startup changed files")
                 self.assertFalse((data / "instance.lock").exists())
 

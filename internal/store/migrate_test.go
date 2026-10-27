@@ -367,8 +367,10 @@ func TestOpenMigratesMigratableDirectory(t *testing.T) {
 	if err = s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err = Preflight(dir); !errors.Is(err, ErrIncompatibleDirectory) {
-		t.Fatalf("production Preflight = %v; want refusal before 1.0", err)
+	disabled := productionPlan()
+	disabled.minimum, disabled.steps = 0, nil
+	if err = preflight(dir, disabled); !errors.Is(err, ErrIncompatibleDirectory) {
+		t.Fatalf("disabled migration Preflight = %v", err)
 	}
 	plan := productionPlan()
 	plan.minimum = SchemaVersion - 1

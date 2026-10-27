@@ -23,8 +23,8 @@ import (
 )
 
 // SchemaVersion is stored in PRAGMA user_version. Before 1.0 every schema
-// change increments it and older directories are refused (ADR 0001).
-const SchemaVersion = 15
+// change increments it; only explicitly supported older schemas migrate (ADR 0001).
+const SchemaVersion = 16
 
 // applicationID ("RdAp") is stored in PRAGMA application_id so that a foreign
 // SQLite file whose user_version happens to match is still refused.
@@ -32,7 +32,7 @@ const applicationID = 0x52644170
 
 const databaseName = "state.sqlite"
 
-var ErrIncompatibleDirectory = errors.New("this data directory belongs to another RedApp schema version or is not a RedApp data directory; use a new empty data directory. Data is never migrated and the old directory is left unchanged")
+var ErrIncompatibleDirectory = errors.New("this data directory is not a compatible RedApp database; only explicitly supported schema versions can be upgraded; the refused directory is left unchanged")
 
 // ErrNotFound reports that a requested row does not exist. It is
 // sql.ErrNoRows, so callers outside this package match it without importing
@@ -106,7 +106,7 @@ func sqliteURL(path string, query string) string {
 
 // Open creates the schema in a new empty directory or opens a directory whose
 // database has exactly SchemaVersion. A database of a migratable older version
-// is backed up and migrated first (never before 1.0, see migrate.go). Any other
+// is backed up and migrated first (see migrate.go). Any other
 // directory is refused without modification. The caller must hold the
 // directory's instance lock.
 func Open(dir string, options ...Option) (*Store, error) {
