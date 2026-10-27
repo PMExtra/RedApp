@@ -2,6 +2,7 @@ import { screen, waitFor, within } from "@testing-library/vue";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { bootstrap, home, publicApp, searchHit, localized } from "@/test/factories";
+import { bootstrapQueryKey } from "@/features/bootstrap";
 import { catalogPage } from "@/test/factories/catalog";
 import { apiError, mockApi, useHandlers } from "@/test/msw";
 import { renderEntry } from "@/test/render";
@@ -108,7 +109,7 @@ describe("public shell", () => {
       within(nav)
         .getAllByRole("link")
         .map((link) => link.textContent.trim()),
-    ).toEqual(["Archive", "中文帮助", "Old title"]);
+    ).toEqual(["Archive", "中文帮助"]);
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Language" }));
     await user.click(await screen.findByRole("menuitemradio", { name: "简体中文" }));
@@ -116,7 +117,85 @@ describe("public shell", () => {
       within(nav)
         .getAllByRole("link")
         .map((link) => link.textContent.trim()),
-    ).toEqual(["旧版资源", "中文帮助", "Old title"]);
+    ).toEqual(["旧版资源", "中文帮助"]);
+    expect(screen.getByRole("combobox", { name: "搜索应用" })).toHaveAttribute(
+      "placeholder",
+      "搜索应用",
+    );
+    await user.click(within(nav).getByRole("button", { name: "更多" }));
+    expect((await screen.findAllByRole("menuitem")).map((item) => item.textContent.trim())).toEqual(
+      ["旧版资源", "中文帮助", "Old title"],
+    );
+  });
+
+  it("keeps one focused search and its open suggestions when navigation changes", async () => {
+    publicServer();
+    const { queryClient } = await renderEntry("public", "/");
+    await screen.findByText("RedApp Mirror");
+    const user = userEvent.setup();
+    const box = screen.getByRole("combobox", { name: "Search apps" });
+    await user.type(box, "claude");
+    const option = await screen.findByRole("option", { name: /Claude Code/ });
+    for (const navigation of [[{ title: "Archive", url: "/legacy/", new_tab: false }], []]) {
+      queryClient.setQueryData(
+        bootstrapQueryKey,
+        bootstrap({ site: { ...bootstrap().site, navigation } }),
+      );
+      await waitFor(() =>
+        expect(screen.queryByRole("navigation", { name: "Custom navigation" }) !== null).toBe(
+          navigation.length > 0,
+        ),
+      );
+      expect(screen.getAllByRole("combobox")).toEqual([box]);
+      expect(box).toHaveValue("claude");
+      expect(box).toHaveFocus();
+      expect(screen.getByRole("option", { name: /Claude Code/ })).toBe(option);
+    }
+    expect(screen.queryByRole("button", { name: "More" })).toBeNull();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("option")).toBeNull();
+  });
+
+  it("bounds inline navigation and preserves ordered long links in a closing menu", async () => {
+    publicServer();
+    const navigation = Array.from({ length: 20 }, (_, index) => ({
+      title: `Link ${index} ${"Long title ".repeat(12)}`,
+      url: `/legacy/${index}/`,
+      new_tab: index === 2,
+    }));
+    useHandlers(
+      mockApi("get", "/api/bootstrap", () =>
+        bootstrap({ site: { ...bootstrap().site, navigation } }),
+      ),
+    );
+    const { router } = await renderEntry("public", "/");
+    const nav = await screen.findByRole("navigation", { name: "Custom navigation" });
+    expect(within(nav).getAllByRole("link")).toHaveLength(2);
+    const user = userEvent.setup();
+    const more = within(nav).getByRole("button", { name: "More" });
+    await user.click(more);
+    const items = await screen.findAllByRole("menuitem");
+    expect(items.map((item) => item.getAttribute("href"))).toEqual(
+      navigation.map((item) => item.url),
+    );
+    expect(items[2]).toHaveAttribute("target", "_blank");
+    expect(items[2]).toHaveAttribute("rel", "noopener noreferrer");
+    // Prevent only native navigation; Reka still handles selection and closing.
+    const stopNavigation = (event: Event) => event.preventDefault();
+    document.addEventListener("click", stopNavigation, { once: true });
+    const selected = items[2];
+    if (!selected) throw new Error("missing menu item");
+    await user.click(selected);
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
+    expect(router.currentRoute.value.path).toBe("/");
+    more.focus();
+    await user.keyboard("{ArrowDown}");
+    await screen.findByRole("menu");
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getAllByRole("menuitem")).toContain(document.activeElement);
+    document.addEventListener("click", stopNavigation, { once: true });
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   });
 
   it("shows site texts and the version", async () => {
@@ -141,7 +220,7 @@ describe("public shell", () => {
     const { searches } = publicServer();
     const { router } = await renderEntry("public", "/");
     const user = userEvent.setup();
-    const box = screen.getByRole("combobox", { name: "Search applications and vendors" });
+    const box = screen.getByRole("combobox", { name: "Search apps" });
     // Focusing the empty box shows the popular applications.
     await user.click(box);
     expect(await screen.findByRole("option", { name: /Codex CLI/ })).toBeInTheDocument();
@@ -159,7 +238,7 @@ describe("public shell", () => {
     publicServer();
     const { router } = await renderEntry("public", "/");
     const user = userEvent.setup();
-    const box = screen.getByRole("combobox", { name: "Search applications and vendors" });
+    const box = screen.getByRole("combobox", { name: "Search apps" });
     await user.type(box, "claude");
     expect(await screen.findByRole("option", { name: /Claude Code/ })).toBeInTheDocument();
     await user.keyboard("{Enter}");
@@ -172,7 +251,7 @@ describe("public shell", () => {
     publicServer();
     const { router } = await renderEntry("public", "/");
     const user = userEvent.setup();
-    const box = screen.getByRole("combobox", { name: "Search applications and vendors" });
+    const box = screen.getByRole("combobox", { name: "Search apps" });
     await user.type(box, "claude");
     expect(await screen.findByRole("option", { name: /Claude Code/ })).toBeInTheDocument();
     // The first arrow starts at the first suggestion; the next one moves on.
@@ -188,7 +267,7 @@ describe("public shell", () => {
     publicServer();
     const { router } = await renderEntry("public", "/");
     const user = userEvent.setup();
-    const box = screen.getByRole("combobox", { name: "Search applications and vendors" });
+    const box = screen.getByRole("combobox", { name: "Search apps" });
     await user.type(box, "中文");
     await user.keyboard("{Escape}{Enter}");
     await waitFor(() => {

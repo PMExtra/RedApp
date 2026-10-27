@@ -51,7 +51,7 @@ function catalogServer(
   return { requests, last: () => requests.at(-1) };
 }
 
-const searchBox = () => screen.getByRole("searchbox", { name: "Search applications" });
+const searchBox = () => screen.getByRole("searchbox", { name: "Search apps" });
 
 describe("catalog page", () => {
   it("lists published applications with site-wide category counts", async () => {

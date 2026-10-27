@@ -144,10 +144,11 @@ function onEnter(event: KeyboardEvent) {
       <ComboboxContent
         position="popper"
         :side-offset="4"
+        :collision-padding="8"
         :class="
           cn(
             panelClass,
-            'max-h-80 w-(--reka-combobox-trigger-width) overflow-y-auto',
+            'max-h-[min(20rem,var(--reka-combobox-content-available-height))] w-(--reka-combobox-trigger-width) max-w-[calc(100vw-1rem)] overflow-y-auto',
             // Hide the automatic highlight; hovering still shows.
             manualHighlight &&
               !navigated &&

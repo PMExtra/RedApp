@@ -11,8 +11,8 @@ export default {
     },
     list: {
       title: "All applications",
-      search: "Search applications",
-      placeholder: "Search by name or ID",
+      search: "Search apps",
+      placeholder: "Search apps",
       results: "No applications | 1 application | {n} applications",
       noMatches: "No applications match “{q}”.",
       clearSearch: "Clear search",

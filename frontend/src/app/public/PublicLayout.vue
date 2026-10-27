@@ -1,10 +1,12 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { LayoutGrid, Shield } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink, RouterView, useRoute } from "vue-router";
 import { SiteFooter, useSiteTexts } from "@/features/bootstrap";
 import { useAdminLink } from "@/features/catalog";
 import { SearchBox } from "@/features/search";
+import PublicNavigation from "./PublicNavigation.vue";
 import { useSiteTitle } from "@/shared/lib";
 import {
   Alert,
@@ -17,9 +19,10 @@ import {
   TopNav,
 } from "@/shared/ui";
 
-const { t, locale } = useI18n();
+const { t } = useI18n();
 const { bootstrap, title, subtitle } = useSiteTexts();
 useSiteTitle(title);
+const navigation = computed(() => bootstrap.data.value?.site.navigation ?? []);
 const route = useRoute();
 // On vendor and application pages the admin link opens their admin page.
 const adminHref = useAdminLink(() => {
@@ -33,26 +36,34 @@ const adminHref = useAdminLink(() => {
 <template>
   <div class="flex min-h-dvh flex-col">
     <SkipLink />
-    <TopNav>
+    <TopNav public-layout :custom-navigation="navigation.length > 0">
       <template #brand>
-        <RouterLink to="/" class="flex flex-col rounded-md leading-tight focus-ring">
+        <RouterLink
+          to="/"
+          class="flex min-w-0 max-w-40 flex-col rounded-md leading-tight focus-ring"
+        >
           <Skeleton v-if="bootstrap.isPending.value" class="h-5 w-28" />
           <template v-else>
-            <span class="text-base font-semibold">{{ title }}</span>
-            <span v-if="subtitle" class="hidden text-xs text-muted md:block">{{ subtitle }}</span>
+            <span class="truncate text-base font-semibold">{{ title }}</span>
+            <span v-if="subtitle" class="hidden truncate text-xs text-muted md:block">{{
+              subtitle
+            }}</span>
           </template>
         </RouterLink>
       </template>
       <SearchBox />
-      <template #actions>
-        <span class="hidden sm:contents">
+      <template #navigation>
+        <div class="flex min-w-0 items-center gap-1">
           <Button as-child variant="ghost" size="sm">
-            <RouterLink to="/all">
+            <RouterLink to="/all" :aria-label="t('publicShell.nav.all')">
               <LayoutGrid aria-hidden="true" />
-              {{ t("publicShell.nav.all") }}
+              <span class="hidden lg:inline">{{ t("publicShell.nav.all") }}</span>
             </RouterLink>
           </Button>
-        </span>
+          <PublicNavigation v-if="navigation.length" :items="navigation" />
+        </div>
+      </template>
+      <template #actions>
         <LanguageSwitcher />
         <ThemeToggle />
         <!-- A full page load: the admin app is a separate entry (admin.html). -->
@@ -65,28 +76,6 @@ const adminHref = useAdminLink(() => {
         </Tooltip>
       </template>
     </TopNav>
-    <nav
-      v-if="bootstrap.data.value?.site.navigation?.length"
-      :aria-label="t('publicShell.nav.custom')"
-      class="border-b border-border bg-surface"
-    >
-      <div class="mx-auto flex max-w-7xl flex-wrap gap-x-5 gap-y-2 px-4 py-3 text-sm sm:px-6">
-        <a
-          v-for="(item, index) in bootstrap.data.value.site.navigation"
-          :key="index"
-          :href="item.url"
-          :target="item.new_tab ? '_blank' : undefined"
-          :rel="item.new_tab ? 'noopener noreferrer' : undefined"
-          class="max-w-full break-words rounded-sm text-primary hover:underline focus-ring"
-        >
-          {{
-            item.localized_title?.[locale === "zh-CN" ? "zh-CN" : "en"] ||
-            item.localized_title?.[locale === "zh-CN" ? "en" : "zh-CN"] ||
-            item.title
-          }}<span v-if="item.new_tab" class="sr-only"> {{ t("publicShell.nav.newTab") }}</span>
-        </a>
-      </div>
-    </nav>
     <div v-if="bootstrap.isError.value" class="mx-auto w-full max-w-7xl px-4 pt-4 sm:px-6">
       <Alert tone="warning" :title="t('publicShell.siteUnavailable')">
         <template #actions>
