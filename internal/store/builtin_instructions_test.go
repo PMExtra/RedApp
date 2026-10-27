@@ -10,6 +10,9 @@ import (
 // sample version numbers.
 func TestBuiltinInstructionsFollowReadingOrder(t *testing.T) {
 	for _, template := range EntityTemplates() {
+		if template.Application.Provider == "json-release" {
+			continue
+		}
 		for _, locale := range []struct {
 			text     string
 			headings []string

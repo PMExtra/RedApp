@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "kind": "App",
+  "metadata": {
+    "id": "dotultimate",
+    "vendor": "jetbrains"
+  },
+  "spec": {
+    "name": {
+      "en": "dotUltimate",
+      "zh-CN": "dotUltimate"
+    },
+    "description": {
+      "en": "Windows .NET tool suite, separate from the standalone Rider IDE. Unverified offline-package mapping.",
+      "zh-CN": "Windows .NET 工具套装，与独立 Rider IDE 并存。离线包映射尚未实时验证。"
+    },
+    "icon": "",
+    "provider": "json-release",
+    "categories": [],
+    "tags": [],
+    "json_release": {
+      "default_channel": "stable",
+      "refresh_seconds": 3600,
+      "channels": {
+        "stable": {
+          "requests": [
+            {
+              "url": "https://data.services.jetbrains.com/products/releases?code=RSU&latest=true&type=release",
+              "context": {
+                "product": "RSU"
+              }
+            }
+          ],
+          "query": ".body[.context.product][0] as $r | $r.downloads.windowsOffline as $a | if $a == null then error(\"verified offline suite metadata is required; do not substitute the web installer\") else {version:$r.version,build:$r.build,artifacts:[{key:\"windows-offline-suite\",os:\"windows\",arch:\"unknown\",format:(if ($a.link | endswith(\".zip\")) then \"zip\" elif ($a.link | endswith(\".exe\")) then \"exe\" else error(\"unsupported offline bundle format\") end),variant:\"offline-suite\",url:$a.link,size:$a.size,checksum_url:$a.checksumLink,checksum_filename:($a.link | split(\"/\") | last)}]} end"
+        }
+      },
+      "sources": {
+        "metadata": [
+          {
+            "origin": "https://data.services.jetbrains.com",
+            "prefix": "/products/"
+          }
+        ],
+        "artifacts": [
+          {
+            "origin": "https://download.jetbrains.com",
+            "prefix": "/resharper/"
+          },
+          {
+            "origin": "https://download-cdn.jetbrains.com",
+            "prefix": "/resharper/"
+          }
+        ],
+        "checksums": [
+          {
+            "origin": "https://download.jetbrains.com",
+            "prefix": "/resharper/"
+          },
+          {
+            "origin": "https://download-cdn.jetbrains.com",
+            "prefix": "/resharper/"
+          }
+        ]
+      },
+      "prewarm": []
+    },
+    "instructions": {
+      "en": "Choose a platform, architecture and package format below. These downloads do not reconfigure or disable the IDE’s built-in updater. Metadata and checksum source formats must be validated in your network before enabling automatic prewarm. This preset is an unverified candidate: validate its product code, download platforms, source paths and checksums before enabling it. The RSU code and windowsOffline field are fixture assumptions, not verified API facts. The query fails closed if this explicit offline entry is absent. Download the complete ZIP (including EXE and .dat); never extract or mirror only its EXE. No separate duplicate entries for suite components.",
+      "zh-CN": "在下方选择平台、架构和包型。这些安装包下载不会修改或禁用 IDE 自带更新器。启用自动预热前，应在自己的网络中验证元数据和校验文件格式。 此预置为未实时验证的候选：启用前须核对产品码、下载平台、来源路径及校验文件。 RSU 产品码和 windowsOffline 字段只是 fixture 假设，尚非已验证 API 事实；缺少明确离线条目时查询拒绝。完整保留 ZIP 内 EXE 与 .dat，不抽取 EXE 单独分发，不为套装子组件重复登记制品。"
+    }
+  }
+}

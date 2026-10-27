@@ -8,6 +8,15 @@ import { localized } from "./index";
 type Overrides<T> = Partial<T>;
 
 const CAPABILITIES: Record<Schema<"ProviderKey">, Schema<"Capabilities">> = {
+  "json-release": {
+    details: true,
+    instructions: true,
+    hosted_files: false,
+    files: true,
+    versions: true,
+    installers: false,
+    time_cleanup: false,
+  },
   info: {
     details: true,
     instructions: true,
@@ -71,6 +80,7 @@ export function providers(): Schema<"ProviderList"> {
   });
   return {
     items: [
+      item("json-release", "JSON Releases", null, 300),
       item("info", "Information", null, null),
       item("hosted", "Hosted files", null, null),
       item("http-cache", "HTTP cache", null, 300),

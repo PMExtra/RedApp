@@ -177,6 +177,56 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/apps/{vendor}/{app}/downloads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Vendor ID. */
+                vendor: components["parameters"]["Vendor"];
+                /** @description Application ID within the vendor. */
+                app: components["parameters"]["App"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read normalized download choices from one immutable JSON release snapshot.
+         * @description Failure to refresh retains the last valid snapshot. URLs stay on RedApp. No architecture or older-version fallback is performed.
+         */
+        get: operations["getReleaseDownloads"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/apps/{vendor}/{app}/release-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Vendor ID. */
+                vendor: components["parameters"]["Vendor"];
+                /** @description Application ID within the vendor. */
+                app: components["parameters"]["App"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview trusted administrator queries without publishing or downloading artifacts.
+         * @description Fetches metadata and checksum sidecars using application proxy scope. This is not a memory sandbox. Configuration is not saved.
+         */
+        post: operations["previewJSONRelease"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/apps/{vendor}/{app}/files": {
         parameters: {
             query?: never;
@@ -2121,7 +2171,7 @@ export interface components {
         /** @description Site-absolute icon path (`/assets/icons/...` uploaded, `/assets/presets/...` embedded) or `""` for none. */
         IconPath: string;
         /** @enum {string} */
-        ProviderKey: "info" | "hosted" | "http-cache" | "codex" | "claude-code";
+        ProviderKey: "info" | "hosted" | "http-cache" | "codex" | "claude-code" | "json-release";
         /**
          * @description `ordered` tries sources in order; `round_robin` starts at the next source each time; `random` tries each once in random order.
          * @enum {string}
@@ -2682,6 +2732,7 @@ export interface components {
             base_url?: components["schemas"]["HttpUrl"];
             base_urls?: components["schemas"]["HttpUrl"][];
             source_strategy?: components["schemas"]["SourceStrategy"];
+            json_release?: components["schemas"]["JSONReleaseConfig"];
             cache_ttl_seconds?: number;
         };
         /** @description Private search tags; trimmed, leading `#` removed, NFC, 1..64 characters, case-insensitive duplicates collapse. */
@@ -2716,6 +2767,65 @@ export interface components {
             localized_icons: components["schemas"]["LocalizedIcons"];
             proxy: components["schemas"]["ProxyConfig"];
         };
+        ReleaseDownloads: {
+            stale?: boolean;
+            /** Format: date-time */
+            fetched_at?: string;
+            channel: string;
+            release_id: string;
+            version: string;
+            build: string;
+            artifacts: components["schemas"]["ReleaseArtifact"][];
+        };
+        JSONReleaseData: {
+            version: string;
+            build?: string;
+            artifacts: components["schemas"]["ReleaseArtifact"][];
+        };
+        ReleaseArtifact: {
+            key: string;
+            /** @enum {string} */
+            os: "windows" | "macos" | "linux" | "unknown";
+            /** @enum {string} */
+            arch: "x64" | "arm64" | "x86" | "arm" | "universal" | "unknown";
+            format: string;
+            scope?: string;
+            variant?: string;
+            url: string;
+            sha256: string;
+            checksum_url?: string;
+            checksum_filename?: string;
+            size?: number;
+        };
+        /** @description Trusted administrator jq configuration. Limits and cancellation are not a hard memory sandbox. Queries receive {body, context}; HTTP is owned by the engine. */
+        JSONReleaseConfig: {
+            default_channel: string;
+            refresh_seconds: number;
+            channels: {
+                [key: string]: {
+                    query: string;
+                    requests: {
+                        url: string;
+                        context?: {
+                            [key: string]: string;
+                        };
+                    }[];
+                };
+            };
+            sources: {
+                metadata: components["schemas"]["ReleaseSources"];
+                artifacts: components["schemas"]["ReleaseSources"];
+                checksums: components["schemas"]["ReleaseSources"];
+            };
+            prewarm?: {
+                channel: string;
+                keys: string[];
+            }[];
+        };
+        ReleaseSources: {
+            origin: string;
+            prefix: string;
+        }[];
         /** @description Provider-specific fields are present only where they apply (see `patchAppConfiguration`). */
         AppSpec: {
             name: components["schemas"]["LocalizedText"];
@@ -2729,6 +2839,7 @@ export interface components {
             base_url?: string;
             base_urls?: string[];
             source_strategy?: components["schemas"]["SourceStrategy"];
+            json_release?: components["schemas"]["JSONReleaseConfig"];
             cache_ttl_seconds?: number;
             http_policy?: components["schemas"]["HttpPolicy"];
             retention?: components["schemas"]["RetentionPolicy"];
@@ -2777,7 +2888,7 @@ export interface components {
         /** @enum {string} */
         VendorConfigurationPath: "name.en" | "name.zh-CN" | "description.en" | "description.zh-CN" | "icon" | "localized_icons.en" | "localized_icons.zh-CN" | "proxy";
         /** @enum {string} */
-        AppConfigurationPath: "name.en" | "name.zh-CN" | "description.en" | "description.zh-CN" | "icon" | "proxy" | "instructions.en" | "instructions.zh-CN" | "base_url" | "base_urls" | "source_strategy" | "cache_ttl_seconds" | "http_policy.rules" | "http_policy.auto_cleanup" | "http_policy.stale_fallback" | "retention" | "prewarm" | "categories" | "tags";
+        AppConfigurationPath: "name.en" | "name.zh-CN" | "description.en" | "description.zh-CN" | "icon" | "proxy" | "instructions.en" | "instructions.zh-CN" | "json_release" | "base_url" | "base_urls" | "source_strategy" | "cache_ttl_seconds" | "http_policy.rules" | "http_policy.auto_cleanup" | "http_policy.stale_fallback" | "retention" | "prewarm" | "categories" | "tags";
         VendorConfiguration: {
             revision: components["schemas"]["Revision"];
             /** @description Preset key (vendor ID) when linked to a template. */
@@ -2834,6 +2945,7 @@ export interface components {
                 icon?: components["schemas"]["IconPath"];
                 proxy?: components["schemas"]["ProxyConfig"];
                 "instructions.en"?: string;
+                json_release?: components["schemas"]["JSONReleaseConfig"];
                 "instructions.zh-CN"?: string;
                 base_url?: components["schemas"]["HttpUrl"];
                 base_urls?: components["schemas"]["HttpUrl"][];
@@ -3410,7 +3522,7 @@ export interface components {
         };
         PrewarmOptions: {
             /** @enum {string} */
-            kind: "release" | "http_cache";
+            kind: "release" | "http_cache" | "artifacts";
             /** @description Release channels (empty for `http_cache`). */
             channels: string[];
             /** @description Release platforms (empty for `http_cache`). */
@@ -3418,7 +3530,13 @@ export interface components {
             default_limits: components["schemas"]["PrewarmLimits"];
         };
         /** @description Use the variant that matches `PrewarmOptions.kind`. */
-        PrewarmStartRequest: components["schemas"]["ReleasePrewarmRequest"] | components["schemas"]["HttpCachePrewarmRequest"];
+        PrewarmStartRequest: components["schemas"]["ArtifactPrewarmRequest"] | components["schemas"]["ReleasePrewarmRequest"] | components["schemas"]["HttpCachePrewarmRequest"];
+        ArtifactPrewarmRequest: {
+            request_id: components["schemas"]["Uid"];
+            target: string;
+            artifact_keys: string[];
+            limits?: components["schemas"]["PrewarmLimits"];
+        };
         ReleasePrewarmRequest: {
             request_id: components["schemas"]["Uid"];
             /** @description A channel of the application or a canonical version. */
@@ -4072,6 +4190,77 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    getReleaseDownloads: {
+        parameters: {
+            query?: {
+                channel?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Vendor ID. */
+                vendor: components["parameters"]["Vendor"];
+                /** @description Application ID within the vendor. */
+                app: components["parameters"]["App"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Normalized package options with local immutable URLs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseDownloads"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    previewJSONRelease: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Vendor ID. */
+                vendor: components["parameters"]["Vendor"];
+                /** @description Application ID within the vendor. */
+                app: components["parameters"]["App"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    config: components["schemas"]["JSONReleaseConfig"];
+                    channel: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Verified normalized data; URLs here are upstream URLs for administrator inspection. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JSONReleaseData"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     listPublicHostedFiles: {
         parameters: {
             query?: {
@@ -4514,6 +4703,15 @@ export interface operations {
             200: components["responses"]["DistributionFile"];
             206: components["responses"]["PartialContent"];
             304: components["responses"]["NotModified"];
+            /** @description Non-cacheable redirect to a RedApp immutable release artifact. */
+            307: {
+                headers: {
+                    Location?: string;
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
@@ -4562,6 +4760,15 @@ export interface operations {
                 content?: never;
             };
             304: components["responses"]["NotModified"];
+            /** @description Non-cacheable redirect to a RedApp immutable release artifact. */
+            307: {
+                headers: {
+                    Location?: string;
+                    "Cache-Control"?: "no-store";
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Bad request (no body). */
             400: {
                 headers: {

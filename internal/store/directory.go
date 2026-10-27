@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/PMExtra/RedApp/internal/identity"
+	"github.com/PMExtra/RedApp/internal/releaseconfig"
 	"github.com/PMExtra/RedApp/presets"
 )
 
@@ -81,53 +82,56 @@ type Vendor struct {
 }
 
 type ApplicationInput struct {
-	Categories      []string      `json:"categories"`
-	Tags            []string      `json:"tags"`
-	ID              string        `json:"id"`
-	Name            LocalizedText `json:"name"`
-	Description     LocalizedText `json:"description"`
-	Icon            string        `json:"icon"`
-	Provider        string        `json:"provider"`
-	BaseURL         string        `json:"base_url"`
-	BaseURLs        []string      `json:"base_urls"`
-	SourceStrategy  string        `json:"source_strategy"`
-	CacheTTLSeconds int           `json:"cache_ttl_seconds"`
-	Enabled         bool          `json:"enabled"`
+	Categories      []string              `json:"categories"`
+	Tags            []string              `json:"tags"`
+	ID              string                `json:"id"`
+	Name            LocalizedText         `json:"name"`
+	Description     LocalizedText         `json:"description"`
+	Icon            string                `json:"icon"`
+	Provider        string                `json:"provider"`
+	JSONRelease     *releaseconfig.Config `json:"json_release,omitempty"`
+	BaseURL         string                `json:"base_url"`
+	BaseURLs        []string              `json:"base_urls"`
+	SourceStrategy  string                `json:"source_strategy"`
+	CacheTTLSeconds int                   `json:"cache_ttl_seconds"`
+	Enabled         bool                  `json:"enabled"`
 }
 
 type ApplicationChanges struct {
-	Name            LocalizedText `json:"name"`
-	Description     LocalizedText `json:"description"`
-	Icon            string        `json:"icon"`
-	BaseURL         string        `json:"base_url"`
-	BaseURLs        []string      `json:"base_urls"`
-	SourceStrategy  string        `json:"source_strategy"`
-	CacheTTLSeconds int           `json:"cache_ttl_seconds"`
-	Enabled         bool          `json:"enabled"`
+	Name            LocalizedText         `json:"name"`
+	Description     LocalizedText         `json:"description"`
+	Icon            string                `json:"icon"`
+	JSONRelease     *releaseconfig.Config `json:"json_release,omitempty"`
+	BaseURL         string                `json:"base_url"`
+	BaseURLs        []string              `json:"base_urls"`
+	SourceStrategy  string                `json:"source_strategy"`
+	CacheTTLSeconds int                   `json:"cache_ttl_seconds"`
+	Enabled         bool                  `json:"enabled"`
 }
 
 type Application struct {
-	Categories      []string      `json:"categories"`
-	Tags            []string      `json:"tags"`
-	BuiltinTemplate bool          `json:"builtin_template"`
-	UID             string        `json:"uid"`
-	ID              string        `json:"id"`
-	Key             string        `json:"key"`
-	VendorUID       string        `json:"vendor_uid"`
-	VendorID        string        `json:"vendor_id"`
-	Name            LocalizedText `json:"name"`
-	Description     LocalizedText `json:"description"`
-	Icon            string        `json:"icon"`
-	Provider        string        `json:"provider"`
-	BaseURL         string        `json:"base_url"`
-	BaseURLs        []string      `json:"base_urls"`
-	SourceStrategy  string        `json:"source_strategy"`
-	CacheTTLSeconds int           `json:"cache_ttl_seconds"`
-	Enabled         bool          `json:"enabled"`
-	Revision        int64         `json:"revision"`
-	RuntimeRevision int64         `json:"runtime_revision"`
-	SourceEpoch     int64         `json:"source_epoch"`
-	DeletedAt       *time.Time    `json:"deleted_at"`
+	Categories      []string              `json:"categories"`
+	Tags            []string              `json:"tags"`
+	BuiltinTemplate bool                  `json:"builtin_template"`
+	UID             string                `json:"uid"`
+	ID              string                `json:"id"`
+	Key             string                `json:"key"`
+	VendorUID       string                `json:"vendor_uid"`
+	VendorID        string                `json:"vendor_id"`
+	Name            LocalizedText         `json:"name"`
+	Description     LocalizedText         `json:"description"`
+	Icon            string                `json:"icon"`
+	Provider        string                `json:"provider"`
+	JSONRelease     *releaseconfig.Config `json:"json_release,omitempty"`
+	BaseURL         string                `json:"base_url"`
+	BaseURLs        []string              `json:"base_urls"`
+	SourceStrategy  string                `json:"source_strategy"`
+	CacheTTLSeconds int                   `json:"cache_ttl_seconds"`
+	Enabled         bool                  `json:"enabled"`
+	Revision        int64                 `json:"revision"`
+	RuntimeRevision int64                 `json:"runtime_revision"`
+	SourceEpoch     int64                 `json:"source_epoch"`
+	DeletedAt       *time.Time            `json:"deleted_at"`
 }
 
 func (a Application) StorageID() string { return identity.StorageID(a.UID, a.SourceEpoch) }
@@ -143,16 +147,17 @@ type SourceFence struct{ AppRuntimeRevision, VendorRuntimeRevision int64 }
 // snapshot. The revision and
 // Active fields describe its current eligibility, not its historical eligibility.
 type SourceRecord struct {
-	AppUID                string    `json:"app_uid"`
-	Epoch                 int64     `json:"epoch"`
-	Provider              string    `json:"provider"`
-	BaseURL               string    `json:"base_url"`
-	BaseURLs              []string  `json:"base_urls"`
-	SourceStrategy        string    `json:"source_strategy"`
-	CreatedAt             time.Time `json:"created_at"`
-	AppRuntimeRevision    int64     `json:"app_runtime_revision"`
-	VendorRuntimeRevision int64     `json:"vendor_runtime_revision"`
-	Active                bool      `json:"active"`
+	AppUID                string                `json:"app_uid"`
+	Epoch                 int64                 `json:"epoch"`
+	Provider              string                `json:"provider"`
+	JSONRelease           *releaseconfig.Config `json:"json_release,omitempty"`
+	BaseURL               string                `json:"base_url"`
+	BaseURLs              []string              `json:"base_urls"`
+	SourceStrategy        string                `json:"source_strategy"`
+	CreatedAt             time.Time             `json:"created_at"`
+	AppRuntimeRevision    int64                 `json:"app_runtime_revision"`
+	VendorRuntimeRevision int64                 `json:"vendor_runtime_revision"`
+	Active                bool                  `json:"active"`
 }
 
 func (r SourceRecord) StorageID() string { return identity.StorageID(r.AppUID, r.Epoch) }
@@ -193,6 +198,23 @@ func validateApplication(a *ApplicationInput) error {
 	}
 	if err := validatePresentation(a.Name, a.Description, a.Icon); err != nil {
 		return err
+	}
+	if a.Provider == "json-release" {
+		if a.JSONRelease == nil {
+			return invalidf("json_release is required")
+		}
+		if err := a.JSONRelease.Validate(); err != nil {
+			return invalidf("json_release: %s", err)
+		}
+		if len(a.BaseURLs) != 0 || a.SourceStrategy != "" {
+			return invalidf("JSON release uses role-specific sources")
+		}
+		a.BaseURL = a.JSONRelease.Sources.Metadata[0].Origin
+		a.CacheTTLSeconds = a.JSONRelease.RefreshSeconds
+		return nil
+	}
+	if a.JSONRelease != nil {
+		return invalidf("json_release requires JSON release provider")
 	}
 	switch a.Provider {
 	case "info", "hosted":
@@ -285,7 +307,7 @@ type directoryQuerier interface{ QueryRow(string, ...any) *sql.Row }
 type directoryScanner interface{ Scan(...any) error }
 
 const vendorColumns = `uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,icon_en,icon_zh_cn,enabled,revision,runtime_revision,deleted_at_s`
-const applicationColumns = `a.uid,a.id,v.id||'/'||a.id,a.vendor_uid,v.id,a.name_en,a.name_zh_cn,a.description_en,a.description_zh_cn,a.icon,a.provider,a.base_url,a.base_urls_json,a.source_strategy,a.cache_ttl_seconds,a.enabled,a.revision,a.source_epoch,a.deleted_at_s,a.runtime_revision,EXISTS(SELECT 1 FROM template_snapshots t WHERE t.kind='App' AND t.canonical_key=v.id||'/'||a.id),COALESCE((SELECT json_group_array(category_id) FROM (SELECT category_id FROM application_categories WHERE app_uid=a.uid ORDER BY category_id)),'[]'),COALESCE((SELECT json_group_array(tag) FROM (SELECT tag FROM application_tags WHERE app_uid=a.uid ORDER BY ordinal)),'[]')`
+const applicationColumns = `a.uid,a.id,v.id||'/'||a.id,a.vendor_uid,v.id,a.name_en,a.name_zh_cn,a.description_en,a.description_zh_cn,a.icon,a.provider,a.base_url,a.base_urls_json,a.json_release_json,a.source_strategy,a.cache_ttl_seconds,a.enabled,a.revision,a.source_epoch,a.deleted_at_s,a.runtime_revision,EXISTS(SELECT 1 FROM template_snapshots t WHERE t.kind='App' AND t.canonical_key=v.id||'/'||a.id),COALESCE((SELECT json_group_array(category_id) FROM (SELECT category_id FROM application_categories WHERE app_uid=a.uid ORDER BY category_id)),'[]'),COALESCE((SELECT json_group_array(tag) FROM (SELECT tag FROM application_tags WHERE app_uid=a.uid ORDER BY ordinal)),'[]')`
 
 // entityLoads, when a test sets it, observes every vendor and application row
 // the store decodes, so tests can check how much of the directory an
@@ -311,11 +333,14 @@ func scanVendor(row directoryScanner) (Vendor, error) {
 func scanApplication(row directoryScanner) (Application, error) {
 	var a Application
 	var deleted sql.NullInt64
-	var bases, categories, tags []byte
-	err := row.Scan(&a.UID, &a.ID, &a.Key, &a.VendorUID, &a.VendorID, &a.Name.En, &a.Name.ZhCN, &a.Description.En, &a.Description.ZhCN, &a.Icon, &a.Provider, &a.BaseURL, &bases, &a.SourceStrategy, &a.CacheTTLSeconds, &a.Enabled, &a.Revision, &a.SourceEpoch, &deleted, &a.RuntimeRevision, &a.BuiltinTemplate, &categories, &tags)
+	var bases, categories, tags, release []byte
+	err := row.Scan(&a.UID, &a.ID, &a.Key, &a.VendorUID, &a.VendorID, &a.Name.En, &a.Name.ZhCN, &a.Description.En, &a.Description.ZhCN, &a.Icon, &a.Provider, &a.BaseURL, &bases, &release, &a.SourceStrategy, &a.CacheTTLSeconds, &a.Enabled, &a.Revision, &a.SourceEpoch, &deleted, &a.RuntimeRevision, &a.BuiltinTemplate, &categories, &tags)
 	if err == nil {
 		observeLoad("application")
 		err = json.Unmarshal(bases, &a.BaseURLs)
+		if err == nil {
+			err = json.Unmarshal(release, &a.JSONRelease)
+		}
 		if err == nil {
 			err = json.Unmarshal(categories, &a.Categories)
 		}
@@ -441,7 +466,7 @@ func (s *Store) UpdateApplication(key string, revision int64, in ApplicationChan
 	if err != nil {
 		return Application{}, err
 	}
-	validated := ApplicationInput{ID: a.ID, Name: in.Name, Description: in.Description, Icon: in.Icon, Provider: a.Provider, BaseURL: in.BaseURL, BaseURLs: in.BaseURLs, SourceStrategy: in.SourceStrategy, CacheTTLSeconds: in.CacheTTLSeconds, Enabled: in.Enabled}
+	validated := ApplicationInput{ID: a.ID, Name: in.Name, Description: in.Description, Icon: in.Icon, Provider: a.Provider, JSONRelease: in.JSONRelease, BaseURL: in.BaseURL, BaseURLs: in.BaseURLs, SourceStrategy: in.SourceStrategy, CacheTTLSeconds: in.CacheTTLSeconds, Enabled: in.Enabled}
 	if a.Provider == "http-cache" && validated.SourceStrategy == "" {
 		validated.SourceStrategy = a.SourceStrategy
 	}
@@ -452,6 +477,9 @@ func (s *Store) UpdateApplication(key string, revision int64, in ApplicationChan
 		validated.BaseURLs = []string{}
 	}
 	set := map[string]json.RawMessage{"name.en": encode(in.Name.En), "name.zh-CN": encode(in.Name.ZhCN), "description.en": encode(in.Description.En), "description.zh-CN": encode(in.Description.ZhCN), "icon": encode(in.Icon), "base_url": encode(validated.BaseURL), "base_urls": encode(validated.BaseURLs), "source_strategy": encode(validated.SourceStrategy), "cache_ttl_seconds": encode(validated.CacheTTLSeconds)}
+	if a.Provider == "json-release" {
+		set["json_release"] = encode(validated.JSONRelease)
+	}
 	return s.PatchApplicationFields(key, revision, set, &in.Enabled)
 }
 
@@ -491,16 +519,19 @@ func (w *configSet) softDeleteApplication(key string, revision int64) (*appEntry
 	return a, nil
 }
 
-const sourceColumns = `src.app_uid,src.epoch,src.provider,src.base_url,src.base_urls_json,src.source_strategy,src.created_at_s,a.runtime_revision,v.runtime_revision,(a.enabled=1 AND v.enabled=1 AND a.deleted_at_s IS NULL AND v.deleted_at_s IS NULL AND src.epoch=a.source_epoch)`
+const sourceColumns = `src.app_uid,src.epoch,src.provider,src.base_url,src.base_urls_json,src.json_release_json,src.source_strategy,src.created_at_s,a.runtime_revision,v.runtime_revision,(a.enabled=1 AND v.enabled=1 AND a.deleted_at_s IS NULL AND v.deleted_at_s IS NULL AND src.epoch=a.source_epoch)`
 const sourceJoin = ` FROM application_sources src JOIN applications a ON a.uid=src.app_uid JOIN vendors v ON v.uid=a.vendor_uid`
 
 func scanSource(row directoryScanner) (SourceRecord, error) {
 	var r SourceRecord
 	var created int64
-	var bases []byte
-	err := row.Scan(&r.AppUID, &r.Epoch, &r.Provider, &r.BaseURL, &bases, &r.SourceStrategy, &created, &r.AppRuntimeRevision, &r.VendorRuntimeRevision, &r.Active)
+	var bases, release []byte
+	err := row.Scan(&r.AppUID, &r.Epoch, &r.Provider, &r.BaseURL, &bases, &release, &r.SourceStrategy, &created, &r.AppRuntimeRevision, &r.VendorRuntimeRevision, &r.Active)
 	if err == nil {
 		err = json.Unmarshal(bases, &r.BaseURLs)
+		if err == nil {
+			err = json.Unmarshal(release, &r.JSONRelease)
+		}
 	}
 	r.CreatedAt = time.Unix(created, 0).UTC()
 	return r, err

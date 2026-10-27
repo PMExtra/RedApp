@@ -176,7 +176,7 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 	must(err)
 	clients := map[string]*distributor.Client{}
 	for _, source := range snapshot.Sources {
-		client, err := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, snapshot.ProviderDefaults[source.Provider], source.AppUID, snapshot.ProxyScopes[source.AppUID].VendorUID, pool)
+		client, err := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, snapshot.ProviderDefaults[source.Provider], source.AppUID, snapshot.ProxyScopes[source.AppUID].VendorUID, pool, source.JSONRelease)
 		must(err)
 		clients[source.StorageID()] = client
 	}
@@ -361,7 +361,7 @@ func (h *harness) createApp(vendor, id, provider string, options map[string]any)
 			h.t.Fatal(err)
 		}
 	}
-	config, err := application.NormalizeConfig(provider, application.ProviderConfig{BaseURL: input.BaseURL, BaseURLs: input.BaseURLs, SourceStrategy: input.SourceStrategy, CacheTTLSeconds: input.CacheTTLSeconds})
+	config, err := application.NormalizeConfig(provider, application.ProviderConfig{JSONRelease: input.JSONRelease, BaseURL: input.BaseURL, BaseURLs: input.BaseURLs, SourceStrategy: input.SourceStrategy, CacheTTLSeconds: input.CacheTTLSeconds})
 	if err != nil {
 		h.t.Fatal(err)
 	}

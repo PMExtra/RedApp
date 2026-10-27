@@ -13,6 +13,7 @@ Every application in RedApp has a **provider**. The provider decides what the ap
 | HTTP cache | `http-cache` | Required; 1–16 sources | Any file below the source URL | Path rules, default TTL 300 s, manual and automatic cleanup |
 | Codex | `codex` | `https://releases.openai.com/codex` (can be changed) | Verified Codex releases and installers | Channel TTL 60 s, version cleanup, optional retention and prewarm |
 | Claude Code | `claude-code` | `https://downloads.claude.ai/claude-code-releases` (can be changed) | Verified Claude Code releases and installers | Channel TTL 60 s, version cleanup, optional retention and prewarm |
+| JSON Release | `json-release` | Explicit metadata/artifact/checksum source policies | Normalized release downloads from JSON + jq configuration | Independent metadata refresh and exact artifact-key prewarm; see [JSON Release](json-release.md) |
 
 All providers share the download limits from the [deployment configuration](configuration.md#field-reference).
 

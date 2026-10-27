@@ -71,7 +71,7 @@ func (s *Server) configurePublication() {
 		}
 		clients := map[string]*distributor.Client{}
 		for _, source := range candidate.Sources {
-			client, err := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, candidate.ProviderDefaults[source.Provider], source.AppUID, candidate.ProxyScopes[source.AppUID].VendorUID, s.pool)
+			client, err := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, candidate.ProviderDefaults[source.Provider], source.AppUID, candidate.ProxyScopes[source.AppUID].VendorUID, s.pool, source.JSONRelease)
 			if err != nil {
 				return nil, err
 			}

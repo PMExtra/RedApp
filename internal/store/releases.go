@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
 	"time"
@@ -46,6 +47,21 @@ func equalSize(a, b *int64) bool { return a == nil && b == nil || a != nil && b 
 // PutRelease atomically commits trusted bytes, discovery history and an immutable
 // resource set. Trust revalidation may replace envelope bytes but never bindings.
 func (s *Store) PutRelease(m ReleaseMetadata, resources []Resource, expected ...SourceFence) error {
+	return s.putRelease(m, resources, nil, expected...)
+}
+
+// PutReleaseChannel commits a verified release, its immutable resources and one
+// channel head in the same transaction. Failed refreshes cannot move the head
+// or leave a newly discovered partial version. Existing providers keep using
+// PutRelease/PutChannel until explicitly migrated to this contract.
+func (s *Store) PutReleaseChannel(m ReleaseMetadata, resources []Resource, channel Channel, expected ...SourceFence) error {
+	if channel.AppID != m.AppID || channel.Version != m.Version || channel.Name == "" || !channel.FetchedAt.Equal(m.FetchedAt) || !channel.ExpiresAt.After(channel.FetchedAt) {
+		return errors.New("channel does not describe the verified release")
+	}
+	return s.putRelease(m, resources, &channel, expected...)
+}
+
+func (s *Store) putRelease(m ReleaseMetadata, resources []Resource, channel *Channel, expected ...SourceFence) error {
 	if requireApp(m.AppID) != nil || m.Version == "" || m.Raw == nil || m.TrustRevision < 1 || m.FetchedAt.IsZero() {
 		return errors.New("invalid trusted release")
 	}
@@ -75,6 +91,12 @@ func (s *Store) PutRelease(m ReleaseMetadata, resources []Resource, expected ...
 	}
 	existing := err == nil
 	if existing {
+		// Atomic snapshot publication also freezes normalized dimensions and
+		// identity fields, not only download bindings. Query snapshots must be
+		// canonicalized before calling PutReleaseChannel.
+		if channel != nil && (!bytes.Equal(oldRaw, m.Raw) || !bytes.Equal(oldSig, m.Signature)) {
+			return ErrImmutableRelease
+		}
 		if m.TrustRevision < oldRevision {
 			return errors.New("trust revision cannot move backwards")
 		}
@@ -119,6 +141,11 @@ func (s *Store) PutRelease(m ReleaseMetadata, resources []Resource, expected ...
 			if _, err = tx.Exec("INSERT INTO resources(app_id,version,resource_key,source_url,sha256,expected_size) VALUES(?,?,?,?,?,?)", r.AppID, r.Version, r.Key, r.SourceURL, r.SHA256, r.ExpectedSize); err != nil {
 				return err
 			}
+		}
+	}
+	if channel != nil {
+		if _, err = tx.Exec("INSERT INTO channels(app_id,channel,version,fetched_at_s,expires_at_s) VALUES(?,?,?,?,?) ON CONFLICT(app_id,channel) DO UPDATE SET version=excluded.version,fetched_at_s=excluded.fetched_at_s,expires_at_s=excluded.expires_at_s", channel.AppID, channel.Name, channel.Version, channel.FetchedAt.Unix(), channel.ExpiresAt.Unix()); err != nil {
+			return err
 		}
 	}
 	return tx.Commit()

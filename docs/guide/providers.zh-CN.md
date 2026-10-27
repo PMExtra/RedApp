@@ -13,6 +13,7 @@ RedApp 中每个应用都有一个 **Provider**。Provider 决定应用提供什
 | HTTP 缓存 | `http-cache` | 必填；1–16 个来源 | 来源 URL 下的任意文件 | 路径规则，默认 TTL 300 秒，手动和自动清理 |
 | Codex | `codex` | `https://releases.openai.com/codex`（可修改） | 经过校验的 Codex 发布和安装器 | 渠道 TTL 60 秒，版本清理，可选保留和预热 |
 | Claude Code | `claude-code` | `https://downloads.claude.ai/claude-code-releases`（可修改） | 经过校验的 Claude Code 发布和安装器 | 渠道 TTL 60 秒，版本清理，可选保留和预热 |
+| JSON Release | `json-release` | 显式元数据、制品和校验文件来源策略 | JSON + jq 配置生成的规范发布下载 | 独立元数据刷新与精确制品 key 预热；见 [JSON Release](json-release.zh-CN.md) |
 
 所有 Provider 共用[部署配置](configuration.zh-CN.md#字段参考)中的下载限额。
 

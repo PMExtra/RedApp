@@ -186,7 +186,7 @@ func paths(kind string) []string {
 	if kind == "Vendor" {
 		return append(out, "localized_icons.en", "localized_icons.zh-CN")
 	}
-	return append(out, "instructions.en", "instructions.zh-CN", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "retention", "prewarm", "categories", "tags")
+	return append(out, "instructions.en", "instructions.zh-CN", "json_release", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "retention", "prewarm", "categories", "tags")
 }
 
 // AppPathApplies reports whether an application configuration path (or a
@@ -197,6 +197,8 @@ func paths(kind string) []string {
 func AppPathApplies(provider, path string) bool {
 	field, _, _ := strings.Cut(path, ".")
 	switch field {
+	case "json_release":
+		return provider == "json-release"
 	case "base_url", "retention", "prewarm":
 		return presets.VersionsProvider(provider)
 	case "base_urls", "source_strategy", "http_policy":
@@ -393,10 +395,11 @@ func (w *configSet) effective(kind string, c ownedConfig) (Object, error) {
 		} else if presets.VersionsProvider(spec.Provider) {
 			effective["retention"] = object(presets.DefaultRetention())
 		}
-		input := ApplicationInput{ID: "effective", Name: LocalizedText{spec.Name.En, spec.Name.ZhCN}, Description: LocalizedText{spec.Description.En, spec.Description.ZhCN}, Icon: spec.Icon, Provider: spec.Provider, BaseURL: spec.BaseURL, BaseURLs: spec.BaseURLs, SourceStrategy: spec.SourceStrategy, CacheTTLSeconds: spec.CacheTTLSeconds}
+		input := ApplicationInput{ID: "effective", Name: LocalizedText{spec.Name.En, spec.Name.ZhCN}, Description: LocalizedText{spec.Description.En, spec.Description.ZhCN}, Icon: spec.Icon, Provider: spec.Provider, JSONRelease: spec.JSONRelease, BaseURL: spec.BaseURL, BaseURLs: spec.BaseURLs, SourceStrategy: spec.SourceStrategy, CacheTTLSeconds: spec.CacheTTLSeconds}
 		if err := validateApplication(&input); err != nil {
 			return nil, err
 		}
+		effective["cache_ttl_seconds"] = input.CacheTTLSeconds
 		effective["base_url"], effective["base_urls"], effective["source_strategy"] = input.BaseURL, input.BaseURLs, input.SourceStrategy
 		if input.BaseURLs == nil {
 			effective["base_urls"] = []string{}
@@ -617,7 +620,7 @@ func vendorSpec(v Vendor) Object {
 }
 
 func appSpec(a Application, instructions LocalizedText, policy cachepolicy.Config) Object {
-	spec := presets.AppSpec{Categories: append([]string{}, a.Categories...), Tags: append([]string{}, a.Tags...), Proxy: networkproxy.Inherit(), Name: presets.Text{En: a.Name.En, ZhCN: a.Name.ZhCN}, Description: presets.Text{En: a.Description.En, ZhCN: a.Description.ZhCN}, Icon: a.Icon, Provider: a.Provider, BaseURL: a.BaseURL, BaseURLs: a.BaseURLs, SourceStrategy: a.SourceStrategy, CacheTTLSeconds: a.CacheTTLSeconds, Instructions: presets.Text{En: instructions.En, ZhCN: instructions.ZhCN}}
+	spec := presets.AppSpec{Categories: append([]string{}, a.Categories...), Tags: append([]string{}, a.Tags...), Proxy: networkproxy.Inherit(), Name: presets.Text{En: a.Name.En, ZhCN: a.Name.ZhCN}, Description: presets.Text{En: a.Description.En, ZhCN: a.Description.ZhCN}, Icon: a.Icon, Provider: a.Provider, JSONRelease: a.JSONRelease, BaseURL: a.BaseURL, BaseURLs: a.BaseURLs, SourceStrategy: a.SourceStrategy, CacheTTLSeconds: a.CacheTTLSeconds, Instructions: presets.Text{En: instructions.En, ZhCN: instructions.ZhCN}}
 	if presets.VersionsProvider(a.Provider) {
 		spec.Retention = presets.DefaultRetention()
 		spec.Prewarm = presets.DefaultPrewarm()
@@ -901,7 +904,7 @@ func snapshots(set presets.Set) ([]templateSnapshot, error) {
 		normalized.Categories, _ = presets.NormalizeCategories(normalized.Categories)
 		normalized.Tags, _ = presets.NormalizeTags(normalized.Tags)
 		normalized.Proxy = normalizedProxy(normalized.Proxy)
-		input := ApplicationInput{ID: a.Metadata.ID, Name: LocalizedText{a.Spec.Name.En, a.Spec.Name.ZhCN}, Description: LocalizedText{a.Spec.Description.En, a.Spec.Description.ZhCN}, Provider: a.Spec.Provider, BaseURL: a.Spec.BaseURL, BaseURLs: a.Spec.BaseURLs, SourceStrategy: a.Spec.SourceStrategy, CacheTTLSeconds: a.Spec.CacheTTLSeconds}
+		input := ApplicationInput{ID: a.Metadata.ID, Name: LocalizedText{a.Spec.Name.En, a.Spec.Name.ZhCN}, Description: LocalizedText{a.Spec.Description.En, a.Spec.Description.ZhCN}, Provider: a.Spec.Provider, JSONRelease: a.Spec.JSONRelease, BaseURL: a.Spec.BaseURL, BaseURLs: a.Spec.BaseURLs, SourceStrategy: a.Spec.SourceStrategy, CacheTTLSeconds: a.Spec.CacheTTLSeconds}
 		if err := validateApplication(&input); err != nil {
 			return nil, err
 		}
@@ -1153,7 +1156,7 @@ func (s *Store) CreateConfiguredApplication(vendor string, in ApplicationInput, 
 		if err != nil {
 			return err
 		}
-		a := Application{Categories: in.Categories, Tags: in.Tags, UID: uid, ID: in.ID, Key: vendor + "/" + in.ID, VendorID: vendor, VendorUID: parent.UID, Name: in.Name, Description: in.Description, Icon: in.Icon, Provider: in.Provider, BaseURL: in.BaseURL, BaseURLs: in.BaseURLs, SourceStrategy: in.SourceStrategy, CacheTTLSeconds: in.CacheTTLSeconds, Enabled: in.Enabled, Revision: 1, SourceEpoch: 1}
+		a := Application{Categories: in.Categories, Tags: in.Tags, UID: uid, ID: in.ID, Key: vendor + "/" + in.ID, VendorID: vendor, VendorUID: parent.UID, Name: in.Name, Description: in.Description, Icon: in.Icon, Provider: in.Provider, JSONRelease: in.JSONRelease, BaseURL: in.BaseURL, BaseURLs: in.BaseURLs, SourceStrategy: in.SourceStrategy, CacheTTLSeconds: in.CacheTTLSeconds, Enabled: in.Enabled, Revision: 1, SourceEpoch: 1}
 		c := ownedConfig{Overrides: Object{}, Spec: appSpec(a, LocalizedText{}, cachepolicy.Empty())}
 		if ref != nil {
 			t, err := w.template("App", *ref)

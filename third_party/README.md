@@ -5,6 +5,8 @@
 | 组件 | 版本 | 文件 |
 | --- | --- | --- |
 | Go 编译器和运行时 | 1.27.1 | [Go.LICENSE](Go.LICENSE) |
+| github.com/itchyny/gojq（可信管理员 JSON 查询） | 0.12.19 | [gojq.LICENSE](gojq.LICENSE) |
+| github.com/itchyny/timefmt-go（gojq 的间接依赖） | 0.1.8 | [timefmt-go.LICENSE](timefmt-go.LICENSE) |
 | github.com/mattn/go-sqlite3 | 1.14.32 | [go-sqlite3.LICENSE](go-sqlite3.LICENSE) |
 | github.com/dustin/go-humanize | 1.1.0 | [go-humanize.LICENSE](go-humanize.LICENSE) |
 | github.com/yuin/goldmark | 1.7.13 | [goldmark.LICENSE](goldmark.LICENSE) |
@@ -14,7 +16,7 @@
 | golang.org/x/crypto（bcrypt） | 0.42.0 | [x-crypto.LICENSE](x-crypto.LICENSE) |
 | github.com/ProtonMail/go-crypto（Claude Code 清单 OpenPGP 验签） | 1.5.2 | [protonmail-go-crypto.LICENSE](protonmail-go-crypto.LICENSE)、[protonmail-go-crypto.PATENTS](protonmail-go-crypto.PATENTS) |
 | github.com/cloudflare/circl（go-crypto 的间接依赖） | 1.6.3 | [circl.LICENSE](circl.LICENSE) |
-| golang.org/x/sys（circl 的间接依赖） | 0.36.0 | [x-sys.LICENSE](x-sys.LICENSE)、[x-sys.PATENTS](x-sys.PATENTS) |
+| golang.org/x/sys（间接依赖） | 0.38.0 | [x-sys.LICENSE](x-sys.LICENSE)、[x-sys.PATENTS](x-sys.PATENTS) |
 | golang.org/x/text（Tag Unicode 规范化与大小写折叠） | 0.42.0 | [x-text.LICENSE](x-text.LICENSE)、[x-text.PATENTS](x-text.PATENTS) |
 | github.com/santhosh-tekuri/jsonschema/v6（仅测试：按 `api/openapi.yaml` 校验 HTTP 响应的 JSON Schema 2020-12 校验器，不编入二进制） | 6.0.3 | [jsonschema.LICENSE](jsonschema.LICENSE) |
 

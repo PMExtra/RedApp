@@ -3,6 +3,7 @@ package builtin
 import (
 	"encoding/json"
 	"errors"
+	"github.com/PMExtra/RedApp/internal/application"
 	"reflect"
 	"testing"
 
@@ -54,11 +55,11 @@ func TestMissingReleaseTemplateRestartsWithTrustedProtocol(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 2 {
+	if len(entries) != 14 {
 		t.Fatal("missing release entries", len(entries))
 	}
 	for _, e := range entries {
-		if e.Protocol == nil || e.TemplateID != e.Descriptor.ID {
+		if e.Protocol == nil || e.Provider != application.JSONRelease && e.TemplateID != e.Descriptor.ID {
 			t.Fatal("protocol lost", e.Descriptor.ID)
 		}
 	}

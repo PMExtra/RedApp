@@ -14,6 +14,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/cachepolicy"
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/networkproxy"
+	"github.com/PMExtra/RedApp/internal/releaseconfig"
 	"github.com/PMExtra/RedApp/presets"
 )
 
@@ -757,7 +758,7 @@ func (w *configSet) materializeApp(a *appEntry) error {
 	if typed.Provider != a.Provider {
 		return invalidf("Provider is immutable")
 	}
-	in := ApplicationInput{ID: a.ID, Name: LocalizedText{typed.Name.En, typed.Name.ZhCN}, Description: LocalizedText{typed.Description.En, typed.Description.ZhCN}, Icon: typed.Icon, Provider: typed.Provider, BaseURL: typed.BaseURL, BaseURLs: typed.BaseURLs, SourceStrategy: typed.SourceStrategy, CacheTTLSeconds: typed.CacheTTLSeconds, Enabled: a.Enabled}
+	in := ApplicationInput{ID: a.ID, Name: LocalizedText{typed.Name.En, typed.Name.ZhCN}, Description: LocalizedText{typed.Description.En, typed.Description.ZhCN}, Icon: typed.Icon, Provider: typed.Provider, JSONRelease: typed.JSONRelease, BaseURL: typed.BaseURL, BaseURLs: typed.BaseURLs, SourceStrategy: typed.SourceStrategy, CacheTTLSeconds: typed.CacheTTLSeconds, Enabled: a.Enabled}
 	if err = validateApplication(&in); err != nil {
 		return err
 	}
@@ -784,9 +785,10 @@ func (w *configSet) materializeApp(a *appEntry) error {
 	if a.proxy, err = decodeProxy(spec["proxy"]); err != nil {
 		return ErrInvalidDirectory
 	}
-	if a.before != nil && (a.BaseURL != in.BaseURL || !reflect.DeepEqual(a.BaseURLs, in.BaseURLs) || a.SourceStrategy != in.SourceStrategy) {
+	if a.before != nil && (a.BaseURL != in.BaseURL || !reflect.DeepEqual(a.BaseURLs, in.BaseURLs) || a.SourceStrategy != in.SourceStrategy || !releaseconfig.SameSource(a.JSONRelease, in.JSONRelease)) {
 		a.SourceEpoch++
 	}
+	a.JSONRelease = in.JSONRelease
 	a.Name, a.Description, a.Icon, a.BaseURL, a.BaseURLs, a.SourceStrategy, a.CacheTTLSeconds = in.Name, in.Description, in.Icon, in.BaseURL, in.BaseURLs, in.SourceStrategy, in.CacheTTLSeconds
 	template, err := w.template("App", a.Key)
 	if err != nil {
@@ -802,7 +804,7 @@ func (w *configSet) materializeApp(a *appEntry) error {
 	a.RuntimeRevision = 1
 	if prev := a.before; prev != nil {
 		a.RuntimeRevision = prev.RuntimeRevision
-		changed := prev.Enabled != a.Enabled || !reflect.DeepEqual(prev.DeletedAt, a.DeletedAt) || prev.BaseURL != a.BaseURL || !reflect.DeepEqual(prev.BaseURLs, a.BaseURLs) || prev.SourceStrategy != a.SourceStrategy || prev.CacheTTLSeconds != a.CacheTTLSeconds || !reflect.DeepEqual(policyValue(a.policyBefore), policyValue(a.policy))
+		changed := prev.Enabled != a.Enabled || !reflect.DeepEqual(prev.DeletedAt, a.DeletedAt) || prev.BaseURL != a.BaseURL || !reflect.DeepEqual(prev.BaseURLs, a.BaseURLs) || prev.SourceStrategy != a.SourceStrategy || prev.CacheTTLSeconds != a.CacheTTLSeconds || !reflect.DeepEqual(prev.JSONRelease, a.JSONRelease) || !reflect.DeepEqual(policyValue(a.policyBefore), policyValue(a.policy))
 		if key != "" && distributionDigestOf(w.distributionsBefore[key]) != distributionDigestOf(d) {
 			changed = true
 		}
@@ -822,7 +824,7 @@ func (w *configSet) materializeApp(a *appEntry) error {
 			exists = err == nil
 		}
 		if !exists {
-			a.newSource = &SourceRecord{AppUID: a.UID, Epoch: a.SourceEpoch, Provider: a.Provider, BaseURL: a.BaseURL, BaseURLs: a.BaseURLs, SourceStrategy: a.SourceStrategy, CreatedAt: time.Now().UTC()}
+			a.newSource = &SourceRecord{AppUID: a.UID, Epoch: a.SourceEpoch, Provider: a.Provider, JSONRelease: a.JSONRelease, BaseURL: a.BaseURL, BaseURLs: a.BaseURLs, SourceStrategy: a.SourceStrategy, CreatedAt: time.Now().UTC()}
 		}
 	}
 	return nil
@@ -1080,10 +1082,10 @@ func (v *vendorEntry) write(tx *sql.Tx) error {
 
 func (a *appEntry) write(tx *sql.Tx) error {
 	if a.before == nil {
-		if _, err := tx.Exec(`INSERT INTO applications(uid,vendor_uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,provider,base_url,base_urls_json,source_strategy,cache_ttl_seconds,enabled,revision,runtime_revision,source_epoch,deleted_at_s) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.UID, a.VendorUID, a.ID, a.Name.En, a.Name.ZhCN, a.Description.En, a.Description.ZhCN, a.Icon, a.Provider, a.BaseURL, string(encode(a.BaseURLs)), a.SourceStrategy, a.CacheTTLSeconds, a.Enabled, a.Revision, a.RuntimeRevision, a.SourceEpoch, unixPointer(a.DeletedAt)); err != nil {
+		if _, err := tx.Exec(`INSERT INTO applications(uid,vendor_uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,provider,base_url,base_urls_json,json_release_json,source_strategy,cache_ttl_seconds,enabled,revision,runtime_revision,source_epoch,deleted_at_s) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.UID, a.VendorUID, a.ID, a.Name.En, a.Name.ZhCN, a.Description.En, a.Description.ZhCN, a.Icon, a.Provider, a.BaseURL, string(encode(a.BaseURLs)), string(encode(a.JSONRelease)), a.SourceStrategy, a.CacheTTLSeconds, a.Enabled, a.Revision, a.RuntimeRevision, a.SourceEpoch, unixPointer(a.DeletedAt)); err != nil {
 			return err
 		}
-	} else if err := casExec(tx, false, "", nil, `UPDATE applications SET name_en=?,name_zh_cn=?,description_en=?,description_zh_cn=?,icon=?,base_url=?,base_urls_json=?,source_strategy=?,cache_ttl_seconds=?,enabled=?,revision=?,source_epoch=?,deleted_at_s=?,runtime_revision=? WHERE uid=? AND revision=?`, []any{a.Name.En, a.Name.ZhCN, a.Description.En, a.Description.ZhCN, a.Icon, a.BaseURL, string(encode(a.BaseURLs)), a.SourceStrategy, a.CacheTTLSeconds, a.Enabled, a.Revision, a.SourceEpoch, unixPointer(a.DeletedAt), a.RuntimeRevision, a.UID, a.before.Revision}); err != nil {
+	} else if err := casExec(tx, false, "", nil, `UPDATE applications SET name_en=?,name_zh_cn=?,description_en=?,description_zh_cn=?,icon=?,base_url=?,base_urls_json=?,json_release_json=?,source_strategy=?,cache_ttl_seconds=?,enabled=?,revision=?,source_epoch=?,deleted_at_s=?,runtime_revision=? WHERE uid=? AND revision=?`, []any{a.Name.En, a.Name.ZhCN, a.Description.En, a.Description.ZhCN, a.Icon, a.BaseURL, string(encode(a.BaseURLs)), string(encode(a.JSONRelease)), a.SourceStrategy, a.CacheTTLSeconds, a.Enabled, a.Revision, a.SourceEpoch, unixPointer(a.DeletedAt), a.RuntimeRevision, a.UID, a.before.Revision}); err != nil {
 		return err
 	}
 	if a.before == nil || !bytes.Equal(encode(a.config), encode(a.configBefore)) {
@@ -1107,7 +1109,7 @@ func (a *appEntry) write(tx *sql.Tx) error {
 		}
 	}
 	if s := a.newSource; s != nil {
-		if _, err := tx.Exec(`INSERT INTO application_sources(app_uid,epoch,provider,base_url,base_urls_json,source_strategy,created_at_s) VALUES(?,?,?,?,?,?,?)`, s.AppUID, s.Epoch, s.Provider, s.BaseURL, string(encode(s.BaseURLs)), s.SourceStrategy, s.CreatedAt.Unix()); err != nil {
+		if _, err := tx.Exec(`INSERT INTO application_sources(app_uid,epoch,provider,base_url,base_urls_json,json_release_json,source_strategy,created_at_s) VALUES(?,?,?,?,?,?,?,?)`, s.AppUID, s.Epoch, s.Provider, s.BaseURL, string(encode(s.BaseURLs)), string(encode(s.JSONRelease)), s.SourceStrategy, s.CreatedAt.Unix()); err != nil {
 			return err
 		}
 	}

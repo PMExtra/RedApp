@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "kind": "Vendor",
+  "metadata": {
+    "id": "microsoft"
+  },
+  "spec": {
+    "name": {
+      "en": "Microsoft",
+      "zh-CN": "Microsoft"
+    },
+    "description": {
+      "en": "",
+      "zh-CN": ""
+    },
+    "icon": "",
+    "localized_icons": {
+      "en": "",
+      "zh-CN": ""
+    }
+  }
+}

@@ -20,7 +20,7 @@ func EntityTemplates() []EntityTemplate {
 	out := []EntityTemplate{}
 	for _, a := range set.Apps {
 		icon, _ := presets.Icon(a.Spec.Icon)
-		out = append(out, EntityTemplate{Vendor: vendors[a.Metadata.Vendor], Application: ApplicationInput{ID: a.Metadata.ID, Name: LocalizedText{En: a.Spec.Name.En, ZhCN: a.Spec.Name.ZhCN}, Description: LocalizedText{En: a.Spec.Description.En, ZhCN: a.Spec.Description.ZhCN}, Icon: icon, Provider: a.Spec.Provider, BaseURL: a.Spec.BaseURL, BaseURLs: a.Spec.BaseURLs, SourceStrategy: a.Spec.SourceStrategy, CacheTTLSeconds: a.Spec.CacheTTLSeconds}, Instructions: LocalizedText{En: a.Spec.Instructions.En, ZhCN: a.Spec.Instructions.ZhCN}})
+		out = append(out, EntityTemplate{Vendor: vendors[a.Metadata.Vendor], Application: ApplicationInput{ID: a.Metadata.ID, Name: LocalizedText{En: a.Spec.Name.En, ZhCN: a.Spec.Name.ZhCN}, Description: LocalizedText{En: a.Spec.Description.En, ZhCN: a.Spec.Description.ZhCN}, Icon: icon, Provider: a.Spec.Provider, JSONRelease: a.Spec.JSONRelease, BaseURL: a.Spec.BaseURL, BaseURLs: a.Spec.BaseURLs, SourceStrategy: a.Spec.SourceStrategy, CacheTTLSeconds: a.Spec.CacheTTLSeconds}, Instructions: LocalizedText{En: a.Spec.Instructions.En, ZhCN: a.Spec.Instructions.ZhCN}})
 	}
 	return out
 }

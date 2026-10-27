@@ -389,6 +389,84 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /api/apps/{vendor}/{app}/downloads:
+    parameters:
+      - $ref: '#/components/parameters/Vendor'
+      - $ref: '#/components/parameters/App'
+    get:
+      operationId: getReleaseDownloads
+      tags: [public]
+      summary: Read normalized download choices from one immutable JSON release snapshot.
+      description: Failure to refresh retains the last valid snapshot. URLs stay on RedApp. No architecture or older-version fallback is performed.
+      parameters:
+        - name: channel
+          in: query
+          schema: {type: string, default: latest, maxLength: 96}
+      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, FILE_NOT_FOUND, SOURCE_CHANGED, METADATA_UNTRUSTED, UPSTREAM_UNAVAILABLE, TRANSFER_CAPACITY]
+      responses:
+        '200':
+          description: Normalized package options with local immutable URLs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReleaseDownloads'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /admin/api/apps/{vendor}/{app}/release-preview:
+    parameters:
+      - $ref: '#/components/parameters/Vendor'
+      - $ref: '#/components/parameters/App'
+    post:
+      operationId: previewJSONRelease
+      tags: [directory]
+      summary: Preview trusted administrator queries without publishing or downloading artifacts.
+      description: Fetches metadata and checksum sidecars using application proxy scope. This is not a memory sandbox. Configuration is not saved.
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      x-max-body-bytes: 1048576
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [config, channel]
+              properties:
+                config:
+                  $ref: '#/components/schemas/JSONReleaseConfig'
+                channel: {type: string, maxLength: 96}
+      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, VALIDATION_FAILED, UPSTREAM_UNAVAILABLE]
+      responses:
+        '200':
+          description: Verified normalized data; URLs here are upstream URLs for administrator inspection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JSONReleaseData'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/apps/{vendor}/{app}/files:
     parameters:
       - $ref: '#/components/parameters/Vendor'
@@ -893,6 +971,12 @@ paths:
           path: '{version}/{platform}/{binary}'
           content_type: application/octet-stream
           description: Release artifact for one of 8 platforms. `X-Expected-SHA256` carries the digest from the signed manifest.
+        - provider: json-release
+          path: releases/{release_id}/{artifact_key}
+          description: Immutable verified artifact, served through RedApp cache as an attachment using the authorized source URL filename.
+        - provider: json-release
+          path: download/{channel}/{artifact_key}
+          description: Non-cacheable 307 to an internal immutable release path; latest aliases the configured default channel.
         - provider: codex, claude-code
           path: descriptor assets (`licenses/LICENSE`, `licenses/NOTICE`, `LICENSE.md`, `claude-code.asc`)
           content_type: text/plain; charset=utf-8
@@ -939,6 +1023,16 @@ paths:
           $ref: '#/components/responses/DistributionFile'
         '206':
           $ref: '#/components/responses/PartialContent'
+        '307':
+          description: Non-cacheable redirect to a RedApp immutable release artifact.
+          headers:
+            Location:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
         '304':
           $ref: '#/components/responses/NotModified'
         '400':
@@ -972,6 +1066,16 @@ paths:
       responses:
         '200':
           description: Headers only.
+        '307':
+          description: Non-cacheable redirect to a RedApp immutable release artifact.
+          headers:
+            Location:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
         '304':
           $ref: '#/components/responses/NotModified'
         '400':
@@ -5222,7 +5326,7 @@ components:
       pattern: '^(|/assets/icons/[0-9a-f]{64}\.(png|jpg|svg)|/assets/presets/[a-z0-9][a-z0-9/._-]*\.(svg|png|jpg))$'
     ProviderKey:
       type: string
-      enum: [info, hosted, http-cache, codex, claude-code]
+      enum: [info, hosted, http-cache, codex, claude-code, json-release]
     SourceStrategy:
       type: string
       enum: [ordered, round_robin, random]
@@ -6397,6 +6501,8 @@ components:
             $ref: '#/components/schemas/HttpUrl'
         source_strategy:
           $ref: '#/components/schemas/SourceStrategy'
+        json_release:
+          $ref: '#/components/schemas/JSONReleaseConfig'
         cache_ttl_seconds:
           type: integer
           minimum: 0
@@ -6469,6 +6575,116 @@ components:
           $ref: '#/components/schemas/LocalizedIcons'
         proxy:
           $ref: '#/components/schemas/ProxyConfig'
+    ReleaseDownloads:
+      type: object
+      additionalProperties: false
+      required: [channel, release_id, version, build, artifacts]
+      properties:
+        stale: {type: boolean}
+        fetched_at: {type: string, format: date-time}
+        channel: {type: string}
+        release_id: {type: string}
+        version: {type: string}
+        build: {type: string}
+        artifacts:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReleaseArtifact'
+    JSONReleaseData:
+      type: object
+      additionalProperties: false
+      required: [version, artifacts]
+      properties:
+        version: {type: string}
+        build: {type: string}
+        artifacts:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReleaseArtifact'
+    ReleaseArtifact:
+      type: object
+      additionalProperties: false
+      required: [key, os, arch, format, url, sha256]
+      properties:
+        key: {type: string}
+        os: {type: string, enum: [windows, macos, linux, unknown]}
+        arch: {type: string, enum: [x64, arm64, x86, arm, universal, unknown]}
+        format: {type: string}
+        scope: {type: string}
+        variant: {type: string}
+        url: {type: string}
+        sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        checksum_url: {type: string}
+        checksum_filename: {type: string}
+        size: {type: integer, minimum: 0}
+    JSONReleaseConfig:
+      type: object
+      additionalProperties: false
+      required: [default_channel, channels, sources, refresh_seconds]
+      description: Trusted administrator jq configuration. Limits and cancellation are not a hard memory sandbox. Queries receive {body, context}; HTTP is owned by the engine.
+      properties:
+        default_channel: {type: string}
+        refresh_seconds: {type: integer, minimum: 60, maximum: 86400}
+        channels:
+          type: object
+          minProperties: 1
+          maxProperties: 8
+          additionalProperties:
+            type: object
+            additionalProperties: false
+            required: [requests, query]
+            properties:
+              query: {type: string, minLength: 1, maxLength: 16384}
+              requests:
+                type: array
+                minItems: 1
+                maxItems: 32
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [url]
+                  properties:
+                    url: {type: string, maxLength: 8192}
+                    context:
+                      type: object
+                      maxProperties: 16
+                      additionalProperties: {type: string, maxLength: 256}
+        sources:
+          type: object
+          additionalProperties: false
+          required: [metadata, artifacts, checksums]
+          properties:
+            metadata:
+              $ref: '#/components/schemas/ReleaseSources'
+            artifacts:
+              $ref: '#/components/schemas/ReleaseSources'
+            checksums:
+              $ref: '#/components/schemas/ReleaseSources'
+        prewarm:
+          type: array
+          maxItems: 8
+          items:
+            type: object
+            additionalProperties: false
+            required: [channel, keys]
+            properties:
+              channel: {type: string}
+              keys:
+                type: array
+                minItems: 1
+                maxItems: 128
+                uniqueItems: true
+                items: {type: string}
+    ReleaseSources:
+      type: array
+      maxItems: 16
+      items:
+        type: object
+        additionalProperties: false
+        required: [origin, prefix]
+        properties:
+          origin: {type: string}
+          prefix: {type: string}
     AppSpec:
       type: object
       additionalProperties: false
@@ -6503,6 +6719,8 @@ components:
             type: string
         source_strategy:
           $ref: '#/components/schemas/SourceStrategy'
+        json_release:
+          $ref: '#/components/schemas/JSONReleaseConfig'
         cache_ttl_seconds:
           type: integer
           minimum: 0
@@ -6621,6 +6839,7 @@ components:
         - proxy
         - instructions.en
         - instructions.zh-CN
+        - json_release
         - base_url
         - base_urls
         - source_strategy
@@ -6762,6 +6981,8 @@ components:
             instructions.en:
               type: string
               maxLength: 12000
+            json_release:
+              $ref: '#/components/schemas/JSONReleaseConfig'
             instructions.zh-CN:
               type: string
               maxLength: 12000
@@ -7917,7 +8138,7 @@ components:
       properties:
         kind:
           type: string
-          enum: [release, http_cache]
+          enum: [release, http_cache, artifacts]
         channels:
           type: array
           description: Release channels (empty for `http_cache`).
@@ -7933,8 +8154,25 @@ components:
     PrewarmStartRequest:
       description: Use the variant that matches `PrewarmOptions.kind`.
       oneOf:
+        - $ref: '#/components/schemas/ArtifactPrewarmRequest'
         - $ref: '#/components/schemas/ReleasePrewarmRequest'
         - $ref: '#/components/schemas/HttpCachePrewarmRequest'
+    ArtifactPrewarmRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, target, artifact_keys]
+      properties:
+        request_id:
+          $ref: '#/components/schemas/Uid'
+        target: {type: string}
+        artifact_keys:
+          type: array
+          minItems: 1
+          maxItems: 128
+          uniqueItems: true
+          items: {type: string}
+        limits:
+          $ref: '#/components/schemas/PrewarmLimits'
     ReleasePrewarmRequest:
       type: object
       additionalProperties: false

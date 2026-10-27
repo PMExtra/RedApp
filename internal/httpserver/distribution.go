@@ -7,8 +7,10 @@ import (
 	"io/fs"
 	"mime"
 	"net/http"
+	"net/url"
 	"path"
 	"strconv"
+	"strings"
 
 	"github.com/PMExtra/RedApp/installers"
 	"github.com/PMExtra/RedApp/internal/application"
@@ -199,6 +201,9 @@ func (s *Server) serveReleasePath(w http.ResponseWriter, r *http.Request, entry 
 		template = key
 	}
 	switch op.Kind {
+	case application.DownloadAliasOperation:
+		s.serveReleaseAlias(w, r, entry, op)
+		return
 	case application.InstallerOperation:
 		body, err := installers.Render(template, key, op.Name, appURL)
 		if errors.Is(err, fs.ErrNotExist) {
@@ -236,6 +241,19 @@ func (s *Server) serveReleasePath(w http.ResponseWriter, r *http.Request, entry 
 		if err != nil {
 			s.writeError(w, r, releaseError(err))
 			return
+		}
+		if entry.Provider == application.JSONRelease {
+			// Stable choice keys need not be filenames. Use only the authorized
+			// URL's final segment, never its query or an upstream header.
+			filename := resource.Key
+			if source, parseErr := url.Parse(resource.Source); parseErr == nil {
+				candidate := path.Base(source.Path)
+				if candidate != "." && candidate != "/" && len(candidate) <= 255 && !strings.ContainsAny(candidate, "\\\r\n\x00") {
+					filename = candidate
+				}
+			}
+			w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+			w.Header().Set("Content-Security-Policy", sandboxPolicy)
 		}
 		if r.Method == http.MethodHead {
 			// HEAD never starts a download or counts as one.

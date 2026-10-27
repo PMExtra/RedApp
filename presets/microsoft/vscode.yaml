@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "kind": "App",
+  "metadata": {
+    "id": "vscode",
+    "vendor": "microsoft"
+  },
+  "spec": {
+    "name": {
+      "en": "Visual Studio Code",
+      "zh-CN": "Visual Studio Code"
+    },
+    "description": {
+      "en": "Verified package downloads through RedApp.",
+      "zh-CN": "通过 RedApp 提供校验后的安装包下载。"
+    },
+    "icon": "",
+    "provider": "json-release",
+    "categories": [],
+    "tags": [],
+    "json_release": {
+      "default_channel": "stable",
+      "refresh_seconds": 3600,
+      "channels": {
+        "stable": {
+          "requests": [
+            {
+              "url": "https://update.code.visualstudio.com/api/update/win32-x64-user/stable/latest",
+              "context": {
+                "key": "win32-x64-user",
+                "os": "windows",
+                "arch": "x64",
+                "format": "exe",
+                "scope": "user"
+              }
+            },
+            {
+              "url": "https://update.code.visualstudio.com/api/update/win32-arm64-user/stable/latest",
+              "context": {
+                "key": "win32-arm64-user",
+                "os": "windows",
+                "arch": "arm64",
+                "format": "exe",
+                "scope": "user"
+              }
+            },
+            {
+              "url": "https://update.code.visualstudio.com/api/update/win32-x64/stable/latest",
+              "context": {
+                "key": "win32-x64",
+                "os": "windows",
+                "arch": "x64",
+                "format": "exe",
+                "scope": "system"
+              }
+            },
+            {
+              "url": "https://update.code.visualstudio.com/api/update/win32-x64-archive/stable/latest",
+              "context": {
+                "key": "win32-x64-archive",
+                "os": "windows",
+                "arch": "x64",
+                "format": "zip",
+                "scope": "portable"
+              }
+            },
+            {
+              "url": "https://update.code.visualstudio.com/api/update/darwin-universal/stable/latest",
+              "context": {
+                "key": "darwin-universal",
+                "os": "macos",
+                "arch": "universal",
+                "format": "zip",
+                "scope": "portable"
+              }
+            },
+            {
+              "url": "https://update.code.visualstudio.com/api/update/linux-x64/stable/latest",
+              "context": {
+                "key": "linux-x64",
+                "os": "linux",
+                "arch": "x64",
+                "format": "tar.gz",
+                "scope": "portable"
+              }
+            },
+            {
+              "url": "https://update.code.visualstudio.com/api/update/linux-arm64/stable/latest",
+              "context": {
+                "key": "linux-arm64",
+                "os": "linux",
+                "arch": "arm64",
+                "format": "tar.gz",
+                "scope": "portable"
+              }
+            },
+            {
+              "url": "https://update.code.visualstudio.com/api/update/linux-deb-x64/stable/latest",
+              "context": {
+                "key": "linux-deb-x64",
+                "os": "linux",
+                "arch": "x64",
+                "format": "deb",
+                "scope": "system"
+              }
+            },
+            {
+              "url": "https://update.code.visualstudio.com/api/update/linux-rpm-x64/stable/latest",
+              "context": {
+                "key": "linux-rpm-x64",
+                "os": "linux",
+                "arch": "x64",
+                "format": "rpm",
+                "scope": "system"
+              }
+            }
+          ],
+          "query": "{version:.body.productVersion,build:.body.version,artifacts:[{key:.context.key,os:.context.os,arch:.context.arch,format:.context.format,scope:.context.scope,url:.body.url,sha256:.body.sha256hash}]}"
+        }
+      },
+      "sources": {
+        "metadata": [
+          {
+            "origin": "https://update.code.visualstudio.com",
+            "prefix": "/api/update/"
+          }
+        ],
+        "artifacts": [
+          {
+            "origin": "https://vscode.download.prss.microsoft.com",
+            "prefix": "/dbazure/download/"
+          }
+        ],
+        "checksums": []
+      },
+      "prewarm": []
+    },
+    "instructions": {
+      "en": "Choose a platform, architecture and package format below. These downloads do not reconfigure or disable the IDE’s built-in updater. Metadata and checksum source formats must be validated in your network before enabling automatic prewarm.",
+      "zh-CN": "在下方选择平台、架构和包型。这些安装包下载不会修改或禁用 IDE 自带更新器。启用自动预热前，应在自己的网络中验证元数据和校验文件格式。"
+    }
+  }
+}

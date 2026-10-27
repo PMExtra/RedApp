@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "kind": "Vendor",
+  "metadata": {
+    "id": "jetbrains"
+  },
+  "spec": {
+    "name": {
+      "en": "JetBrains",
+      "zh-CN": "JetBrains"
+    },
+    "description": {
+      "en": "",
+      "zh-CN": ""
+    },
+    "icon": "",
+    "localized_icons": {
+      "en": "",
+      "zh-CN": ""
+    }
+  }
+}

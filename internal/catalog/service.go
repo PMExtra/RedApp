@@ -57,6 +57,9 @@ func sourceFence(e application.Entry) store.SourceFence {
 // again before contacting the upstream, so a completed fetch is never
 // repeated.
 func (s *Service) release(ctx context.Context, e application.Entry, target string) (application.Release, error) {
+	return s.releaseMode(ctx, e, target, false)
+}
+func (s *Service) releaseMode(ctx context.Context, e application.Entry, target string, force bool) (application.Release, error) {
 	if e.Protocol == nil {
 		return application.Release{}, application.ErrNotFound
 	}
@@ -65,6 +68,15 @@ func (s *Service) release(ctx context.Context, e application.Entry, target strin
 		return application.Release{}, err
 	}
 	channel := e.HasChannel(target)
+	if channel {
+		if p, ok := e.Protocol.(application.SnapshotProtocol); ok {
+			var err error
+			target, err = p.CanonicalChannel(target)
+			if err != nil {
+				return application.Release{}, err
+			}
+		}
+	}
 	if !channel {
 		v, err := e.Protocol.ValidateVersion(target)
 		if err != nil || v != target {
@@ -72,6 +84,9 @@ func (s *Service) release(ctx context.Context, e application.Entry, target strin
 		}
 	}
 	r, version, hit, err := s.cached(e, target, channel)
+	if force {
+		hit = false
+	}
 	if err != nil {
 		return application.Release{}, err
 	}
@@ -81,7 +96,7 @@ func (s *Service) release(ctx context.Context, e application.Entry, target strin
 	if hit {
 		return r, nil
 	}
-	key := fmt.Sprintf("%s\x00%d/%d\x00%s", app, e.Revision, e.VendorRevision, target)
+	key := fmt.Sprintf("%s\x00%d/%d\x00%s/%t", app, e.Revision, e.VendorRevision, target, force)
 	s.mu.Lock()
 	f := s.flights[key]
 	if f == nil {
@@ -99,7 +114,7 @@ func (s *Service) release(ctx context.Context, e application.Entry, target strin
 			s.mu.Unlock()
 			return application.Release{}, err
 		}
-		go func() { defer finish(); s.fetch(workCtx, e, target, channel, key, f) }()
+		go func() { defer finish(); s.fetch(workCtx, e, target, channel, key, f, force) }()
 	}
 	s.mu.Unlock()
 	select {
@@ -164,13 +179,16 @@ func (s *Service) cached(e application.Entry, target string, channel bool) (rele
 	return r, "", true, nil
 }
 
-func (s *Service) fetch(parent context.Context, e application.Entry, target string, isChannel bool, key string, f *flight) {
+func (s *Service) fetch(parent context.Context, e application.Entry, target string, isChannel bool, key string, f *flight, force bool) {
 	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 	app := e.StorageID()
 	// A flight that published while this one was being started has already
 	// filled the cache.
 	release, version, hit, err := s.cached(e, target, isChannel)
+	if force {
+		hit = false
+	}
 	switch {
 	case err != nil: // reported below like a fetch failure
 	case hit && version != "":
@@ -186,11 +204,18 @@ func (s *Service) fetch(parent context.Context, e application.Entry, target stri
 			}
 		}
 		if err == nil && resolved.Envelope != nil {
-			release, err = s.verifyAndPersist(e, resolved.Version, *resolved.Envelope)
+			if _, snapshot := e.Protocol.(application.SnapshotProtocol); snapshot {
+				release, err = e.Protocol.VerifyRelease(resolved.Version, *resolved.Envelope)
+				if err == nil {
+					err = s.persistChannel(e, release, target, time.Now().UTC())
+				}
+			} else {
+				release, err = s.verifyAndPersist(e, resolved.Version, *resolved.Envelope)
+			}
 		} else if err == nil {
 			release, err = s.release(ctx, e, resolved.Version)
 		}
-		if err == nil {
+		if _, snapshot := e.Protocol.(application.SnapshotProtocol); err == nil && !snapshot {
 			ttl := e.Descriptor.DefaultChannelTTLSeconds
 			now := time.Now().UTC()
 			err = s.db.PutChannel(store.Channel{AppID: app, Name: target, Version: release.Version, FetchedAt: now, ExpiresAt: now.Add(time.Duration(ttl) * time.Second)}, sourceFence(e))
@@ -215,6 +240,18 @@ func (s *Service) fetch(parent context.Context, e application.Entry, target stri
 			event.UpstreamStatus = &upstream.Status
 		}
 		_ = s.db.RecordEvent(event)
+	}
+	if isChannel {
+		if _, ok := e.Protocol.(application.SnapshotProtocol); ok {
+			_ = s.db.RecordReleaseRefresh(app, target, err == nil)
+			if err != nil && !force {
+				if old, readErr := s.db.Channel(app, target); readErr == nil {
+					if prior, _, valid, readErr := s.cached(e, old.Version, false); readErr == nil && valid {
+						release, err = prior, nil
+					}
+				}
+			}
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -348,4 +385,25 @@ func (s *Service) verifyAndPersist(e application.Entry, version string, envelope
 		return application.Release{}, err
 	}
 	return release, nil
+}
+
+func (s *Service) persistChannel(e application.Entry, r application.Release, channel string, now time.Time) error {
+	resources := make([]store.Resource, 0, len(r.Artifacts))
+	for _, a := range r.Artifacts {
+		resources = append(resources, store.Resource{AppID: e.StorageID(), Version: r.Version, Key: a.Key, SourceURL: a.Source, SHA256: a.SHA256, ExpectedSize: a.Size})
+	}
+	return s.db.PutReleaseChannel(store.ReleaseMetadata{AppID: e.StorageID(), Version: r.Version, Raw: r.Envelope.Raw, Signature: r.Envelope.Signature, TrustRevision: e.Descriptor.TrustRevision, FetchedAt: now}, resources, store.Channel{AppID: e.StorageID(), Name: channel, Version: r.Version, FetchedAt: now, ExpiresAt: now.Add(time.Duration(e.Descriptor.DefaultChannelTTLSeconds) * time.Second)}, sourceFence(e))
+}
+
+// Refresh explicitly fetches one channel. Unlike normal reads it reports errors
+// even when an older valid snapshot remains available.
+func (s *Service) Refresh(ctx context.Context, app, channel string) (application.Release, error) {
+	e, ok := s.registry.Lookup(app)
+	if !ok {
+		return application.Release{}, application.ErrNotFound
+	}
+	if _, ok = e.Protocol.(application.SnapshotProtocol); !ok || !e.HasChannel(channel) {
+		return application.Release{}, application.ErrNotFound
+	}
+	return s.releaseMode(ctx, e, channel, true)
 }

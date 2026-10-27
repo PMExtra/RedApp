@@ -6,7 +6,7 @@ RedApp 是自托管的软件下载再分发服务。它在内网用同一地址�
 
 ## 功能
 
-- 五种 Provider：应用信息页、托管上传文件、通用 HTTP 缓存，以及经过校验的 Codex 和 Claude Code 发布。
+- 六种 Provider：应用信息页、托管上传文件、通用 HTTP 缓存、经过校验的 Codex 和 Claude Code 发布，以及可配置的 JSON 发布。
 - HTTP 缓存支持有序路径规则、旧缓存回退、1–16 个镜像源、刷新以及手动或自动清理。
 - Codex 和 Claude Code 的发布元数据与二进制按上游摘要和签名校验。
 - 官方安装器仅做最小修改，改为从本 RedApp 服务下载。
@@ -72,6 +72,7 @@ irm 'https://downloads.example.internal/anthropic/claude-code/install.ps1' | iex
 
 - [配置](docs/guide/configuration.zh-CN.md)：部署设置、公共地址、代理、预置模板、导出和导入。
 - [运维](docs/guide/operations.zh-CN.md)：Docker、数据目录、反向代理、健康检查、备份和故障排查。
+- [JSON 发布](docs/guide/json-release.zh-CN.md)：查询配置、精确安装包预热与多平台下载。
 - [Provider](docs/guide/providers.zh-CN.md)：Provider 类型、HTTP 缓存规则、发布分发和使用说明。
 - [安全](docs/guide/security.zh-CN.md)：信任模型、认证、沙箱和上游校验。
 - [指标](docs/guide/metrics.zh-CN.md)：指标名称、采样、保留和缺失数据。

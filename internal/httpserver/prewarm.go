@@ -14,6 +14,9 @@ import (
 
 // prewarmCapable: release providers with platforms, and the HTTP cache.
 func prewarmCapable(e application.Entry) bool {
+	if _, ok := e.Protocol.(application.ArtifactKeyProtocol); ok {
+		return true
+	}
 	if _, release := e.Protocol.(application.PlatformProtocol); release {
 		return true
 	}
@@ -37,6 +40,10 @@ func (s *Server) getPrewarmOptions(w http.ResponseWriter, r *http.Request) {
 		options.Kind = "release"
 		options.Channels = append(options.Channels, e.Descriptor.Channels...)
 		options.Platforms = append(options.Platforms, release.Platforms()...)
+	}
+	if _, ok := e.Protocol.(application.ArtifactKeyProtocol); ok {
+		options.Kind = "artifacts"
+		options.Channels = append(options.Channels, e.Descriptor.Channels...)
 	}
 	writeOK(w, options)
 }
@@ -100,20 +107,21 @@ func (s *Server) startPrewarm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		RequestID string           `json:"request_id"`
-		Target    string           `json:"target"`
-		Platforms []string         `json:"platforms"`
-		Paths     []string         `json:"paths"`
-		Indexes   []string         `json:"indexes"`
-		Manifest  string           `json:"manifest"`
-		Match     *pathmatch.Spec  `json:"match"`
-		Limits    *warmplan.Limits `json:"limits"`
+		ArtifactKeys []string         `json:"artifact_keys"`
+		RequestID    string           `json:"request_id"`
+		Target       string           `json:"target"`
+		Platforms    []string         `json:"platforms"`
+		Paths        []string         `json:"paths"`
+		Indexes      []string         `json:"indexes"`
+		Manifest     string           `json:"manifest"`
+		Match        *pathmatch.Spec  `json:"match"`
+		Limits       *warmplan.Limits `json:"limits"`
 	}
 	if apiErr := decodeJSON(r, &input); apiErr != nil {
 		s.writeError(w, r, apiErr)
 		return
 	}
-	in := warmplan.Input{RequestID: input.RequestID, Target: input.Target, Platforms: input.Platforms, Paths: input.Paths, Indexes: input.Indexes, Manifest: input.Manifest, Match: input.Match}
+	in := warmplan.Input{ArtifactKeys: input.ArtifactKeys, RequestID: input.RequestID, Target: input.Target, Platforms: input.Platforms, Paths: input.Paths, Indexes: input.Indexes, Manifest: input.Manifest, Match: input.Match}
 	if input.Limits != nil {
 		if !input.Limits.Valid() {
 			s.fail(w, r, codeValidationFailed, nil, "limits are out of range")

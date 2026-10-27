@@ -6,6 +6,7 @@ require (
 	github.com/ProtonMail/go-crypto v1.5.2
 	github.com/bmatcuk/doublestar/v4 v4.10.2
 	github.com/dustin/go-humanize v1.1.0
+	github.com/itchyny/gojq v0.12.19
 	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/yuin/goldmark v1.7.13
@@ -17,5 +18,6 @@ require (
 
 require (
 	github.com/cloudflare/circl v1.6.3 // indirect
-	golang.org/x/sys v0.36.0 // indirect
+	github.com/itchyny/timefmt-go v0.1.8 // indirect
+	golang.org/x/sys v0.38.0 // indirect
 )

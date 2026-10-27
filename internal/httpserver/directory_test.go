@@ -18,7 +18,7 @@ func TestProvidersListCapabilitiesAndNullDefaults(t *testing.T) {
 	for _, p := range list.Items {
 		providers[p.Key] = p
 	}
-	if len(providers) != 5 || providers[application.HttpCache].Capabilities.Versions || !providers[application.HttpCache].Capabilities.TimeCleanup {
+	if len(providers) != 6 || providers[application.HttpCache].Capabilities.Versions || !providers[application.HttpCache].Capabilities.TimeCleanup {
 		t.Fatal("provider capabilities", list)
 	}
 	for _, key := range []string{application.Codex, application.ClaudeCode} {

@@ -38,6 +38,8 @@ type route struct {
 func (s *Server) routeTable() []route {
 	return []route{
 		// Health, public API, pages, assets, distribution, authentication.
+		{method: "GET", path: "/api/apps/{vendor}/{app}/downloads", operation: "getReleaseDownloads", serve: s.getReleaseDownloads, query: []string{"channel"}},
+		{method: "POST", path: "/admin/api/apps/{vendor}/{app}/release-preview", operation: "previewJSONRelease", serve: s.previewJSONRelease, auth: authAdmin, maxBody: 1048576},
 		{method: "GET", path: "/health/live", operation: "getLiveness", serve: s.getLiveness},
 		{method: "GET", path: "/health/ready", operation: "getReadiness", serve: s.getReadiness},
 		{method: "GET", path: "/api/bootstrap", operation: "getBootstrap", serve: s.getBootstrap},

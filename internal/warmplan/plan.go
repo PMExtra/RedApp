@@ -23,15 +23,16 @@ func (l Limits) Valid() bool {
 }
 
 type Input struct {
-	RetrySkip []string        `json:"retry_skip,omitempty"`
-	RequestID string          `json:"request_id"`
-	Target    string          `json:"target,omitempty"`
-	Platforms []string        `json:"platforms,omitempty"`
-	Paths     []string        `json:"paths,omitempty"`
-	Indexes   []string        `json:"indexes,omitempty"`
-	Manifest  string          `json:"manifest,omitempty"`
-	Match     *pathmatch.Spec `json:"match,omitempty"`
-	Limits    Limits          `json:"limits"`
+	ArtifactKeys []string        `json:"artifact_keys,omitempty"`
+	RetrySkip    []string        `json:"retry_skip,omitempty"`
+	RequestID    string          `json:"request_id"`
+	Target       string          `json:"target,omitempty"`
+	Platforms    []string        `json:"platforms,omitempty"`
+	Paths        []string        `json:"paths,omitempty"`
+	Indexes      []string        `json:"indexes,omitempty"`
+	Manifest     string          `json:"manifest,omitempty"`
+	Match        *pathmatch.Spec `json:"match,omitempty"`
+	Limits       Limits          `json:"limits"`
 }
 type Item struct {
 	Key    string `json:"key"`

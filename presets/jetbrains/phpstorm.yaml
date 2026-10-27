@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "kind": "App",
+  "metadata": {
+    "id": "phpstorm",
+    "vendor": "jetbrains"
+  },
+  "spec": {
+    "name": {
+      "en": "PhpStorm",
+      "zh-CN": "PhpStorm"
+    },
+    "description": {
+      "en": "Verified package downloads through RedApp.",
+      "zh-CN": "通过 RedApp 提供校验后的安装包下载。"
+    },
+    "icon": "",
+    "provider": "json-release",
+    "categories": [],
+    "tags": [],
+    "json_release": {
+      "default_channel": "stable",
+      "refresh_seconds": 3600,
+      "channels": {
+        "stable": {
+          "requests": [
+            {
+              "url": "https://data.services.jetbrains.com/products/releases?code=PS&latest=true&type=release",
+              "context": {
+                "product": "PS"
+              }
+            }
+          ],
+          "query": "{\"windows\":{\"key\":\"windows-x64-exe\",\"os\":\"windows\",\"arch\":\"x64\",\"format\":\"exe\"},\"windowsARM64\":{\"key\":\"windows-arm64-exe\",\"os\":\"windows\",\"arch\":\"arm64\",\"format\":\"exe\"},\"linux\":{\"key\":\"linux-x64-tar\",\"os\":\"linux\",\"arch\":\"x64\",\"format\":\"tar.gz\"},\"linuxARM64\":{\"key\":\"linux-arm64-tar\",\"os\":\"linux\",\"arch\":\"arm64\",\"format\":\"tar.gz\"},\"mac\":{\"key\":\"macos-x64-dmg\",\"os\":\"macos\",\"arch\":\"x64\",\"format\":\"dmg\"},\"macM1\":{\"key\":\"macos-arm64-dmg\",\"os\":\"macos\",\"arch\":\"arm64\",\"format\":\"dmg\"}} as $platforms | .body[.context.product][0] as $r | {version:$r.version,build:$r.build,artifacts:[$r.downloads | to_entries[] | select($platforms[.key] != null) | $platforms[.key] + {url:.value.link,size:.value.size,checksum_url:.value.checksumLink,checksum_filename:(.value.link | split(\"?\")[0] | split(\"/\") | last)}]}"
+        }
+      },
+      "sources": {
+        "metadata": [
+          {
+            "origin": "https://data.services.jetbrains.com",
+            "prefix": "/products/"
+          }
+        ],
+        "artifacts": [
+          {
+            "origin": "https://download.jetbrains.com",
+            "prefix": "/webide/"
+          },
+          {
+            "origin": "https://download-cdn.jetbrains.com",
+            "prefix": "/webide/"
+          }
+        ],
+        "checksums": [
+          {
+            "origin": "https://download.jetbrains.com",
+            "prefix": "/webide/"
+          },
+          {
+            "origin": "https://download-cdn.jetbrains.com",
+            "prefix": "/webide/"
+          }
+        ]
+      },
+      "prewarm": []
+    },
+    "instructions": {
+      "en": "Choose a platform, architecture and package format below. These downloads do not reconfigure or disable the IDE’s built-in updater. Metadata and checksum source formats must be validated in your network before enabling automatic prewarm. This preset is an unverified candidate: validate its product code, download platforms, source paths and checksums before enabling it.",
+      "zh-CN": "在下方选择平台、架构和包型。这些安装包下载不会修改或禁用 IDE 自带更新器。启用自动预热前，应在自己的网络中验证元数据和校验文件格式。 此预置为未实时验证的候选：启用前须核对产品码、下载平台、来源路径及校验文件。"
+    }
+  }
+}
