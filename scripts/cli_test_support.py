@@ -49,7 +49,7 @@ class ServerError(RuntimeError):
 def clean_environment(**overrides):
     """Return the current environment without inherited REDAPP_* settings."""
     environment = {
-        key: value for key, value in os.environ.items() if not key.startswith("REDAPP_")
+        key: value for key, value in os.environ.items() if not key.startswith("REDAPP_") and key != "SQLITE_TMPDIR"
     }
     environment.update(overrides)
     return environment

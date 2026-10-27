@@ -62,6 +62,17 @@ func TestOpenRefusesIncompatibleDirectoriesWithoutModification(t *testing.T) {
 				t.Fatal(err)
 			}
 		},
+		"truncated database header": func(t *testing.T, dir string) {
+			createDirectory(t, dir)
+			if err := os.Truncate(filepath.Join(dir, databaseName), 100); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"not a SQLite header": func(t *testing.T, dir string) {
+			if err := os.WriteFile(filepath.Join(dir, databaseName), make([]byte, 4096), 0600); err != nil {
+				t.Fatal(err)
+			}
+		},
 		"database is not a regular file": func(t *testing.T, dir string) {
 			if err := os.Mkdir(filepath.Join(dir, databaseName), 0700); err != nil {
 				t.Fatal(err)

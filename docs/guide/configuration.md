@@ -67,6 +67,7 @@ Lists replace lower-priority lists; they are not merged. Every source is validat
 | `download_limits.max_readers` | `REDAPP_MAX_READERS` | `--max-readers` | `512` | 1–65536 |
 | `download_limits.max_artifact_bytes` | `REDAPP_MAX_ARTIFACT_BYTES` | `--max-artifact-bytes` | 4 GiB | 1 byte to 1 TiB |
 | `download_limits.max_downloads_per_client` | `REDAPP_MAX_DOWNLOADS_PER_CLIENT` | `--max-downloads-per-client` | `16` | 1–65536 |
+| — | `SQLITE_TMPDIR` | — | `<data_dir>/tmp/sqlite` | Runtime override; an existing writable absolute directory used only by SQLite |
 | — | `REDAPP_PUBLIC_URL` | — | empty | HTTP(S) origin; see [Public address](#public-address) |
 
 Notes:

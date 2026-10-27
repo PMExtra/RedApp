@@ -67,6 +67,7 @@ download_limits:
 | `download_limits.max_readers` | `REDAPP_MAX_READERS` | `--max-readers` | `512` | 1–65536 |
 | `download_limits.max_artifact_bytes` | `REDAPP_MAX_ARTIFACT_BYTES` | `--max-artifact-bytes` | 4 GiB | 1 字节到 1 TiB |
 | `download_limits.max_downloads_per_client` | `REDAPP_MAX_DOWNLOADS_PER_CLIENT` | `--max-downloads-per-client` | `16` | 1–65536 |
+| — | `SQLITE_TMPDIR` | — | `<data_dir>/tmp/sqlite` | 运行时覆盖；必须是已存在的可写绝对目录，仅供 SQLite 使用 |
 | — | `REDAPP_PUBLIC_URL` | — | 空 | HTTP(S) origin；见[公共地址](#公共地址) |
 
 说明：

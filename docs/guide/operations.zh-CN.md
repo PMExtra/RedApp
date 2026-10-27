@@ -28,7 +28,7 @@ docker run -d --name redapp --read-only \
   redapp:local
 ```
 
-- RedApp 只写数据目录，因此可以使用 `--read-only`。
+- RedApp 默认把 SQLite 临时文件放在数据目录内，因此可以使用 `--read-only`，无需额外的 `/tmp` 挂载。
 - 绑定挂载的数据目录必须可由 UID/GID `65532` 写入。RedApp 不会修改属主，也不会改用其他目录。
 - 使用配置文件时，可以只读挂载到 `/etc/redapp/config.yaml`，或挂载到其他位置并把 `REDAPP_CONFIG` 设为其容器内路径。
 
@@ -64,6 +64,7 @@ volumes:
 | --- | --- |
 | `state.sqlite`（及 `-wal`、`-shm`） | 配置、账号、缓存索引、指标、事件 |
 | `objects/` | 缓存的发布文件、HTTP 缓存正文、托管文件、图标 |
+| `tmp/sqlite/` | SQLite 排序与语句回滚的临时文件；不是持久数据 |
 | `instance.lock` | 防止第二个实例使用的锁 |
 
 - 一个目录只供一个实例使用。不支持网络文件系统（NFS、SMB）。
@@ -190,6 +191,7 @@ time=2026-10-10T08:15:00.000Z level=WARN msg="automatic HTTP cache cleanup faile
 | `component` | 记录的内容 |
 | --- | --- |
 | （无） | 启动和停止、`http request` 访问日志、`request failed` 错误日志、启动失败时的致命错误 |
+| `storage` | SQLite 临时目录准备结果 |
 | `auth` | 首次启动时打印一次初始管理员密码 |
 | `configuration` | 每次发布的配置变更，含应用数和上游来源数 |
 | `download` | 启动时的缓存恢复、发布制品下载失败和状态写入失败 |
@@ -214,6 +216,16 @@ time=2026-10-10T08:15:00.000Z level=WARN msg="automatic HTTP cache cleanup faile
 每个响应都带 `X-Request-Id` 头，错误响应在 `error.request_id` 中重复该值。用户报告错误时，用这个值检索日志。
 
 运行警告记录在 **事件** 页面而不是日志中，例如旧缓存回退、覆盖上游 `no-store` 的缓存规则、上游错误、下载失败和自动清理失败。RedApp 保留最新 1,000 条事件，最长 30 天。
+
+## SQLite 临时空间
+
+`serve` 在只读版本预检和实例锁之后、首次 SQLite 连接及升级备份之前，创建并检查 `<data_dir>/tmp/sqlite`。默认目录权限为 `0700`；已有默认目录权限不符会报错，不会自动 chmod。初始化中断后，只含空 `tmp/sqlite` 目录结构的新数据目录可以重试。不会清空已有临时目录、数据库或 WAL/SHM。
+
+可在启动进程时设置 `SQLITE_TMPDIR`，选择已存在、可写的绝对目录。RedApp 会实际创建、写入并删除探测文件；空值、相对路径、不存在或不可写的目录会明确阻止启动，不回退到 `/tmp` 或数据根目录。显式目录不会被自动创建或修改权限。`config validate` 和 `healthcheck` 不准备临时目录；健康检查也不代表历史聚合已成功。
+
+默认使用磁盘，不使用 tmpfs。临时空间峰值取决于数据量、查询和事务；它与数据库共用文件系统，仍需监控可用空间。自选 tmpfs 时，应根据实测峰值和容器内存余量设置上限，不能把开始落盘的阈值当作容量需求。
+
+SQLite 在 Linux 上通常创建临时文件后立即 unlink，并在关闭或进程退出后释放空间，不需要定时清理。已 unlink 的文件不会出现在目录大小统计中，但仍消耗文件系统可用空间。临时文件不需要备份；不要以清理临时空间为由删除 `state.sqlite-wal` 或 `state.sqlite-shm`。
 
 ## 备份
 
