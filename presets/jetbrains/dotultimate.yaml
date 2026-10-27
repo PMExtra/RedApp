@@ -11,8 +11,8 @@
       "zh-CN": "dotUltimate"
     },
     "description": {
-      "en": "Windows .NET tool suite, separate from the standalone Rider IDE. Unverified offline-package mapping.",
-      "zh-CN": "Windows .NET 工具套装，与独立 Rider IDE 并存。离线包映射尚未实时验证。"
+      "en": "Windows .NET tool suite distributed as one complete offline ZIP, separate from the standalone Rider IDE.",
+      "zh-CN": "Windows .NET 工具套装，完整离线 ZIP 整体分发，与独立 Rider IDE 并存。"
     },
     "icon": "",
     "provider": "json-release",
@@ -31,7 +31,7 @@
               }
             }
           ],
-          "query": ".body[.context.product][0] as $r | $r.downloads.windowsOffline as $a | if $a == null then error(\"verified offline suite metadata is required; do not substitute the web installer\") else {version:$r.version,build:$r.build,artifacts:[{key:\"windows-offline-suite\",os:\"windows\",arch:\"unknown\",format:(if ($a.link | endswith(\".zip\")) then \"zip\" elif ($a.link | endswith(\".exe\")) then \"exe\" else error(\"unsupported offline bundle format\") end),variant:\"offline-suite\",url:$a.link,size:$a.size,checksum_url:$a.checksumLink,checksum_filename:($a.link | split(\"/\") | last)}]} end"
+          "query": ".body[.context.product][0] as $r | $r.downloads.windowsZIP as $a | if $a == null then error(\"offline suite ZIP metadata is required; do not substitute the web installer\") elif ($a.link | endswith(\".zip\") | not) then error(\"offline suite must be a complete ZIP\") else {version:$r.version,build:$r.build,artifacts:[{key:\"windows-offline-suite\",os:\"windows\",arch:\"unknown\",format:\"zip\",variant:\"offline-suite\",url:$a.link,size:$a.size,checksum_url:$a.checksumLink,checksum_filename:($a.link | split(\"/\") | last)}]} end"
         }
       },
       "sources": {
@@ -65,8 +65,8 @@
       "prewarm": []
     },
     "instructions": {
-      "en": "Choose a platform, architecture and package format below. These downloads do not reconfigure or disable the IDE’s built-in updater. Metadata and checksum source formats must be validated in your network before enabling automatic prewarm. This preset is an unverified candidate: validate its product code, download platforms, source paths and checksums before enabling it. The RSU code and windowsOffline field are fixture assumptions, not verified API facts. The query fails closed if this explicit offline entry is absent. Download the complete ZIP (including EXE and .dat); never extract or mirror only its EXE. No separate duplicate entries for suite components.",
-      "zh-CN": "在下方选择平台、架构和包型。这些安装包下载不会修改或禁用 IDE 自带更新器。启用自动预热前，应在自己的网络中验证元数据和校验文件格式。 此预置为未实时验证的候选：启用前须核对产品码、下载平台、来源路径及校验文件。 RSU 产品码和 windowsOffline 字段只是 fixture 假设，尚非已验证 API 事实；缺少明确离线条目时查询拒绝。完整保留 ZIP 内 EXE 与 .dat，不抽取 EXE 单独分发，不为套装子组件重复登记制品。"
+      "en": "The RSU product supplies the complete offline suite as downloads.windowsZIP. Download and preserve the whole ZIP, including its EXE and .dat; never mirror only the EXE or substitute windowsWeb, windowsWebLP or toolboxWindows. No duplicate artifacts are registered for suite components. Architecture remains unknown. Validate the package and offline installation before enabling prewarm; metadata and checksum validation alone do not verify archive contents. These downloads do not reconfigure the IDE’s built-in updater.",
+      "zh-CN": "RSU 产品通过 downloads.windowsZIP 提供完整离线套件。下载并保留整个 ZIP（包括 EXE 和 .dat），不单独分发 EXE，不以 windowsWeb、windowsWebLP 或 toolboxWindows 替代，不为套装子组件重复登记制品。架构保持未知。启用预热前须验证安装包及离线安装；元数据与校验文件验证不代表归档内容已验证。这些下载不会修改 IDE 自带更新器。"
     }
   }
 }

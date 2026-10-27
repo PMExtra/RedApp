@@ -54,15 +54,15 @@ Opaque release IDs identify version/build and are not semantically sortable. Thi
 
 ## Presets and update policy
 
-VS Code uses per-platform update JSON: `productVersion` is the display version, `version` the upstream build/commit and `sha256hash` the digest. JetBrains uses product release JSON and maps supported entries in `downloads`; library metadata is excluded. The configured product codes are `IIU` for IDEA, `PCP` for PyCharm and `CL` for CLion (package and checksum paths under `/cpp/`). These endpoint choices remain subject to the live-verification limitation below. Other product codes can reuse the configuration.
+VS Code uses per-platform update JSON: `productVersion` is the display version, `version` the upstream build/commit and `sha256hash` the digest. JetBrains uses product release JSON and maps supported entries in `downloads`; library metadata is excluded. The configured product codes are `IIU` for IDEA, `PCP` for PyCharm and `CL` for CLion (package and checksum paths under `/cpp/`). These endpoint choices remain subject to the validation boundaries below. Other product codes can reuse the configuration.
 
-The templates are covered by synthetic mapping fixtures. The official endpoints and JetBrains checksum sidecars were not reachable in the implementation environment; their current formats and every platform's availability are **not live-verified**. Run preview in your own network before enabling prewarm. A changed CDN or checksum format fails closed and requires an explicit configuration correction.
+The templates have mapping fixtures, including a recorded official dotUltimate response and checksum sidecar. Official metadata and small sidecars can be validated without downloading installers; this does not verify package bytes or installation behavior. Run preview in your own network before enabling prewarm. A changed CDN or checksum format fails closed and requires an explicit configuration correction.
 
 Serving an original IDE package does not modify its installed settings, launcher or official updater. These templates do not disable IDE update checks or redirect them to RedApp. No stable installation-time adaptation has been verified for these raw-package flows; administrators must account for this boundary rather than assume downloads control runtime updates.
 
 ### Candidate inventory
 
-The 12 JSON Release presets are VS Code, IntelliJ IDEA, PyCharm, CLion, WebStorm, PhpStorm, GoLand, Rider, DataGrip, RubyMine, RustRover and dotUltimate. New presets start disabled with no prewarm selection. They are synthetic-fixture-backed candidates, **not live-verified integrations**. MPS, DataSpell, AppCode, Fleet, Aqua, Writerside, Gateway and Toolbox are not included.
+The 12 JSON Release presets are VS Code, IntelliJ IDEA, PyCharm, CLion, WebStorm, PhpStorm, GoLand, Rider, DataGrip, RubyMine, RustRover and dotUltimate. New presets start disabled with no prewarm selection. Official metadata and checksum sidecars have been checked; **full package downloads and installation remain unverified**. MPS, DataSpell, AppCode, Fleet, Aqua, Writerside, Gateway and Toolbox are not included.
 
 | JetBrains candidate | Configured product code | Artifact/checksum prefix |
 | --- | --- | --- |
@@ -71,9 +71,9 @@ The 12 JSON Release presets are VS Code, IntelliJ IDEA, PyCharm, CLion, WebStorm
 | Rider / DataGrip / RubyMine | RD / DG / RM | /rider/ /datagrip/ /ruby/ |
 | RustRover / dotUltimate | RR / RSU | /rustrover/ /resharper/ |
 
-These codes and paths are configuration candidates, not fresh official observations. Preview must validate metadata, platform availability, CDN redirects and sidecars before enablement. CI fixtures do not resolve that release blocker.
+Preview must validate current metadata, platform availability, CDN redirects and sidecars before enablement. Recorded responses and CI fixtures do not replace full download and installation validation.
 
-dotUltimate is a Windows .NET suite, not an independent IDE, and coexists with standalone Rider. Its `RSU` code and `downloads.windowsOffline` field are **unverified fixture assumptions**. The candidate rejects ordinary `windows` web-installer entries and unsupported formats; do not enable it until the actual offline metadata and SHA256 source have been confirmed and the configuration corrected if needed. The complete offline ZIP is one artifact, preserving its EXE and .dat together; it is never unpacked or duplicated for each suite component. An explicitly identified offline EXE is also representable for older formats. Unknown architecture remains unknown.
+dotUltimate is a Windows .NET suite that coexists with standalone Rider. The official `RSU` metadata identifies the complete offline archive as `downloads.windowsZIP`. The preset requires that entry and a ZIP URL; it rejects missing ZIP metadata, web installers (`windowsWeb`, `windowsWebLP`), and the separate `toolboxWindows` package. The complete offline ZIP is one artifact, preserving its EXE and .dat together; it is never unpacked or duplicated for each suite component. Unknown architecture remains unknown. Metadata and SHA256 sidecars do not establish archive contents or offline installation behavior; verify those before enabling prewarm.
 
 ## Storage and deployment
 

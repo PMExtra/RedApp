@@ -38,7 +38,7 @@ func TestIDEConfigurationsUseOneQueryEngine(t *testing.T) {
 					base := "https://download.jetbrains.com/" + prefix + "/"
 					encoded, _ := json.Marshal(map[string]any{code: []any{map[string]any{"version": "2026.2", "build": "262.1", "downloads": map[string]any{"windows": map[string]any{"link": base + "setup.exe", "checksumLink": base + "setup.exe.sha256", "size": 123}, "macM1": map[string]any{"link": base + "setup.dmg", "checksumLink": base + "setup.dmg.sha256", "size": 456}, "thirdPartyLibrariesJson": map[string]any{"link": "https://untrusted.example/libraries.json"}}}}})
 					if code == "RSU" {
-						encoded, _ = json.Marshal(map[string]any{code: []any{map[string]any{"version": "2026.2", "build": "262.1", "downloads": map[string]any{"windowsOffline": map[string]any{"link": base + "suite.zip", "checksumLink": base + "suite.zip.sha256", "size": 789}}}}})
+						encoded, _ = json.Marshal(map[string]any{code: []any{map[string]any{"version": "2026.2", "build": "262.1", "downloads": map[string]any{"windowsZIP": map[string]any{"link": base + "suite.zip", "checksumLink": base + "suite.zip.sha256", "size": 789}}}}})
 					}
 					body = string(encoded)
 				case strings.HasSuffix(raw, ".sha256"):
@@ -187,7 +187,7 @@ func TestExpandedPresetInventoryAndSourcePolicies(t *testing.T) {
 	}
 }
 
-func TestDotUltimateCandidateRejectsWebInstallerAndKeepsWholeArchive(t *testing.T) {
+func TestDotUltimateRejectsWebInstallerAndKeepsWholeArchive(t *testing.T) {
 	for _, app := range presets.Embedded().Apps {
 		if app.Key() != "jetbrains/dotultimate" {
 			continue
@@ -197,7 +197,7 @@ func TestDotUltimateCandidateRejectsWebInstallerAndKeepsWholeArchive(t *testing.
 		for _, test := range []struct {
 			key, filename string
 			valid         bool
-		}{{"windows", "web.exe", false}, {"windowsOffline", "suite.zip", true}, {"windowsOffline", "suite.exe", true}, {"windowsOffline", "payload.dat", false}} {
+		}{{"windowsWeb", "web.exe", false}, {"windowsWebLP", "web.exe", false}, {"toolboxWindows", "setup.exe", false}, {"windowsOffline", "suite.zip", false}, {"windowsZIP", "suite.zip", true}, {"windowsZIP", "suite.exe", false}, {"windowsZIP", "payload.dat", false}} {
 			input, _ := json.Marshal(map[string]any{"context": request.Context, "body": map[string]any{request.Context["product"]: []any{map[string]any{"version": "2026.2", "build": "262.1", "downloads": map[string]any{test.key: map[string]any{"link": "https://download.jetbrains.com/resharper/" + test.filename, "checksumLink": "https://download.jetbrains.com/resharper/" + test.filename + ".sha256", "size": 789}}}}}})
 			output, err := jsonrelease.NewRunner().Run(context.Background(), config.Channels["stable"].Query, input)
 			if !test.valid {

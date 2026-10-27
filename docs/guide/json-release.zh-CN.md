@@ -54,15 +54,15 @@
 
 ## 预置与更新策略
 
-VS Code 使用各平台更新 JSON：`productVersion` 为显示版本，`version` 为上游 build/commit，`sha256hash` 为摘要。JetBrains 使用产品发布 JSON，映射 `downloads` 中支持的平台，排除库元数据。预置配置为 IDEA 的 `IIU`、PyCharm 的 `PCP` 和 CLion 的 `CL`（安装包与校验文件限定在 `/cpp/`）。这些端点选择仍受下述实时验证限制；其他产品代码可以复用配置。
+VS Code 使用各平台更新 JSON：`productVersion` 为显示版本，`version` 为上游 build/commit，`sha256hash` 为摘要。JetBrains 使用产品发布 JSON，映射 `downloads` 中支持的平台，排除库元数据。预置配置为 IDEA 的 `IIU`、PyCharm 的 `PCP` 和 CLion 的 `CL`（安装包与校验文件限定在 `/cpp/`）。这些端点选择仍受下述验证边界限制；其他产品代码可以复用配置。
 
-模板由合成映射 fixture 覆盖。实施环境无法访问官方端点和 JetBrains 校验侧车，因此**未实时验证**当前格式及所有平台可用性。启用预热前请在实际网络中执行预览。CDN 或校验格式改变会拒绝发布，需明确调整配置。
+模板具有映射 fixture，其中 dotUltimate 使用记录的官方响应及校验文件。无需下载安装包即可验证官方元数据和小型 sidecar，但这不能验证安装包字节或安装行为。启用预热前请在实际网络中执行预览。CDN 或校验格式改变会拒绝发布，需明确调整配置。
 
 分发原始 IDE 安装包不会修改安装后的设置、启动器或官方更新器。这些模板不会禁用 IDE 更新检查，也不会将其指向 RedApp。目前未验证适用于这些原始安装包流程的稳定安装期适配方式；管理员必须了解这一边界，不能认为下载代理已经接管运行时更新。
 
 ### 候选预置清单
 
-12 个 JSON Release 预置为 VS Code、IntelliJ IDEA、PyCharm、CLion、WebStorm、PhpStorm、GoLand、Rider、DataGrip、RubyMine、RustRover、dotUltimate。新预置默认禁用且不预热，均为合成 fixture 支持的候选，**不是已实时验证的集成**。不包含 MPS、DataSpell、AppCode、Fleet、Aqua、Writerside、Gateway、Toolbox。
+12 个 JSON Release 预置为 VS Code、IntelliJ IDEA、PyCharm、CLion、WebStorm、PhpStorm、GoLand、Rider、DataGrip、RubyMine、RustRover、dotUltimate。新预置默认禁用且不预热，官方元数据及校验文件已经核对，**完整安装包下载与安装仍未验证**。不包含 MPS、DataSpell、AppCode、Fleet、Aqua、Writerside、Gateway、Toolbox。
 
 | JetBrains 候选 | 配置产品码 | 制品/校验文件前缀 |
 | --- | --- | --- |
@@ -71,9 +71,9 @@ VS Code 使用各平台更新 JSON：`productVersion` 为显示版本，`version
 | Rider / DataGrip / RubyMine | RD / DG / RM | /rider/ /datagrip/ /ruby/ |
 | RustRover / dotUltimate | RR / RSU | /rustrover/ /resharper/ |
 
-这些产品码和路径是候选配置，并非本轮获得的官方实时证据。启用前须预览验证元数据、平台可用性、CDN 跳转与侧车格式。CI fixture 不消除这一发布阻塞。
+启用前仍须通过预览验证当前元数据、平台可用性、CDN 重定向与 sidecar。记录的响应和 CI fixture 不能替代完整下载与安装验证。
 
-dotUltimate 是 Windows .NET 套装，不是独立 IDE，与独立 Rider 并存。其 `RSU` 产品码和 `downloads.windowsOffline` 字段是**未经验证的 fixture 假设**。候选会拒绝普通 `windows` 在线安装器条目和不支持的包型；实际离线元数据和 SHA256 来源确认并修正配置前不得启用。离线 ZIP 整体作为一个制品，完整保留 EXE 和 .dat，不解包、不为每个子组件重复登记；明确标识为离线包的旧 EXE 格式亦可表达。未知架构保持未知。
+dotUltimate 是与独立 Rider 并存的 Windows .NET 套装。官方 `RSU` 元数据通过 `downloads.windowsZIP` 标识完整离线归档。预置要求该条目及 ZIP URL；缺少 ZIP 元数据、在线安装器（`windowsWeb`、`windowsWebLP`）及独立的 `toolboxWindows` 包均不会被替代选用。离线 ZIP 整体作为一个制品，完整保留 EXE 和 .dat，不解包、不为每个子组件重复登记。未知架构保持未知。元数据与 SHA256 sidecar 不能证明归档内容或离线安装行为；启用预热前仍须验证。
 
 ## 存储与部署
 
