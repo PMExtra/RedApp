@@ -8,7 +8,7 @@ import sqlite3
 import tempfile
 import unittest
 
-from cli_test_support import BINARY, ROOT, main, run_cli
+from cli_test_support import BINARY, ROOT, RedAppServer, main, run_cli
 
 BASE_CONFIG_LIMITS = {"max_writers": 16, "max_readers": 512}
 # store.SchemaVersion of this checkout.
@@ -65,6 +65,42 @@ class DataDirectoryCLITest(unittest.TestCase):
         self.assert_exit(self.validate(), 0, "file")
         result = self.invoke(["config", "validate"], {"REDAPP_DATA": str(self.data)})
         self.assert_exit(result, 0, "REDAPP_DATA")
+
+    def test_sqlite_temp_override_is_validated_only_for_serve(self):
+        for path in ["", "relative", str(self.directory / "missing-temp"), "/sys"]:
+            with self.subTest(path=path):
+                env = {"SQLITE_TMPDIR": path}
+                self.assert_exit(self.validate(env=env), 0, "validate ignores SQLite runtime")
+                result = self.invoke(["serve", "--config", str(self.config_path)], env)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("sqlite", result.stderr.lower())
+                self.assertFalse((self.data / "state.sqlite").exists())
+                self.assertFalse((self.data / "tmp").exists())
+                # The instance lock may have been created, but no database or
+                # default temp directory may mask an invalid explicit override.
+                if self.data.exists():
+                    for file in self.data.iterdir():
+                        file.unlink()
+                    self.data.rmdir()
+
+    def test_existing_sqlite_temp_override_keeps_permissions_and_restart(self):
+        selected = self.directory / "selected-temp"
+        selected.mkdir(mode=0o750)
+        original_mode = selected.stat().st_mode
+
+        def configure(server, port):
+            args, env = RedAppServer.yaml_config(server, port)
+            return args, {**env, "SQLITE_TMPDIR": str(selected)}
+
+        server = RedAppServer(self.directory / "runtime", configure)
+        self.addCleanup(server.stop)
+        server.start()
+        server.stop()
+        server.start()
+        server.stop()
+        self.assertEqual(selected.stat().st_mode, original_mode)
+        self.assertEqual(list(selected.iterdir()), [])
+        self.assertFalse((server.data_dir / "tmp").exists())
 
     def test_artifact_size_limits_from_flags_and_environment(self):
         cases = [

@@ -28,7 +28,7 @@ docker run -d --name redapp --read-only \
   redapp:local
 ```
 
-- RedApp writes only to the data directory, so `--read-only` works.
+- RedApp stores SQLite temporary files inside the data directory by default, so `--read-only` works without an additional `/tmp` mount.
 - A bind-mounted data directory must be writable by UID/GID `65532`. RedApp does not change ownership and does not fall back to another directory.
 - To use a config file, mount it read-only at `/etc/redapp/config.yaml`, or mount it elsewhere and set `REDAPP_CONFIG` to its container path.
 
@@ -64,6 +64,7 @@ The data directory holds all runtime state:
 | --- | --- |
 | `state.sqlite` (with `-wal` and `-shm`) | Configuration, accounts, cache index, metrics, events |
 | `objects/` | Cached release files, HTTP cache bodies, hosted files, icons |
+| `tmp/sqlite/` | SQLite sorting and statement rollback temporary files; not persistent data |
 | `instance.lock` | Lock that prevents a second instance |
 
 - One directory serves one instance. Network file systems (NFS, SMB) are not supported.
@@ -190,6 +191,7 @@ time=2026-10-10T08:15:00.000Z level=WARN msg="automatic HTTP cache cleanup faile
 | `component` | What is logged |
 | --- | --- |
 | (none) | Startup and shutdown, `http request` access lines, `request failed` lines, the fatal error when startup fails |
+| `storage` | The selected and verified SQLite temporary directory |
 | `auth` | The initial admin password, once, on the first start |
 | `configuration` | Every published configuration change, with the number of applications and sources |
 | `download` | Cache recovery at startup, failed release downloads and failed state writes |
@@ -214,6 +216,16 @@ Background tasks log failures and results, never one line per request or per fil
 Every response carries an `X-Request-Id` header, and error responses repeat it as `error.request_id`. Search the log for that value when a user reports an error.
 
 Operational warnings go to the **Events** page instead of the log. Examples are stale cache fallback, cache rules that override upstream `no-store`, upstream errors, failed downloads and failed automatic cleanup. RedApp keeps the newest 1,000 events for up to 30 days.
+
+## SQLite temporary space
+
+After read-only version preflight and acquiring the instance lock, `serve` creates and checks `<data_dir>/tmp/sqlite` before the first SQLite connection and any upgrade backup. Default directories use mode `0700`; existing default directories with different permissions cause an error instead of being chmodded. A new data directory containing only an empty `tmp/sqlite` skeleton can retry interrupted initialization. Existing temporary directories, databases and WAL/SHM files are never cleared.
+
+Set `SQLITE_TMPDIR` when starting the process to choose an existing writable absolute directory. RedApp creates, writes and removes a probe file; an empty value, relative path, missing or unwritable directory explicitly stops startup without falling back to `/tmp` or the data root. Explicit directories are not created or chmodded. `config validate` and `healthcheck` do not prepare temporary space; readiness does not prove that history aggregation succeeded.
+
+The default uses disk, not tmpfs. Peak temporary space depends on data, queries and transactions; it shares a filesystem with the database, so monitor free space. If selecting tmpfs, size its limit from measured peaks and container memory headroom, not the threshold at which SQLite starts spilling to disk.
+
+On Linux SQLite normally unlinks temporary files immediately after opening them and releases their space on close or process exit; no scheduled cleanup is needed. Unlinked files do not appear in directory-size metrics but still consume filesystem free space. Temporary files need no backup; never delete `state.sqlite-wal` or `state.sqlite-shm` to clean temporary space.
 
 ## Backups
 

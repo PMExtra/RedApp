@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -247,7 +248,11 @@ func TestHostedTransferProgressCancelAndBusyID(t *testing.T) {
 	h.expectError("GET", transferPath, nil, 404, codeTransferNotFound, nil)
 	h.expectError("DELETE", transferPath, nil, 404, codeTransferNotFound, nil)
 	bodyBytes, _ := json.Marshal(input)
-	request, err := http.NewRequest("POST", h.http.URL+"/admin/api/apps/"+app.Key+"/files/import?transfer_id="+transfer, bytes.NewReader(bodyBytes))
+	// Cancel even on an early assertion failure, before upstream.Close waits
+	// for the streaming handler's context to finish.
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	defer cancelRequest()
+	request, err := http.NewRequestWithContext(requestCtx, "POST", h.http.URL+"/admin/api/apps/"+app.Key+"/files/import?transfer_id="+transfer, bytes.NewReader(bodyBytes))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,10 +283,12 @@ func TestHostedTransferProgressCancelAndBusyID(t *testing.T) {
 	for {
 		data, _ := h.request("GET", transferPath, nil, 200, nil)
 		progress := decodeJSONBody[hostedTransferDTO](t, data)
-		if progress.ID != transfer || progress.Path != "cancel.bin" || progress.State != "receiving" || progress.TotalBytes == nil || *progress.TotalBytes != 100 {
+		if progress.ID != transfer || progress.Path != "cancel.bin" || progress.State != "receiving" || progress.TotalBytes != nil && *progress.TotalBytes != 100 {
 			t.Fatal("transfer progress", string(data))
 		}
-		if progress.Bytes == int64(len("temporary")) {
+		// The upstream's flush does not synchronize the importer's receipt of
+		// response headers. Wait for both known size and copied bytes.
+		if progress.TotalBytes != nil && progress.Bytes == int64(len("temporary")) {
 			break
 		}
 		if time.Now().After(deadline) {

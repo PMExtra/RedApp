@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -103,13 +104,16 @@ func (s *Store) RecordMetrics(at time.Time, boot string, samples []MetricSample,
 			duration = rateWindowSeconds
 		}
 		if _, err = tx.Exec("INSERT OR IGNORE INTO metric_samples(scope,app_id,metric,t_s,observed_at_s,boot,value,delta,duration_s) VALUES(?,?,?,?,?,?,?,?,?)", sample.Scope, sample.AppID, sample.Key, minute, observed, boot, sample.Value, delta, duration); err != nil {
-			return err
+			return fmt.Errorf("insert metric sample: %w", err)
 		}
 	}
 	if err = maintainMetrics(tx, at, catalog); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit metric history: %w", err)
+	}
+	return nil
 }
 
 // MaintainMetrics aggregates every closed hour before at and applies the
@@ -123,7 +127,10 @@ func (s *Store) MaintainMetrics(at time.Time, catalog []MetricDefinition) error 
 	if err = maintainMetrics(tx, at, catalog); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit metric history: %w", err)
+	}
+	return nil
 }
 
 func maintainMetrics(tx *sql.Tx, at time.Time, catalog []MetricDefinition) error {
@@ -141,19 +148,22 @@ func maintainMetrics(tx *sql.Tx, at time.Time, catalog []MetricDefinition) error
  ON CONFLICT(scope,app_id,metric,t_s) DO UPDATE SET min=excluded.min,max=excluded.max,avg=excluded.avg,last=excluded.last,count=excluded.count,delta=excluded.delta,delta_count=excluded.delta_count,duration_s=excluded.duration_s`
 
 			if _, err := tx.Exec(query, hour, d.Key, watermark, hour); err != nil {
-				return err
+				return fmt.Errorf("aggregate metric %s: %w", d.Key, err)
 			}
 		}
 		if _, err := tx.Exec("UPDATE metric_history_state SET aggregated_before_s=? WHERE id=1", hour); err != nil {
-			return err
+			return fmt.Errorf("advance metric history watermark: %w", err)
 		}
 	}
 	// UTC bucket-aligned retention includes the leading partial range bucket.
 	if _, err := tx.Exec("DELETE FROM metric_samples WHERE t_s<?", at.UTC().Truncate(time.Minute).Add(-24*time.Hour).Unix()); err != nil {
-		return err
+		return fmt.Errorf("expire metric samples: %w", err)
 	}
 	_, err := tx.Exec("DELETE FROM metric_hours WHERE t_s<?", at.UTC().Truncate(time.Hour).Add(-30*24*time.Hour).Unix())
-	return err
+	if err != nil {
+		return fmt.Errorf("expire metric hours: %w", err)
+	}
+	return nil
 }
 
 // hourlySelect also serves read-only queries before the minute sampler has

@@ -8,6 +8,7 @@ mkdir -p "$DOCKER_CONFIG"
 task_name="redapp-test-$$"
 task_volume="$task_name-data"
 task_image="${REDAPP_TEST_IMAGE:-$task_name:local}"
+task_spill_image="$task_name-spill:local"
 # Tests may select a manifest variant explicitly; ordinary runs use Docker's host selection.
 docker_run() {
   if [ -n "${REDAPP_TEST_PLATFORM:-}" ]; then
@@ -20,6 +21,7 @@ cleanup() {
   # Also remove image-declared anonymous volumes when REDAPP_DATA changes mounts.
   docker rm -fv "$task_name" "$task_name-second" >/dev/null 2>&1 || true
   docker volume rm "$task_volume" >/dev/null 2>&1 || true
+  docker image rm "$task_spill_image" >/dev/null 2>&1 || true
   if [ -z "${REDAPP_TEST_IMAGE:-}" ]; then docker image rm "$task_image" >/dev/null 2>&1 || true; fi
   rm -rf "$task_temp"
 }
@@ -97,7 +99,7 @@ docker exec "$task_name" /redapp healthcheck
 docker logs "$task_name" >"$task_temp/after.log" 2>&1
 test "$(grep -c 'Initial admin password' "$task_temp/after.log")" = 1
 docker stop --time 20 "$task_name" >/dev/null
-docker rm "$task_name" >/dev/null
+docker rm -v "$task_name" >/dev/null
 # Recreate the same volume at a different path using environment only. Healthcheck
 # must follow the changed listener, independently of PUBLIC_URL.
 docker_run -d --network none --read-only --name "$task_name" -v "$task_volume:/state" -e REDAPP_DATA=/state -e REDAPP_LISTEN=:18081 -e REDAPP_MAX_WRITERS=20 -e REDAPP_MAX_READERS=600 -e REDAPP_MAX_ARTIFACT_BYTES=4GiB -e REDAPP_PUBLIC_URL=https://links.example "$task_image" >/dev/null
@@ -131,4 +133,62 @@ with sqlite3.connect('file:' + sys.argv[1] + '?mode=ro&immutable=1', uri=True) a
         sys.exit(f'Unexpected persisted schema identity: {application_id:#x} v{user_version}')
 print(f'Fresh schema {schema} persisted through runtime restart/recreation')
 PY
+# Build a private fixture image from the tested runtime, using a consistent DB
+# copied only after stop. No shell, tmpfs, extra writable mount or network is
+# added. The old runtime fails this fixture with SQLITE_IOERR_GETTEMPPATH.
+python3 - "$task_temp/state.sqlite" "$task_root/internal/store/testdata/metric_spill.sql" <<'PY_SEED'
+from pathlib import Path
+import sqlite3
+import sys
+with sqlite3.connect(sys.argv[1]) as db:
+    db.executescript(Path(sys.argv[2]).read_text())
+    db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+PY_SEED
+mkdir "$task_temp/spill"
+cp "$task_temp/state.sqlite" "$task_temp/spill/state.sqlite"
+cat > "$task_temp/spill/Dockerfile" <<DOCKERFILE
+FROM $task_image
+COPY --chown=65532:65532 state.sqlite /var/lib/redapp/state.sqlite
+DOCKERFILE
+if [ -n "${REDAPP_TEST_PLATFORM:-}" ]; then
+  DOCKER_BUILDKIT=1 docker build --platform "$REDAPP_TEST_PLATFORM" -t "$task_spill_image" "$task_temp/spill" >/dev/null
+else
+  DOCKER_BUILDKIT=1 docker build -t "$task_spill_image" "$task_temp/spill" >/dev/null
+fi
+docker rm -v "$task_name" >/dev/null
+docker_run -d --network none --read-only --name "$task_name" "$task_spill_image" >/dev/null
+task_try=0
+while [ "$task_try" -lt 20 ]; do
+  if docker exec "$task_name" /redapp healthcheck; then break; fi
+  task_try=$((task_try+1))
+  sleep 1
+done
+docker exec "$task_name" /redapp healthcheck
+# Shutdown waits for the startup sampler, so this also waits for aggregation.
+docker stop --time 20 "$task_name" >/dev/null
+docker logs "$task_name" >"$task_temp/spill.log" 2>&1
+if grep -q 'level=ERROR' "$task_temp/spill.log"; then
+  grep 'component=history' "$task_temp/spill.log" >&2 || true
+  echo 'History spill fixture failed' >&2
+  exit 1
+fi
+grep -q 'SQLite temporary directory ready.*temp_dir=/var/lib/redapp/tmp/sqlite' "$task_temp/spill.log"
+docker cp "$task_name:/var/lib/redapp/state.sqlite" "$task_temp/aggregated.sqlite"
+python3 - "$task_temp/state.sqlite" "$task_temp/aggregated.sqlite" <<'PY_VERIFY'
+import sqlite3
+import sys
+with sqlite3.connect("file:" + sys.argv[1] + "?mode=ro&immutable=1", uri=True) as before:
+    old_watermark = before.execute("SELECT aggregated_before_s FROM metric_history_state").fetchone()[0]
+with sqlite3.connect("file:" + sys.argv[2] + "?mode=ro&immutable=1", uri=True) as after:
+    watermark = after.execute("SELECT aggregated_before_s FROM metric_history_state").fetchone()[0]
+    last_sample = after.execute("SELECT max(t_s) FROM metric_samples WHERE scope='global'").fetchone()[0]
+    if watermark <= old_watermark or last_sample < watermark:
+        raise SystemExit("History did not commit its new sample and hourly aggregation")
+print("SQLite statement-journal spill committed on scratch with read-only root and no /tmp")
+PY_VERIFY
+# An explicit unusable temp directory must fail instead of using the default.
+if docker_run --rm --network none --read-only -e SQLITE_TMPDIR=/missing "$task_spill_image" >"$task_temp/bad-temp.log" 2>&1; then
+  echo 'Invalid SQLITE_TMPDIR was ignored' >&2; exit 1
+fi
+grep -q 'resolve SQLite temporary directory' "$task_temp/bad-temp.log"
 echo "Docker runtime (${REDAPP_TEST_PLATFORM:-host})：无配置默认启动、YAML 单文件选择/失败保护、新writer/reader字段和容量简写、环境变量改路径/端口、禁用网络、非 root、只读根、持久性/健康/实例锁/崩溃恢复通过。"

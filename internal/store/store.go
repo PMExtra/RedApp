@@ -5,8 +5,10 @@ import (
 	"context"
 	"database/sql"
 	_ "embed"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/url"
 	"os"
@@ -16,6 +18,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
+	"github.com/PMExtra/RedApp/internal/fsutil"
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/instance"
 	"github.com/PMExtra/RedApp/internal/logging"
@@ -246,6 +249,9 @@ func inspectDirectory(dir, path string, plan migrationPlan) (directoryState, err
 			return 0, err
 		}
 		for _, entry := range entries {
+			if entry.Name() == "tmp" && emptySQLiteTemporaryTree(filepath.Join(dir, "tmp")) {
+				continue
+			}
 			if entry.Name() != instance.LockName {
 				return 0, ErrIncompatibleDirectory
 			}
@@ -265,9 +271,12 @@ func inspectDirectory(dir, path string, plan migrationPlan) (directoryState, err
 	return directoryCurrent, err
 }
 
-// probeExisting reads the version of an existing database. immutable=1 makes
-// SQLite read only the main file and never create or update WAL, SHM or journal
-// files; the version is checkpointed into the main file at creation.
+// probeExisting reads only the on-disk SQLite header, without initializing
+// SQLite's process-wide VFS (which caches SQLITE_TMPDIR at initialization).
+// Creation and migration checkpoint the header before completing; Open checks
+// the WAL view again using SQLite. This is version classification, not an
+// integrity check, and never opens or modifies the WAL or SHM files.
+// Header offsets: https://sqlite.org/fileformat.html#the_database_header
 func probeExisting(path string, plan migrationPlan) (bool, error) {
 	for _, suffix := range []string{"-wal", "-shm"} {
 		info, err := os.Lstat(path + suffix)
@@ -281,16 +290,34 @@ func probeExisting(path string, plan migrationPlan) (bool, error) {
 			return false, ErrIncompatibleDirectory
 		}
 	}
-	db, err := sql.Open("sqlite3", sqliteURL(path, "mode=ro&immutable=1&_query_only=on"))
+	f, err := fsutil.OpenRegular(path)
 	if err != nil {
 		return false, fmt.Errorf("%w: %w", ErrIncompatibleDirectory, err)
 	}
-	defer db.Close()
-	db.SetMaxOpenConns(1)
-	app, version, err := readHeader(context.Background(), db)
-	if err != nil {
-		return false, err
+	defer f.Close()
+	var header [100]byte
+	if _, err = io.ReadFull(f, header[:]); err != nil {
+		return false, fmt.Errorf("%w: read SQLite header: %w", ErrIncompatibleDirectory, err)
 	}
+	size := int64(binary.BigEndian.Uint16(header[16:18]))
+	if size == 1 {
+		size = 65536
+	}
+	info, statErr := f.Stat()
+	if statErr != nil {
+		return false, statErr
+	}
+	if string(header[:16]) != "SQLite format 3\x00" || size < 512 || size > 65536 || size&(size-1) != 0 {
+		return false, ErrIncompatibleDirectory
+	}
+	if info.Size() < size || info.Size()%size != 0 {
+		return false, ErrIncompatibleDirectory
+	}
+	if header[18] < 1 || header[18] > 2 || header[19] < 1 || header[19] > 2 || header[21] != 64 || header[22] != 32 || header[23] != 32 {
+		return false, ErrIncompatibleDirectory
+	}
+	app := int(binary.BigEndian.Uint32(header[68:72]))
+	version := int(binary.BigEndian.Uint32(header[60:64]))
 	return plan.classify(app, version)
 }
 

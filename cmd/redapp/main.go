@@ -155,6 +155,11 @@ func serve(c config.Deployment, logger *slog.Logger) error {
 		return err
 	}
 	defer guard.Close()
+	tempDir, err := store.PrepareSQLiteTemporaryDirectory(guard.Directory)
+	if err != nil {
+		return err
+	}
+	logger.Info("SQLite temporary directory ready", slog.String("component", "storage"), slog.String("temp_dir", tempDir))
 	db, err := store.Open(guard.Directory, store.WithLogger(logger))
 	if err != nil {
 		return err
