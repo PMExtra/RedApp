@@ -102,7 +102,17 @@ class HTTPServerCLITest(ServerTestCase):
         self.client.fetch("/admin/api/status", expect=401)
         csrf = self.client.login()
         self.assertEqual(self.read("/admin/api/session")["csrf_token"], csrf)
-        self.assertEqual(self.read("/admin/api/vendors?page=1&limit=12")["total"], 2)
+        vendors = self.read("/admin/api/vendors?page=1&limit=12")
+        self.assertEqual(vendors["total"], 4)
+        self.assertEqual({v["id"] for v in vendors["items"]}, {"openai", "anthropic", "microsoft", "jetbrains"})
+        apps = self.read("/admin/api/apps?limit=100")
+        candidates = [a for a in apps["items"] if a["provider"] == "json-release"]
+        self.assertEqual({a["key"] for a in candidates}, {
+            "microsoft/vscode", "jetbrains/idea", "jetbrains/pycharm", "jetbrains/clion",
+            "jetbrains/webstorm", "jetbrains/phpstorm", "jetbrains/goland", "jetbrains/rider",
+            "jetbrains/datagrip", "jetbrains/rubymine", "jetbrains/rustrover", "jetbrains/dotultimate",
+        })
+        self.assertTrue(all(not a["enabled"] and not a["json_release"].get("prewarm") for a in candidates))
         self.enable_builtin_templates()
         spa_paths = [
             "/",
@@ -133,7 +143,7 @@ class HTTPServerCLITest(ServerTestCase):
         # Management-only fixtures; they never contact the configured upstream.
         self.client.login()
         providers = {provider["key"] for provider in self.read("/admin/api/providers")["items"]}
-        self.assertEqual(providers, {"info", "hosted", "http-cache", "codex", "claude-code"})
+        self.assertEqual(providers, {"info", "hosted", "http-cache", "codex", "claude-code", "json-release"})
         created = self.client.fetch(
             "/admin/api/vendors",
             {"id": "cli-example", "name": {"en": "CLI fixture", "zh-CN": "CLI 测试"}, "enabled": True},

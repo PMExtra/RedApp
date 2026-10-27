@@ -18,11 +18,16 @@ import (
 // Real HTTP and source-policy fixture; no official metadata or package downloads.
 func TestJSONReleasePreviewDownloadsAndInternalAliases(t *testing.T) {
 	var artifactReads atomic.Int32
+	var upstreamFailed atomic.Bool
 	body := []byte("fixture package")
 	var origin string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/metadata":
+			if upstreamFailed.Load() {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
 			json.NewEncoder(w).Encode(releaseconfig.Release{Version: "1.2.3", Build: "abc", Artifacts: []releaseconfig.Artifact{{Key: "windows-x64-user", OS: "windows", Arch: "x64", Format: "exe", Scope: "user", URL: origin + "/files/setup.exe", SHA256: fmt.Sprintf("%x", sha256.Sum256(body))}}})
 		case "/files/setup.exe":
 			artifactReads.Add(1)
@@ -37,10 +42,29 @@ func TestJSONReleasePreviewDownloadsAndInternalAliases(t *testing.T) {
 	cfg := releaseconfig.Config{DefaultChannel: "stable", RefreshSeconds: 60, Channels: map[string]releaseconfig.Channel{"stable": {Requests: []releaseconfig.Request{{URL: origin + "/metadata"}}, Query: ".body"}}, Sources: releaseconfig.Sources{Metadata: []releaseconfig.Source{{Origin: origin, Prefix: "/metadata"}}, Artifacts: []releaseconfig.Source{{Origin: origin, Prefix: "/files/"}}}}
 	// Source prefixes are directories; metadata is authorized under the origin.
 	cfg.Sources.Metadata[0].Prefix = "/"
-	h := newHarness(t)
+	h := newHarness(t, func(c *harnessConfig) { c.preserveTemplateDefaults = true })
 	h.login("")
+	// All response shapes use the same strict App schema, including nested vendors.
+	h.request("GET", "/admin/api/vendors?limit=100", nil, 200, nil)
+	page := getJSON[pageDTO[appListItemDTO]](h, "/admin/api/apps?limit=100")
+	candidates := 0
+	for _, item := range page.Items {
+		if item.Provider == "json-release" {
+			candidates++
+			if item.Enabled || item.JSONRelease == nil || len(item.JSONRelease.Prewarm) != 0 {
+				t.Fatal("candidate activated", item.Key)
+			}
+		}
+	}
+	if candidates != 12 {
+		t.Fatal("candidate inventory", candidates)
+	}
 	h.createVendor("fixture")
 	h.request("POST", "/admin/api/apps", map[string]any{"vendor": "fixture", "id": "editor", "provider": "json-release", "name": map[string]string{"en": "Editor", "zh-CN": "编辑器"}, "enabled": true, "json_release": cfg}, 201, nil)
+	h.request("GET", "/admin/api/apps/fixture/editor", nil, 200, nil)
+	upstreamFailed.Store(true)
+	h.expectError("POST", "/admin/api/apps/fixture/editor/release-preview", map[string]any{"config": cfg, "channel": "stable"}, 502, codeUpstreamUnavailable, nil)
+	upstreamFailed.Store(false)
 	preview, _ := h.request("POST", "/admin/api/apps/fixture/editor/release-preview", map[string]any{"config": cfg, "channel": "stable"}, 200, nil)
 	if got := decodeJSONBody[releaseconfig.Release](t, preview); got.Version != "1.2.3" || len(got.Artifacts) != 1 {
 		t.Fatal(string(preview))
@@ -63,8 +87,8 @@ func TestJSONReleasePreviewDownloadsAndInternalAliases(t *testing.T) {
 		t.Fatal("public metadata bypassed local download")
 	}
 	for _, alias := range []string{"latest", "stable"} {
-		_, headers := h.request("GET", "/fixture/editor/download/"+alias+"/windows-x64-user", nil, 307, nil)
-		if headers.Get("Location") != "/fixture/editor/releases/"+choices.ReleaseID+"/windows-x64-user" || headers.Get("Cache-Control") != "no-store" {
+		body, headers := h.request("GET", "/fixture/editor/download/"+alias+"/windows-x64-user", nil, 307, nil)
+		if len(body) != 0 || headers.Get("Content-Type") != "" || headers.Get("Location") != "/fixture/editor/releases/"+choices.ReleaseID+"/windows-x64-user" || headers.Get("Cache-Control") != "no-store" {
 			t.Fatal(headers)
 		}
 	}

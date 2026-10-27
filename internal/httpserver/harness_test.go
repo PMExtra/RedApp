@@ -74,6 +74,8 @@ type harnessConfig struct {
 	maxDownloadsPerClient int
 	// embeddedFrontend serves the committed build instead of frontendFixture.
 	embeddedFrontend bool
+	// preserveTemplateDefaults keeps fresh presets disabled, as in production.
+	preserveTemplateDefaults bool
 }
 
 type harnessOption func(*harnessConfig)
@@ -135,7 +137,7 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 	existing, err := db.Vendors(true)
 	must(err)
 	must(db.EnsureEntityTemplates())
-	if len(existing) == 0 {
+	if len(existing) == 0 && !cfg.preserveTemplateDefaults {
 		vendors, err := db.Vendors(false)
 		must(err)
 		for _, v := range vendors {

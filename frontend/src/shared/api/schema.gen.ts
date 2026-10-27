@@ -2647,7 +2647,7 @@ export interface components {
         };
         /**
          * @description Administrator view. Upstream fields depend on the provider: `base_url` (`codex`, `claude-code`),
-         *     `base_urls` and `source_strategy` (`http-cache`), `cache_ttl_seconds` (all three); absent otherwise.
+         *     `base_urls` and `source_strategy` (`http-cache`), `cache_ttl_seconds` (all three), `json_release` (`json-release`); absent otherwise.
          */
         App: {
             uid: components["schemas"]["Uid"];
@@ -2659,6 +2659,7 @@ export interface components {
             description: components["schemas"]["LocalizedText"];
             icon: components["schemas"]["IconPath"];
             provider: components["schemas"]["ProviderKey"];
+            json_release?: components["schemas"]["JSONReleaseConfig"];
             base_url?: string;
             base_urls?: string[];
             source_strategy?: components["schemas"]["SourceStrategy"];
@@ -2688,6 +2689,7 @@ export interface components {
             description: components["schemas"]["LocalizedText"];
             icon: components["schemas"]["IconPath"];
             provider: components["schemas"]["ProviderKey"];
+            json_release?: components["schemas"]["JSONReleaseConfig"];
             base_url?: string;
             base_urls?: string[];
             source_strategy?: components["schemas"]["SourceStrategy"];
@@ -4258,6 +4260,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
+            502: components["responses"]["BadGateway"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };

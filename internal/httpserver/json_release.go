@@ -1,6 +1,8 @@
 package httpserver
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -108,6 +110,10 @@ func (s *Server) previewJSONRelease(w http.ResponseWriter, r *http.Request) {
 	}
 	release, err := jsonrelease.NewDiscoverer(builtin.JSONQueryRunner(), client).Discover(r.Context(), input.Config, input.Channel)
 	if err != nil {
+		if errors.Is(err, jsonrelease.ErrSource) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			s.fail(w, r, codeUpstreamUnavailable, err, "Release preview source is unavailable")
+			return
+		}
 		s.fail(w, r, codeValidationFailed, err, "Release preview failed; check query, source policy and upstream availability")
 		return
 	}
@@ -135,5 +141,6 @@ func (s *Server) serveReleaseAlias(w http.ResponseWriter, r *http.Request, entry
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	http.Redirect(w, r, path, http.StatusTemporaryRedirect)
+	w.Header().Set("Location", path)
+	w.WriteHeader(http.StatusTemporaryRedirect)
 }
