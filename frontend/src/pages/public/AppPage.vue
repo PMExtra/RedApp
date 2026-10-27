@@ -10,6 +10,7 @@ import { isApiError } from "@/shared/api";
 import { useLocalized, type Locale } from "@/shared/i18n";
 import { publicUrl, useDocumentTitle } from "@/shared/lib";
 import { AsyncState, Card, CopyButton, EntityIcon, PageHeader, Skeleton } from "@/shared/ui";
+import { ReleaseDownloads } from "@/features/json-release";
 import NotFoundPage from "./NotFoundPage.vue";
 
 /**
@@ -116,7 +117,8 @@ const prefix = computed(
       <Card v-if="instructions" :title="t('catalog.app.instructions')">
         <InstructionsDocument :vendor="app.vendor.id" :app="app.id" :revision="app.revision" />
       </Card>
-      <HostedFiles v-if="hosted" :app="app" />
+      <ReleaseDownloads v-if="app.provider === 'json-release'" :vendor="vendor" :app="appId" />
+      <HostedFiles v-else-if="hosted" :app="app" />
       <DownloadPrefix v-else-if="prefix" :app-key="app.key" />
     </template>
   </div>

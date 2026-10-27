@@ -8,7 +8,7 @@ import { isApiError, type Schema } from "@/shared/api";
 import { formError, FormField, useDirtyGuard, zodSchema } from "@/shared/forms";
 import { useLocalized } from "@/shared/i18n";
 import { toast } from "@/shared/lib";
-import { AsyncState, Button, Card, Input, RadioGroup, Switch } from "@/shared/ui";
+import { AsyncState, Button, Card, Input, RadioGroup, Switch, Textarea } from "@/shared/ui";
 import IconField from "./IconField.vue";
 import { appRoute, isReleaseProvider } from "./links";
 import LocalizedTextFields from "./LocalizedTextFields.vue";
@@ -37,10 +37,11 @@ const providers = useProviders();
 const create = useCreateApp();
 const enabledId = useId();
 
-const PROVIDERS = ["info", "hosted", "http-cache", "codex", "claude-code"] as const;
+const PROVIDERS = ["info", "hosted", "http-cache", "codex", "claude-code", "json-release"] as const;
 const schema = z
   .object({
     provider: z.enum(PROVIDERS),
+    json_release: z.string(),
     id: appIdSchema,
     name: nameSchema,
     description: descriptionSchema,
@@ -60,7 +61,18 @@ const schema = z
         context.addIssue({ code: "custom", path: [path, ...issue.path], message: issue.message });
       }
     };
-    if (values.provider === "http-cache") {
+    if (values.provider === "json-release") {
+      try {
+        const parsed: unknown = JSON.parse(values.json_release);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+      } catch {
+        context.addIssue({
+          code: "custom",
+          path: ["json_release"],
+          message: formError("jsonRelease.invalid"),
+        });
+      }
+    } else if (values.provider === "http-cache") {
       check(baseUrlsSchema, values.base_urls, "base_urls");
       check(ttlSchema, values.cache_ttl_seconds, "cache_ttl_seconds");
     } else if (isReleaseProvider(values.provider)) {
@@ -73,6 +85,7 @@ const { handleSubmit, meta, defineField, setFieldError, setValues, resetForm, is
     validationSchema: zodSchema(schema),
     initialValues: {
       provider: "info" as ProviderKey,
+      json_release: "",
       id: "",
       name: { en: "", "zh-CN": "" },
       description: { en: "", "zh-CN": "" },
@@ -118,15 +131,17 @@ watch(
 
 const submit = handleSubmit(async (values) => {
   const upstream: Partial<Schema<"AppCreate">> =
-    values.provider === "http-cache"
-      ? {
-          base_urls: values.base_urls.map((url) => url.trim()),
-          source_strategy: values.source_strategy,
-          cache_ttl_seconds: values.cache_ttl_seconds ?? 0,
-        }
-      : isReleaseProvider(values.provider)
-        ? { base_url: values.base_url.trim() }
-        : {};
+    values.provider === "json-release"
+      ? { json_release: JSON.parse(values.json_release) as Schema<"JSONReleaseConfig"> }
+      : values.provider === "http-cache"
+        ? {
+            base_urls: values.base_urls.map((url) => url.trim()),
+            source_strategy: values.source_strategy,
+            cache_ttl_seconds: values.cache_ttl_seconds ?? 0,
+          }
+        : isReleaseProvider(values.provider)
+          ? { base_url: values.base_url.trim() }
+          : {};
   try {
     const app = await create.mutateAsync({
       vendor: props.vendor,
@@ -212,6 +227,13 @@ const submit = handleSubmit(async (values) => {
         :title="t('directory.sections.source')"
       >
         <SourceFields :provider="provider" />
+        <FormField
+          v-if="provider === 'json-release'"
+          name="json_release"
+          :label="t('jsonRelease.config')"
+          :description="t('jsonRelease.createHint')"
+          ><template #default="{ field }"><Textarea v-bind="field" :rows="16" monospace /></template
+        ></FormField>
       </Card>
 
       <div class="flex justify-end gap-3">

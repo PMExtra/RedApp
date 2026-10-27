@@ -1,0 +1,2 @@
+import type { LocaleModule } from "@/shared/i18n";
+export default { releaseDownloads: { title:"Download", choice:"Platform · architecture · package", choose:"Choose a package", hint:"Environment detection is only a suggestion. Check the architecture and package format before downloading.", download:"Download {package}", version:"Version {version}", retry:"Retry", unavailable:"No packages are available.", os:{windows:"Windows",macos:"macOS",linux:"Linux",unknown:"Unknown OS"} } } satisfies LocaleModule;
