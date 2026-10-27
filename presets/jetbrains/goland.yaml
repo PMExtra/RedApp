@@ -11,10 +11,10 @@
       "zh-CN": "GoLand"
     },
     "description": {
-      "en": "Verified package downloads through RedApp.",
-      "zh-CN": "通过 RedApp 提供校验后的安装包下载。"
+      "en": "GoLand is an integrated development environment for Go development.",
+      "zh-CN": "GoLand 是面向 Go 开发的集成开发环境。"
     },
-    "icon": "",
+    "icon": "assets/jetbrains/goland/icon.svg",
     "provider": "json-release",
     "categories": [],
     "tags": [],
@@ -65,8 +65,8 @@
       "prewarm": []
     },
     "instructions": {
-      "en": "Choose a platform, architecture and package format below. These downloads do not reconfigure or disable the IDE’s built-in updater. Metadata and checksum source formats must be validated in your network before enabling automatic prewarm. This preset is an unverified candidate: validate its product code, download platforms, source paths and checksums before enabling it.",
-      "zh-CN": "在下方选择平台、架构和包型。这些安装包下载不会修改或禁用 IDE 自带更新器。启用自动预热前，应在自己的网络中验证元数据和校验文件格式。 此预置为未实时验证的候选：启用前须核对产品码、下载平台、来源路径及校验文件。"
+      "en": "Metadata, query mappings and official download response headers have been checked. These checks do not verify every package’s full contents or installation behavior. These downloads do not reconfigure the IDE’s built-in updater. Validate packages and installation in your environment before enabling automatic prewarm.",
+      "zh-CN": "元数据、查询映射和官方下载响应头已经核对。这些检查不代表所有安装包的完整内容或安装行为均已验证。这些下载不会修改 IDE 自带更新器。启用自动预热前，应在自己的环境中验证安装包与安装行为。"
     }
   }
 }

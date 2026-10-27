@@ -10,13 +10,13 @@
       "zh-CN": "JetBrains"
     },
     "description": {
-      "en": "",
-      "zh-CN": ""
+      "en": "JetBrains develops integrated development environments and tools for software teams.",
+      "zh-CN": "JetBrains 为软件团队开发集成开发环境和工具。"
     },
-    "icon": "",
+    "icon": "assets/builtin/jetbrains.svg",
     "localized_icons": {
-      "en": "",
-      "zh-CN": ""
+      "en": "assets/builtin/jetbrains.svg",
+      "zh-CN": "assets/builtin/jetbrains.svg"
     }
   }
 }
