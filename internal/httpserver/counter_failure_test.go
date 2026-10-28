@@ -42,7 +42,9 @@ func TestDownloadCompletesWhenCounterPersistenceFails(t *testing.T) {
 	}
 	// Increments retained across failed flushes are persisted once storage recovers.
 	entry, _ := h.server.registry.Lookup(key)
-	counters, _ := db.CountersFor(entry.MetricsID())
+	counters := settled(func() (map[string]int64, error) { return db.CountersFor(entry.MetricsID()) }, func(c map[string]int64) bool {
+		return c["download_success"] == 2 && c["downstream_bytes"] == int64(2*len(data))
+	})
 	stats, _ := db.VersionStats(entry.StorageID())
 	if counters["artifact_requests"] != 2 || counters["download_success"] != 2 || counters["downstream_bytes"] != int64(2*len(data)) || stats["0.159.2"].DownstreamBytes != int64(2*len(data)) {
 		t.Fatal(counters, stats)
