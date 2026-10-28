@@ -7462,7 +7462,7 @@ components:
     MirrorApp:
       type: object
       additionalProperties: false
-      required: [instance_id, key, provider, vendor, name, description, icon, instructions, auto_index, channels, default_channel, upstream_chain, revision]
+      required: [instance_id, key, provider, vendor, name, description, icon, instructions, auto_index, channels, default_channel, upstream_chain, source_epoch, revision]
       properties:
         instance_id:
           type: string
@@ -7511,6 +7511,10 @@ components:
           items:
             type: string
             pattern: '^[0-9a-f]{32}$'
+        source_epoch:
+          type: integer
+          minimum: 1
+          description: The application's current source epoch; a JSON release mirror starts a new epoch when it changes.
         revision:
           type: string
     FileIndex:

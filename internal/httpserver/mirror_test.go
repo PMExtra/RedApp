@@ -55,14 +55,17 @@ func TestMirrorApplicationsOfAnotherInstance(t *testing.T) {
 	}))
 	t.Cleanup(feed.Close)
 	feedURL = feed.URL
-	a.createApp("acme", "feed", application.JSONRelease, map[string]any{"json_release": map[string]any{
-		"default_channel": "beta", "refresh_seconds": 60,
-		"channels": map[string]any{
-			"stable": map[string]any{"requests": []any{map[string]any{"url": feed.URL + "/meta"}}, "query": ".body"},
-			"beta":   map[string]any{"requests": []any{map[string]any{"url": feed.URL + "/meta"}}, "query": ".body"},
-		},
-		"sources": map[string]any{"metadata": []any{map[string]any{"origin": feed.URL, "prefix": "/"}}, "artifacts": []any{map[string]any{"origin": feed.URL, "prefix": "/files/"}}},
-	}})
+	feedConfig := func(query string) map[string]any {
+		return map[string]any{
+			"default_channel": "beta", "refresh_seconds": 60,
+			"channels": map[string]any{
+				"stable": map[string]any{"requests": []any{map[string]any{"url": feed.URL + "/meta"}}, "query": query},
+				"beta":   map[string]any{"requests": []any{map[string]any{"url": feed.URL + "/meta"}}, "query": query},
+			},
+			"sources": map[string]any{"metadata": []any{map[string]any{"origin": feed.URL, "prefix": "/"}}, "artifacts": []any{map[string]any{"origin": feed.URL, "prefix": "/files/"}}},
+		}
+	}
+	a.createApp("acme", "feed", application.JSONRelease, map[string]any{"json_release": feedConfig(".body")})
 
 	b.login("")
 	b.expectError("POST", "/admin/api/upstreams", map[string]string{"name": "Self", "origin": b.http.URL}, 508, codeLoopDetected, nil)
@@ -144,6 +147,18 @@ func TestMirrorApplicationsOfAnotherInstance(t *testing.T) {
 	}
 	if data, _ := b.request("GET", "/mirror/feed/releases/"+choices.ReleaseID+"/win-x64", nil, 200, nil); !bytes.Equal(data, setup) {
 		t.Fatal("JSON release artifact through the mirror", string(data))
+	}
+	// A new source upstream gives the mirror a new epoch too, so the same
+	// release discovered again under the upstream's new source is not taken
+	// for a changed immutable release.
+	epoch := b.adminApp("mirror/feed").SourceEpoch
+	a.patchApp("acme/feed", map[string]any{"json_release": feedConfig(". | .body")})
+	b.request("POST", "/admin/api/apps/mirror/feed/mirror/sync", nil, 200, nil)
+	if next := b.adminApp("mirror/feed").SourceEpoch; next != epoch+1 {
+		t.Fatal("the mirror kept its epoch after the upstream source changed", epoch, next)
+	}
+	if again := getJSON[releaseDownloadsDTO](b, "/api/apps/mirror/feed/downloads"); again.ReleaseID != choices.ReleaseID {
+		t.Fatalf("release after the upstream epoch change %+v", again)
 	}
 
 	// A stops publishing the application: B keeps it, marked unavailable.

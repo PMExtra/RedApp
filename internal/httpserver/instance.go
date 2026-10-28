@@ -55,6 +55,7 @@ type mirrorAppDTO struct {
 	Channels       []string        `json:"channels"`
 	DefaultChannel *string         `json:"default_channel"`
 	UpstreamChain  []string        `json:"upstream_chain"`
+	SourceEpoch    int64           `json:"source_epoch"`
 	Revision       string          `json:"revision"`
 }
 
@@ -85,6 +86,7 @@ func (s *Server) getMirrorApp(w http.ResponseWriter, r *http.Request) {
 		AutoIndex:     e.AutoIndex,
 		Channels:      []string{},
 		UpstreamChain: []string{},
+		SourceEpoch:   e.SourceEpoch,
 	}
 	if e.Protocol != nil {
 		out.Channels = append(out.Channels, e.Descriptor.Channels...)

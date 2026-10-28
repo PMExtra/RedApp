@@ -3183,6 +3183,8 @@ export interface components {
             default_channel: string | null;
             /** @description Instance IDs the content passes through before this instance, nearest first. */
             upstream_chain: string[];
+            /** @description The application's current source epoch; a JSON release mirror starts a new epoch when it changes. */
+            source_epoch: number;
             revision: string;
         };
         /** @description Directory listing of a `hosted` or `http-cache` application with `auto_index`. */

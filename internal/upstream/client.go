@@ -135,6 +135,7 @@ type mirrorApp struct {
 	Channels       []string  `json:"channels"`
 	DefaultChannel *string   `json:"default_channel"`
 	UpstreamChain  []string  `json:"upstream_chain"`
+	SourceEpoch    int64     `json:"source_epoch"`
 	Revision       string    `json:"revision"`
 }
 
