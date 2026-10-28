@@ -143,11 +143,10 @@ func (s *Service) Update(ctx context.Context, uid string, revision int64, name, 
 }
 
 // localProvider is the provider a mirror of an upstream application uses:
-// hosted files are mirrored through the HTTP cache. JSON releases are not
-// mirrored yet.
+// hosted files are mirrored through the HTTP cache.
 func localProvider(remote string) (string, bool) {
 	switch remote {
-	case "info", "http-cache", "codex", "claude-code":
+	case "info", "http-cache", "codex", "claude-code", "json-release":
 		return remote, true
 	case "hosted":
 		return "http-cache", true
@@ -213,13 +212,38 @@ func (s *Service) checkChain(m mirrorApp) error {
 }
 
 func snapshotOf(m mirrorApp, icon string) store.MirrorSnapshot {
-	return store.MirrorSnapshot{
+	out := store.MirrorSnapshot{
 		Name:         store.LocalizedText{En: m.Name.En, ZhCN: m.Name.ZhCN},
 		Description:  store.LocalizedText{En: m.Description.En, ZhCN: m.Description.ZhCN},
 		Instructions: store.LocalizedText{En: m.Instructions.En, ZhCN: m.Instructions.ZhCN},
 		Icon:         icon,
 		AutoIndex:    m.AutoIndex,
 	}
+	if m.Provider == "json-release" {
+		for _, channel := range m.Channels {
+			if channel != "latest" {
+				out.Channels = append(out.Channels, channel)
+			}
+		}
+		if m.DefaultChannel != nil {
+			out.DefaultChannel = *m.DefaultChannel
+		}
+		out.UpstreamEpoch = m.SourceEpoch
+	}
+	return out
+}
+
+// checkReleaseChannels refuses a JSON release whose channels the upstream does
+// not describe, for example an upstream without default_channel.
+func checkReleaseChannels(m mirrorApp) error {
+	if m.Provider != "json-release" {
+		return nil
+	}
+	snapshot := snapshotOf(m, "")
+	if snapshot.DefaultChannel == "" || !slices.Contains(snapshot.Channels, snapshot.DefaultChannel) || len(snapshot.Channels) > 8 || m.SourceEpoch < 1 {
+		return fmt.Errorf("%w: the upstream does not describe its JSON release channels; it may need a newer RedApp", ErrIncompatible)
+	}
+	return nil
 }
 
 // BindInput selects an upstream application and the local application that
@@ -256,6 +280,9 @@ func (s *Service) Bind(ctx context.Context, uid string, in BindInput) (store.App
 	provider, ok := localProvider(m.Provider)
 	if !ok {
 		return store.Application{}, fmt.Errorf("%w: %s applications cannot be mirrored", ErrIncompatible, m.Provider)
+	}
+	if err = checkReleaseChannels(m); err != nil {
+		return store.Application{}, err
 	}
 	icon, err := s.icon(ctx, c, m.Icon)
 	if err != nil {
@@ -344,6 +371,9 @@ func (s *Service) check(ctx context.Context, b store.Binding) error {
 		if provider, ok := localProvider(m.Provider); !ok || provider != b.Provider {
 			err = fmt.Errorf("%w: the upstream application changed its provider", ErrIncompatible)
 		}
+	}
+	if err == nil {
+		err = checkReleaseChannels(m)
 	}
 	if errors.Is(err, ErrRemoteNotFound) {
 		s.log.Warn("upstream application gone", slog.String("app", b.AppKey), slog.String("remote", b.RemoteKey))

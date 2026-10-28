@@ -127,14 +127,16 @@ type mirrorApp struct {
 		Description localized `json:"description"`
 		Icon        string    `json:"icon"`
 	} `json:"vendor"`
-	Name          localized `json:"name"`
-	Description   localized `json:"description"`
-	Icon          string    `json:"icon"`
-	Instructions  localized `json:"instructions"`
-	AutoIndex     bool      `json:"auto_index"`
-	Channels      []string  `json:"channels"`
-	UpstreamChain []string  `json:"upstream_chain"`
-	Revision      string    `json:"revision"`
+	Name           localized `json:"name"`
+	Description    localized `json:"description"`
+	Icon           string    `json:"icon"`
+	Instructions   localized `json:"instructions"`
+	AutoIndex      bool      `json:"auto_index"`
+	Channels       []string  `json:"channels"`
+	DefaultChannel *string   `json:"default_channel"`
+	UpstreamChain  []string  `json:"upstream_chain"`
+	SourceEpoch    int64     `json:"source_epoch"`
+	Revision       string    `json:"revision"`
 }
 
 func (c client) mirror(ctx context.Context, key string) (mirrorApp, error) {

@@ -1245,8 +1245,8 @@ export interface paths {
         };
         /**
          * Read one page of the applications an upstream publishes.
-         * @description Reads the upstream's `listCatalog` and marks the applications this instance mirrors. JSON release
-         *     applications cannot be mirrored yet (`supported: false`).
+         * @description Reads the upstream's `listCatalog` and marks the applications this instance mirrors and those it cannot
+         *     mirror (`supported: false`).
          */
         get: operations["listUpstreamCatalog"];
         put?: never;
@@ -1275,7 +1275,9 @@ export interface paths {
          *     created; the vendor is created from the upstream's vendor when it does not exist. With `revision` the existing
          *     application `vendor/app` of the same provider is adopted: it keeps its local settings, its display follows the
          *     upstream and its source becomes the upstream application (a new source epoch). Hosted applications are mirrored
-         *     as HTTP cache applications. The name, description, icon, usage instructions and `auto_index` follow the upstream
+         *     as HTTP cache applications. A JSON release mirror reads the upstream's `getReleaseDownloads` for each of its
+         *     channels with a fixed query and downloads every artifact from the upstream; its `json_release` belongs to the
+         *     upstream, so it has no prewarm selection of its own. The name, description, icon, usage instructions and `auto_index` follow the upstream
          *     unless overridden per field in the configuration; the source cannot be overridden. An upstream chain that contains
          *     this instance is refused with `508 LOOP_DETECTED`.
          */
@@ -3177,8 +3179,12 @@ export interface components {
             auto_index: boolean;
             /** @description Release channels (release providers); empty otherwise. */
             channels: string[];
+            /** @description Channel that `latest` names (JSON releases), or `null`. */
+            default_channel: string | null;
             /** @description Instance IDs the content passes through before this instance, nearest first. */
             upstream_chain: string[];
+            /** @description The application's current source epoch; a JSON release mirror starts a new epoch when it changes. */
+            source_epoch: number;
             revision: string;
         };
         /** @description Directory listing of a `hosted` or `http-cache` application with `auto_index`. */
