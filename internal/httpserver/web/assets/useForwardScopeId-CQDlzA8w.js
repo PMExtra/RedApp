@@ -1,0 +1,1 @@
+import{En as e}from"./ui-D719Augw.js";function t(){let t=e()?.vnode?.scopeId;return t?{[t]:``}:{}}export{t};

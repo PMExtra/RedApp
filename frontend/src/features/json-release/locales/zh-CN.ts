@@ -5,6 +5,8 @@ export default {
     applyPrewarm: "使用选定的预热 key",
     prewarmHint: "选择使用稳定安装包 key。保存配置后生效；空选择关闭该渠道的预热。",
 
+    mirrored:
+      "此配置由上游 RedApp 提供：镜像从上游读取版本信息并下载文件。如需编辑，请先停止镜像。",
     title: "JSON 发布发现",
     config: "请求与查询配置（JSON）",
     trust:

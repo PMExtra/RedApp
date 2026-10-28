@@ -4,7 +4,9 @@ import { Plus, Trash2 } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import {
   FieldReset,
+  isUpstreamRef,
   OverlayFormActions,
+  templateLink,
   useAppConfiguration,
   useAppConfigurationPatch,
   useOverlayDraft,
@@ -62,7 +64,7 @@ const save = useAppConfigurationPatch(
   configuration.data,
 );
 const submitted = ref(false);
-const linked = computed(() => (configuration.data.value?.template_ref ?? null) !== null);
+const link = computed(() => templateLink(configuration.data.value, "http_policy"));
 const fields = computed(() => configuration.data.value?.fields ?? {});
 const busy = computed(() => save.isPending.value);
 useDirtyGuard(overlay.dirty);
@@ -162,7 +164,13 @@ async function reload() {
       @retry="configuration.refetch()"
     >
       <form v-if="draft" class="flex flex-col gap-6" novalidate @submit.prevent="submit">
-        <Alert v-if="configuration.data.value?.template_missing" tone="warning">
+        <Alert
+          v-if="
+            configuration.data.value?.template_missing &&
+            !isUpstreamRef(configuration.data.value?.template_ref)
+          "
+          tone="warning"
+        >
           {{ t("cachePolicy.templateMissing") }}
         </Alert>
         <RevisionConflictAlert v-if="save.hasConflict.value" @reload="reload" />
@@ -181,7 +189,7 @@ async function reload() {
                   {{ t("cachePolicy.staleFallback") }}
                 </label>
                 <FieldReset
-                  :linked="linked"
+                  v-bind="link"
                   :origin="fields['http_policy.stale_fallback']"
                   :modified="overlay.modified('http_policy.stale_fallback')"
                   @reset="overlay.restore('http_policy.stale_fallback')"
@@ -202,7 +210,7 @@ async function reload() {
                 <p class="text-xs text-muted">{{ t("cachePolicy.rules.hint") }}</p>
               </div>
               <FieldReset
-                :linked="linked"
+                v-bind="link"
                 :origin="fields['http_policy.rules']"
                 :modified="overlay.modified('http_policy.rules')"
                 @reset="overlay.restore('http_policy.rules')"
@@ -273,7 +281,7 @@ async function reload() {
                 <p class="text-xs text-muted">{{ t("cachePolicy.cleanup.hint") }}</p>
               </div>
               <FieldReset
-                :linked="linked"
+                v-bind="link"
                 :origin="fields['http_policy.auto_cleanup']"
                 :modified="overlay.modified('http_policy.auto_cleanup')"
                 @reset="overlay.restore('http_policy.auto_cleanup')"

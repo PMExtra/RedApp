@@ -13,10 +13,14 @@ import type { ResetBinding } from "./types";
  * Upstream fields of a vee-validate form, by provider: `http-cache` has an
  * ordered list of source URLs, a selection strategy and the default TTL;
  * release providers have one base URL; `info` and `hosted` have none.
+ * `sourceLocked` (mirrored applications) keeps the URLs and the strategy
+ * read-only: the upstream provides them.
  */
 const props = defineProps<{
   provider: ProviderKey;
   disabled?: boolean;
+  /** The source comes from an upstream RedApp; only the freshness stays editable. */
+  sourceLocked?: boolean;
   /** FieldReset props per path (overlay editing); omit when creating. */
   resetBinding?: (path: string) => ResetBinding;
 }>();
@@ -25,6 +29,7 @@ const { t } = useI18n();
 
 const httpCache = computed(() => props.provider === "http-cache");
 const release = computed(() => isReleaseProvider(props.provider));
+const sourceDisabled = computed(() => props.disabled || props.sourceLocked);
 const strategies = computed(() => [
   { value: "ordered", label: t("directory.source.strategies.ordered") },
   { value: "round_robin", label: t("directory.source.strategies.round_robin") },
@@ -34,8 +39,8 @@ const strategies = computed(() => [
 
 <template>
   <div v-if="httpCache" class="flex flex-col gap-5">
-    <SourceUrlList :disabled="disabled">
-      <template v-if="resetBinding" #reset>
+    <SourceUrlList :disabled="sourceDisabled">
+      <template v-if="resetBinding && !sourceLocked" #reset>
         <FieldReset
           v-bind="resetBinding('base_urls')"
           :disabled="disabled"
@@ -49,7 +54,7 @@ const strategies = computed(() => [
       :label="t('directory.source.strategy')"
       :description="t('directory.source.strategyHint')"
     >
-      <template v-if="resetBinding" #label-end>
+      <template v-if="resetBinding && !sourceLocked" #label-end>
         <FieldReset
           v-bind="resetBinding('source_strategy')"
           :disabled="disabled"
@@ -61,7 +66,7 @@ const strategies = computed(() => [
           v-bind="field"
           :options="strategies"
           orientation="horizontal"
-          :disabled="disabled"
+          :disabled="sourceDisabled"
         />
       </template>
     </FormField>
@@ -101,7 +106,7 @@ const strategies = computed(() => [
     :description="t('directory.source.baseUrlHint')"
     required
   >
-    <template v-if="resetBinding" #label-end>
+    <template v-if="resetBinding && !sourceLocked" #label-end>
       <FieldReset
         v-bind="resetBinding('base_url')"
         :disabled="disabled"
@@ -116,7 +121,7 @@ const strategies = computed(() => [
         spellcheck="false"
         autocomplete="off"
         maxlength="4096"
-        :disabled="disabled"
+        :disabled="sourceDisabled"
       />
     </template>
   </FormField>

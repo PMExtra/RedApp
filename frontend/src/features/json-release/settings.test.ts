@@ -86,6 +86,22 @@ describe("JSON release settings", () => {
     expect(revision).toBe('"9"');
     expect(saved?.set?.json_release?.channels).toEqual(config.channels);
   });
+  it("shows a mirror's configuration read-only", async () => {
+    useHandlers(
+      mockApi("get", "/admin/api/apps/{vendor}/{app}/configuration", () => ({
+        ...configuration(),
+        template_ref: "upstream:ffeeddccbbaa99887766554433221100",
+      })),
+    );
+    await renderAppPage(JSONReleaseSection, { props: { vendor: "mirror", app: "feed" } });
+    const editor = await screen.findByRole("textbox", {
+      name: "Request and query configuration (JSON)",
+    });
+    expect(editor).toHaveAttribute("readonly");
+    expect(screen.getByText(/The upstream RedApp provides this configuration/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Preview" })).toBeEnabled();
+  });
   it("rejects invalid JSON locally without claiming preview isolation", async () => {
     useHandlers(
       mockApi("get", "/admin/api/apps/{vendor}/{app}/configuration", () => configuration()),

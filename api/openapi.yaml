@@ -127,8 +127,8 @@ tags:
 x-spa-routes:
   description: |
     Paths that return the SPA document (`200 text/html`). Any other `/admin/...` path returns the SPA
-    document with status 404. Vendor and application segments must exist (not necessarily enabled) for
-    admin routes; public `/<vendor>` and `/<vendor>/<app>` routes require the vendor and application to be
+    document with status 404. Upstream, vendor and application segments must exist (vendors and applications
+    not necessarily enabled) for admin routes; public `/<vendor>` and `/<vendor>/<app>` routes require the vendor and application to be
     published, otherwise they return `index.html` with status 404 so that the SPA shows its not-found page.
     Tab availability follows provider capabilities: `files` only for `hosted`; `cache` and `metrics` for
     `http-cache`, `codex`, `claude-code`; `versions` and its per-version page `versions/{version}` for `codex`, `claude-code` (the version
@@ -156,6 +156,8 @@ x-spa-routes:
     - /admin/vendors
     - /admin/vendors/new
     - /admin/categories
+    - /admin/upstreams
+    - /admin/upstreams/{upstream}
     - /admin/vendors/{vendor}
     - /admin/vendors/{vendor}/settings
     - /admin/vendors/{vendor}/apps

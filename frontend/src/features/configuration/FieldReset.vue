@@ -6,7 +6,7 @@ import type { Schema } from "@/shared/api";
 import { IconButton } from "@/shared/ui";
 
 /**
- * "Restore template value" at the end of an overlay field's label row
+ * "Restore template value" ("follow the upstream" for mirrored applications) at the end of an overlay field's label row
  * (Field's `label-end` slot); it fits the fixed 24px row. Visible only for
  * template-linked entities when the field is overridden (`custom`) or edited.
  * The caller restores the draft and adds the path to `unset` when it was custom.
@@ -14,6 +14,8 @@ import { IconButton } from "@/shared/ui";
 const props = defineProps<{
   /** `configuration.template_ref !== null`. */
   linked: boolean;
+  /** The template is the upstream of a mirrored application (`isUpstreamRef`). */
+  upstream?: boolean;
   origin?: Schema<"FieldOrigin">;
   /** The draft differs from the saved value. */
   modified?: boolean;
@@ -29,11 +31,16 @@ const visible = computed(
     props.origin?.resettable !== false &&
     (props.modified || props.origin?.source === "custom"),
 );
-const label = computed(() =>
-  props.templateValue
+const label = computed(() => {
+  if (props.upstream) {
+    return props.templateValue
+      ? t("configuration.followUpstreamValue", { value: props.templateValue })
+      : t("configuration.followUpstream");
+  }
+  return props.templateValue
     ? t("configuration.resetTo", { value: props.templateValue })
-    : t("configuration.reset"),
-);
+    : t("configuration.reset");
+});
 </script>
 
 <template>

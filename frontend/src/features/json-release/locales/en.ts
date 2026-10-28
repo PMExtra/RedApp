@@ -7,6 +7,8 @@ export default {
       "Selection uses stable package keys. Save the configuration to apply it; an empty selection disables prewarm for this channel.",
 
     title: "JSON release discovery",
+    mirrored:
+      "The upstream RedApp provides this configuration: a mirror reads the releases and downloads from the upstream. Stop mirroring to edit it.",
     config: "Request and query configuration (JSON)",
     trust:
       "Queries are trusted administrator configuration, not a sandbox. Intermediate memory is not hard-limited. Preview fetches metadata and checksum sidecars only.",

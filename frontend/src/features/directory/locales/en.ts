@@ -116,6 +116,8 @@ export default {
       baseUrlHint: "The provider's default upstream. Replace it to use a mirror.",
       epochHint:
         "Changing the upstream starts a new source epoch: new requests only use the new source; old cached files stay until cleaned up.",
+      mirrorHint:
+        "The upstream RedApp provides the source of this mirrored application; stop mirroring to change it.",
     },
     inactive: {
       title: "Enable the application first",

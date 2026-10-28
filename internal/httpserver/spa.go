@@ -34,6 +34,8 @@ var adminSPARoutes = []string{
 	"/admin/vendors",
 	"/admin/vendors/new",
 	"/admin/categories",
+	"/admin/upstreams",
+	"/admin/upstreams/{upstream}",
 	"/admin/vendors/{vendor}",
 	"/admin/vendors/{vendor}/settings",
 	"/admin/vendors/{vendor}/apps",
@@ -102,9 +104,10 @@ func (s *Server) redirectAdmin(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusTemporaryRedirect)
 }
 
-// getAdminPage serves a registered admin SPA route. Vendor and application
-// segments must exist (enabled or not) and tabs must match the provider's
-// capabilities; otherwise the document is served with 404.
+// getAdminPage serves a registered admin SPA route. Upstream, vendor and
+// application segments must exist (vendors and applications enabled or not)
+// and tabs must match the provider's capabilities; otherwise the document is
+// served with 404.
 func (s *Server) getAdminPage(w http.ResponseWriter, r *http.Request) {
 	if e := spaQueryValid(r); e != nil {
 		s.writeError(w, r, e)
@@ -118,6 +121,13 @@ func (s *Server) getAdminPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminRouteExists(r *http.Request) bool {
+	if uid := r.PathValue("upstream"); uid != "" {
+		if !identity.ValidUID(uid) {
+			return false
+		}
+		_, err := s.store.Upstream(uid)
+		return err == nil
+	}
 	vendor, app := r.PathValue("vendor"), r.PathValue("app")
 	if vendor == "" {
 		return true

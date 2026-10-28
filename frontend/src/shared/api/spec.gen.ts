@@ -13,6 +13,8 @@ export const spaRoutes = [
   "/admin/vendors",
   "/admin/vendors/new",
   "/admin/categories",
+  "/admin/upstreams",
+  "/admin/upstreams/{upstream}",
   "/admin/vendors/{vendor}",
   "/admin/vendors/{vendor}/settings",
   "/admin/vendors/{vendor}/apps",

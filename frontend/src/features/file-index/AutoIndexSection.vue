@@ -3,6 +3,8 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   FieldReset,
+  isUpstreamRef,
+  templateLink,
   OverlayFormActions,
   useAppConfiguration,
   useAppConfigurationPatch,
@@ -60,7 +62,13 @@ async function reload() {
       @retry="configuration.refetch()"
     >
       <form v-if="draft" class="flex flex-col gap-4" novalidate @submit.prevent="submit">
-        <Alert v-if="configuration.data.value?.template_missing" tone="warning">
+        <Alert
+          v-if="
+            configuration.data.value?.template_missing &&
+            !isUpstreamRef(configuration.data.value?.template_ref)
+          "
+          tone="warning"
+        >
           {{ t("fileIndex.templateMissing") }}
         </Alert>
         <RevisionConflictAlert v-if="save.hasConflict.value" @reload="reload" />
@@ -77,7 +85,7 @@ async function reload() {
                 {{ t("fileIndex.label") }}
               </label>
               <FieldReset
-                :linked="(configuration.data.value?.template_ref ?? null) !== null"
+                v-bind="templateLink(configuration.data.value, 'auto_index')"
                 :origin="configuration.data.value?.fields.auto_index"
                 :modified="overlay.modified('auto_index')"
                 @reset="overlay.restore('auto_index')"

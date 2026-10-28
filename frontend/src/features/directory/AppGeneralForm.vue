@@ -4,6 +4,7 @@ import { useI18n } from "vue-i18n";
 import { z } from "zod";
 import {
   FieldReset,
+  isUpstreamRef,
   OverlaySectionCard,
   TemplateMissingAlert,
   useAppConfiguration,
@@ -61,6 +62,12 @@ const configuration = useAppConfiguration(vendor, appId);
 const data = computed(() => configuration.data.value);
 const reloading = computed(() => configuration.isFetching.value);
 const readOnly = computed(() => props.app.deleted_at !== null);
+// A mirrored application's source belongs to its upstream binding.
+const mirrored = computed(() => isUpstreamRef(data.value?.template_ref));
+// Release providers have nothing but the source in this card.
+const sourceReadOnly = computed(
+  () => readOnly.value || (mirrored.value && provider !== "http-cache"),
+);
 // One mutation per card: saving and conflicts stay per card.
 const detailsSave = useAppConfigurationPatch(vendor, appId, configuration.data);
 const sourceSave = useAppConfigurationPatch(vendor, appId, configuration.data);
@@ -82,7 +89,7 @@ const providerName = computed(() => {
     @retry="configuration.refetch()"
   >
     <div class="flex flex-col gap-6">
-      <TemplateMissingAlert :missing="data?.template_missing" />
+      <TemplateMissingAlert :missing="data?.template_missing" :upstream="mirrored" />
 
       <OverlaySectionCard
         v-slot="{ section }"
@@ -99,13 +106,16 @@ const providerName = computed(() => {
           <dd class="font-mono">{{ app.key }}</dd>
           <dt class="text-muted">{{ t("directory.fields.provider") }}</dt>
           <dd>{{ providerName }}</dd>
-          <template v-if="data?.template_provider">
+          <template v-if="data?.template_provider && !mirrored">
             <dt class="text-muted">{{ t("configuration.templateProvider") }}</dt>
             <dd>{{ data.template_provider }}</dd>
           </template>
         </dl>
         <p class="text-xs text-muted">{{ t("directory.fields.fixedAfterCreate") }}</p>
-        <p v-if="section.linked.value" class="text-sm text-muted">
+        <p v-if="mirrored" class="text-sm text-muted">
+          {{ t("configuration.upstreamHint") }}
+        </p>
+        <p v-else-if="section.linked.value" class="text-sm text-muted">
           {{ t("configuration.linkedHint") }}
         </p>
         <LocalizedTextFields
@@ -136,17 +146,18 @@ const providerName = computed(() => {
         v-if="SOURCE_PATHS.length > 0"
         v-slot="{ section }"
         :title="t('directory.sections.source')"
-        :description="t('directory.source.epochHint')"
+        :description="t(mirrored ? 'directory.source.mirrorHint' : 'directory.source.epochHint')"
         :configuration="data"
         :reloading="reloading"
         :paths="SOURCE_PATHS"
         :schema="sourceSchema"
         :save="sourceSave"
-        :read-only="readOnly"
+        :read-only="sourceReadOnly"
       >
         <SourceFields
           :provider="provider"
-          :disabled="readOnly"
+          :disabled="sourceReadOnly"
+          :source-locked="mirrored"
           :reset-binding="section.resetBinding"
           @reset="section.reset"
         />

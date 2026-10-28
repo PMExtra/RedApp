@@ -12,6 +12,7 @@ export default {
       directory: "Directory",
       vendors: "Vendors and applications",
       categories: "Categories",
+      upstreams: "Upstreams",
       settings: "Settings",
       site: "Site",
       proxy: "Upstream proxy",
@@ -27,6 +28,8 @@ export default {
       appNew: "New application",
       app: "Application",
       categories: "Categories",
+      upstreams: "Upstreams",
+      upstream: "Upstream",
       notFound: "Page not found",
     },
     tabs: {

@@ -1,0 +1,1 @@
+import{Yn as e,or as t,rr as n}from"./ui-D719Augw.js";function r(r,i){let a=t(r.value),o;return e(r,e=>{clearTimeout(o),o=setTimeout(()=>{a.value=e},i)}),n(()=>clearTimeout(o)),a}export{r as t};
