@@ -129,7 +129,7 @@ func TestDownloadCountersCSRFAndPasswordChange(t *testing.T) {
 	if served != 1 {
 		t.Fatal("artifact fetched more than once or HEAD downloaded", served)
 	}
-	counters, _ := h.store.Counters()
+	counters := settled(h.store.Counters, func(c map[string]int64) bool { return c["downstream_bytes"] == int64(2*len(data)) })
 	if counters["artifact_requests"] != 2 || counters["miss_requests"] != 1 || counters["cache_hit_requests"] != 1 || counters["downstream_bytes"] != int64(2*len(data)) {
 		t.Fatal(counters)
 	}
@@ -195,6 +195,7 @@ func TestReleaseArtifactRangesAndValidators(t *testing.T) {
 	}
 	// The miss, the range to the end, the If-Range miss and the multi-range
 	// request reached the end of the file; bytes=3-10 did not.
+	counters = settled(h.store.Counters, func(c map[string]int64) bool { return c["download_success"] >= 4 })
 	if counters["download_success"] != 4 || counters["download_errors"] != 0 || counters["downstream_bytes"] != int64(3*len(data)+8+len(data[9:])) {
 		t.Fatal(counters)
 	}
