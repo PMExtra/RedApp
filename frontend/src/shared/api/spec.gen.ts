@@ -255,6 +255,22 @@ export const errorCatalog = {
     "status": 502,
     "retryable": true
   },
+  "UPSTREAM_NOT_FOUND": {
+    "status": 404,
+    "retryable": false
+  },
+  "MIRROR_NOT_FOUND": {
+    "status": 404,
+    "retryable": false
+  },
+  "UPSTREAM_IN_USE": {
+    "status": 409,
+    "retryable": false
+  },
+  "UPSTREAM_INCOMPATIBLE": {
+    "status": 502,
+    "retryable": false
+  },
   "LOOP_DETECTED": {
     "status": 508,
     "retryable": false

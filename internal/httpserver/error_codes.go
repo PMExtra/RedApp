@@ -61,6 +61,10 @@ const (
 	codeUpstreamUnavailable       errorCode = "UPSTREAM_UNAVAILABLE"
 	codeIndexUnsupported          errorCode = "INDEX_UNSUPPORTED"
 	codeLoopDetected              errorCode = "LOOP_DETECTED"
+	codeUpstreamNotFound          errorCode = "UPSTREAM_NOT_FOUND"
+	codeMirrorNotFound            errorCode = "MIRROR_NOT_FOUND"
+	codeUpstreamInUse             errorCode = "UPSTREAM_IN_USE"
+	codeUpstreamIncompatible      errorCode = "UPSTREAM_INCOMPATIBLE"
 	codeMetadataUntrusted         errorCode = "METADATA_UNTRUSTED"
 	codeChannelsUnverified        errorCode = "CHANNELS_UNVERIFIED"
 	codeImportSourceFailed        errorCode = "IMPORT_SOURCE_FAILED"
@@ -136,6 +140,10 @@ var errorCatalog = map[errorCode]errorClass{
 	codeUpstreamUnavailable:       {502, true},
 	codeIndexUnsupported:          {502, false},
 	codeLoopDetected:              {508, false},
+	codeUpstreamNotFound:          {404, false},
+	codeMirrorNotFound:            {404, false},
+	codeUpstreamInUse:             {409, false},
+	codeUpstreamIncompatible:      {502, false},
 	codeMetadataUntrusted:         {502, false},
 	codeChannelsUnverified:        {502, true},
 	codeImportSourceFailed:        {502, true},

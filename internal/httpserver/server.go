@@ -25,6 +25,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/prewarm"
 	"github.com/PMExtra/RedApp/internal/releasemaintenance"
 	"github.com/PMExtra/RedApp/internal/store"
+	"github.com/PMExtra/RedApp/internal/upstream"
 )
 
 //go:embed web/*
@@ -49,6 +50,7 @@ type Deps struct {
 	PublicSettings *config.PublicSettings
 	Prewarmer      *prewarm.Service
 	Maintenance    *releasemaintenance.Service
+	Upstreams      *upstream.Service
 	DataDir        string
 	Started        time.Time    // process start; zero means now
 	Logger         *slog.Logger // nil discards the logs
@@ -102,6 +104,7 @@ type Server struct {
 	public      *config.PublicSettings
 	prewarmer   *prewarm.Service
 	maintenance *releasemaintenance.Service
+	upstreams   *upstream.Service
 	dataDir     string
 	started     time.Time
 	log         *slog.Logger
@@ -131,7 +134,7 @@ func New(deps Deps, options ...Option) (*Server, error) {
 		"Downloads": deps.Downloads != nil, "HTTPCache": deps.HTTPCache != nil, "Hosted": deps.Hosted != nil,
 		"Auth": deps.Auth != nil, "Pool": deps.Pool != nil, "Icons": deps.Icons != nil,
 		"History": deps.History != nil, "PublicSettings": deps.PublicSettings != nil,
-		"Prewarmer": deps.Prewarmer != nil, "Maintenance": deps.Maintenance != nil, "DataDir": deps.DataDir != "",
+		"Prewarmer": deps.Prewarmer != nil, "Maintenance": deps.Maintenance != nil, "Upstreams": deps.Upstreams != nil, "DataDir": deps.DataDir != "",
 	} {
 		if !present {
 			missing = append(missing, name)
@@ -145,7 +148,7 @@ func New(deps Deps, options ...Option) (*Server, error) {
 		version: deps.Version, store: deps.Store, registry: deps.Registry, catalog: deps.Catalog,
 		downloads: deps.Downloads, httpCache: deps.HTTPCache, hosted: deps.Hosted, auth: deps.Auth,
 		proxies: deps.TrustedProxies, pool: deps.Pool, icons: deps.Icons, history: deps.History,
-		public: deps.PublicSettings, prewarmer: deps.Prewarmer, maintenance: deps.Maintenance,
+		public: deps.PublicSettings, prewarmer: deps.Prewarmer, maintenance: deps.Maintenance, upstreams: deps.Upstreams,
 		dataDir: deps.DataDir, started: deps.Started, log: deps.Logger,
 		deleteWait: 15 * time.Second, now: time.Now,
 	}

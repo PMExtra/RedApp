@@ -295,6 +295,8 @@ type Request struct {
 	IdleTimeout time.Duration
 	// directory keeps every redirect hop inside the configured root (Index).
 	directory bool
+	// query allows the query string that GetAPI built itself.
+	query bool
 }
 
 func (c *Client) Get(ctx context.Context, source string, headers http.Header) (*http.Response, error) {
@@ -316,7 +318,13 @@ func (c *Client) Send(ctx context.Context, req Request) (*http.Response, error) 
 		// The parse error quotes the raw URL; keep it out of logs and events.
 		return nil, errors.New("invalid upstream URL")
 	}
-	if err = c.Validate(u); err != nil {
+	checked := u
+	if req.query {
+		withoutQuery := *u
+		withoutQuery.RawQuery = ""
+		checked = &withoutQuery
+	}
+	if err = c.Validate(checked); err != nil {
 		return nil, err
 	}
 	// There is no overall client deadline: the returned body owns this

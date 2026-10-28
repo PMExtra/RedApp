@@ -105,7 +105,8 @@ func (w *configSet) canReset(kind string, c ownedConfig, path string) (bool, err
 }
 
 func (w *configSet) distributionKey(a *appEntry) (string, error) {
-	if a.config.Ref != nil {
+	// A mirrored application uses the reviewed contract of its provider.
+	if a.config.Ref != nil && !isUpstreamRef(a.config.Ref) {
 		t, err := w.template("App", *a.config.Ref)
 		if err != nil {
 			return "", err

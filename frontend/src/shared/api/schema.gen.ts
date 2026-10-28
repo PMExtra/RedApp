@@ -1184,6 +1184,162 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/api/upstreams": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the upstream RedApp instances this instance mirrors applications from. */
+        get: operations["listUpstreams"];
+        put?: never;
+        /**
+         * Verify and add an upstream RedApp instance.
+         * @description RedApp reads `/api/instance` at the address (with the global proxy) and records the identity it reports.
+         *     The address is `http(s)://host[:port]`; RedApp serves from the root of its host. The local instance itself is
+         *     refused with `508 LOOP_DETECTED`.
+         */
+        post: operations["createUpstream"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/upstreams/{upstream}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Upstream UID. */
+                upstream: string;
+            };
+            cookie?: never;
+        };
+        /** Read one upstream. */
+        get: operations["getUpstream"];
+        put?: never;
+        post?: never;
+        /** Delete an upstream that no application mirrors. */
+        delete: operations["deleteUpstream"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename an upstream or move it to another address.
+         * @description A new address is verified like a new upstream and becomes the source of every application mirrored from
+         *     the upstream, starting a new source epoch for each.
+         */
+        patch: operations["updateUpstream"];
+        trace?: never;
+    };
+    "/admin/api/upstreams/{upstream}/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Upstream UID. */
+                upstream: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Read one page of the applications an upstream publishes.
+         * @description Reads the upstream's `listCatalog` and marks the applications this instance mirrors. JSON release
+         *     applications cannot be mirrored yet (`supported: false`).
+         */
+        get: operations["listUpstreamCatalog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/upstreams/{upstream}/mirrors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Upstream UID. */
+                upstream: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mirror an upstream application as a local application.
+         * @description Reads the upstream application's `getMirrorApp`. Without `revision` a new application `vendor/app` is
+         *     created; the vendor is created from the upstream's vendor when it does not exist. With `revision` the existing
+         *     application `vendor/app` of the same provider is adopted: it keeps its local settings, its display follows the
+         *     upstream and its source becomes the upstream application (a new source epoch). Hosted applications are mirrored
+         *     as HTTP cache applications. The name, description, icon, usage instructions and `auto_index` follow the upstream
+         *     unless overridden per field in the configuration; the source cannot be overridden. An upstream chain that contains
+         *     this instance is refused with `508 LOOP_DETECTED`.
+         */
+        post: operations["createMirror"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/apps/{vendor}/{app}/mirror": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Vendor ID. */
+                vendor: components["parameters"]["Vendor"];
+                /** @description Application ID within the vendor. */
+                app: components["parameters"]["App"];
+            };
+            cookie?: never;
+        };
+        /** Read the mirror state of an application. */
+        get: operations["getAppMirror"];
+        put?: never;
+        post?: never;
+        /**
+         * Turn a mirrored application into an ordinary one.
+         * @description The application keeps its current values, including its source, and stops following the upstream. An
+         *     application with a built-in template is linked to it again, with every current value kept as an override.
+         */
+        delete: operations["deleteAppMirror"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/apps/{vendor}/{app}/mirror/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Vendor ID. */
+                vendor: components["parameters"]["Vendor"];
+                /** @description Application ID within the vendor. */
+                app: components["parameters"]["App"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check the upstream application now.
+         * @description Checks run automatically every 15 minutes. An upstream failure is recorded in `error`, not returned as an
+         *     error: the application keeps its last values. An application the upstream no longer publishes is marked
+         *     unavailable (its template is reported missing) and keeps its last values.
+         */
+        post: operations["syncAppMirror"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/api/categories": {
         parameters: {
             query?: never;
@@ -2214,7 +2370,7 @@ export interface components {
          * @description Stable error code; see `components.x-error-codes`.
          * @enum {string}
          */
-        ErrorCode: "INVALID_REQUEST" | "VALIDATION_FAILED" | "INVALID_QUERY" | "INVALID_CURSOR" | "INVALID_PATH" | "REQUEST_ORIGIN_INVALID" | "IF_MATCH_REQUIRED" | "CURRENT_PASSWORD_INCORRECT" | "PASSWORD_INVALID" | "PROXY_REDACTED_MISMATCH" | "ICON_INVALID" | "PACKAGE_INVALID" | "INSTRUCTIONS_TRUST_REQUIRED" | "AUTH_REQUIRED" | "LOGIN_FAILED" | "ORIGIN_REJECTED" | "CSRF_REJECTED" | "NOT_FOUND" | "VENDOR_NOT_FOUND" | "APPLICATION_NOT_FOUND" | "CATEGORY_NOT_FOUND" | "FILE_NOT_FOUND" | "SOURCE_NOT_FOUND" | "PREVIEW_NOT_FOUND" | "JOB_NOT_FOUND" | "TRANSFER_NOT_FOUND" | "CACHE_ENTRY_NOT_FOUND" | "CAPABILITY_UNSUPPORTED" | "METHOD_NOT_ALLOWED" | "REVISION_CONFLICT" | "ALREADY_EXISTS" | "VENDOR_NOT_EMPTY" | "BUILTIN_PROTECTED" | "ENTITY_DELETED" | "APPLICATION_DISABLED" | "APPLICATION_DELETE_PENDING" | "CATEGORY_AMBIGUOUS" | "FILE_CONFLICT" | "TRANSFER_ID_IN_USE" | "TRANSFER_CANCELLED" | "PREVIEW_STALE" | "OPERATION_IN_PROGRESS" | "SOURCE_CHANGED" | "IMPORT_NOT_READY" | "PREWARM_BUSY" | "PREWARM_REQUEST_CONFLICT" | "ARTIFACT_TOO_LARGE" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "LOGIN_RATE_LIMITED" | "PREVIEW_LIMIT_EXCEEDED" | "INTERNAL_ERROR" | "UPSTREAM_UNAVAILABLE" | "INDEX_UNSUPPORTED" | "LOOP_DETECTED" | "METADATA_UNTRUSTED" | "CHANNELS_UNVERIFIED" | "IMPORT_SOURCE_FAILED" | "STORAGE_UNAVAILABLE" | "NOT_READY" | "SESSION_LIMIT_EXCEEDED" | "TRANSFER_CAPACITY" | "CACHE_CONTENDED" | "PREVIEW_BUSY" | "INSTALLER_UNAVAILABLE" | "CACHE_MISS";
+        ErrorCode: "INVALID_REQUEST" | "VALIDATION_FAILED" | "INVALID_QUERY" | "INVALID_CURSOR" | "INVALID_PATH" | "REQUEST_ORIGIN_INVALID" | "IF_MATCH_REQUIRED" | "CURRENT_PASSWORD_INCORRECT" | "PASSWORD_INVALID" | "PROXY_REDACTED_MISMATCH" | "ICON_INVALID" | "PACKAGE_INVALID" | "INSTRUCTIONS_TRUST_REQUIRED" | "AUTH_REQUIRED" | "LOGIN_FAILED" | "ORIGIN_REJECTED" | "CSRF_REJECTED" | "NOT_FOUND" | "VENDOR_NOT_FOUND" | "APPLICATION_NOT_FOUND" | "CATEGORY_NOT_FOUND" | "FILE_NOT_FOUND" | "SOURCE_NOT_FOUND" | "PREVIEW_NOT_FOUND" | "JOB_NOT_FOUND" | "TRANSFER_NOT_FOUND" | "CACHE_ENTRY_NOT_FOUND" | "CAPABILITY_UNSUPPORTED" | "METHOD_NOT_ALLOWED" | "REVISION_CONFLICT" | "ALREADY_EXISTS" | "VENDOR_NOT_EMPTY" | "BUILTIN_PROTECTED" | "ENTITY_DELETED" | "APPLICATION_DISABLED" | "APPLICATION_DELETE_PENDING" | "CATEGORY_AMBIGUOUS" | "FILE_CONFLICT" | "TRANSFER_ID_IN_USE" | "TRANSFER_CANCELLED" | "PREVIEW_STALE" | "OPERATION_IN_PROGRESS" | "SOURCE_CHANGED" | "IMPORT_NOT_READY" | "PREWARM_BUSY" | "PREWARM_REQUEST_CONFLICT" | "ARTIFACT_TOO_LARGE" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "LOGIN_RATE_LIMITED" | "PREVIEW_LIMIT_EXCEEDED" | "INTERNAL_ERROR" | "UPSTREAM_UNAVAILABLE" | "INDEX_UNSUPPORTED" | "LOOP_DETECTED" | "UPSTREAM_NOT_FOUND" | "MIRROR_NOT_FOUND" | "UPSTREAM_IN_USE" | "UPSTREAM_INCOMPATIBLE" | "METADATA_UNTRUSTED" | "CHANNELS_UNVERIFIED" | "IMPORT_SOURCE_FAILED" | "STORAGE_UNAVAILABLE" | "NOT_READY" | "SESSION_LIMIT_EXCEEDED" | "TRANSFER_CAPACITY" | "CACHE_CONTENDED" | "PREVIEW_BUSY" | "INSTALLER_UNAVAILABLE" | "CACHE_MISS";
         /** @description 32 lowercase hex characters. */
         Uid: string;
         /**
@@ -2937,6 +3093,67 @@ export interface components {
             auto_index?: boolean;
             retention?: components["schemas"]["RetentionPolicy"];
             prewarm?: components["schemas"]["PrewarmPolicy"];
+        };
+        Upstream: {
+            uid: string;
+            name: string;
+            /** @description `http(s)://host[:port]`. */
+            origin: string;
+            /** @description Identity the upstream reported when its address was last verified. */
+            instance_id: string;
+            revision: number;
+            /** Format: date-time */
+            created_at: string;
+            /** @description Applications mirrored from the upstream. */
+            mirrors: number;
+        };
+        UpstreamList: {
+            items: components["schemas"]["Upstream"][];
+        };
+        UpstreamRequest: {
+            name: string;
+            origin: string;
+        };
+        UpstreamCatalogPage: {
+            items: {
+                key: components["schemas"]["AppKey"];
+                provider: string;
+                name: components["schemas"]["LocalizedText"];
+                description: components["schemas"]["LocalizedText"];
+                /** @description Icon path on the upstream. */
+                icon: string;
+                supported: boolean;
+                /** @description The local application mirroring it, or `null`. */
+                mirror: components["schemas"]["AppKey"] | null;
+            }[];
+            page: number;
+            limit: number;
+            total: number;
+            total_pages: number;
+        };
+        MirrorRequest: {
+            remote_key: components["schemas"]["AppKey"];
+            vendor: components["schemas"]["Slug"];
+            app: components["schemas"]["Slug"];
+            /** @description Adopt the existing application `vendor/app` at this revision. */
+            revision?: number;
+        };
+        AppMirror: {
+            upstream: components["schemas"]["Upstream"];
+            remote_key: components["schemas"]["AppKey"];
+            remote_revision: string;
+            upstream_chain: string[];
+            /** @description False once the upstream no longer publishes the application. */
+            available: boolean;
+            /**
+             * Format: date-time
+             * @description Last time the upstream values were read.
+             */
+            synced_at: string;
+            /** Format: date-time */
+            checked_at: string;
+            /** @description Error code of the last check, or `null` after a successful one. */
+            error: string | null;
         };
         Instance: {
             instance_id: string;
@@ -6286,6 +6503,356 @@ export interface operations {
             409: components["responses"]["Conflict"];
             413: components["responses"]["PayloadTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listUpstreams: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Upstreams by name. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpstreamList"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    createUpstream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpstreamRequest"];
+            };
+        };
+        responses: {
+            /** @description Added upstream. */
+            201: {
+                headers: {
+                    ETag: components["headers"]["ETag"];
+                    Location: components["headers"]["Location"];
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Upstream"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            500: components["responses"]["InternalError"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["ServiceUnavailable"];
+            508: components["responses"]["LoopDetected"];
+        };
+    };
+    getUpstream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Upstream UID. */
+                upstream: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The upstream. */
+            200: {
+                headers: {
+                    ETag: components["headers"]["ETag"];
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Upstream"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    deleteUpstream: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The `ETag` (quoted revision) the client last read. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Upstream UID. */
+                upstream: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    updateUpstream: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The `ETag` (quoted revision) the client last read. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Upstream UID. */
+                upstream: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpstreamRequest"];
+            };
+        };
+        responses: {
+            /** @description Saved upstream. */
+            200: {
+                headers: {
+                    ETag: components["headers"]["ETag"];
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Upstream"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            500: components["responses"]["InternalError"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["ServiceUnavailable"];
+            508: components["responses"]["LoopDetected"];
+        };
+    };
+    listUpstreamCatalog: {
+        parameters: {
+            query?: {
+                /** @description Search text, trimmed, at most 128 characters. */
+                q?: components["parameters"]["SearchQuery"];
+                /** @description 1-based page number. */
+                page?: components["parameters"]["Page"];
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit25"];
+            };
+            header?: never;
+            path: {
+                /** @description Upstream UID. */
+                upstream: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of upstream applications. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpstreamCatalogPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    createMirror: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Upstream UID. */
+                upstream: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MirrorRequest"];
+            };
+        };
+        responses: {
+            /** @description The mirrored application. */
+            201: {
+                headers: {
+                    ETag: components["headers"]["ETag"];
+                    Location: components["headers"]["Location"];
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["App"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            500: components["responses"]["InternalError"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["ServiceUnavailable"];
+            508: components["responses"]["LoopDetected"];
+        };
+    };
+    getAppMirror: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Vendor ID. */
+                vendor: components["parameters"]["Vendor"];
+                /** @description Application ID within the vendor. */
+                app: components["parameters"]["App"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Mirror state. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppMirror"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    deleteAppMirror: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The `ETag` (quoted revision) the client last read. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path: {
+                /** @description Vendor ID. */
+                vendor: components["parameters"]["Vendor"];
+                /** @description Application ID within the vendor. */
+                app: components["parameters"]["App"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The application. */
+            200: {
+                headers: {
+                    ETag: components["headers"]["ETag"];
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["App"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    syncAppMirror: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Vendor ID. */
+                vendor: components["parameters"]["Vendor"];
+                /** @description Application ID within the vendor. */
+                app: components["parameters"]["App"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Mirror state after the check. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppMirror"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
             500: components["responses"]["InternalError"];
             503: components["responses"]["ServiceUnavailable"];
         };

@@ -36,6 +36,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/store"
 	"github.com/PMExtra/RedApp/internal/store/storetest"
 	"github.com/PMExtra/RedApp/internal/testutil"
+	"github.com/PMExtra/RedApp/internal/upstream"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -200,6 +201,8 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 	prewarmer, err := prewarm.New(db, registry, catalogService, manager, httpCache, prewarm.WithLogger(logger))
 	must(err)
 	maintenance := &releasemaintenance.Service{DB: db, Registry: registry, Catalog: catalogService, Downloads: manager, AutomaticPrewarm: prewarmer.Automatic, Log: logger}
+	mirrors, err := upstream.New(db, pool, icons, upstream.WithLogger(logger))
+	must(err)
 	var frontend fs.FS = frontendFixture
 	if cfg.embeddedFrontend {
 		frontend = nil
@@ -208,7 +211,7 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 		Frontend: frontend,
 		Version:  "test", Store: db, Registry: registry, Catalog: catalogService, Downloads: manager,
 		HTTPCache: httpCache, Hosted: hostedFiles, Auth: a, TrustedProxies: cfg.proxies, Pool: pool, Icons: icons,
-		History: metricHistory, PublicSettings: public, Prewarmer: prewarmer, Maintenance: maintenance,
+		History: metricHistory, PublicSettings: public, Prewarmer: prewarmer, Maintenance: maintenance, Upstreams: mirrors,
 		DataDir: cfg.dir, Started: time.Now(), Logger: logger, MaxDownloadsPerClient: cfg.maxDownloadsPerClient,
 	}, cfg.options...)
 	must(err)

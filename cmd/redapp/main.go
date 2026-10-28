@@ -32,6 +32,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/prewarm"
 	"github.com/PMExtra/RedApp/internal/releasemaintenance"
 	"github.com/PMExtra/RedApp/internal/store"
+	mirrors "github.com/PMExtra/RedApp/internal/upstream"
 )
 
 var version = "dev"
@@ -250,10 +251,14 @@ func serve(c config.Deployment, logger *slog.Logger) error {
 	}
 	defer prewarmer.Close()
 	maintenance := &releasemaintenance.Service{DB: db, Registry: registry, Catalog: catalogService, Downloads: manager, AutomaticPrewarm: prewarmer.Automatic, Log: logger}
+	mirrorService, err := mirrors.New(db, upstream, icons, mirrors.WithLogger(logger))
+	if err != nil {
+		return err
+	}
 	handler, err := httpserver.New(httpserver.Deps{
 		Version: version, Store: db, Registry: registry, Catalog: catalogService, Downloads: manager,
 		HTTPCache: httpCache, Hosted: hostedFiles, Auth: a, TrustedProxies: proxies, Pool: upstream,
-		Icons: icons, History: metricHistory, PublicSettings: public, Prewarmer: prewarmer, Maintenance: maintenance,
+		Icons: icons, History: metricHistory, PublicSettings: public, Prewarmer: prewarmer, Maintenance: maintenance, Upstreams: mirrorService,
 		DataDir: guard.Directory, Started: time.Now().UTC(), Logger: logger, MaxDownloadsPerClient: c.DownloadLimits.MaxDownloadsPerClient,
 	})
 	if err != nil {
@@ -284,6 +289,10 @@ func serve(c config.Deployment, logger *slog.Logger) error {
 		httpCache.RunCleanup(cleanupCtx, registry)
 	}()
 	defer func() { cancelCleanup(); <-cleanupDone }()
+	mirrorCtx, cancelMirrors := context.WithCancel(ctx)
+	mirrorDone := make(chan struct{})
+	go func() { defer close(mirrorDone); mirrorService.Run(mirrorCtx, mirrors.SyncInterval) }()
+	defer func() { cancelMirrors(); <-mirrorDone }()
 	result := make(chan error, 1)
 	go func() { result <- server.ListenAndServe() }()
 	logger.Info("RedApp started", slog.String("version", version), slog.String("listen", c.Listen), slog.String("data_dir", guard.Directory))

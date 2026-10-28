@@ -122,6 +122,8 @@ tags:
     description: One-time prewarm tasks.
   - name: hosted
     description: Hosted file management.
+  - name: mirrors
+    description: Upstream RedApp instances and the applications mirrored from them.
 x-spa-routes:
   description: |
     Paths that return the SPA document (`200 text/html`). Any other `/admin/...` path returns the SPA
@@ -2793,6 +2795,438 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /admin/api/upstreams:
+    get:
+      operationId: listUpstreams
+      tags: [mirrors]
+      summary: List the upstream RedApp instances this instance mirrors applications from.
+      security:
+        - sessionCookie: []
+      x-error-codes: []
+      responses:
+        '200':
+          description: Upstreams by name.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      operationId: createUpstream
+      tags: [mirrors]
+      summary: Verify and add an upstream RedApp instance.
+      description: |
+        RedApp reads `/api/instance` at the address (with the global proxy) and records the identity it reports.
+        The address is `http(s)://host[:port]`; RedApp serves from the root of its host. The local instance itself is
+        refused with `508 LOOP_DETECTED`.
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      x-max-body-bytes: 8192
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpstreamRequest'
+      x-error-codes: [VALIDATION_FAILED, ALREADY_EXISTS, UPSTREAM_UNAVAILABLE, UPSTREAM_INCOMPATIBLE, LOOP_DETECTED]
+      responses:
+        '201':
+          description: Added upstream.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Location:
+              $ref: '#/components/headers/Location'
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Upstream'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '508':
+          $ref: '#/components/responses/LoopDetected'
+  /admin/api/upstreams/{upstream}:
+    parameters:
+      - name: upstream
+        in: path
+        required: true
+        description: Upstream UID.
+        schema:
+          type: string
+          pattern: '^[0-9a-f]{32}$'
+    get:
+      operationId: getUpstream
+      tags: [mirrors]
+      summary: Read one upstream.
+      security:
+        - sessionCookie: []
+      x-error-codes: [UPSTREAM_NOT_FOUND]
+      responses:
+        '200':
+          description: The upstream.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Upstream'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    patch:
+      operationId: updateUpstream
+      tags: [mirrors]
+      summary: Rename an upstream or move it to another address.
+      description: |
+        A new address is verified like a new upstream and becomes the source of every application mirrored from
+        the upstream, starting a new source epoch for each.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      x-max-body-bytes: 8192
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpstreamRequest'
+      x-error-codes: [UPSTREAM_NOT_FOUND, VALIDATION_FAILED, ALREADY_EXISTS, UPSTREAM_UNAVAILABLE, UPSTREAM_INCOMPATIBLE, LOOP_DETECTED]
+      responses:
+        '200':
+          description: Saved upstream.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Upstream'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '508':
+          $ref: '#/components/responses/LoopDetected'
+    delete:
+      operationId: deleteUpstream
+      tags: [mirrors]
+      summary: Delete an upstream that no application mirrors.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      x-error-codes: [UPSTREAM_NOT_FOUND, UPSTREAM_IN_USE]
+      responses:
+        '204':
+          description: Deleted.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /admin/api/upstreams/{upstream}/catalog:
+    parameters:
+      - name: upstream
+        in: path
+        required: true
+        description: Upstream UID.
+        schema:
+          type: string
+          pattern: '^[0-9a-f]{32}$'
+    get:
+      operationId: listUpstreamCatalog
+      tags: [mirrors]
+      summary: Read one page of the applications an upstream publishes.
+      description: |
+        Reads the upstream's `listCatalog` and marks the applications this instance mirrors. JSON release
+        applications cannot be mirrored yet (`supported: false`).
+      parameters:
+        - $ref: '#/components/parameters/SearchQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit25'
+      security:
+        - sessionCookie: []
+      x-error-codes: [UPSTREAM_NOT_FOUND, UPSTREAM_UNAVAILABLE, UPSTREAM_INCOMPATIBLE]
+      responses:
+        '200':
+          description: One page of upstream applications.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamCatalogPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /admin/api/upstreams/{upstream}/mirrors:
+    parameters:
+      - name: upstream
+        in: path
+        required: true
+        description: Upstream UID.
+        schema:
+          type: string
+          pattern: '^[0-9a-f]{32}$'
+    post:
+      operationId: createMirror
+      tags: [mirrors]
+      summary: Mirror an upstream application as a local application.
+      description: |
+        Reads the upstream application's `getMirrorApp`. Without `revision` a new application `vendor/app` is
+        created; the vendor is created from the upstream's vendor when it does not exist. With `revision` the existing
+        application `vendor/app` of the same provider is adopted: it keeps its local settings, its display follows the
+        upstream and its source becomes the upstream application (a new source epoch). Hosted applications are mirrored
+        as HTTP cache applications. The name, description, icon, usage instructions and `auto_index` follow the upstream
+        unless overridden per field in the configuration; the source cannot be overridden. An upstream chain that contains
+        this instance is refused with `508 LOOP_DETECTED`.
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      x-max-body-bytes: 8192
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MirrorRequest'
+      x-error-codes: [UPSTREAM_NOT_FOUND, APPLICATION_NOT_FOUND, VENDOR_NOT_FOUND, VALIDATION_FAILED, ALREADY_EXISTS, REVISION_CONFLICT, ENTITY_DELETED, UPSTREAM_UNAVAILABLE, UPSTREAM_INCOMPATIBLE, LOOP_DETECTED]
+      responses:
+        '201':
+          description: The mirrored application.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Location:
+              $ref: '#/components/headers/Location'
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/App'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+        '508':
+          $ref: '#/components/responses/LoopDetected'
+  /admin/api/apps/{vendor}/{app}/mirror:
+    parameters:
+      - $ref: '#/components/parameters/Vendor'
+      - $ref: '#/components/parameters/App'
+    get:
+      operationId: getAppMirror
+      tags: [mirrors]
+      summary: Read the mirror state of an application.
+      security:
+        - sessionCookie: []
+      x-error-codes: [APPLICATION_NOT_FOUND, MIRROR_NOT_FOUND]
+      responses:
+        '200':
+          description: Mirror state.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppMirror'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      operationId: deleteAppMirror
+      tags: [mirrors]
+      summary: Turn a mirrored application into an ordinary one.
+      description: |
+        The application keeps its current values, including its source, and stops following the upstream. An
+        application with a built-in template is linked to it again, with every current value kept as an override.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      x-error-codes: [APPLICATION_NOT_FOUND, MIRROR_NOT_FOUND, ENTITY_DELETED]
+      responses:
+        '200':
+          description: The application.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/App'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /admin/api/apps/{vendor}/{app}/mirror/sync:
+    parameters:
+      - $ref: '#/components/parameters/Vendor'
+      - $ref: '#/components/parameters/App'
+    post:
+      operationId: syncAppMirror
+      tags: [mirrors]
+      summary: Check the upstream application now.
+      description: |
+        Checks run automatically every 15 minutes. An upstream failure is recorded in `error`, not returned as an
+        error: the application keeps its last values. An application the upstream no longer publishes is marked
+        unavailable (its template is reported missing) and keeps its last values.
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      x-error-codes: [APPLICATION_NOT_FOUND, MIRROR_NOT_FOUND, ENTITY_DELETED]
+      responses:
+        '200':
+          description: Mirror state after the check.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AppMirror'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /admin/api/categories:
     get:
       operationId: listCategories
@@ -5189,6 +5623,10 @@ components:
     PREVIEW_LIMIT_EXCEEDED: {status: 429, retryable: true, description: Too many active import previews (8); wait for expiry.}
     INTERNAL_ERROR: {status: 500, retryable: false, description: Unexpected server error; report the request ID.}
     UPSTREAM_UNAVAILABLE: {status: 502, retryable: true, description: 'Upstream unreachable, timed out or returned 5xx.'}
+    UPSTREAM_NOT_FOUND: {status: 404, retryable: false, description: The upstream does not exist.}
+    MIRROR_NOT_FOUND: {status: 404, retryable: false, description: The application is not mirrored from an upstream.}
+    UPSTREAM_IN_USE: {status: 409, retryable: false, description: Applications are mirrored from the upstream.}
+    UPSTREAM_INCOMPATIBLE: {status: 502, retryable: false, description: 'The address is not a compatible RedApp instance, now serves another instance, or the upstream application cannot be mirrored.'}
     LOOP_DETECTED: {status: 508, retryable: false, description: 'A chain of sources leads back to the same application: a request sent by the application it asks for, or a mirror whose upstream chain contains this instance.'}
     INDEX_UNSUPPORTED: {status: 502, retryable: false, description: The HTTP cache source answered a directory request without a listing RedApp can read (HTML links, nginx autoindex JSON, Caddy browse JSON or a RedApp listing).}
     METADATA_UNTRUSTED: {status: 502, retryable: false, description: Upstream release metadata failed verification (digest, signature, URL rules).}
@@ -5376,6 +5814,10 @@ components:
         - UPSTREAM_UNAVAILABLE
         - INDEX_UNSUPPORTED
         - LOOP_DETECTED
+        - UPSTREAM_NOT_FOUND
+        - MIRROR_NOT_FOUND
+        - UPSTREAM_IN_USE
+        - UPSTREAM_INCOMPATIBLE
         - METADATA_UNTRUSTED
         - CHANNELS_UNVERIFIED
         - IMPORT_SOURCE_FAILED
@@ -6874,6 +7316,137 @@ components:
           $ref: '#/components/schemas/RetentionPolicy'
         prewarm:
           $ref: '#/components/schemas/PrewarmPolicy'
+    Upstream:
+      type: object
+      additionalProperties: false
+      required: [uid, name, origin, instance_id, revision, created_at, mirrors]
+      properties:
+        uid:
+          type: string
+          pattern: '^[0-9a-f]{32}$'
+        name:
+          type: string
+        origin:
+          type: string
+          description: '`http(s)://host[:port]`.'
+        instance_id:
+          type: string
+          pattern: '^[0-9a-f]{32}$'
+          description: Identity the upstream reported when its address was last verified.
+        revision:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        mirrors:
+          type: integer
+          minimum: 0
+          description: Applications mirrored from the upstream.
+    UpstreamList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Upstream'
+    UpstreamRequest:
+      type: object
+      additionalProperties: false
+      required: [name, origin]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        origin:
+          type: string
+          maxLength: 2048
+    UpstreamCatalogPage:
+      type: object
+      additionalProperties: false
+      required: [items, page, limit, total, total_pages]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [key, provider, name, description, icon, supported, mirror]
+            properties:
+              key:
+                $ref: '#/components/schemas/AppKey'
+              provider:
+                type: string
+              name:
+                $ref: '#/components/schemas/LocalizedText'
+              description:
+                $ref: '#/components/schemas/LocalizedText'
+              icon:
+                type: string
+                description: Icon path on the upstream.
+              supported:
+                type: boolean
+              mirror:
+                description: The local application mirroring it, or `null`.
+                oneOf:
+                  - $ref: '#/components/schemas/AppKey'
+                  - type: 'null'
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        total_pages:
+          type: integer
+    MirrorRequest:
+      type: object
+      additionalProperties: false
+      required: [remote_key, vendor, app]
+      properties:
+        remote_key:
+          $ref: '#/components/schemas/AppKey'
+        vendor:
+          $ref: '#/components/schemas/Slug'
+        app:
+          $ref: '#/components/schemas/Slug'
+        revision:
+          type: integer
+          minimum: 1
+          description: Adopt the existing application `vendor/app` at this revision.
+    AppMirror:
+      type: object
+      additionalProperties: false
+      required: [upstream, remote_key, remote_revision, upstream_chain, available, synced_at, checked_at, error]
+      properties:
+        upstream:
+          $ref: '#/components/schemas/Upstream'
+        remote_key:
+          $ref: '#/components/schemas/AppKey'
+        remote_revision:
+          type: string
+        upstream_chain:
+          type: array
+          items:
+            type: string
+            pattern: '^[0-9a-f]{32}$'
+        available:
+          type: boolean
+          description: False once the upstream no longer publishes the application.
+        synced_at:
+          type: string
+          format: date-time
+          description: Last time the upstream values were read.
+        checked_at:
+          type: string
+          format: date-time
+        error:
+          description: Error code of the last check, or `null` after a successful one.
+          oneOf:
+            - type: string
+            - type: 'null'
     Instance:
       type: object
       additionalProperties: false
