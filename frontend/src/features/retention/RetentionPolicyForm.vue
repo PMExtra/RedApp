@@ -3,6 +3,8 @@ import { computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   FieldReset,
+  isUpstreamRef,
+  templateLink,
   OverlayFormActions,
   useAppConfiguration,
   useAppConfigurationPatch,
@@ -97,7 +99,13 @@ async function reload() {
     @retry="configuration.refetch()"
   >
     <form v-if="draft" class="flex flex-col gap-4" novalidate @submit.prevent="submit">
-      <Alert v-if="configuration.data.value?.template_missing" tone="warning">
+      <Alert
+        v-if="
+          configuration.data.value?.template_missing &&
+          !isUpstreamRef(configuration.data.value?.template_ref)
+        "
+        tone="warning"
+      >
         {{ t("retention.templateMissing") }}
       </Alert>
       <RevisionConflictAlert v-if="save.hasConflict.value" @reload="reload" />
@@ -115,7 +123,7 @@ async function reload() {
               {{ t("retention.enabled") }}
             </label>
             <FieldReset
-              :linked="(configuration.data.value?.template_ref ?? null) !== null"
+              v-bind="templateLink(configuration.data.value, 'retention')"
               :origin="configuration.data.value?.fields.retention"
               :modified="overlay.modified('retention')"
               :disabled="readOnly || save.isPending.value"

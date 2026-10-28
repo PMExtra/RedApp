@@ -139,6 +139,8 @@ Sign in at `/admin/login`. Pages that you can open directly or bookmark:
 | `/admin/vendors` | Vendors and applications: list, search, import |
 | `/admin/vendors/new` | Create a vendor |
 | `/admin/categories` | Rename categories |
+| `/admin/upstreams` | Upstream RedApp instances: add, rename, move, delete |
+| `/admin/upstreams/<upstream>` | Applications an upstream publishes; mirror them as local applications |
 | `/admin/vendors/<vendor>` | Opens the vendor settings |
 | `/admin/vendors/<vendor>/settings` | Vendor settings, export |
 | `/admin/vendors/<vendor>/apps` | Applications of a vendor |

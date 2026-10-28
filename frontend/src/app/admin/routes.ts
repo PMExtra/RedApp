@@ -43,7 +43,7 @@ export const adminRoutes: RouteRecordRaw[] = [
         meta: { titleKey: "adminShell.titles.proxy" },
       },
 
-      // Directory: vendors, applications, categories.
+      // Directory: vendors, applications, categories, upstreams.
       {
         path: "vendors",
         name: "admin-vendors",
@@ -61,6 +61,17 @@ export const adminRoutes: RouteRecordRaw[] = [
         name: "admin-categories",
         component: () => import("@/pages/admin/categories/CategoriesPage.vue"),
         meta: { titleKey: "adminShell.titles.categories" },
+      },
+      {
+        path: "upstreams",
+        name: "admin-upstreams",
+        component: () => import("@/pages/admin/upstreams/UpstreamsPage.vue"),
+        meta: { titleKey: "adminShell.titles.upstreams" },
+      },
+      {
+        path: "upstreams/:upstream",
+        name: "admin-upstream",
+        component: () => import("@/pages/admin/upstreams/UpstreamPage.vue"),
       },
       {
         path: "vendors/:vendor/apps/new",

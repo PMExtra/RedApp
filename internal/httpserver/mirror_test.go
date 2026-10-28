@@ -76,6 +76,9 @@ func TestMirrorApplicationsOfAnotherInstance(t *testing.T) {
 		t.Fatalf("%+v %v", up, headers)
 	}
 	b.expectError("POST", "/admin/api/upstreams", map[string]string{"name": "Again", "origin": a.http.URL}, 409, codeAlreadyExists, nil)
+	if code, page, _ := b.raw("GET", "/admin/upstreams/"+up.UID, nil, "", nil); code != 200 || entryDocument(page) != "admin" {
+		t.Fatal("upstream page", code)
+	}
 
 	catalog := getJSON[pageDTO[upstreamCatalogItemDTO]](b, "/admin/api/upstreams/"+up.UID+"/catalog?limit=100")
 	supported := map[string]bool{}

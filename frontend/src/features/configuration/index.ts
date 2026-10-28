@@ -16,6 +16,8 @@ export {
   getLeaf,
   setLeaf,
   isEmptyPatch,
+  isUpstreamRef,
+  templateLink,
   same,
   type OverlayConfiguration,
   type OverlayFormOptions,

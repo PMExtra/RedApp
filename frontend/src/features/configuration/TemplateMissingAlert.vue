@@ -2,11 +2,16 @@
 import { useI18n } from "vue-i18n";
 import { Alert } from "@/shared/ui";
 
-/** Shown when the preset a configuration is linked to no longer exists in this build. */
-defineProps<{ missing: boolean | undefined }>();
+/**
+ * Shown when the preset a configuration is linked to no longer exists in this
+ * build, or when the upstream of a mirrored application stopped publishing it.
+ */
+defineProps<{ missing: boolean | undefined; upstream?: boolean }>();
 const { t } = useI18n();
 </script>
 
 <template>
-  <Alert v-if="missing" tone="warning">{{ t("configuration.templateMissing") }}</Alert>
+  <Alert v-if="missing" tone="warning">
+    {{ t(upstream ? "configuration.upstreamMissing" : "configuration.templateMissing") }}
+  </Alert>
 </template>

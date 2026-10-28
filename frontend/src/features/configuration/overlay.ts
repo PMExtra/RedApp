@@ -17,6 +17,37 @@ export interface OverlayConfiguration {
   fields: Partial<Record<string, Schema<"FieldOrigin">>>;
 }
 
+const UPSTREAM_TEMPLATE_PREFIX = "upstream:";
+
+/**
+ * A mirrored application follows the template `upstream:<app uid>` that its
+ * upstream binding owns; its display fields follow the upstream application.
+ */
+export function isUpstreamRef(ref: string | null | undefined): boolean {
+  return ref?.startsWith(UPSTREAM_TEMPLATE_PREFIX) ?? false;
+}
+
+/** Paths of a mirrored application that follow the upstream unless overridden. */
+const UPSTREAM_PATHS = ["name", "description", "icon", "instructions", "auto_index"];
+
+/** Whether `path` of a mirrored application follows its upstream. */
+export function followsUpstream(path: string): boolean {
+  return UPSTREAM_PATHS.includes(path.split(".")[0] ?? path);
+}
+
+/**
+ * FieldReset's `linked` and `upstream` props for `path` of a configuration:
+ * "follow the upstream" only for the paths a mirror takes from its upstream;
+ * other paths of a mirror (proxy, policies) restore their defaults as usual.
+ */
+export function templateLink(
+  configuration: Pick<OverlayConfiguration, "template_ref"> | undefined,
+  path: string,
+): { linked: boolean; upstream: boolean } {
+  const ref = configuration?.template_ref ?? null;
+  return { linked: ref !== null, upstream: isUpstreamRef(ref) && followsUpstream(path) };
+}
+
 /** Sparse overlay patch (`set` dotted paths, `unset` paths back to the template). */
 export interface OverlayPatch {
   set: Record<string, unknown>;
@@ -129,6 +160,7 @@ export function useOverlayForm<Values extends Record<string, unknown>>(
   );
 
   const linked = computed(() => configuration.value?.template_ref != null);
+  const upstream = computed(() => isUpstreamRef(configuration.value?.template_ref));
 
   function origin(path: string): Schema<"FieldOrigin"> | undefined {
     return configuration.value?.fields[path];
@@ -162,6 +194,7 @@ export function useOverlayForm<Values extends Record<string, unknown>>(
     const value = templateValue(path);
     return {
       linked: linked.value,
+      upstream: upstream.value && followsUpstream(path),
       origin: origin(path),
       modified: modified(path),
       templateValue: value === undefined ? undefined : format(value),
@@ -186,6 +219,7 @@ export function useOverlayForm<Values extends Record<string, unknown>>(
     form,
     dirty,
     linked,
+    upstream,
     load,
     discard,
     origin,

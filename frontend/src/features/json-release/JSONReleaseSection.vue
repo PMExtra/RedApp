@@ -4,12 +4,14 @@ import { useMutation } from "@tanstack/vue-query";
 import { useI18n } from "vue-i18n";
 import { api, unwrap, type Schema } from "@/shared/api";
 import {
+  isUpstreamRef,
   useAppConfiguration,
   useAppConfigurationPatch,
   OverlayFormActions,
 } from "@/features/configuration";
 import { useDirtyGuard } from "@/shared/forms";
 import {
+  Alert,
   AsyncState,
   Button,
   Card,
@@ -30,6 +32,9 @@ const save = useAppConfigurationPatch(
   () => props.app,
   configuration.data,
 );
+// A mirror's `json_release` belongs to its upstream: it can be previewed, not edited.
+const mirrored = computed(() => isUpstreamRef(configuration.data.value?.template_ref));
+const locked = computed(() => props.readOnly || mirrored.value);
 const text = ref("");
 const baseline = ref("");
 const channel = ref("latest");
@@ -79,14 +84,14 @@ function toggleKey(key: string, enabled: boolean | "indeterminate") {
 }
 function applyPrewarm() {
   const config = parsed.value;
-  if (!config || props.readOnly) return;
+  if (!config || locked.value) return;
   const name = channel.value === "latest" ? config.default_channel : channel.value;
   const prewarm = (config.prewarm ?? []).filter((p) => p.channel !== name);
   if (prewarmKeys.value.length) prewarm.push({ channel: name, keys: [...prewarmKeys.value] });
   text.value = JSON.stringify({ ...config, prewarm }, null, 2);
 }
 function submit() {
-  if (!parsed.value || props.readOnly) return;
+  if (!parsed.value || locked.value) return;
   save.mutate({ set: { json_release: parsed.value } }, { onSuccess: reset });
 }
 async function reload() {
@@ -109,6 +114,7 @@ watch(
       @retry="configuration.refetch()"
     >
       <form v-if="configuration.data.value" class="flex flex-col gap-4" @submit.prevent="submit">
+        <Alert v-if="mirrored" tone="info">{{ t("jsonRelease.mirrored") }}</Alert>
         <RevisionConflictAlert v-if="save.hasConflict.value" @reload="reload" />
         <Field
           :label="t('jsonRelease.config')"
@@ -119,6 +125,7 @@ watch(
               v-model="text"
               :rows="18"
               monospace
+              :readonly="mirrored || undefined"
               :disabled="readOnly || save.isPending.value" /></template
         ></Field>
         <div class="flex flex-wrap items-end gap-3">
@@ -140,7 +147,7 @@ watch(
             :aria-label="t('jsonRelease.result')"
             >{{ JSON.stringify(preview.data.value, null, 2) }}</pre>
         </AsyncState>
-        <fieldset v-if="preview.data.value && !readOnly" class="flex flex-col gap-3">
+        <fieldset v-if="preview.data.value && !locked" class="flex flex-col gap-3">
           <legend class="font-medium">{{ t("jsonRelease.prewarm") }}</legend>
           <p class="text-sm text-muted">{{ t("jsonRelease.prewarmHint") }}</p>
           <Checkbox
@@ -164,7 +171,7 @@ watch(
           <Button @click="applyPrewarm">{{ t("jsonRelease.applyPrewarm") }}</Button>
         </fieldset>
         <OverlayFormActions
-          v-if="!readOnly"
+          v-if="!locked"
           :dirty="dirty"
           :saving="save.isPending.value"
           :disabled="!dirty || !parsed"

@@ -12,6 +12,7 @@ export default {
       directory: "目录",
       vendors: "厂商与应用",
       categories: "分类",
+      upstreams: "上游",
       settings: "设置",
       site: "站点",
       proxy: "上游代理",
@@ -27,6 +28,8 @@ export default {
       appNew: "新建应用",
       app: "应用",
       categories: "分类",
+      upstreams: "上游",
+      upstream: "上游",
       notFound: "页面不存在",
     },
     tabs: {

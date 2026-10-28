@@ -97,6 +97,7 @@ frontend/
 | `hosted` | 托管文件列表、上传/按 URL 导入（进度、取消）、替换与删除（`HostedFilesPanel`） | `hosted` 应用文件页 |
 | `file-index` | 设置页区块 `AutoIndexSection`（`auto_index`：目录列表开关） | `hosted`、`http-cache` 应用设置页 |
 | `cache-policy` | 设置页区块 `CachePolicySection`（`http_policy`：过期回退、路径 TTL 规则、自动清理规则）与 `ChannelTtlSection`（发布类应用的元数据有效期），`PathMatchInput`（服务端试匹配）、`DurationInput` | 应用设置页、缓存维护面板 |
+| `mirrors` | 上游实例的查询与增删改（`UpstreamDialog`，改名/迁移按 revision 做 CAS）、上游目录（`UpstreamCatalog`：搜索、分页、跨页勾选）与逐个镜像（`MirrorDialog`：本地 ID、检测同名应用并要求显式接管）、设置页区块 `MirrorSection`（镜像来源、立即检查、停止镜像） | 上游列表与详情页、应用设置页 |
 
 ## 新增页面、路由和功能
 
@@ -291,7 +292,7 @@ Reka UI 的 `SelectViewport`/`ComboboxViewport`/`ScrollAreaViewport` 会插入�
 
 - `npm test`（Vitest + happy-dom）。测试文件与被测代码放在一起，命名 `*.test.ts`。
 - `src/test/msw.ts`：所有测试共享的 MSW 服务器，未处理的请求让测试失败。`mockApi(method, specPath, resolver)` 按规范路径注册，返回值类型来自生成的成功响应；`apiError(code)` 按错误码目录生成状态与 `retryable`；`noContent()`。在测试中用 `useHandlers(...)` 安装，测试结束自动重置。
-- `src/test/factories/`：由规范示例构造的类型化夹具，传入要关心的字段覆盖。按领域分文件并直接引用：`index.ts`（引导、会话、公开应用）、`catalog.ts`（目录、托管文件）、`directory.ts`（厂商、应用 `app()`、列表项、页 `page()`、配置覆盖、分类、导入）、`metrics.ts`（`metric(key)`、`globalStatus()`、`appStatus()`、`historySeries()`）、`settings.ts`、`runtime.ts`（`codexApp()`、`httpCacheApp()`、`codexConfiguration()`、版本、制品、保留、预热、缓存维护）。同一模型只保留一个工厂，特定变体在它之上构造。
+- `src/test/factories/`：由规范示例构造的类型化夹具，传入要关心的字段覆盖。按领域分文件并直接引用：`index.ts`（引导、会话、公开应用）、`catalog.ts`（目录、托管文件）、`directory.ts`（厂商、应用 `app()`、列表项、页 `page()`、配置覆盖、分类、导入）、`metrics.ts`（`metric(key)`、`globalStatus()`、`appStatus()`、`historySeries()`）、`settings.ts`、`runtime.ts`（`codexApp()`、`httpCacheApp()`、`codexConfiguration()`、版本、制品、保留、预热、缓存维护）、`mirrors.ts`（`upstream()`、`upstreamCatalogItem()`、`appMirror()`、镜像应用及其配置）。同一模型只保留一个工厂，特定变体在它之上构造。
 - `src/test/render.ts`：`renderWithApp(component, { props, routes, path })` 带完整插件（严格 i18n、Query 不重试、内存路由、Toaster、ConfirmHost）；`renderEntry("admin" | "public", path)` 渲染整个入口（布局、守卫、会话）。
 - `src/test/directory.ts`：`renderAdminPage(path)` 以已登录管理员渲染后台入口（引导、会话、Provider 列表已应答）；`recorder()` 收集请求体、`If-Match` 和 URL。
 - `src/test/appPage.ts`：`renderAppPage(component, { key, tab, props })` 把面板作为 `/admin/vendors/:vendor/apps/:app/:tab` 的路由组件渲染，`route.params` 与离开保护和真实页面一致。

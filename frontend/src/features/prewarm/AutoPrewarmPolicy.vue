@@ -3,6 +3,7 @@ import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   FieldReset,
+  templateLink,
   OverlayFormActions,
   useAppConfiguration,
   useAppConfigurationPatch,
@@ -113,7 +114,7 @@ async function reload() {
                 t("prewarm.auto.enabled")
               }}</label>
               <FieldReset
-                :linked="(configuration.data.value?.template_ref ?? null) !== null"
+                v-bind="templateLink(configuration.data.value, 'prewarm')"
                 :origin="configuration.data.value?.fields.prewarm"
                 :modified="overlay.modified('prewarm')"
                 @reset="overlay.restore('prewarm')"

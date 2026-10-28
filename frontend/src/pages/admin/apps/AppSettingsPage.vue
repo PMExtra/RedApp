@@ -11,10 +11,12 @@ import {
 } from "@/features/directory";
 import { AutoIndexSection } from "@/features/file-index";
 import { JSONReleaseSection } from "@/features/json-release";
+import { MirrorSection } from "@/features/mirrors";
 import { AppTaxonomyForm } from "@/features/taxonomy";
 
 /**
- * Settings tab: details, upstream and proxy; taxonomy; usage instructions;
+ * Settings tab: the mirror source (mirrored applications only); details,
+ * upstream and proxy; taxonomy; usage instructions;
  * provider-specific sections; deletion. Every section edits the same
  * configuration overlay through `@/features/configuration`, so saving one
  * section never conflicts with another.
@@ -59,6 +61,7 @@ const sections = computed(() => {
 
 <template>
   <div v-if="app.data.value" :key="app.data.value.uid" class="flex flex-col gap-6">
+    <MirrorSection :app="app.data.value" />
     <AppGeneralForm :app="app.data.value" />
     <AppTaxonomyForm :vendor="vendorId" :app="appId" :read-only="readOnly" />
     <AppInstructionsForm :app="app.data.value" />

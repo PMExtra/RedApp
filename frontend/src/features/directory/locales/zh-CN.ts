@@ -111,6 +111,7 @@ export default {
       baseUrl: "基础地址",
       baseUrlHint: "提供方式的默认上游。可替换为镜像地址。",
       epochHint: "修改上游会开始新的源周期：新请求只使用新源，旧的缓存文件保留到被清理为止。",
+      mirrorHint: "此镜像应用的来源由上游 RedApp 提供；如需修改，请先停止镜像。",
     },
     inactive: {
       title: "请先启用应用",

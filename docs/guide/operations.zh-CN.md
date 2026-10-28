@@ -139,6 +139,8 @@ RedApp 读取转发头的方式：
 | `/admin/vendors` | 厂商与应用：列表、搜索、导入 |
 | `/admin/vendors/new` | 创建厂商 |
 | `/admin/categories` | 重命名分类 |
+| `/admin/upstreams` | 上游 RedApp 实例：添加、重命名、迁移地址、删除 |
+| `/admin/upstreams/<upstream>` | 上游发布的应用；将其镜像为本地应用 |
 | `/admin/vendors/<vendor>` | 打开厂商设置 |
 | `/admin/vendors/<vendor>/settings` | 厂商设置、导出 |
 | `/admin/vendors/<vendor>/apps` | 厂商下的应用 |

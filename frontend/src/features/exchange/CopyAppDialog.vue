@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
-import { useAppConfiguration } from "@/features/configuration";
+import { isUpstreamRef, useAppConfiguration } from "@/features/configuration";
 import { appRoute, VendorPicker, type App } from "@/features/directory";
 import { useNotes } from "@/features/notes";
 import { isApiError, type Schema } from "@/shared/api";
@@ -42,8 +42,12 @@ const targetId = ref("");
 const chosenMode = ref<string | undefined>();
 const includeNotes = ref<boolean | "indeterminate">(false);
 const submitted = ref(false);
-const linked = computed(() => configuration.data.value?.template_ref != null);
 // `linked` keeps the template reference and is only possible with a template.
+// A mirror's template belongs to its upstream binding, so it is copied independently.
+const linked = computed(() => {
+  const ref = configuration.data.value?.template_ref ?? null;
+  return ref !== null && !isUpstreamRef(ref);
+});
 const mode = computed({
   get: () => (linked.value ? (chosenMode.value ?? "linked") : "independent"),
   set: (value: string | undefined) => {
