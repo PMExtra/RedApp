@@ -994,7 +994,9 @@ paths:
             ranges return the full file.
             `Cache-Control: only-if-cached` on a miss returns `504 CACHE_MISS`; other request cache directives are ignored.
             Uncacheable upstream responses (`no-store`/`private` without a matching rule, `Set-Cookie`, `Vary`
-            other than `Accept-Encoding`) are streamed without storing.
+            other than `Accept-Encoding`) are streamed without storing and carry `Cache-Control: no-store`. Other
+            responses carry `Cache-Control: max-age=<seconds>`, the freshness remaining in RedApp (0 when stale), so a
+            downstream cache never keeps the file longer than RedApp does.
         - provider: hosted
           path: '{path}'
           content_type: application/octet-stream

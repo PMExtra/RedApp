@@ -90,6 +90,8 @@ RedApp 按以下顺序确定 TTL：
 
 **TTL 0** 表示每次请求都先向来源重新验证。文件仍会被存储，因此来源故障时可以作为回退。
 
+响应带 `Cache-Control: max-age=<秒数>`，值为该文件在 RedApp 中剩余的新鲜时间（已过期时为 0），因此下游缓存（包括以本应用为来源的另一个 RedApp）保留文件的时间不会超过 RedApp 本身。不可缓存的响应带 `Cache-Control: no-store`。
+
 ### 路径规则
 
 规则匹配解码后、以 `/` 开头的应用相对路径。对于 `/example/files/releases/tool.zip`，路径为 `/releases/tool.zip`。

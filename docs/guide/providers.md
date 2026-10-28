@@ -90,6 +90,8 @@ RedApp picks the TTL in this order:
 
 **TTL 0** means every request revalidates with the source first. The file is still stored, so it can serve as a fallback when the source fails.
 
+Responses carry `Cache-Control: max-age=<seconds>`, the freshness the file has left in RedApp (0 when expired), so a downstream cache, including another RedApp that uses this application as its source, never keeps the file longer than RedApp does. Uncacheable responses carry `Cache-Control: no-store`.
+
 ### Path rules
 
 Rules match the decoded path relative to the application, starting with `/`. For `/example/files/releases/tool.zip`, the path is `/releases/tool.zip`.

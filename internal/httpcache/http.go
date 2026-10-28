@@ -9,6 +9,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/distributor"
@@ -99,7 +100,7 @@ func (s *Service) Serve(w http.ResponseWriter, r *http.Request, entry applicatio
 				return err
 			}
 			defer s.unpin(old.GenerationID)
-			return s.serveStored(w, r, old)
+			return s.serveStored(w, r, f, old)
 		}
 		if onlyCached {
 			if old != nil {
@@ -134,7 +135,7 @@ func (s *Service) Serve(w http.ResponseWriter, r *http.Request, entry applicatio
 		}
 		// A joined stream that stopped before its first byte while this request
 		// still wants the file is retried with a new fetch (see serveStream).
-		if err = s.serveResult(w, r, result, relativePath); errors.Is(err, ErrFetchAgain) {
+		if err = s.serveResult(w, r, f, result); errors.Is(err, ErrFetchAgain) {
 			continue
 		}
 		return err
@@ -148,6 +149,22 @@ func safeHeaders(w http.ResponseWriter, name string) {
 	w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
 	w.Header().Set("Cache-Control", "no-store")
 }
+
+// downstreamCacheControl lets a downstream shared cache, such as another
+// RedApp instance, keep a representation no longer than this cache keeps it:
+// the remaining freshness here, or 0 when it is stale. Freshness therefore
+// does not accumulate across chained caches. A representation this cache may
+// not store under the current policy keeps the no-store set by safeHeaders.
+func (s *Service) downstreamCacheControl(w http.ResponseWriter, f fill, h http.Header, validatedAt time.Time) {
+	if !f.eligible(h) {
+		return
+	}
+	remaining := int64(f.freshness(h, validatedAt).Sub(s.now()) / time.Second)
+	if remaining < 0 {
+		remaining = 0
+	}
+	w.Header().Set("Cache-Control", "max-age="+strconv.FormatInt(remaining, 10))
+}
 func requestRange(r *http.Request) *http.Request {
 	if r.Method == http.MethodHead || strings.Contains(r.Header.Get("Range"), ",") {
 		copy := r.Clone(r.Context())
@@ -156,20 +173,21 @@ func requestRange(r *http.Request) *http.Request {
 	}
 	return r
 }
-func (s *Service) serveStored(w http.ResponseWriter, r *http.Request, row *Row) error {
-	f, size, err := s.bodies().Open(row.GenerationID)
+func (s *Service) serveStored(w http.ResponseWriter, r *http.Request, f fill, row *Row) error {
+	file, size, err := s.bodies().Open(row.GenerationID)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer file.Close()
 	if size != row.SizeBytes {
 		return ErrUpstream
 	}
 	safeHeaders(w, row.Path)
+	s.downstreamCacheControl(w, f, row.headers, row.ValidatedAt)
 	w.Header().Set("ETag", row.ETag)
 	modified, _ := http.ParseTime(row.headers.Get("Last-Modified"))
 	gate := &accessWriter{ResponseWriter: w, touch: func() error { return s.touch(row) }}
-	reader := &contextReadSeeker{ctx: r.Context(), ReadSeekCloser: f}
+	reader := &contextReadSeeker{ctx: r.Context(), ReadSeekCloser: file}
 	http.ServeContent(gate, requestRange(r), path.Base(row.Path), modified, reader)
 	if reader.err != nil && !errors.Is(reader.err, io.EOF) {
 		panic(http.ErrAbortHandler)
@@ -261,7 +279,7 @@ func (s *Service) head(w http.ResponseWriter, r *http.Request, f fill, old *Row)
 		return err
 	}
 	defer s.unpin(result.row.GenerationID)
-	return s.serveStored(w, r, result.row)
+	return s.serveStored(w, r, f, result.row)
 }
 
 func (s *Service) headResponse(w http.ResponseWriter, r *http.Request, f fill, old *Row, attempt sourceAttempt, headers http.Header, resp *http.Response) error {
@@ -291,7 +309,7 @@ func (s *Service) headResponse(w http.ResponseWriter, r *http.Request, f fill, o
 			return err
 		}
 		defer s.unpin(result.row.GenerationID)
-		return s.serveStored(w, r, result.row)
+		return s.serveStored(w, r, f, result.row)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return &UpstreamStatusError{Status: resp.StatusCode}
@@ -313,11 +331,12 @@ func (s *Service) headResponse(w http.ResponseWriter, r *http.Request, f fill, o
 					return err
 				}
 				defer s.unpin(result.row.GenerationID)
-				return s.serveStored(w, r, result.row)
+				return s.serveStored(w, r, f, result.row)
 			}
 		}
 	}
 	safeHeaders(w, path)
+	s.downstreamCacheControl(w, f, resp.Header, s.now())
 	if resp.ContentLength >= 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
 	}
@@ -334,16 +353,16 @@ func (s *Service) headResponse(w http.ResponseWriter, r *http.Request, f fill, o
 	return nil
 }
 
-func (s *Service) serveResult(w http.ResponseWriter, r *http.Request, result fetchResult, name string) error {
+func (s *Service) serveResult(w http.ResponseWriter, r *http.Request, f fill, result fetchResult) error {
 	if result.response != nil {
-		return s.serveDirect(w, r, result, name)
+		return s.serveDirect(w, r, result, f.path)
 	}
 	if result.stream != nil {
 		return s.serveStream(w, r, result.stream)
 	}
 	if result.row != nil {
 		defer s.unpin(result.row.GenerationID)
-		return s.serveStored(w, r, result.row)
+		return s.serveStored(w, r, f, result.row)
 	}
 	return &UpstreamStatusError{Status: result.status}
 }
@@ -422,6 +441,8 @@ func (s *Service) serveStream(w http.ResponseWriter, r *http.Request, st *stream
 		}
 	}
 	safeHeaders(w, st.fill.path)
+	// Freshness starts when the stream is published, which is no earlier than now.
+	s.downstreamCacheControl(w, st.fill, st.header, s.now())
 	// The digest is not known yet: only an upstream ETag is sent.
 	if tag := st.header.Get("ETag"); tag != "" {
 		w.Header().Set("ETag", tag)
