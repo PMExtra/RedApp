@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
@@ -14,18 +15,27 @@ import (
 )
 
 type releaseDownloadsDTO struct {
-	Stale     bool                     `json:"stale"`
-	FetchedAt time.Time                `json:"fetched_at"`
-	Channel   string                   `json:"channel"`
-	ReleaseID string                   `json:"release_id"`
-	Version   string                   `json:"version"`
-	Build     string                   `json:"build"`
-	Artifacts []releaseconfig.Artifact `json:"artifacts"`
+	Stale     bool                `json:"stale"`
+	FetchedAt time.Time           `json:"fetched_at"`
+	Channel   string              `json:"channel"`
+	ReleaseID string              `json:"release_id"`
+	Version   string              `json:"version"`
+	Build     string              `json:"build"`
+	Artifacts []downloadChoiceDTO `json:"artifacts"`
+}
+
+// downloadChoiceDTO is a stored artifact as a public download choice. Path is
+// relative to the application: a downstream RedApp reaches this instance at an
+// address of its own, not at the public URL. The persisted release model is
+// never extended, so stored release identities do not change.
+type downloadChoiceDTO struct {
+	releaseconfig.Artifact
+	Path string `json:"path"`
 }
 
 func (s *Server) getReleaseDownloads(w http.ResponseWriter, r *http.Request) {
 	entry, ok := s.publishedApp(w, r)
-	if !ok {
+	if !ok || s.loopDetected(w, r, entry) {
 		return
 	}
 	protocol, ok := entry.Protocol.(application.SnapshotProtocol)
@@ -57,6 +67,7 @@ func (s *Server) getReleaseDownloads(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, storageError(err))
 		return
 	}
+	choices := make([]downloadChoiceDTO, len(data.Artifacts))
 	for i := range data.Artifacts {
 		path, pathErr := snapshot.DownloadPath(entry.Descriptor.ID, data.Artifacts[i].Key)
 		if pathErr != nil {
@@ -66,6 +77,7 @@ func (s *Server) getReleaseDownloads(w http.ResponseWriter, r *http.Request) {
 		data.Artifacts[i].URL = s.publicURL(r) + path
 		data.Artifacts[i].ChecksumURL = ""
 		data.Artifacts[i].ChecksumFilename = ""
+		choices[i] = downloadChoiceDTO{Artifact: data.Artifacts[i], Path: strings.TrimPrefix(path, "/"+entry.Descriptor.ID+"/")}
 	}
 	head, err := s.store.Channel(entry.StorageID(), canonical)
 	if err != nil {
@@ -84,7 +96,7 @@ func (s *Server) getReleaseDownloads(w http.ResponseWriter, r *http.Request) {
 		stale = true
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeOK(w, releaseDownloadsDTO{Stale: stale, FetchedAt: metadata.FetchedAt, Channel: canonical, ReleaseID: release.Version, Version: data.Version, Build: data.Build, Artifacts: data.Artifacts})
+	writeOK(w, releaseDownloadsDTO{Stale: stale, FetchedAt: metadata.FetchedAt, Channel: canonical, ReleaseID: release.Version, Version: data.Version, Build: data.Build, Artifacts: choices})
 }
 func (s *Server) previewJSONRelease(w http.ResponseWriter, r *http.Request) {
 	entry, ok := s.maintainedApp(w, r, func(e application.Entry) bool { return e.Provider == application.JSONRelease })

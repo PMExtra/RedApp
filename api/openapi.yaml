@@ -232,6 +232,34 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /api/instance:
+    get:
+      operationId: getInstance
+      tags: [public]
+      summary: Identify this RedApp instance to another instance that uses it as an upstream.
+      description: |
+        `instance_id` is random, created with the data directory and kept by its backups; a copied data directory
+        shares it. Every upstream request that reads an application's source carries
+        `Via: 1.1 redapp-<instance_id>.<application digest>`. A request that reads an application's source and was
+        sent by that same application (its source leads back to itself) is refused with `508 LOOP_DETECTED`; other
+        applications of the same instance may use each other as sources.
+      x-error-codes: []
+      responses:
+        '200':
+          description: Instance identity.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Instance'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/home:
     get:
       operationId: getHome
@@ -389,6 +417,38 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /api/apps/{vendor}/{app}/mirror:
+    parameters:
+      - $ref: '#/components/parameters/Vendor'
+      - $ref: '#/components/parameters/App'
+    get:
+      operationId: getMirrorApp
+      tags: [public]
+      summary: Describe a published application for a downstream RedApp that mirrors it.
+      description: |
+        The display fields a mirror follows (instructions as source text, so a mirror renders its own addresses),
+        the provider and channels it reproduces the content with, and `upstream_chain`: the instances the content
+        passes through before this one. A downstream refuses to mirror an application whose chain contains itself.
+        `revision` changes whenever any other field changes.
+      x-error-codes: [APPLICATION_NOT_FOUND]
+      responses:
+        '200':
+          description: Mirror description.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MirrorApp'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/apps/{vendor}/{app}/downloads:
     parameters:
       - $ref: '#/components/parameters/Vendor'
@@ -402,7 +462,7 @@ paths:
         - name: channel
           in: query
           schema: {type: string, default: latest, maxLength: 96}
-      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, FILE_NOT_FOUND, SOURCE_CHANGED, METADATA_UNTRUSTED, UPSTREAM_UNAVAILABLE, TRANSFER_CAPACITY]
+      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, FILE_NOT_FOUND, SOURCE_CHANGED, METADATA_UNTRUSTED, UPSTREAM_UNAVAILABLE, TRANSFER_CAPACITY, LOOP_DETECTED]
       responses:
         '200':
           description: Normalized package options with local immutable URLs.
@@ -418,6 +478,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '502':
           $ref: '#/components/responses/BadGateway'
+        '508':
+          $ref: '#/components/responses/LoopDetected'
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
@@ -1045,6 +1107,7 @@ paths:
         - TRANSFER_CAPACITY
         - CACHE_CONTENDED
         - CACHE_MISS
+        - LOOP_DETECTED
       responses:
         '200':
           $ref: '#/components/responses/DistributionFile'
@@ -1082,6 +1145,8 @@ paths:
           $ref: '#/components/responses/ServiceUnavailable'
         '504':
           $ref: '#/components/responses/GatewayTimeout'
+        '508':
+          $ref: '#/components/responses/LoopDetected'
     head:
       operationId: headDistributionFile
       tags: [distribution]
@@ -1089,7 +1154,7 @@ paths:
       description: |
         Same resolution as GET. For an uncached `http-cache` file RedApp sends `HEAD` upstream and stores nothing.
         HEAD never starts a release artifact download and never counts as a download.
-      x-error-codes: [APPLICATION_NOT_FOUND, FILE_NOT_FOUND, SOURCE_CHANGED, UPSTREAM_UNAVAILABLE, INDEX_UNSUPPORTED, METADATA_UNTRUSTED, TRANSFER_CAPACITY]
+      x-error-codes: [APPLICATION_NOT_FOUND, FILE_NOT_FOUND, SOURCE_CHANGED, UPSTREAM_UNAVAILABLE, INDEX_UNSUPPORTED, METADATA_UNTRUSTED, TRANSFER_CAPACITY, LOOP_DETECTED]
       responses:
         '200':
           description: Headers only.
@@ -1117,6 +1182,8 @@ paths:
           description: Upstream failure (no body).
         '503':
           description: Capacity or storage unavailable (no body).
+        '508':
+          description: Loop detected (no body).
 
   # ---------------------------------------------------------------- auth
   /admin/api/session:
@@ -5011,6 +5078,15 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    LoopDetected:
+      description: The request was sent by the application it asks for (`Via`); its source leads back to itself.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/XRequestId'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     ServiceUnavailable:
       description: Local storage, capacity or a dependency is temporarily unavailable.
       headers:
@@ -5113,6 +5189,7 @@ components:
     PREVIEW_LIMIT_EXCEEDED: {status: 429, retryable: true, description: Too many active import previews (8); wait for expiry.}
     INTERNAL_ERROR: {status: 500, retryable: false, description: Unexpected server error; report the request ID.}
     UPSTREAM_UNAVAILABLE: {status: 502, retryable: true, description: 'Upstream unreachable, timed out or returned 5xx.'}
+    LOOP_DETECTED: {status: 508, retryable: false, description: 'A chain of sources leads back to the same application: a request sent by the application it asks for, or a mirror whose upstream chain contains this instance.'}
     INDEX_UNSUPPORTED: {status: 502, retryable: false, description: The HTTP cache source answered a directory request without a listing RedApp can read (HTML links, nginx autoindex JSON, Caddy browse JSON or a RedApp listing).}
     METADATA_UNTRUSTED: {status: 502, retryable: false, description: Upstream release metadata failed verification (digest, signature, URL rules).}
     CHANNELS_UNVERIFIED: {status: 502, retryable: true, description: Release channels could not be fetched and verified; nothing was selected or deleted.}
@@ -5298,6 +5375,7 @@ components:
         - INTERNAL_ERROR
         - UPSTREAM_UNAVAILABLE
         - INDEX_UNSUPPORTED
+        - LOOP_DETECTED
         - METADATA_UNTRUSTED
         - CHANNELS_UNVERIFIED
         - IMPORT_SOURCE_FAILED
@@ -6634,7 +6712,7 @@ components:
         artifacts:
           type: array
           items:
-            $ref: '#/components/schemas/ReleaseArtifact'
+            $ref: '#/components/schemas/ReleaseDownloadChoice'
     JSONReleaseData:
       type: object
       additionalProperties: false
@@ -6662,6 +6740,23 @@ components:
         checksum_url: {type: string}
         checksum_filename: {type: string}
         size: {type: integer, minimum: 0}
+    ReleaseDownloadChoice:
+      type: object
+      additionalProperties: false
+      required: [key, os, arch, format, url, sha256, path]
+      properties:
+        key: {type: string}
+        os: {type: string, enum: [windows, macos, linux, unknown]}
+        arch: {type: string, enum: [x64, arm64, x86, arm, universal, unknown]}
+        format: {type: string}
+        scope: {type: string}
+        variant: {type: string}
+        url: {type: string}
+        sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        size: {type: integer, minimum: 0}
+        path:
+          type: string
+          description: The artifact address relative to `/{vendor}/{app}/`, for a downstream RedApp that reaches this instance at another address.
     JSONReleaseConfig:
       type: object
       additionalProperties: false
@@ -6779,6 +6874,65 @@ components:
           $ref: '#/components/schemas/RetentionPolicy'
         prewarm:
           $ref: '#/components/schemas/PrewarmPolicy'
+    Instance:
+      type: object
+      additionalProperties: false
+      required: [instance_id, version]
+      properties:
+        instance_id:
+          type: string
+          pattern: '^[0-9a-f]{32}$'
+        version:
+          type: string
+    MirrorApp:
+      type: object
+      additionalProperties: false
+      required: [instance_id, key, provider, vendor, name, description, icon, instructions, auto_index, channels, upstream_chain, revision]
+      properties:
+        instance_id:
+          type: string
+          pattern: '^[0-9a-f]{32}$'
+        key:
+          $ref: '#/components/schemas/AppKey'
+        provider:
+          $ref: '#/components/schemas/ProviderKey'
+        vendor:
+          type: object
+          additionalProperties: false
+          required: [id, name, description, icon]
+          properties:
+            id:
+              $ref: '#/components/schemas/Slug'
+            name:
+              $ref: '#/components/schemas/LocalizedText'
+            description:
+              $ref: '#/components/schemas/LocalizedText'
+            icon:
+              $ref: '#/components/schemas/IconPath'
+        name:
+          $ref: '#/components/schemas/LocalizedText'
+        description:
+          $ref: '#/components/schemas/LocalizedText'
+        icon:
+          $ref: '#/components/schemas/IconPath'
+        instructions:
+          description: Usage instructions source text (Markdown with template variables), per language.
+          $ref: '#/components/schemas/LocalizedText'
+        auto_index:
+          type: boolean
+        channels:
+          type: array
+          description: Release channels (release providers); empty otherwise.
+          items:
+            type: string
+        upstream_chain:
+          type: array
+          description: Instance IDs the content passes through before this instance, nearest first.
+          items:
+            type: string
+            pattern: '^[0-9a-f]{32}$'
+        revision:
+          type: string
     FileIndex:
       type: object
       additionalProperties: false

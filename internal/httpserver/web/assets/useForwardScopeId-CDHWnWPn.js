@@ -1,0 +1,1 @@
+import{Cn as e}from"./ui-BHxFItiU.js";function t(){let t=e()?.vnode?.scopeId;return t?{[t]:``}:{}}export{t};

@@ -273,6 +273,9 @@ func (s *Server) serveFileIndex(w http.ResponseWriter, r *http.Request, entry ap
 			index.Entries = append(index.Entries, item)
 		}
 	case application.HttpCache:
+		if s.loopDetected(w, r, entry) {
+			return
+		}
 		if dir != "" {
 			if _, err := entry.Upstream.RelativeURL(dir); err != nil {
 				s.fail(w, r, codeInvalidPath, nil, "Invalid directory path")

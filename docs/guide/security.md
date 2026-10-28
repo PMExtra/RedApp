@@ -124,6 +124,7 @@ Common rules for all upstream traffic:
 - The HTTP cache may follow redirects to other HTTPS hosts. It drops credentials and cookies when the host changes.
 - A redirect to another host can only reach the same kind of address as the configured source: a source on the public internet can only redirect to public addresses, and an intranet source only to intranet addresses. The source host itself may be on the intranet. With an outbound proxy, the proxy resolves host names and this check does not apply.
 - Clients cannot choose the upstream host; they can only request paths below the configured source.
+- Requests that read an application's source carry `Via: 1.1 redapp-<instance ID>.<application digest>`. The instance ID is random, created with the data directory and also returned by `/api/instance`. A request that an application sent to itself, because its source leads back to it, is refused with `508 LOOP_DETECTED`; applications of the same instance may still use each other as sources.
 
 Choosing a mirror as the source does not make arbitrary files trusted. Codex and Claude Code files from a mirror must still pass the same checks.
 

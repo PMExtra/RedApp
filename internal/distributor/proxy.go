@@ -53,6 +53,7 @@ type Pool struct {
 	transports    atomic.Pointer[transportSet]
 	scopes        atomic.Pointer[scopeSnapshot]
 	net           network
+	instance      atomic.Value // instance UID string; see SetInstance
 }
 
 func NewPool() *Pool { return newPool(systemNetwork) }

@@ -18,6 +18,7 @@ const response: Schema<"ReleaseDownloads"> = {
       format: "exe",
       scope: "user",
       url: "/microsoft/vscode/releases/fixed/win-user",
+      path: "releases/fixed/win-user",
       sha256: "b".repeat(64),
     },
     {
@@ -27,6 +28,7 @@ const response: Schema<"ReleaseDownloads"> = {
       format: "deb",
       scope: "system",
       url: "/microsoft/vscode/releases/fixed/linux-deb",
+      path: "releases/fixed/linux-deb",
       sha256: "c".repeat(64),
     },
   ],

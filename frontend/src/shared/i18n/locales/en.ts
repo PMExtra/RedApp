@@ -200,6 +200,7 @@ export default {
       INTERNAL_ERROR: "An unexpected server error occurred.",
       UPSTREAM_UNAVAILABLE: "The upstream server is unavailable. Try again later.",
       INDEX_UNSUPPORTED: "The origin does not list this directory.",
+      LOOP_DETECTED: "The request came back to this RedApp through its upstreams.",
       METADATA_UNTRUSTED: "Upstream release metadata failed verification.",
       CHANNELS_UNVERIFIED:
         "Release channels could not be verified; nothing was changed. Try again.",

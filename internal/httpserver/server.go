@@ -86,6 +86,7 @@ func WithClock(now func() time.Time) Option {
 // Server is the HTTP layer: routing, middleware, request parsing and response
 // encoding over the domain services in Deps.
 type Server struct {
+	instanceUID string // random identity of the data directory; see getInstance
 	version     string
 	store       *store.Store
 	registry    *application.Registry
@@ -157,6 +158,14 @@ func New(deps Deps, options ...Option) (*Server, error) {
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
 	}
+	instanceUID, err := deps.Store.InstanceUID()
+	if err != nil {
+		return nil, fmt.Errorf("httpserver: instance identity: %w", err)
+	}
+	s.instanceUID = instanceUID
+	// Every upstream request names this instance, so that a chain of
+	// instances leading back here is refused (loopDetected).
+	s.pool.SetInstance(instanceUID)
 	maxDownloads := deps.MaxDownloadsPerClient
 	if maxDownloads == 0 {
 		maxDownloads = config.DefaultMaxDownloadsPerClient

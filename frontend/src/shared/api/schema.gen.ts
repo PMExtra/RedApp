@@ -64,6 +64,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/instance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Identify this RedApp instance to another instance that uses it as an upstream.
+         * @description `instance_id` is random, created with the data directory and kept by its backups; a copied data directory
+         *     shares it. Every upstream request that reads an application's source carries
+         *     `Via: 1.1 redapp-<instance_id>.<application digest>`. A request that reads an application's source and was
+         *     sent by that same application (its source leads back to itself) is refused with `508 LOOP_DETECTED`; other
+         *     applications of the same instance may use each other as sources.
+         */
+        get: operations["getInstance"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/home": {
         parameters: {
             query?: never;
@@ -169,6 +193,34 @@ export interface paths {
          * @description An application is published when it and its vendor are enabled and not deleted.
          */
         get: operations["getPublicApp"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/apps/{vendor}/{app}/mirror": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Vendor ID. */
+                vendor: components["parameters"]["Vendor"];
+                /** @description Application ID within the vendor. */
+                app: components["parameters"]["App"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Describe a published application for a downstream RedApp that mirrors it.
+         * @description The display fields a mirror follows (instructions as source text, so a mirror renders its own addresses),
+         *     the provider and channels it reproduces the content with, and `upstream_chain`: the instances the content
+         *     passes through before this one. A downstream refuses to mirror an application whose chain contains itself.
+         *     `revision` changes whenever any other field changes.
+         */
+        get: operations["getMirrorApp"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2162,7 +2214,7 @@ export interface components {
          * @description Stable error code; see `components.x-error-codes`.
          * @enum {string}
          */
-        ErrorCode: "INVALID_REQUEST" | "VALIDATION_FAILED" | "INVALID_QUERY" | "INVALID_CURSOR" | "INVALID_PATH" | "REQUEST_ORIGIN_INVALID" | "IF_MATCH_REQUIRED" | "CURRENT_PASSWORD_INCORRECT" | "PASSWORD_INVALID" | "PROXY_REDACTED_MISMATCH" | "ICON_INVALID" | "PACKAGE_INVALID" | "INSTRUCTIONS_TRUST_REQUIRED" | "AUTH_REQUIRED" | "LOGIN_FAILED" | "ORIGIN_REJECTED" | "CSRF_REJECTED" | "NOT_FOUND" | "VENDOR_NOT_FOUND" | "APPLICATION_NOT_FOUND" | "CATEGORY_NOT_FOUND" | "FILE_NOT_FOUND" | "SOURCE_NOT_FOUND" | "PREVIEW_NOT_FOUND" | "JOB_NOT_FOUND" | "TRANSFER_NOT_FOUND" | "CACHE_ENTRY_NOT_FOUND" | "CAPABILITY_UNSUPPORTED" | "METHOD_NOT_ALLOWED" | "REVISION_CONFLICT" | "ALREADY_EXISTS" | "VENDOR_NOT_EMPTY" | "BUILTIN_PROTECTED" | "ENTITY_DELETED" | "APPLICATION_DISABLED" | "APPLICATION_DELETE_PENDING" | "CATEGORY_AMBIGUOUS" | "FILE_CONFLICT" | "TRANSFER_ID_IN_USE" | "TRANSFER_CANCELLED" | "PREVIEW_STALE" | "OPERATION_IN_PROGRESS" | "SOURCE_CHANGED" | "IMPORT_NOT_READY" | "PREWARM_BUSY" | "PREWARM_REQUEST_CONFLICT" | "ARTIFACT_TOO_LARGE" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "LOGIN_RATE_LIMITED" | "PREVIEW_LIMIT_EXCEEDED" | "INTERNAL_ERROR" | "UPSTREAM_UNAVAILABLE" | "INDEX_UNSUPPORTED" | "METADATA_UNTRUSTED" | "CHANNELS_UNVERIFIED" | "IMPORT_SOURCE_FAILED" | "STORAGE_UNAVAILABLE" | "NOT_READY" | "SESSION_LIMIT_EXCEEDED" | "TRANSFER_CAPACITY" | "CACHE_CONTENDED" | "PREVIEW_BUSY" | "INSTALLER_UNAVAILABLE" | "CACHE_MISS";
+        ErrorCode: "INVALID_REQUEST" | "VALIDATION_FAILED" | "INVALID_QUERY" | "INVALID_CURSOR" | "INVALID_PATH" | "REQUEST_ORIGIN_INVALID" | "IF_MATCH_REQUIRED" | "CURRENT_PASSWORD_INCORRECT" | "PASSWORD_INVALID" | "PROXY_REDACTED_MISMATCH" | "ICON_INVALID" | "PACKAGE_INVALID" | "INSTRUCTIONS_TRUST_REQUIRED" | "AUTH_REQUIRED" | "LOGIN_FAILED" | "ORIGIN_REJECTED" | "CSRF_REJECTED" | "NOT_FOUND" | "VENDOR_NOT_FOUND" | "APPLICATION_NOT_FOUND" | "CATEGORY_NOT_FOUND" | "FILE_NOT_FOUND" | "SOURCE_NOT_FOUND" | "PREVIEW_NOT_FOUND" | "JOB_NOT_FOUND" | "TRANSFER_NOT_FOUND" | "CACHE_ENTRY_NOT_FOUND" | "CAPABILITY_UNSUPPORTED" | "METHOD_NOT_ALLOWED" | "REVISION_CONFLICT" | "ALREADY_EXISTS" | "VENDOR_NOT_EMPTY" | "BUILTIN_PROTECTED" | "ENTITY_DELETED" | "APPLICATION_DISABLED" | "APPLICATION_DELETE_PENDING" | "CATEGORY_AMBIGUOUS" | "FILE_CONFLICT" | "TRANSFER_ID_IN_USE" | "TRANSFER_CANCELLED" | "PREVIEW_STALE" | "OPERATION_IN_PROGRESS" | "SOURCE_CHANGED" | "IMPORT_NOT_READY" | "PREWARM_BUSY" | "PREWARM_REQUEST_CONFLICT" | "ARTIFACT_TOO_LARGE" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "LOGIN_RATE_LIMITED" | "PREVIEW_LIMIT_EXCEEDED" | "INTERNAL_ERROR" | "UPSTREAM_UNAVAILABLE" | "INDEX_UNSUPPORTED" | "LOOP_DETECTED" | "METADATA_UNTRUSTED" | "CHANNELS_UNVERIFIED" | "IMPORT_SOURCE_FAILED" | "STORAGE_UNAVAILABLE" | "NOT_READY" | "SESSION_LIMIT_EXCEEDED" | "TRANSFER_CAPACITY" | "CACHE_CONTENDED" | "PREVIEW_BUSY" | "INSTALLER_UNAVAILABLE" | "CACHE_MISS";
         /** @description 32 lowercase hex characters. */
         Uid: string;
         /**
@@ -2799,7 +2851,7 @@ export interface components {
             release_id: string;
             version: string;
             build: string;
-            artifacts: components["schemas"]["ReleaseArtifact"][];
+            artifacts: components["schemas"]["ReleaseDownloadChoice"][];
         };
         JSONReleaseData: {
             version: string;
@@ -2820,6 +2872,21 @@ export interface components {
             checksum_url?: string;
             checksum_filename?: string;
             size?: number;
+        };
+        ReleaseDownloadChoice: {
+            key: string;
+            /** @enum {string} */
+            os: "windows" | "macos" | "linux" | "unknown";
+            /** @enum {string} */
+            arch: "x64" | "arm64" | "x86" | "arm" | "universal" | "unknown";
+            format: string;
+            scope?: string;
+            variant?: string;
+            url: string;
+            sha256: string;
+            size?: number;
+            /** @description The artifact address relative to `/{vendor}/{app}/`, for a downstream RedApp that reaches this instance at another address. */
+            path: string;
         };
         /** @description Trusted administrator jq configuration. Limits and cancellation are not a hard memory sandbox. Queries receive {body, context}; HTTP is owned by the engine. */
         JSONReleaseConfig: {
@@ -2870,6 +2937,32 @@ export interface components {
             auto_index?: boolean;
             retention?: components["schemas"]["RetentionPolicy"];
             prewarm?: components["schemas"]["PrewarmPolicy"];
+        };
+        Instance: {
+            instance_id: string;
+            version: string;
+        };
+        MirrorApp: {
+            instance_id: string;
+            key: components["schemas"]["AppKey"];
+            provider: components["schemas"]["ProviderKey"];
+            vendor: {
+                id: components["schemas"]["Slug"];
+                name: components["schemas"]["LocalizedText"];
+                description: components["schemas"]["LocalizedText"];
+                icon: components["schemas"]["IconPath"];
+            };
+            name: components["schemas"]["LocalizedText"];
+            description: components["schemas"]["LocalizedText"];
+            icon: components["schemas"]["IconPath"];
+            /** @description Usage instructions source text (Markdown with template variables), per language. */
+            instructions: components["schemas"]["LocalizedText"];
+            auto_index: boolean;
+            /** @description Release channels (release providers); empty otherwise. */
+            channels: string[];
+            /** @description Instance IDs the content passes through before this instance, nearest first. */
+            upstream_chain: string[];
+            revision: string;
         };
         /** @description Directory listing of a `hosted` or `http-cache` application with `auto_index`. */
         FileIndex: {
@@ -3971,6 +4064,16 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
+        /** @description The request was sent by the application it asks for (`Via`); its source leads back to itself. */
+        LoopDetected: {
+            headers: {
+                "X-Request-Id": components["headers"]["XRequestId"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
         /** @description Local storage, capacity or a dependency is temporarily unavailable. */
         ServiceUnavailable: {
             headers: {
@@ -4092,6 +4195,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Bootstrap"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getInstance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Instance identity. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Instance"];
                 };
             };
             400: components["responses"]["BadRequest"];
@@ -4244,6 +4371,36 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    getMirrorApp: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Vendor ID. */
+                vendor: components["parameters"]["Vendor"];
+                /** @description Application ID within the vendor. */
+                app: components["parameters"]["App"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Mirror description. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MirrorApp"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     getReleaseDownloads: {
         parameters: {
             query?: {
@@ -4275,6 +4432,7 @@ export interface operations {
             500: components["responses"]["InternalError"];
             502: components["responses"]["BadGateway"];
             503: components["responses"]["ServiceUnavailable"];
+            508: components["responses"]["LoopDetected"];
         };
     };
     previewJSONRelease: {
@@ -4789,6 +4947,7 @@ export interface operations {
             502: components["responses"]["BadGateway"];
             503: components["responses"]["ServiceUnavailable"];
             504: components["responses"]["GatewayTimeout"];
+            508: components["responses"]["LoopDetected"];
         };
     };
     headDistributionFile: {
@@ -4861,6 +5020,13 @@ export interface operations {
             };
             /** @description Capacity or storage unavailable (no body). */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Loop detected (no body). */
+            508: {
                 headers: {
                     [name: string]: unknown;
                 };
