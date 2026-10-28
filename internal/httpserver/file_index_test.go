@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -186,4 +187,24 @@ func TestHTTPCacheAutoIndexListsTheSource(t *testing.T) {
 		t.Fatal("stale page lacks its notice")
 	}
 	h.expectError("GET", "/acme/mirror/never/", nil, 502, codeUpstreamUnavailable, nil)
+}
+
+// The administrator API reads and saves auto_index like any other path.
+func TestAutoIndexThroughTheConfigurationAPI(t *testing.T) {
+	h := newHarness(t)
+	h.createVendor("acme")
+	a := h.createApp("acme", "files", application.Hosted, nil)
+	h.login("")
+	path := "/admin/api/apps/" + a.Key + "/configuration"
+	before := getJSON[configurationDTO](h, path)
+	if value, ok := before.Effective["auto_index"]; !ok || value != false {
+		t.Fatalf("effective configuration lacks auto_index: %v", before.Effective)
+	}
+	body, _ := h.request("PATCH", path, map[string]any{"set": map[string]any{"auto_index": true}}, 200, map[string]string{"If-Match": `"` + strconv.FormatInt(before.Revision, 10) + `"`})
+	if after := decodeJSONBody[configurationDTO](t, body); after.Effective["auto_index"] != true {
+		t.Fatalf("auto_index not saved: %v", after.Effective)
+	}
+	if code, _, _ := h.raw("GET", "/acme/files/", nil, "", nil); code != 200 {
+		t.Fatal("listing not enabled", code)
+	}
 }
