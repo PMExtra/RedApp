@@ -956,7 +956,7 @@ paths:
         - provider: codex
           path: releases/{version}/{asset}
           content_type: application/octet-stream
-          description: Release artifact. `X-Expected-SHA256` carries the verified digest; `ETag` is `"sha256-<digest>"`.
+          description: 'Release artifact. `X-Expected-SHA256` carries the verified digest; verified content has `ETag: "sha256-<digest>"`.'
         - provider: claude-code
           path: latest | stable
           content_type: text/plain; charset=utf-8
@@ -972,7 +972,7 @@ paths:
         - provider: claude-code
           path: '{version}/{platform}/{binary}'
           content_type: application/octet-stream
-          description: Release artifact for one of 8 platforms. `X-Expected-SHA256` carries the digest from the signed manifest; `ETag` is `"sha256-<digest>"`.
+          description: 'Release artifact for one of 8 platforms. `X-Expected-SHA256` carries the digest from the signed manifest; verified content has `ETag: "sha256-<digest>"`.'
         - provider: json-release
           path: releases/{release_id}/{artifact_key}
           description: Immutable verified artifact, served through RedApp cache as an attachment using the authorized source URL filename.
@@ -1004,10 +1004,11 @@ paths:
             `Content-Disposition: attachment; filename=<base name>`, `ETag: "sha256-<hex>"`, `Cache-Control: no-cache`,
             `Content-Security-Policy: sandbox; default-src 'none'`. Conditional requests and single byte ranges.
       x-range-support: |
-        hosted and http-cache support a single byte range. Release artifacts support conditional requests and a single
-        byte range once their length is known (`Accept-Ranges: bytes`), waiting for the requested bytes of a transfer in
-        progress; the final byte is sent only after the artifact is verified. Otherwise they return the whole file
-        (`Accept-Ranges: none`). Release metadata does not support ranges.
+        hosted and http-cache support a single byte range. Verified, complete release artifacts carry
+        `ETag: "sha256-<digest>"` and support conditional requests and a single byte range (`Accept-Ranges: bytes`);
+        multiple ranges return the whole file. An artifact still being downloaded is streamed whole without an ETag
+        (`Accept-Ranges: none`), so unverified bytes are never offered for resumption. An `If-None-Match` matching the
+        digest ETag returns `304` without starting or counting a download. Release metadata does not support ranges.
       x-streaming: |
         Release artifacts and HTTP cache misses are streamed while the shared upstream download progresses (many
         readers follow one writer). Upstream reads have a 60 s idle timeout and no total limit; a failed transfer is

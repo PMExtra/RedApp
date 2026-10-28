@@ -110,9 +110,14 @@ func TestDownloadCountersCSRFAndPasswordChange(t *testing.T) {
 	h.expectError("DELETE", "/admin/api/session", nil, 403, codeCSRFRejected, nil)
 	h.expectError("POST", "/admin/api/password", map[string]string{"current_password": h.password, "new_password": "correct-horse-battery-new"}, 403, codeCSRFRejected, nil)
 	h.csrf = csrf
-	for range 2 {
+	// The miss streams unverified bytes; only the verified hit is rangeable.
+	for _, ranges := range []string{"none", "bytes"} {
 		body, header := h.request("GET", "/"+key+"/releases/0.159.2/archive.tgz", nil, 200, nil)
-		if !bytes.Equal(body, data) || header.Get("X-Expected-SHA256") == "" || header.Get("Accept-Ranges") != "bytes" || header.Get("ETag") != `"sha256-`+header.Get("X-Expected-SHA256")+`"` {
+		etag := ""
+		if ranges == "bytes" {
+			etag = `"sha256-` + header.Get("X-Expected-SHA256") + `"`
+		}
+		if !bytes.Equal(body, data) || header.Get("X-Expected-SHA256") == "" || header.Get("Accept-Ranges") != ranges || header.Get("ETag") != etag {
 			t.Fatal(string(body), header)
 		}
 	}
@@ -150,18 +155,23 @@ func TestDownloadCountersCSRFAndPasswordChange(t *testing.T) {
 
 }
 
-// A downstream cache, such as another RedApp, resumes an interrupted artifact
-// transfer with a single range guarded by the strong ETag.
+// A downstream cache, such as another RedApp, resumes an interrupted transfer
+// of verified content with a single range guarded by the strong ETag. Bytes of
+// a transfer in progress are never offered for resumption.
 func TestReleaseArtifactRangesAndValidators(t *testing.T) {
 	data := []byte("official archive bytes")
 	h := newHarness(t)
-	h.upstreamProxy(codexRelease("0.159.2", map[string][]byte{"archive.tgz": data}, nil))
+	var served int
+	h.upstreamProxy(codexRelease("0.159.2", map[string][]byte{"archive.tgz": data, "other.tgz": data}, func(string) { served++ }))
 	key := h.releaseApp("fixture", "codex", "codex")
 	file := "/" + key + "/releases/0.159.2/archive.tgz"
-	// The first request is a miss: the range waits for the bytes being fetched.
-	body, header := h.request("GET", file, nil, 206, map[string]string{"Range": "bytes=3-10"})
-	etag := header.Get("ETag")
-	if string(body) != string(data[3:11]) || header.Get("Content-Range") != "bytes 3-10/22" || !strings.HasPrefix(etag, `"sha256-`) {
+	body, header := h.request("GET", file, nil, 200, map[string]string{"Range": "bytes=3-10"})
+	if string(body) != string(data) || header.Get("Accept-Ranges") != "none" || header.Get("ETag") != "" {
+		t.Fatal("a miss offered unverified bytes for resumption", string(body), header)
+	}
+	etag := `"sha256-` + header.Get("X-Expected-SHA256") + `"`
+	body, header = h.request("GET", file, nil, 206, map[string]string{"Range": "bytes=3-10"})
+	if string(body) != string(data[3:11]) || header.Get("Content-Range") != "bytes 3-10/22" || header.Get("ETag") != etag {
 		t.Fatal(string(body), header)
 	}
 	if body, _ = h.request("GET", file, nil, 206, map[string]string{"Range": "bytes=9-", "If-Range": etag}); string(body) != string(data[9:]) {
@@ -170,16 +180,28 @@ func TestReleaseArtifactRangesAndValidators(t *testing.T) {
 	if body, _ = h.request("GET", file, nil, 200, map[string]string{"Range": "bytes=9-", "If-Range": `"sha256-other"`}); string(body) != string(data) {
 		t.Fatal("If-Range with another ETag did not return the whole file", string(body))
 	}
-	h.request("GET", file, nil, 304, map[string]string{"If-None-Match": etag})
+	if body, _ = h.request("GET", file, nil, 200, map[string]string{"Range": "bytes=0-1,5-6"}); string(body) != string(data) {
+		t.Fatal("multiple ranges did not return the whole file", string(body))
+	}
 	h.request("GET", file, nil, 416, map[string]string{"Range": "bytes=99-"})
+	// A client holding the verified bytes needs no transfer, even of an
+	// artifact that is not cached: nothing is fetched or counted.
+	before, _ := h.store.Counters()
+	h.request("GET", file, nil, 304, map[string]string{"If-None-Match": etag})
+	h.request("GET", "/"+key+"/releases/0.159.2/other.tgz", nil, 304, map[string]string{"If-None-Match": `W/` + etag})
 	counters, _ := h.store.Counters()
-	if counters["download_success"] != 3 || counters["download_errors"] != 0 || counters["downstream_bytes"] != int64(8+len(data[9:])+len(data)) {
+	if served != 1 || counters["artifact_requests"] != before["artifact_requests"] {
+		t.Fatal("a revalidation started or counted a download", served, before, counters)
+	}
+	// The miss, the range to the end, the If-Range miss and the multi-range
+	// request reached the end of the file; bytes=3-10 did not.
+	if counters["download_success"] != 4 || counters["download_errors"] != 0 || counters["downstream_bytes"] != int64(3*len(data)+8+len(data[9:])) {
 		t.Fatal(counters)
 	}
 }
 
-// With a declared length, a client must never receive every byte of an
-// artifact whose digest fails: the final byte is held until verification.
+// A client never receives an artifact whose digest fails as a complete
+// download: the stream is aborted instead of ending normally.
 func TestReleaseArtifactDigestFailureNeverLooksComplete(t *testing.T) {
 	data := []byte("official archive bytes")
 	tampered := []byte("tampered archive bytes")
@@ -200,7 +222,7 @@ func TestReleaseArtifactDigestFailureNeverLooksComplete(t *testing.T) {
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(response.Body)
-	if response.Header.Get("Content-Length") != strconv.Itoa(len(data)) || err == nil || len(body) >= len(data) {
+	if err == nil || response.Header.Get("ETag") != "" || response.Header.Get("Accept-Ranges") != "none" {
 		t.Fatalf("digest failure looked complete: %d bytes, %v, %v", len(body), err, response.Header)
 	}
 }

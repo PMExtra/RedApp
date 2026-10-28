@@ -222,7 +222,7 @@ A restart interrupts a running refresh or cleanup. It does not resume; create a 
 
 These providers serve official releases. RedApp fetches metadata and binaries from the upstream, verifies them, caches them and serves them together with patched installers. See [Security](security.md#upstream-verification) for the checks.
 
-Release files support conditional requests and resuming with a single byte range once their length is known, including while RedApp is still downloading them. The last byte is sent only after the file passes verification, so a client never receives a file that failed it as complete.
+Release files that RedApp has downloaded and verified carry `ETag: "sha256-<digest>"` and support conditional requests and resuming with a single byte range. A file that RedApp is still downloading is sent whole and cannot be resumed, because its bytes are not verified yet.
 
 ### Channels
 

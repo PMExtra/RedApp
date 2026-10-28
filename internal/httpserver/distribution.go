@@ -295,14 +295,35 @@ func releaseError(err error) *apiError {
 	}
 }
 
-// artifactHeaders describe the verified representation. The strong ETag lets
-// a downstream cache, such as another RedApp, resume an interrupted transfer
-// of exactly these bytes with If-Range.
 func artifactHeaders(w http.ResponseWriter, resource download.Resource) {
 	h := w.Header()
 	h.Set("Content-Type", "application/octet-stream")
 	h.Set("X-Expected-SHA256", resource.Hash)
-	h.Set("ETag", `"sha256-`+resource.Hash+`"`)
+}
+
+// artifactETag names the verified bytes of an artifact, which never change.
+func artifactETag(resource download.Resource) string { return `"sha256-` + resource.Hash + `"` }
+
+// etagListed reports whether an If-None-Match value matches etag (weak comparison).
+func etagListed(header, etag string) bool {
+	for _, tag := range strings.Split(header, ",") {
+		tag = strings.TrimPrefix(strings.TrimSpace(tag), "W/")
+		if tag == "*" || tag == etag {
+			return true
+		}
+	}
+	return false
+}
+
+// singleRange drops a multi-range request header: ServeContent would read
+// such ranges in its own goroutine, which can outlive the shared reader.
+func singleRange(r *http.Request) *http.Request {
+	if !strings.Contains(r.Header.Get("Range"), ",") {
+		return r
+	}
+	copy := r.Clone(r.Context())
+	copy.Header.Del("Range")
+	return copy
 }
 
 // serveArtifact streams a release artifact while the shared download
@@ -310,6 +331,15 @@ func artifactHeaders(w http.ResponseWriter, resource download.Resource) {
 // truncating the body silently.
 func (s *Server) serveArtifact(w *downloadReceipt, r *http.Request, resource download.Resource) {
 	defer s.store.SettleCounters() // Persist this transfer's counters promptly; failures are reported, never fatal.
+	etag := artifactETag(resource)
+	// A client that already holds the verified bytes needs no transfer, and
+	// none is started or counted for it.
+	if etagListed(r.Header.Get("If-None-Match"), etag) {
+		artifactHeaders(w, resource)
+		w.Header().Set("ETag", etag)
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
 	app := resource.Application
 	metricApp := resource.MetricScope()
 	if err := s.store.AddFor(metricApp, "artifact_requests", 1); err != nil {
@@ -339,6 +369,42 @@ func (s *Server) serveArtifact(w *downloadReceipt, r *http.Request, resource dow
 		s.writeError(w, r, storageError(err))
 		return
 	}
+	artifactHeaders(w, resource)
+	count := func(n int) {
+		// Counters are buffered in memory; accounting never aborts a client transfer.
+		_ = s.store.AddFor(metricApp, "downstream_bytes", int64(n))
+		_ = s.store.AddVersion(app, resource.Version, 0, int64(n))
+	}
+	// Only verified, complete content carries the ETag and honours ranges and
+	// preconditions, for example to let a downstream RedApp resume. Bytes of a
+	// transfer still in progress are unverified: a client resuming them from
+	// another generation could join a rejected prefix to a valid tail.
+	if total, seekErr := rd.Seek(0, io.SeekEnd); rd.Kind == "cache_hit" && seekErr == nil {
+		if _, err = rd.Seek(0, io.SeekStart); err != nil {
+			s.writeError(w, r, storageError(err))
+			return
+		}
+		w.Header().Set("ETag", etag)
+		w.Header().Set("Accept-Ranges", "bytes")
+		reader := &artifactReader{Reader: rd, total: total}
+		http.ServeContent(&artifactWriter{downloadReceipt: w, count: count}, singleRange(r), "", time.Time{}, reader)
+		if reader.err != nil && reader.err != io.EOF {
+			_ = s.store.AddFor(metricApp, "download_errors", 1)
+			panic(http.ErrAbortHandler)
+		}
+		// Only a response that reached the end of the file is a completed download.
+		reachedEnd := w.status == http.StatusOK || w.status == http.StatusPartialContent && strings.HasSuffix(w.Header().Get("Content-Range"), "-"+strconv.FormatInt(total-1, 10)+"/"+strconv.FormatInt(total, 10))
+		if w.failed {
+			_ = s.store.AddFor(metricApp, "download_errors", 1)
+		} else if reachedEnd {
+			_ = s.store.AddFor(metricApp, "download_success", 1)
+		}
+		return
+	}
+	if _, err = rd.Seek(0, io.SeekStart); err != nil {
+		s.writeError(w, r, storageError(err))
+		return
+	}
 	// Wait for the first byte, so that a transfer failing at once is reported
 	// as an error the client can retry before any header is sent.
 	var first [1]byte
@@ -349,34 +415,6 @@ func (s *Server) serveArtifact(w *downloadReceipt, r *http.Request, resource dow
 	}
 	if _, err = rd.Seek(0, io.SeekStart); err != nil {
 		s.writeError(w, r, storageError(err))
-		return
-	}
-	artifactHeaders(w, resource)
-	count := func(n int) {
-		// Counters are buffered in memory; accounting never aborts a client transfer.
-		_ = s.store.AddFor(metricApp, "downstream_bytes", int64(n))
-		_ = s.store.AddVersion(app, resource.Version, 0, int64(n))
-	}
-	// With a known length, conditional and single-range requests are answered
-	// as for a stored file, waiting for the requested bytes of a transfer still
-	// in progress. Without one, the whole body is streamed.
-	if total, seekErr := rd.Seek(0, io.SeekEnd); seekErr == nil {
-		if _, err = rd.Seek(0, io.SeekStart); err != nil {
-			s.writeError(w, r, storageError(err))
-			return
-		}
-		w.Header().Set("Accept-Ranges", "bytes")
-		reader := &artifactReader{Reader: rd, total: total}
-		http.ServeContent(&artifactWriter{downloadReceipt: w, count: count}, r, "", time.Time{}, reader)
-		if reader.err != nil && reader.err != io.EOF {
-			_ = s.store.AddFor(metricApp, "download_errors", 1)
-			panic(http.ErrAbortHandler)
-		}
-		if w.failed {
-			_ = s.store.AddFor(metricApp, "download_errors", 1)
-		} else if w.status == http.StatusOK || w.status == http.StatusPartialContent {
-			_ = s.store.AddFor(metricApp, "download_success", 1)
-		}
 		return
 	}
 	w.Header().Set("Accept-Ranges", "none")
@@ -411,11 +449,11 @@ func (s *Server) serveArtifact(w *downloadReceipt, r *http.Request, resource dow
 	}
 }
 
-// artifactReader serves a shared transfer of known length to http.ServeContent.
+// artifactReader serves complete content of known length to http.ServeContent.
 // It records a failure, so the connection is aborted instead of truncated
-// silently, and holds back the final byte until the transfer is verified: with
-// a declared Content-Length, a client that received every byte would otherwise
-// take a later digest failure for a complete download.
+// silently, and delivers the final byte only with the body's verified EOF: a
+// finished body may still be failed later, and with a declared Content-Length
+// a client that received every byte would take that for a complete download.
 type artifactReader struct {
 	*download.Reader
 	total int64
