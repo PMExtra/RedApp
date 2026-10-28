@@ -78,6 +78,7 @@ export function publicApp(overrides: Overrides<Schema<"PublicApp">> = {}): Schem
     categories: [],
     latest_known_version: { version: "0.46.0", first_seen: "2026-10-01T08:00:00Z" },
     instructions_available: { en: true, "zh-CN": true },
+    auto_index: false,
     revision: "r1",
     ...overrides,
   };

@@ -1,0 +1,1 @@
+import{Kn as e,er as t,rr as n}from"./ui-BXRa_BVs.js";function r(r,i){let a=n(r.value),o;return e(r,e=>{clearTimeout(o),o=setTimeout(()=>{a.value=e},i)}),t(()=>clearTimeout(o)),a}export{r as t};

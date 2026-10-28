@@ -268,7 +268,7 @@ Prewarm downloads files before clients ask for them.
 | Claude Code (8) | `darwin-arm64`, `darwin-x64`, `linux-arm64`, `linux-x64`, `linux-arm64-musl`, `linux-x64-musl`, `win32-arm64`, `win32-x64` |
 
 - **Automatic prewarm** (release applications only): choose channels and platforms. Every 15 minutes, RedApp downloads the versions those channels point to. Versions already prewarmed are skipped; failures are retried in the next pass.
-- **Manual prewarm** (release and HTTP cache applications): start a one-time task. For the HTTP cache, provide file paths, a UTF-8 path list, or directory paths whose listings RedApp crawls. Directory listings in HTML, nginx `autoindex` JSON and Caddy `browse` JSON are supported.
+- **Manual prewarm** (release and HTTP cache applications): start a one-time task. For the HTTP cache, provide file paths, a UTF-8 path list, or directory paths whose listings RedApp crawls. Directory listings in HTML, nginx `autoindex` JSON, Caddy `browse` JSON and RedApp formats are supported.
 
 | Limit for a prewarm task | Default | Maximum |
 | --- | --- | --- |
@@ -298,6 +298,24 @@ Hosted applications serve files that administrators provide.
 - An import URL may contain a query string, for example a signed download link. RedApp uses it once and never stores or shows it. URLs with credentials or a fragment (`#...`) are refused.
 - Files of a deleted hosted application can still be downloaded and deleted, but not added or replaced.
 - Downloads support byte ranges and conditional requests.
+
+## Directory listings
+
+Hosted and HTTP cache applications can list their directories. Turn on **List directories** in the application settings (`auto_index` in configuration files). It is off by default.
+
+| Address | Response |
+| --- | --- |
+| `/<vendor>/<app>` | The application page, as always |
+| `/<vendor>/<app>/` | The root directory. Without directory listings, a temporary redirect (`307`) to the application page |
+| `/<vendor>/<app>/<directory>/` | That directory |
+| `/<vendor>/<app>/<directory>` | A temporary redirect (`307`) to the address ending in `/`, when the path is a directory |
+
+- Browsers get a page with a filter box and a link back to the application page. A client whose `Accept` prefers `application/json` gets JSON: `path`, `stale`, `truncated` and `entries`, each with `name`, `type` (`file` or `directory`) and, when known, `size` and `modified`. The page uses plain relative links, so tools such as `wget -r` can follow them.
+- A listing has at most 10,000 entries, directories first; a longer directory is marked as truncated. There is no pagination.
+- **Hosted files**: a directory appears when files exist below it. A file and a directory may share a name; without the trailing `/` the file is served.
+- **HTTP cache**: the listing comes from the source, never from cached files, so it also shows files that are not cached yet. RedApp reads HTML links, nginx `autoindex` JSON, Caddy `browse` JSON and RedApp listings, and keeps only safe links to direct children. A listing is reused for the application's default TTL. When the source fails, the last successful listing is shown and marked as stale, also after a restart; a directory that was never listed returns an error. A source that answers without a readable listing returns `502 INDEX_UNSUPPORTED`. A path that the source redirects to the same path with `/` is a directory.
+- The application page shows **Browse files** while directory listings are on.
+- Listings do not count as downloads.
 
 ## App info and usage instructions
 

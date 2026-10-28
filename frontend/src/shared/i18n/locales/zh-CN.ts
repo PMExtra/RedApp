@@ -195,6 +195,7 @@ export default {
       PREVIEW_LIMIT_EXCEEDED: "打开的导入预览过多，请稍后再试。",
       INTERNAL_ERROR: "服务器发生意外错误。",
       UPSTREAM_UNAVAILABLE: "上游服务器不可用，请稍后再试。",
+      INDEX_UNSUPPORTED: "源站不提供此目录的列表。",
       METADATA_UNTRUSTED: "上游发布元数据未通过校验。",
       CHANNELS_UNVERIFIED: "无法验证发布渠道，未做任何修改。请重试。",
       IMPORT_SOURCE_FAILED: "无法从该 URL 下载文件，请重试。",

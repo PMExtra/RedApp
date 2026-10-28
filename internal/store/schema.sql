@@ -44,6 +44,7 @@ CREATE TABLE applications(
   json_release_json TEXT NOT NULL DEFAULT 'null',
   source_strategy TEXT NOT NULL CHECK(source_strategy IN ('','ordered','round_robin','random')),
   cache_ttl_seconds INTEGER NOT NULL CHECK(cache_ttl_seconds BETWEEN 0 AND 86400),
+  auto_index INTEGER NOT NULL DEFAULT 0 CHECK(auto_index IN (0,1)),
   enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
   revision INTEGER NOT NULL CHECK(revision>=1),
   runtime_revision INTEGER NOT NULL CHECK(runtime_revision>=1),
@@ -321,6 +322,18 @@ CREATE TABLE http_cache_generations(
 );
 CREATE UNIQUE INDEX http_cache_current ON http_cache_generations(storage_id,path) WHERE is_current=1;
 CREATE INDEX http_cache_scan ON http_cache_generations(storage_id,row_no) WHERE is_current=1;
+-- Last successful source directory listing of an http-cache application with
+-- auto_index, served while the source fails. A row of an earlier source epoch
+-- is ignored and replaced.
+CREATE TABLE http_cache_indexes(
+  app_uid TEXT NOT NULL REFERENCES applications(uid) ON DELETE CASCADE,
+  path TEXT NOT NULL,
+  source_epoch INTEGER NOT NULL CHECK(source_epoch>=1),
+  entries_json BLOB NOT NULL,
+  truncated INTEGER NOT NULL CHECK(truncated IN (0,1)),
+  fetched_at_s INTEGER NOT NULL,
+  PRIMARY KEY(app_uid,path)
+);
 -- Frozen previews ------------------------------------------------------------
 -- Every cleanup, retention and refresh is previewed first and executes only the
 -- frozen items. criteria_json and summary_json belong to the kind; the fence,

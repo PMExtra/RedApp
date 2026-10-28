@@ -663,7 +663,7 @@ func validateExchangeSpec(kind string, value Object) error {
 		if validateApplication(&input) != nil || validateInstructions(LocalizedText{v.Instructions.En, v.Instructions.ZhCN}) != nil {
 			return ErrInvalidDirectory
 		}
-		if v.Prewarm != nil && v.Prewarm.Validate(v.Provider) != nil || v.Retention != nil && (!presets.VersionsProvider(v.Provider) || v.Retention.Validate() != nil) || v.HTTPPolicy != nil && (v.Provider != "http-cache" || v.HTTPPolicy.Validate() != nil) {
+		if v.Prewarm != nil && v.Prewarm.Validate(v.Provider) != nil || v.Retention != nil && (!presets.VersionsProvider(v.Provider) || v.Retention.Validate() != nil) || v.HTTPPolicy != nil && (v.Provider != "http-cache" || v.HTTPPolicy.Validate() != nil) || v.AutoIndex != nil && !presets.AutoIndexProvider(v.Provider) {
 			return ErrInvalidDirectory
 		}
 		if _, e := presets.NormalizeCategories(v.Categories); e != nil {

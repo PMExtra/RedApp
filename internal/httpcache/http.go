@@ -270,6 +270,10 @@ func (s *Service) head(w http.ResponseWriter, r *http.Request, f fill, old *Row)
 			lastErr = ErrUpstream
 			continue
 		}
+		if resp.StatusCode == http.StatusOK && directoryRedirect(entry, resp, source) {
+			resp.Body.Close()
+			return ErrDirectory
+		}
 		err = s.headResponse(w, r, f, old, attempt, headers, resp)
 		resp.Body.Close()
 		return err

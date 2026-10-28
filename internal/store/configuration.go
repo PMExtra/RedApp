@@ -189,14 +189,15 @@ func paths(kind string) []string {
 	if kind == "Vendor" {
 		return append(out, "localized_icons.en", "localized_icons.zh-CN")
 	}
-	return append(out, "instructions.en", "instructions.zh-CN", "json_release", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "retention", "prewarm", "categories", "tags")
+	return append(out, "instructions.en", "instructions.zh-CN", "json_release", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "auto_index", "retention", "prewarm", "categories", "tags")
 }
 
 // AppPathApplies reports whether an application configuration path (or a
 // top-level spec field such as http_policy) applies to the provider: base_url
 // to release providers, base_urls, source_strategy and http_policy to
-// http-cache, retention and prewarm to release providers and
-// cache_ttl_seconds to every provider with an upstream.
+// http-cache, retention and prewarm to release providers, auto_index to
+// hosted and http-cache and cache_ttl_seconds to every provider with an
+// upstream.
 func AppPathApplies(provider, path string) bool {
 	field, _, _ := strings.Cut(path, ".")
 	switch field {
@@ -208,6 +209,8 @@ func AppPathApplies(provider, path string) bool {
 		return provider == "http-cache"
 	case "cache_ttl_seconds":
 		return provider == "http-cache" || presets.VersionsProvider(provider)
+	case "auto_index":
+		return presets.AutoIndexProvider(provider)
 	}
 	return true
 }
@@ -408,6 +411,11 @@ func (w *configSet) effective(kind string, c ownedConfig) (Object, error) {
 			}
 		} else if presets.VersionsProvider(spec.Provider) {
 			effective["retention"] = object(presets.DefaultRetention())
+		}
+		if spec.AutoIndex != nil && !presets.AutoIndexProvider(spec.Provider) {
+			return nil, ErrInvalidDirectory
+		} else if spec.AutoIndex == nil && presets.AutoIndexProvider(spec.Provider) {
+			effective["auto_index"] = false
 		}
 		input := ApplicationInput{ID: "effective", Name: LocalizedText{spec.Name.En, spec.Name.ZhCN}, Description: LocalizedText{spec.Description.En, spec.Description.ZhCN}, Icon: spec.Icon, Provider: spec.Provider, JSONRelease: spec.JSONRelease, BaseURL: spec.BaseURL, BaseURLs: spec.BaseURLs, SourceStrategy: spec.SourceStrategy, CacheTTLSeconds: spec.CacheTTLSeconds}
 		if err := validateApplication(&input); err != nil {
@@ -664,6 +672,10 @@ func appSpec(a Application, instructions LocalizedText, policy cachepolicy.Confi
 	if a.Provider == "http-cache" {
 		spec.HTTPPolicy = &policy
 	}
+	if presets.AutoIndexProvider(a.Provider) {
+		autoIndex := a.AutoIndex
+		spec.AutoIndex = &autoIndex
+	}
 	return object(spec)
 }
 func validateInstructions(value LocalizedText) error {
@@ -710,6 +722,12 @@ func applyPatch(c *ownedConfig, kind string, patch ConfigurationPatch) error {
 		}
 		if p == "retention" {
 			var value presets.Retention
+			if json.Unmarshal(patch.Set[p], &value) != nil {
+				return ErrInvalidDirectory
+			}
+		}
+		if p == "auto_index" {
+			var value bool
 			if json.Unmarshal(patch.Set[p], &value) != nil {
 				return ErrInvalidDirectory
 			}
@@ -976,6 +994,9 @@ func snapshots(set presets.Set) ([]templateSnapshot, error) {
 			normalized.Prewarm = presets.DefaultPrewarm()
 		}
 		if normalized.Prewarm != nil && normalized.Prewarm.Validate(normalized.Provider) != nil {
+			return nil, ErrInvalidDirectory
+		}
+		if normalized.AutoIndex != nil && !presets.AutoIndexProvider(normalized.Provider) {
 			return nil, ErrInvalidDirectory
 		}
 		spec := object(normalized)

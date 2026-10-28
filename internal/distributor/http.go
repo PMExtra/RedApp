@@ -336,7 +336,7 @@ func (c *Client) Send(ctx context.Context, req Request) (*http.Response, error) 
 		if !c.IndexBoundary(u) {
 			return nil, errIndexBoundary
 		}
-		r.Header.Set("Accept", "application/json,text/html")
+		r.Header.Set("Accept", "application/json, text/html;q=0.9")
 	}
 	for _, key := range []string{"Range", "If-Range", "If-None-Match", "If-Modified-Since", "If-Match", "If-Unmodified-Since"} {
 		if v := req.Header.Get(key); v != "" {

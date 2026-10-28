@@ -102,7 +102,7 @@ RedApp 是单进程 Go 服务：一个二进制、一个 SQLite 数据库、一�
 | --- | --- |
 | `/`、`/all` | 首页与全部应用（SPA） |
 | `/<vendor>` | 厂商页（厂商启用且未删除；否则返回同一文档并带 404） |
-| `/<vendor>/<app>` | 应用详情与使用说明（SPA，应用未发布时返回同一文档并带 404）；带尾部 `/` 时 308 重定向 |
+| `/<vendor>/<app>` | 应用详情与使用说明（SPA，应用未发布时返回同一文档并带 404）；带尾部 `/` 时，开启 `auto_index` 的 `hosted`、`http-cache` 应用列出根目录，否则 307 重定向到详情页 |
 | `/<vendor>/<app>/<file_path>` | 分发路径：安装脚本、静态资产、渠道/元数据或制品 |
 | `/api/...`、`/admin/api/...` | 公开 API 与管理 API |
 | `/admin/...` | 后台 SPA；只有规范 `x-spa-routes` 中的路径（且厂商、应用和标签页存在）返回 200，其余 `/admin/...` 返回同一文档并带 404 |
@@ -156,6 +156,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 - **新鲜度**：首个匹配的路径规则决定 TTL（忽略上游头）；无规则时用上游 `s-maxage`/`max-age` 减去由 `Age`/`Date` 推算的年龄（有 `Cache-Control` 但没有这两个指令时立即过期）；完全没有 `Cache-Control` 时才用应用默认 TTL。路径规则最多 32 条，还可覆盖 `no-store`/`private`，但不缓存带 `Set-Cookie` 或不支持的 `Vary` 的响应。请求端缓存指令被忽略，只支持 `only-if-cached`。不可缓存的响应由每个读者各自直接传输，受写者额度约束。
 - **恢复**：启动时只删除 part、没有条目的 body 和已退役条目，不计算哈希。每个条目在本进程首次使用前校验一次：`spool.Checks` 合并同一条目的并发校验，校验在服务自己的 context 中运行，等待者取消不会中断它；不一致或缺失的条目被退役并重新回源。本进程写入的条目不再校验。
 - **额度与指标**：读者和写者占用 `download.Budget` 的共享额度，流在整个填充期间持有一个写者额度。`Files()` 以 `spool.FileStatus` 报告条目和正在填充的 part，与下载引擎的 `Files()` 一起用于容量和磁盘指标。
+- **目录列表**（`auto_index`）：`Service.Index` 只向来源请求目录（`distributor.Client.Index`，`Accept` 优先 JSON），从不由已缓存条目拼出列表；解析 HTML、nginx、Caddy 与 RedApp 列表，只保留经 `discoveredPath` 校验的直接子项。同一目录的并发请求合并为一次；最近一次成功的列表按应用与来源 epoch 存在 `http_cache_indexes`，在应用默认 TTL 内复用，来源失败时作为 `stale` 返回。`fetchAttempt` 遇到来源把路径重定向到同一路径加 `/` 时返回 `ErrDirectory`，HTTP 层 307 到目录，不缓存。托管文件的目录由 `store.HostedDirectory` 按路径前缀范围查询。HTML 与 JSON 的渲染在 `httpserver/file_index.go`：CSP 只按哈希允许页面自身的内联样式和脚本。
 - 这里的哈希只用于存储完整性，不用于授权。
 
 ## 冻结预览
@@ -202,7 +203,7 @@ HTTP 层只有一处映射（`previews.go`）：未知、其他应用或其他�
 
 - schema 内嵌在 `internal/store/schema.sql`，版本写入 `PRAGMA user_version`，常量为 `store.SchemaVersion`（当前为 15）。`PRAGMA application_id` 固定为 RedApp 的标识，用来拒绝版本号碰巧相同的其他 SQLite 文件。
 - 新目录（为空、只含实例锁，或附带空的私有 `tmp/sqlite` 初始化目录结构）创建全新 schema，并在首次启动前 checkpoint 到主文件。已有数据库直接只读文件头检查 `application_id` 与 `user_version`，避免过早初始化 SQLite 的进程级 VFS；版本不兼容时只读拒绝，不改写、不删除，也不创建 WAL/SHM 文件。正式打开后再以 SQLite 核对 WAL 视图。不比较表结构：1.0 前每次 schema 变化都提升版本。
-- 迁移框架（`migrate.go`）按明确兼容窗口运行，目前支持 schema 15→16→17，窗口外版本只读拒绝。迁移先用 `VACUUM INTO` 在数据目录写备份，再在一个事务中执行迁移步骤、外键检查并与全新 schema 比对；流程见 [development.md](development.md#schema-迁移)。每个 schema 版本的 golden fixture 在 `internal/store/testdata/schema/`。
+- 迁移框架（`migrate.go`）按明确兼容窗口运行，目前支持 schema 15→16→17→18，窗口外版本只读拒绝。迁移先用 `VACUUM INTO` 在数据目录写备份，再在一个事务中执行迁移步骤、外键检查并与全新 schema 比对；流程见 [development.md](development.md#schema-迁移)。每个 schema 版本的 golden fixture 在 `internal/store/testdata/schema/`。
 - 属于厂商或应用的行以 UID 引用父行并 `ON DELETE CASCADE`；应用引用厂商不级联，因为必须先删除应用并登记其对象文件。发布、缓存和指标数据以存储命名空间或指标命名空间为键，永久删除应用时按前缀删除；同一版本的元数据、渠道、资源和下载代际随版本级联删除。
 - 1.0 前允许不兼容变更，合理成本下提供迁移，规则见 [ADR 0001](adr/0001-pre-1.0-no-migrations.md)。
 - 连接：WAL、`synchronous=FULL`、外键开启。写连接只有一个（`_txlock=immediate`），所有写入和读改写事务都在它上面串行；只读查询和只读快照事务走独立的 `query_only` 读连接池（8 个），WAL 下不等待正在进行的写事务，看到的是最近一次提交。持有写事务时（包括 `finalize`、`beforeCommit` 和删除包装回调）只能使用该事务，不能调用会写的 `Store` 方法，否则会等待调用者自己占用的写连接；只读方法可以调用，但看不到事务内未提交的修改。

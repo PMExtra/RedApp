@@ -81,6 +81,8 @@ func rowsFromEntries(entries []store.HTTPCacheEntry) ([]Row, error) {
 }
 
 type Service struct {
+	// indexFlights coalesces concurrent source listings of one directory; guarded by mu.
+	indexFlights    map[string]*indexFlight
 	sourceCursors   map[string]*list.Element
 	sourceOrder     list.List
 	cleanupMu       sync.Mutex

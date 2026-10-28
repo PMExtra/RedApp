@@ -396,7 +396,9 @@ export interface paths {
         };
         /**
          * Serve the SPA document for a published application.
-         * @description `/{vendor}/{app}/` (trailing slash) redirects with `308` to `/{vendor}/{app}`. Unknown or unpublished
+         * @description `/{vendor}/{app}/` (trailing slash) lists the root directory of a `hosted` or `http-cache` application with
+         *     `auto_index` and otherwise redirects with `307` to `/{vendor}/{app}` (temporary, because enabling `auto_index`
+         *     changes it; see `getDistributionFile`). Unknown or unpublished
          *     applications and invalid identities return `index.html` with status 404. Paths below `/admin/` (other
          *     than `x-spa-routes`) return `admin.html` with status 404 (see `getAdminPage`); paths whose first segment is
          *     `api`, `assets` or `health` return the router-level `404 NOT_FOUND` error.
@@ -557,6 +559,21 @@ export interface paths {
          *     2. `http-cache`: the cached or fetched upstream file at `<source>/<file_path>`.
          *     3. Reviewed static assets of the application descriptor (licences, public keys), `text/plain`.
          *     4. `codex` / `claude-code`: the release protocol routes in `x-distribution-routes`.
+         *
+         *     Directory listings (`auto_index`, `hosted` and `http-cache` only): a path ending in `/`, including the
+         *     application root `/{vendor}/{app}/`, lists that directory. A client whose `Accept` prefers `application/json`
+         *     to `text/html` gets a `FileIndex` document; others get an HTML page (server-rendered, relative `<a href>` links,
+         *     `Content-Security-Policy` allowing only the page's own inline style and script by hash). Both carry
+         *     `Vary: Accept` and `Cache-Control: no-cache`. A directory has at most 10,000 entries per listing, directories
+         *     first and then by name; more set `truncated`. There is no pagination. A path without the trailing slash that is
+         *     a directory (a hosted path below which files exist, or an `http-cache` path the source redirects to the same
+         *     path with `/`) returns `307` to the directory; a hosted file of the same name takes precedence. `hosted`
+         *     listings come from the hosted files; `http-cache` listings come only from the source (HTML links, nginx
+         *     autoindex JSON, Caddy browse JSON or a RedApp listing), never from cached files, so files not cached yet are
+         *     listed. A source listing younger than the application's cache TTL is reused; when every source fails, the last
+         *     successful listing of the current source epoch is returned with `stale`, otherwise `502 UPSTREAM_UNAVAILABLE`.
+         *     A source that answers without a readable listing returns `502 INDEX_UNSUPPORTED`; a missing directory returns
+         *     `404 FILE_NOT_FOUND`. Listings are not downloads: they take no download slot and are not ranked.
          *
          *     Query strings are rejected (`400 INVALID_PATH` for `http-cache` and `hosted`, `400 INVALID_QUERY` otherwise).
          *     Every file request increments `counters.requests`. Complete GET downloads (`200`/`206`, full body written,
@@ -1052,7 +1069,8 @@ export interface paths {
          * @description Same semantics as `patchVendorConfiguration`. Additional rules:
          *
          *     - Paths must apply to the provider (`base_url` only for `codex`/`claude-code`; `base_urls`, `source_strategy`
-         *       and `http_policy.*` only for `http-cache`; `retention`/`prewarm` only for `codex`/`claude-code`;
+         *       and `http_policy.*` only for `http-cache`; `auto_index` only for `hosted`/`http-cache`; `retention`/`prewarm`
+         *       only for `codex`/`claude-code`;
          *       `cache_ttl_seconds` not for `info`/`hosted`). Otherwise `400 VALIDATION_FAILED`.
          *     - `proxy`, `prewarm`, `retention`, `base_urls`, `categories`, `tags` and each `http_policy.*` list replace the
          *       whole value.
@@ -2144,7 +2162,7 @@ export interface components {
          * @description Stable error code; see `components.x-error-codes`.
          * @enum {string}
          */
-        ErrorCode: "INVALID_REQUEST" | "VALIDATION_FAILED" | "INVALID_QUERY" | "INVALID_CURSOR" | "INVALID_PATH" | "REQUEST_ORIGIN_INVALID" | "IF_MATCH_REQUIRED" | "CURRENT_PASSWORD_INCORRECT" | "PASSWORD_INVALID" | "PROXY_REDACTED_MISMATCH" | "ICON_INVALID" | "PACKAGE_INVALID" | "INSTRUCTIONS_TRUST_REQUIRED" | "AUTH_REQUIRED" | "LOGIN_FAILED" | "ORIGIN_REJECTED" | "CSRF_REJECTED" | "NOT_FOUND" | "VENDOR_NOT_FOUND" | "APPLICATION_NOT_FOUND" | "CATEGORY_NOT_FOUND" | "FILE_NOT_FOUND" | "SOURCE_NOT_FOUND" | "PREVIEW_NOT_FOUND" | "JOB_NOT_FOUND" | "TRANSFER_NOT_FOUND" | "CACHE_ENTRY_NOT_FOUND" | "CAPABILITY_UNSUPPORTED" | "METHOD_NOT_ALLOWED" | "REVISION_CONFLICT" | "ALREADY_EXISTS" | "VENDOR_NOT_EMPTY" | "BUILTIN_PROTECTED" | "ENTITY_DELETED" | "APPLICATION_DISABLED" | "APPLICATION_DELETE_PENDING" | "CATEGORY_AMBIGUOUS" | "FILE_CONFLICT" | "TRANSFER_ID_IN_USE" | "TRANSFER_CANCELLED" | "PREVIEW_STALE" | "OPERATION_IN_PROGRESS" | "SOURCE_CHANGED" | "IMPORT_NOT_READY" | "PREWARM_BUSY" | "PREWARM_REQUEST_CONFLICT" | "ARTIFACT_TOO_LARGE" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "LOGIN_RATE_LIMITED" | "PREVIEW_LIMIT_EXCEEDED" | "INTERNAL_ERROR" | "UPSTREAM_UNAVAILABLE" | "METADATA_UNTRUSTED" | "CHANNELS_UNVERIFIED" | "IMPORT_SOURCE_FAILED" | "STORAGE_UNAVAILABLE" | "NOT_READY" | "SESSION_LIMIT_EXCEEDED" | "TRANSFER_CAPACITY" | "CACHE_CONTENDED" | "PREVIEW_BUSY" | "INSTALLER_UNAVAILABLE" | "CACHE_MISS";
+        ErrorCode: "INVALID_REQUEST" | "VALIDATION_FAILED" | "INVALID_QUERY" | "INVALID_CURSOR" | "INVALID_PATH" | "REQUEST_ORIGIN_INVALID" | "IF_MATCH_REQUIRED" | "CURRENT_PASSWORD_INCORRECT" | "PASSWORD_INVALID" | "PROXY_REDACTED_MISMATCH" | "ICON_INVALID" | "PACKAGE_INVALID" | "INSTRUCTIONS_TRUST_REQUIRED" | "AUTH_REQUIRED" | "LOGIN_FAILED" | "ORIGIN_REJECTED" | "CSRF_REJECTED" | "NOT_FOUND" | "VENDOR_NOT_FOUND" | "APPLICATION_NOT_FOUND" | "CATEGORY_NOT_FOUND" | "FILE_NOT_FOUND" | "SOURCE_NOT_FOUND" | "PREVIEW_NOT_FOUND" | "JOB_NOT_FOUND" | "TRANSFER_NOT_FOUND" | "CACHE_ENTRY_NOT_FOUND" | "CAPABILITY_UNSUPPORTED" | "METHOD_NOT_ALLOWED" | "REVISION_CONFLICT" | "ALREADY_EXISTS" | "VENDOR_NOT_EMPTY" | "BUILTIN_PROTECTED" | "ENTITY_DELETED" | "APPLICATION_DISABLED" | "APPLICATION_DELETE_PENDING" | "CATEGORY_AMBIGUOUS" | "FILE_CONFLICT" | "TRANSFER_ID_IN_USE" | "TRANSFER_CANCELLED" | "PREVIEW_STALE" | "OPERATION_IN_PROGRESS" | "SOURCE_CHANGED" | "IMPORT_NOT_READY" | "PREWARM_BUSY" | "PREWARM_REQUEST_CONFLICT" | "ARTIFACT_TOO_LARGE" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "LOGIN_RATE_LIMITED" | "PREVIEW_LIMIT_EXCEEDED" | "INTERNAL_ERROR" | "UPSTREAM_UNAVAILABLE" | "INDEX_UNSUPPORTED" | "METADATA_UNTRUSTED" | "CHANNELS_UNVERIFIED" | "IMPORT_SOURCE_FAILED" | "STORAGE_UNAVAILABLE" | "NOT_READY" | "SESSION_LIMIT_EXCEEDED" | "TRANSFER_CAPACITY" | "CACHE_CONTENDED" | "PREVIEW_BUSY" | "INSTALLER_UNAVAILABLE" | "CACHE_MISS";
         /** @description 32 lowercase hex characters. */
         Uid: string;
         /**
@@ -2309,6 +2327,8 @@ export interface components {
             /** @description `null` when no version is known or the provider has no versions. */
             latest_known_version: components["schemas"]["LatestKnownVersion"] | null;
             instructions_available: components["schemas"]["LocalizedFlags"];
+            /** @description The application lists its directories at `/{vendor}/{app}/` (`hosted` and `http-cache` only). */
+            auto_index: boolean;
             /** @description Opaque; changes whenever the rendered instructions document could change (instructions, latest version, public URL, names). */
             revision: string;
         };
@@ -2846,8 +2866,32 @@ export interface components {
             json_release?: components["schemas"]["JSONReleaseConfig"];
             cache_ttl_seconds?: number;
             http_policy?: components["schemas"]["HttpPolicy"];
+            /** @description List directories (`hosted` and `http-cache` only); see `getDistributionFile`. */
+            auto_index?: boolean;
             retention?: components["schemas"]["RetentionPolicy"];
             prewarm?: components["schemas"]["PrewarmPolicy"];
+        };
+        /** @description Directory listing of a `hosted` or `http-cache` application with `auto_index`. */
+        FileIndex: {
+            /** @description Application-relative directory with a leading and a trailing `/` (`/` is the root). */
+            path: string;
+            /** @description `http-cache` only: the source failed and this is its last successful listing. */
+            stale: boolean;
+            /** @description The directory has more than the 10,000 listed entries. */
+            truncated: boolean;
+            entries: {
+                /** @description Decoded name of a direct child; link it as `./<percent-encoded name>` (with `/` for a directory). */
+                name: string;
+                /** @enum {string} */
+                type: "file" | "directory";
+                /** @description Bytes of a file, when known. */
+                size?: number;
+                /**
+                 * Format: date-time
+                 * @description Last change, when known. A hosted directory reports its newest file.
+                 */
+                modified?: string;
+            }[];
         };
         /** @description Markdown per language, at most 12000 characters, no control characters except newline, CR and tab. Empty stays empty (no fallback to the template). */
         Instructions: {
@@ -2892,7 +2936,7 @@ export interface components {
         /** @enum {string} */
         VendorConfigurationPath: "name.en" | "name.zh-CN" | "description.en" | "description.zh-CN" | "icon" | "localized_icons.en" | "localized_icons.zh-CN" | "proxy";
         /** @enum {string} */
-        AppConfigurationPath: "name.en" | "name.zh-CN" | "description.en" | "description.zh-CN" | "icon" | "proxy" | "instructions.en" | "instructions.zh-CN" | "json_release" | "base_url" | "base_urls" | "source_strategy" | "cache_ttl_seconds" | "http_policy.rules" | "http_policy.auto_cleanup" | "http_policy.stale_fallback" | "retention" | "prewarm" | "categories" | "tags";
+        AppConfigurationPath: "name.en" | "name.zh-CN" | "description.en" | "description.zh-CN" | "icon" | "proxy" | "instructions.en" | "instructions.zh-CN" | "json_release" | "base_url" | "base_urls" | "source_strategy" | "cache_ttl_seconds" | "http_policy.rules" | "http_policy.auto_cleanup" | "http_policy.stale_fallback" | "auto_index" | "retention" | "prewarm" | "categories" | "tags";
         VendorConfiguration: {
             revision: components["schemas"]["Revision"];
             /** @description Preset key (vendor ID) when linked to a template. */
@@ -2960,6 +3004,7 @@ export interface components {
                 "http_policy.rules"?: components["schemas"]["CacheRule"][];
                 "http_policy.auto_cleanup"?: components["schemas"]["CleanupRule"][];
                 "http_policy.stale_fallback"?: boolean;
+                auto_index?: boolean;
                 retention?: components["schemas"]["RetentionPolicy"];
                 prewarm?: components["schemas"]["PrewarmPolicy"];
                 categories?: components["schemas"]["Slug"][];
@@ -3754,7 +3799,10 @@ export interface components {
             };
             content: {
                 "application/octet-stream": string;
+                /** @description Release metadata, or a `FileIndex` directory listing (`auto_index`). */
                 "application/json": string;
+                /** @description Directory listing page (`auto_index`). */
+                "text/html": string;
                 "text/plain": string;
                 "application/pgp-signature": string;
             };
@@ -4710,7 +4758,7 @@ export interface operations {
             200: components["responses"]["DistributionFile"];
             206: components["responses"]["PartialContent"];
             304: components["responses"]["NotModified"];
-            /** @description Non-cacheable redirect to a RedApp immutable release artifact. */
+            /** @description Non-cacheable redirect to a RedApp immutable release artifact, to a directory path with its trailing slash (`auto_index`), or from `/{vendor}/{app}/` to the application page. */
             307: {
                 headers: {
                     Location?: string;
@@ -4767,7 +4815,7 @@ export interface operations {
                 content?: never;
             };
             304: components["responses"]["NotModified"];
-            /** @description Non-cacheable redirect to a RedApp immutable release artifact. */
+            /** @description Non-cacheable redirect to a RedApp immutable release artifact, to a directory path with its trailing slash (`auto_index`), or from `/{vendor}/{app}/` to the application page. */
             307: {
                 headers: {
                     Location?: string;

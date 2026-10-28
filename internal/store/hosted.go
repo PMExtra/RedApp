@@ -134,3 +134,75 @@ func (s *Store) HostedIDs() (map[string]bool, error) {
 	}
 	return out, rows.Err()
 }
+
+// HostedEntry is one direct child of a hosted directory: a file, or a
+// directory that holds files further down (its size is 0 and its time is that
+// of its newest file). A file and a directory may share a name.
+type HostedEntry struct {
+	Name      string
+	Directory bool
+	SizeBytes int64
+	CreatedAt time.Time
+}
+
+// hostedPrefixRange bounds the paths below dir with an index-friendly range:
+// every path starting with "dir/" sorts at or after it and before "dir0".
+func hostedPrefixRange(dir string) (prefix, upper string) {
+	if dir == "" {
+		return "", ""
+	}
+	return dir + "/", dir + "0"
+}
+
+// HostedDirectory lists up to limit direct children of dir ("" is the root),
+// directories first and then by name. More reports that further children
+// exist. A directory without files has no children.
+func (s *Store) HostedDirectory(uid, dir string, limit int) (entries []HostedEntry, more bool, err error) {
+	if !identity.ValidUID(uid) || dir != "" && !ValidHostedPath(dir) || limit < 1 {
+		return nil, false, ErrInvalidDirectory
+	}
+	prefix, upper := hostedPrefixRange(dir)
+	where, args := `app_uid=?`, []any{prefix, uid}
+	if upper != "" {
+		where, args = where+` AND path>=? AND path<?`, append(args, prefix, upper)
+	}
+	// substr and length count characters, consistently for path and prefix.
+	rows, err := s.read.Query(`SELECT name, dir, CASE WHEN dir THEN 0 ELSE MAX(size_bytes) END, MAX(created_at_s) FROM (
+  SELECT CASE WHEN instr(rest,'/')>0 THEN substr(rest,1,instr(rest,'/')-1) ELSE rest END AS name, instr(rest,'/')>0 AS dir, size_bytes, created_at_s
+  FROM (SELECT substr(path, length(?)+1) AS rest, size_bytes, created_at_s FROM hosted_files WHERE `+where+`)
+) GROUP BY name, dir ORDER BY dir DESC, name LIMIT ?`, append(args, limit+1)...)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var e HostedEntry
+		var at int64
+		if err = rows.Scan(&e.Name, &e.Directory, &e.SizeBytes, &at); err != nil {
+			return nil, false, err
+		}
+		e.CreatedAt = time.Unix(at, 0).UTC()
+		entries = append(entries, e)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, false, err
+	}
+	if len(entries) > limit {
+		return entries[:limit], true, nil
+	}
+	return entries, false, nil
+}
+
+// HostedDirectoryExists reports whether any hosted file lies below dir.
+func (s *Store) HostedDirectoryExists(uid, dir string) (bool, error) {
+	if !identity.ValidUID(uid) || !ValidHostedPath(dir) {
+		return false, ErrInvalidDirectory
+	}
+	prefix, upper := hostedPrefixRange(dir)
+	var found int
+	err := s.read.QueryRow(`SELECT 1 FROM hosted_files WHERE app_uid=? AND path>=? AND path<? LIMIT 1`, uid, prefix, upper).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}

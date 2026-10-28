@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { Share2 } from "@lucide/vue";
+import { FolderOpen, Share2 } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink, useRoute } from "vue-router";
 import { useBootstrap } from "@/features/bootstrap";
@@ -9,7 +9,15 @@ import { InstructionsDocument } from "@/features/instructions";
 import { isApiError } from "@/shared/api";
 import { useLocalized, type Locale } from "@/shared/i18n";
 import { publicUrl, useDocumentTitle } from "@/shared/lib";
-import { AsyncState, Card, CopyButton, EntityIcon, PageHeader, Skeleton } from "@/shared/ui";
+import {
+  AsyncState,
+  Button,
+  Card,
+  CopyButton,
+  EntityIcon,
+  PageHeader,
+  Skeleton,
+} from "@/shared/ui";
 import { ReleaseDownloads } from "@/features/json-release";
 import NotFoundPage from "./NotFoundPage.vue";
 
@@ -91,6 +99,13 @@ const prefix = computed(
           <EntityIcon :src="app.icon" size="xl" />
         </template>
         <template #actions>
+          <!-- The listing is a server page, not an SPA route. -->
+          <Button v-if="app.auto_index" as-child>
+            <a :href="`/${app.vendor.id}/${app.id}/`">
+              <FolderOpen aria-hidden="true" />
+              {{ t("catalog.app.browse") }}
+            </a>
+          </Button>
           <CopyButton
             :text="pageUrl"
             :icon="Share2"

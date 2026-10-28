@@ -143,6 +143,7 @@ type Entry struct {
 	Upstream              *distributor.Client
 	Upstreams             []*distributor.Client
 	SourceStrategy        string
+	AutoIndex             bool // hosted and http-cache directories are listed
 	PublicAssets          map[string]Representation
 	UID                   string
 	Provider              string

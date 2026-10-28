@@ -42,8 +42,13 @@ func (s *Server) getDistributionFile(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, r, codeInvalidQuery, nil, "Unexpected query string")
 			return
 		}
+		if entry.AutoIndex {
+			s.serveFileIndex(w, r, entry, "")
+			return
+		}
+		// Temporary: enabling auto_index later lists the root at this address.
 		w.Header().Set("Location", "/"+entry.Descriptor.ID)
-		w.WriteHeader(http.StatusPermanentRedirect)
+		w.WriteHeader(http.StatusTemporaryRedirect)
 		return
 	}
 	if fileQuery {
@@ -52,6 +57,10 @@ func (s *Server) getDistributionFile(w http.ResponseWriter, r *http.Request) {
 			code = codeInvalidPath
 		}
 		s.fail(w, r, code, nil, "File requests do not accept a query string")
+		return
+	}
+	if entry.AutoIndex && strings.HasSuffix(file, "/") {
+		s.serveFileIndex(w, r, entry, strings.TrimSuffix(file, "/"))
 		return
 	}
 	switch entry.Provider {
@@ -98,6 +107,17 @@ func (s *Server) serveHostedFile(w http.ResponseWriter, r *http.Request, entry a
 	}
 	defer done()
 	file, row, release, err := s.hosted.Open(entry.UID, relative)
+	if err != nil && isNotFound(err) && entry.AutoIndex {
+		directory, dirErr := s.store.HostedDirectoryExists(entry.UID, relative)
+		if dirErr != nil {
+			s.writeError(w, r, storageError(dirErr))
+			return
+		}
+		if directory {
+			redirectToDirectory(w, entry, relative)
+			return
+		}
+	}
 	if err != nil {
 		switch {
 		case isNotFound(err), errors.Is(err, store.ErrSourceInactive), errors.Is(err, store.ErrDirectoryDeleted), errors.Is(err, fs.ErrNotExist):
@@ -146,6 +166,10 @@ func (s *Server) serveCacheFile(w http.ResponseWriter, r *http.Request, entry ap
 	defer done()
 	receipt := newDownloadReceipt(w, r)
 	if err := s.httpCache.Serve(receipt, r, entry, relative); err != nil {
+		if errors.Is(err, httpcache.ErrDirectory) {
+			redirectToDirectory(w, entry, relative)
+			return
+		}
 		s.writeError(w, r, cacheFileError(err))
 		return
 	}
