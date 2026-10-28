@@ -11,6 +11,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/PMExtra/RedApp/installers"
 	"github.com/PMExtra/RedApp/internal/application"
@@ -294,11 +295,14 @@ func releaseError(err error) *apiError {
 	}
 }
 
+// artifactHeaders describe the verified representation. The strong ETag lets
+// a downstream cache, such as another RedApp, resume an interrupted transfer
+// of exactly these bytes with If-Range.
 func artifactHeaders(w http.ResponseWriter, resource download.Resource) {
 	h := w.Header()
 	h.Set("Content-Type", "application/octet-stream")
 	h.Set("X-Expected-SHA256", resource.Hash)
-	h.Set("Accept-Ranges", "none")
+	h.Set("ETag", `"sha256-`+resource.Hash+`"`)
 }
 
 // serveArtifact streams a release artifact while the shared download
@@ -335,15 +339,53 @@ func (s *Server) serveArtifact(w *downloadReceipt, r *http.Request, resource dow
 		s.writeError(w, r, storageError(err))
 		return
 	}
+	// Wait for the first byte, so that a transfer failing at once is reported
+	// as an error the client can retry before any header is sent.
+	var first [1]byte
+	if _, re := rd.Read(first[:]); re != nil && re != io.EOF {
+		_ = s.store.AddFor(metricApp, "download_errors", 1)
+		s.fail(w, r, codeUpstreamUnavailable, re, "Artifact download failed")
+		return
+	}
+	if _, err = rd.Seek(0, io.SeekStart); err != nil {
+		s.writeError(w, r, storageError(err))
+		return
+	}
 	artifactHeaders(w, resource)
+	count := func(n int) {
+		// Counters are buffered in memory; accounting never aborts a client transfer.
+		_ = s.store.AddFor(metricApp, "downstream_bytes", int64(n))
+		_ = s.store.AddVersion(app, resource.Version, 0, int64(n))
+	}
+	// With a known length, conditional and single-range requests are answered
+	// as for a stored file, waiting for the requested bytes of a transfer still
+	// in progress. Without one, the whole body is streamed.
+	if total, seekErr := rd.Seek(0, io.SeekEnd); seekErr == nil {
+		if _, err = rd.Seek(0, io.SeekStart); err != nil {
+			s.writeError(w, r, storageError(err))
+			return
+		}
+		w.Header().Set("Accept-Ranges", "bytes")
+		reader := &artifactReader{Reader: rd, total: total}
+		http.ServeContent(&artifactWriter{downloadReceipt: w, count: count}, r, "", time.Time{}, reader)
+		if reader.err != nil && reader.err != io.EOF {
+			_ = s.store.AddFor(metricApp, "download_errors", 1)
+			panic(http.ErrAbortHandler)
+		}
+		if w.failed {
+			_ = s.store.AddFor(metricApp, "download_errors", 1)
+		} else if w.status == http.StatusOK || w.status == http.StatusPartialContent {
+			_ = s.store.AddFor(metricApp, "download_success", 1)
+		}
+		return
+	}
+	w.Header().Set("Accept-Ranges", "none")
 	buf := make([]byte, 32<<10)
 	for {
 		n, re := rd.Read(buf)
 		if n > 0 {
 			written, we := w.Write(buf[:n])
-			// Counters are buffered in memory; accounting never aborts a client transfer.
-			_ = s.store.AddFor(metricApp, "downstream_bytes", int64(written))
-			_ = s.store.AddVersion(app, resource.Version, 0, int64(written))
+			count(written)
 			if we != nil {
 				_ = s.store.AddFor(metricApp, "download_errors", 1)
 				return
@@ -367,6 +409,59 @@ func (s *Server) serveArtifact(w *downloadReceipt, r *http.Request, resource dow
 			panic(http.ErrAbortHandler)
 		}
 	}
+}
+
+// artifactReader serves a shared transfer of known length to http.ServeContent.
+// It records a failure, so the connection is aborted instead of truncated
+// silently, and holds back the final byte until the transfer is verified: with
+// a declared Content-Length, a client that received every byte would otherwise
+// take a later digest failure for a complete download.
+type artifactReader struct {
+	*download.Reader
+	total int64
+	err   error
+}
+
+func (r *artifactReader) Read(p []byte) (n int, err error) {
+	defer func() {
+		if err != nil {
+			r.err = err
+		}
+	}()
+	if last := r.total - 1; r.Offset() < last && int64(len(p)) > last-r.Offset() {
+		p = p[:last-r.Offset()]
+	}
+	if n, err = r.Reader.Read(p); err != nil || n == 0 || r.Offset() != r.total {
+		return n, err
+	}
+	// EOF follows only verified content; anything else withholds the last byte.
+	var probe [1]byte
+	if _, err = r.Reader.Read(probe[:]); err != io.EOF {
+		if err == nil {
+			err = errors.New("artifact exceeds its declared length")
+		}
+		return 0, err
+	}
+	return n, nil
+}
+
+// artifactWriter accounts and flushes every artifact write, as the streaming
+// loop does, so bytes of a transfer in progress reach the client as they arrive.
+type artifactWriter struct {
+	*downloadReceipt
+	count func(int)
+}
+
+func (w *artifactWriter) Write(b []byte) (int, error) {
+	n, err := w.downloadReceipt.Write(b)
+	// The text body of a 416 is not artifact traffic.
+	if w.status == http.StatusOK || w.status == http.StatusPartialContent {
+		w.count(n)
+	}
+	if err == nil {
+		w.downloadReceipt.Flush()
+	}
+	return n, err
 }
 
 // countRequest increments counters.requests for a valid file request.

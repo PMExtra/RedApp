@@ -4722,7 +4722,7 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
-            /** @description `If-Match` or `If-Unmodified-Since` precondition of a file request failed (hosted, http-cache). No body. */
+            /** @description `If-Match` or `If-Unmodified-Since` precondition of a file request failed (hosted, http-cache, release artifacts). No body. */
             412: {
                 headers: {
                     [name: string]: unknown;
@@ -4730,7 +4730,7 @@ export interface operations {
                 content?: never;
             };
             413: components["responses"]["PayloadTooLarge"];
-            /** @description Requested range not satisfiable (hosted, http-cache). No body. */
+            /** @description Requested range not satisfiable (hosted, http-cache, release artifacts). No body. */
             416: {
                 headers: {
                     [name: string]: unknown;

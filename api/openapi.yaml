@@ -956,7 +956,7 @@ paths:
         - provider: codex
           path: releases/{version}/{asset}
           content_type: application/octet-stream
-          description: Release artifact. `X-Expected-SHA256` carries the verified digest.
+          description: Release artifact. `X-Expected-SHA256` carries the verified digest; `ETag` is `"sha256-<digest>"`.
         - provider: claude-code
           path: latest | stable
           content_type: text/plain; charset=utf-8
@@ -972,7 +972,7 @@ paths:
         - provider: claude-code
           path: '{version}/{platform}/{binary}'
           content_type: application/octet-stream
-          description: Release artifact for one of 8 platforms. `X-Expected-SHA256` carries the digest from the signed manifest.
+          description: Release artifact for one of 8 platforms. `X-Expected-SHA256` carries the digest from the signed manifest; `ETag` is `"sha256-<digest>"`.
         - provider: json-release
           path: releases/{release_id}/{artifact_key}
           description: Immutable verified artifact, served through RedApp cache as an attachment using the authorized source URL filename.
@@ -1003,7 +1003,11 @@ paths:
           description: |
             `Content-Disposition: attachment; filename=<base name>`, `ETag: "sha256-<hex>"`, `Cache-Control: no-cache`,
             `Content-Security-Policy: sandbox; default-src 'none'`. Conditional requests and single byte ranges.
-      x-range-support: "hosted and http-cache support a single byte range; release artifacts and metadata do not (`Accept-Ranges: none`)."
+      x-range-support: |
+        hosted and http-cache support a single byte range. Release artifacts support conditional requests and a single
+        byte range once their length is known (`Accept-Ranges: bytes`), waiting for the requested bytes of a transfer in
+        progress; the final byte is sent only after the artifact is verified. Otherwise they return the whole file
+        (`Accept-Ranges: none`). Release metadata does not support ranges.
       x-streaming: |
         Release artifacts and HTTP cache misses are streamed while the shared upstream download progresses (many
         readers follow one writer). Upstream reads have a 60 s idle timeout and no total limit; a failed transfer is
@@ -1046,11 +1050,11 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
         '412':
-          description: '`If-Match` or `If-Unmodified-Since` precondition of a file request failed (hosted, http-cache). No body.'
+          description: '`If-Match` or `If-Unmodified-Since` precondition of a file request failed (hosted, http-cache, release artifacts). No body.'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '416':
-          description: Requested range not satisfiable (hosted, http-cache). No body.
+          description: Requested range not satisfiable (hosted, http-cache, release artifacts). No body.
         '500':
           $ref: '#/components/responses/InternalError'
         '502':

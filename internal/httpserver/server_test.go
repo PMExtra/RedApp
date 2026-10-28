@@ -2,8 +2,10 @@ package httpserver
 
 import (
 	"bytes"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -110,7 +112,7 @@ func TestDownloadCountersCSRFAndPasswordChange(t *testing.T) {
 	h.csrf = csrf
 	for range 2 {
 		body, header := h.request("GET", "/"+key+"/releases/0.159.2/archive.tgz", nil, 200, nil)
-		if !bytes.Equal(body, data) || header.Get("X-Expected-SHA256") == "" || header.Get("Accept-Ranges") != "none" {
+		if !bytes.Equal(body, data) || header.Get("X-Expected-SHA256") == "" || header.Get("Accept-Ranges") != "bytes" || header.Get("ETag") != `"sha256-`+header.Get("X-Expected-SHA256")+`"` {
 			t.Fatal(string(body), header)
 		}
 	}
@@ -146,6 +148,61 @@ func TestDownloadCountersCSRFAndPasswordChange(t *testing.T) {
 		t.Fatal("logs miss the operation or contain secrets")
 	}
 
+}
+
+// A downstream cache, such as another RedApp, resumes an interrupted artifact
+// transfer with a single range guarded by the strong ETag.
+func TestReleaseArtifactRangesAndValidators(t *testing.T) {
+	data := []byte("official archive bytes")
+	h := newHarness(t)
+	h.upstreamProxy(codexRelease("0.159.2", map[string][]byte{"archive.tgz": data}, nil))
+	key := h.releaseApp("fixture", "codex", "codex")
+	file := "/" + key + "/releases/0.159.2/archive.tgz"
+	// The first request is a miss: the range waits for the bytes being fetched.
+	body, header := h.request("GET", file, nil, 206, map[string]string{"Range": "bytes=3-10"})
+	etag := header.Get("ETag")
+	if string(body) != string(data[3:11]) || header.Get("Content-Range") != "bytes 3-10/22" || !strings.HasPrefix(etag, `"sha256-`) {
+		t.Fatal(string(body), header)
+	}
+	if body, _ = h.request("GET", file, nil, 206, map[string]string{"Range": "bytes=9-", "If-Range": etag}); string(body) != string(data[9:]) {
+		t.Fatal("If-Range with the current ETag did not resume", string(body))
+	}
+	if body, _ = h.request("GET", file, nil, 200, map[string]string{"Range": "bytes=9-", "If-Range": `"sha256-other"`}); string(body) != string(data) {
+		t.Fatal("If-Range with another ETag did not return the whole file", string(body))
+	}
+	h.request("GET", file, nil, 304, map[string]string{"If-None-Match": etag})
+	h.request("GET", file, nil, 416, map[string]string{"Range": "bytes=99-"})
+	counters, _ := h.store.Counters()
+	if counters["download_success"] != 3 || counters["download_errors"] != 0 || counters["downstream_bytes"] != int64(8+len(data[9:])+len(data)) {
+		t.Fatal(counters)
+	}
+}
+
+// With a declared length, a client must never receive every byte of an
+// artifact whose digest fails: the final byte is held until verification.
+func TestReleaseArtifactDigestFailureNeverLooksComplete(t *testing.T) {
+	data := []byte("official archive bytes")
+	tampered := []byte("tampered archive bytes")
+	h := newHarness(t)
+	metadata := codexRelease("0.159.2", map[string][]byte{"archive.tgz": data}, nil)
+	h.upstreamProxy(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/archive.tgz") {
+			w.Header().Set("Content-Length", strconv.Itoa(len(tampered)))
+			_, _ = w.Write(tampered)
+			return
+		}
+		metadata.ServeHTTP(w, r)
+	}))
+	key := h.releaseApp("fixture", "codex", "codex")
+	response, err := h.http.Client().Get(h.http.URL + "/" + key + "/releases/0.159.2/archive.tgz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if response.Header.Get("Content-Length") != strconv.Itoa(len(data)) || err == nil || len(body) >= len(data) {
+		t.Fatalf("digest failure looked complete: %d bytes, %v, %v", len(body), err, response.Header)
+	}
 }
 
 func TestProxyTrustedMultiHopIPv6AndMalformed(t *testing.T) {
