@@ -77,7 +77,8 @@ func parseIndex(body []byte, contentType string) ([]indexLink, error) {
 			}
 			href := e.URL
 			if href == "" {
-				href = url.PathEscape(e.Name)
+				// "./" keeps a name such as "a:b" from being read as a URL scheme.
+				href = "./" + url.PathEscape(e.Name)
 			}
 			directory := e.Type == "directory" || e.IsDir != nil && *e.IsDir || strings.HasSuffix(e.Name, "/") || strings.HasSuffix(href, "/")
 			if directory && !strings.HasSuffix(href, "/") {

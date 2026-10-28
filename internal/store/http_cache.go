@@ -372,13 +372,14 @@ func (s *Store) HTTPCacheIndex(appUID, dir string) (HTTPCacheIndex, error) {
 	return index, err
 }
 
-// SaveHTTPCacheIndex replaces the stored listing of dir. A deleted application
-// has no row to refer to, so nothing is stored for it.
+// SaveHTTPCacheIndex replaces the stored listing of dir. Nothing is stored for
+// a deleted application or a listing of a source epoch that is no longer
+// current, so a late fetch of an old source cannot replace the new one's.
 func (s *Store) SaveHTTPCacheIndex(appUID, dir string, index HTTPCacheIndex) error {
 	if !json.Valid(index.Entries) || index.SourceEpoch < 1 {
 		return ErrInvalidDirectory
 	}
-	_, err := s.db.Exec(`INSERT INTO http_cache_indexes(app_uid,path,source_epoch,entries_json,truncated,fetched_at_s) SELECT uid,?,?,?,?,? FROM applications WHERE uid=? AND provider='http-cache' AND deleted_at_s IS NULL
-ON CONFLICT(app_uid,path) DO UPDATE SET source_epoch=excluded.source_epoch,entries_json=excluded.entries_json,truncated=excluded.truncated,fetched_at_s=excluded.fetched_at_s`, dir, index.SourceEpoch, index.Entries, index.Truncated, index.FetchedAt.Unix(), appUID)
+	_, err := s.db.Exec(`INSERT INTO http_cache_indexes(app_uid,path,source_epoch,entries_json,truncated,fetched_at_s) SELECT uid,?,?,?,?,? FROM applications WHERE uid=? AND provider='http-cache' AND deleted_at_s IS NULL AND source_epoch=?
+ON CONFLICT(app_uid,path) DO UPDATE SET source_epoch=excluded.source_epoch,entries_json=excluded.entries_json,truncated=excluded.truncated,fetched_at_s=excluded.fetched_at_s`, dir, index.SourceEpoch, index.Entries, index.Truncated, index.FetchedAt.Unix(), appUID, index.SourceEpoch)
 	return err
 }

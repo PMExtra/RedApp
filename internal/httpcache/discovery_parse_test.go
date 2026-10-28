@@ -20,11 +20,11 @@ func TestParseIndexReadsListingFormats(t *testing.T) {
 		want              []want
 	}{
 		"nginx": {`[{"name":"d","type":"directory","mtime":"Wed, 28 Oct 2026 10:00:00 GMT"},{"name":"a b","type":"file","mtime":"Wed, 28 Oct 2026 10:00:00 GMT","size":3},{"name":"l","type":"other"}]`, "application/json",
-			[]want{{"d/", true, -1, true}, {"a%20b", false, 3, true}}},
+			[]want{{"./d/", true, -1, true}, {"./a%20b", false, 3, true}}},
 		"caddy": {`[{"name":"d/","size":4096,"url":"./d/","mod_time":"2026-10-28T10:00:00Z","is_dir":true},{"name":"f","size":5,"url":"./f","mod_time":"2026-10-28T10:00:00.5Z","is_dir":false}]`, "application/json",
 			[]want{{"./d/", true, -1, true}, {"./f", false, 5, true}}},
 		"redapp": {` {"path":"/","stale":false,"truncated":false,"entries":[{"name":"d","type":"directory","modified":"2026-10-28T10:00:00Z"},{"name":"f","type":"file","size":7}]}`, "application/json; charset=utf-8",
-			[]want{{"d/", true, -1, true}, {"f", false, 7, false}}},
+			[]want{{"./d/", true, -1, true}, {"./f", false, 7, false}}},
 		"html": {`<a href="x/">x/</a><a href="y">y</a>`, "text/html",
 			[]want{{"x/", true, -1, false}, {"y", false, -1, false}}},
 	} {

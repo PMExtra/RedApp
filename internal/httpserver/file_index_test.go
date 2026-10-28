@@ -134,7 +134,7 @@ func TestHTTPCacheAutoIndexListsTheSource(t *testing.T) {
 				t.Errorf("directory request did not prefer JSON: %q", r.Header.Get("Accept"))
 			}
 			w.Header().Set("Content-Type", "application/json")
-			io.WriteString(w, `[{"name":"dir","type":"directory","mtime":"Wed, 28 Oct 2026 10:00:00 GMT"},{"name":"a.bin","type":"file","mtime":"Wed, 28 Oct 2026 10:00:00 GMT","size":3},{"name":"..","type":"directory"},{"name":"link","type":"other"}]`)
+			io.WriteString(w, `[{"name":"dir","type":"directory","mtime":"Wed, 28 Oct 2026 10:00:00 GMT"},{"name":"a.bin","type":"file","mtime":"Wed, 28 Oct 2026 10:00:00 GMT","size":3},{"name":"a:b","type":"file","size":1},{"name":"..","type":"directory"},{"name":"link","type":"other"}]`)
 		case "/files/dir":
 			http.Redirect(w, r, "/files/dir/", http.StatusMovedPermanently)
 		case "/files/dir/":
@@ -156,11 +156,14 @@ func TestHTTPCacheAutoIndexListsTheSource(t *testing.T) {
 	json := map[string]string{"Accept": "application/json"}
 	body, _ := h.request("GET", "/acme/mirror/", nil, 200, json)
 	root := decodeIndex(t, body)
-	if root.Stale || !reflect.DeepEqual(summarize(root), []indexRowSummary{{"dir", "directory", 0, true}, {"a.bin", "file", 3, true}}) {
+	if root.Stale || !reflect.DeepEqual(summarize(root), []indexRowSummary{{"dir", "directory", 0, true}, {"a.bin", "file", 3, true}, {"a:b", "file", 1, false}}) {
 		t.Fatalf("root listing %+v", summarize(root))
 	}
 	if code, _, header := h.raw("GET", "/acme/mirror/dir", nil, "", nil); code != 307 || header.Get("Location") != "/acme/mirror/dir/" {
 		t.Fatal("source directory without slash", code, header)
+	}
+	if counters, _ := h.store.Counters(); counters["download_errors"] != 0 {
+		t.Fatal("a directory redirect counted as a failed download", counters)
 	}
 	body, _ = h.request("GET", "/acme/mirror/dir/", nil, 200, json)
 	if dir := decodeIndex(t, body); !reflect.DeepEqual(summarize(dir), []indexRowSummary{{"sub", "directory", 0, false}, {"b.bin", "file", 0, false}}) {
@@ -176,7 +179,7 @@ func TestHTTPCacheAutoIndexListsTheSource(t *testing.T) {
 	// listed cannot be listed.
 	failing.Store(true)
 	body, _ = h.request("GET", "/acme/mirror/", nil, 200, json)
-	if stale := decodeIndex(t, body); !stale.Stale || len(stale.Entries) != 2 {
+	if stale := decodeIndex(t, body); !stale.Stale || len(stale.Entries) != 3 {
 		t.Fatalf("stale listing %+v", stale)
 	}
 	if _, page, _ := h.raw("GET", "/acme/mirror/", nil, "", map[string]string{"Accept-Language": "en"}); !strings.Contains(string(page), "The source is unavailable") {

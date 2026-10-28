@@ -79,3 +79,36 @@ func TestHostedDirectoryListsDirectChildren(t *testing.T) {
 		t.Fatal("trailing slash accepted")
 	}
 }
+
+// A late listing of an earlier source never replaces the current source's.
+func TestHTTPCacheIndexKeepsOnlyTheCurrentSourceEpoch(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	v, err := s.CreateVendor(VendorInput{ID: "acme", Name: LocalizedText{"Acme", "示例"}, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.CreateApplication(v.ID, ApplicationInput{ID: "mirror", Name: LocalizedText{"Mirror", "镜像"}, Provider: "http-cache", BaseURL: "https://origin.example/files", CacheTTLSeconds: 60, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_800_000_000, 0).UTC()
+	current := HTTPCacheIndex{SourceEpoch: a.SourceEpoch, Entries: []byte(`[{"name":"new"}]`), FetchedAt: now}
+	if err = s.SaveHTTPCacheIndex(a.UID, "dir", current); err != nil {
+		t.Fatal(err)
+	}
+	late := HTTPCacheIndex{SourceEpoch: a.SourceEpoch + 1, Entries: []byte(`[{"name":"other"}]`), Truncated: true, FetchedAt: now}
+	if err = s.SaveHTTPCacheIndex(a.UID, "dir", late); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.HTTPCacheIndex(a.UID, "dir")
+	if err != nil || got.SourceEpoch != a.SourceEpoch || string(got.Entries) != `[{"name":"new"}]` || got.Truncated || !got.FetchedAt.Equal(now) {
+		t.Fatalf("%+v %v", got, err)
+	}
+	if _, err = s.HTTPCacheIndex(a.UID, "missing"); err != ErrNotFound {
+		t.Fatal("missing listing", err)
+	}
+}

@@ -79,16 +79,11 @@ func (s *Service) Index(ctx context.Context, entry application.Entry, dir string
 	if !joined {
 		flight = &indexFlight{done: make(chan struct{})}
 		s.indexFlights[key] = flight
+		// begin already holds a count, so Close cannot be past wg.Wait.
+		s.wg.Add(1)
+		go s.runIndexFlight(flight, key, entry, dir)
 	}
 	s.mu.Unlock()
-	if !joined {
-		// The flight serves every waiter, so one waiter leaving does not cancel it.
-		flight.index, flight.err = s.fetchIndex(context.WithoutCancel(ctx), entry, dir)
-		s.mu.Lock()
-		delete(s.indexFlights, key)
-		s.mu.Unlock()
-		close(flight.done)
-	}
 	select {
 	case <-flight.done:
 	case <-ctx.Done():
@@ -104,6 +99,27 @@ func (s *Service) Index(ctx context.Context, entry application.Entry, dir string
 		return truncateIndex(stored, limit), nil
 	}
 	return Index{}, err
+}
+
+// runIndexFlight fetches for every waiter of a flight, including the one that
+// started it, in its own goroutine. Its application work lease, derived from
+// the service, is cancelled by application deletion and service shutdown, but
+// not when a waiting client leaves.
+func (s *Service) runIndexFlight(flight *indexFlight, key string, entry application.Entry, dir string) {
+	defer s.wg.Done()
+	defer func() {
+		s.mu.Lock()
+		delete(s.indexFlights, key)
+		s.mu.Unlock()
+		close(flight.done)
+	}()
+	ctx, finish, err := s.db.ApplicationWork(s.ctx, entry.StorageID())
+	if err != nil {
+		flight.err = err
+		return
+	}
+	defer finish()
+	flight.index, flight.err = s.fetchIndex(ctx, entry, dir)
 }
 
 func truncateIndex(index Index, limit int) Index {
