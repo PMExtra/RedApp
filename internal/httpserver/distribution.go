@@ -32,7 +32,7 @@ func (s *Server) getDistributionFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entry, ok := s.publishedApp(w, r)
-	if !ok {
+	if !ok || s.loopDetected(w, r) {
 		return
 	}
 	file := r.PathValue("file_path")

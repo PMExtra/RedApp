@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/application"
@@ -25,7 +26,7 @@ type releaseDownloadsDTO struct {
 
 func (s *Server) getReleaseDownloads(w http.ResponseWriter, r *http.Request) {
 	entry, ok := s.publishedApp(w, r)
-	if !ok {
+	if !ok || s.loopDetected(w, r) {
 		return
 	}
 	protocol, ok := entry.Protocol.(application.SnapshotProtocol)
@@ -64,6 +65,9 @@ func (s *Server) getReleaseDownloads(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		data.Artifacts[i].URL = s.publicURL(r) + path
+		// Relative to the application: a downstream RedApp reaches this
+		// instance at an address of its own, not at the public URL.
+		data.Artifacts[i].Path = strings.TrimPrefix(path, "/"+entry.Descriptor.ID+"/")
 		data.Artifacts[i].ChecksumURL = ""
 		data.Artifacts[i].ChecksumFilename = ""
 	}

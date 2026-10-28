@@ -500,6 +500,12 @@ CREATE TABLE admin(
   hash BLOB NOT NULL,
   revision INTEGER NOT NULL
 );
+-- Random identity of this RedApp instance, created with the database. Other
+-- instances see it to detect loops; a restored backup keeps it.
+CREATE TABLE instance(
+  id INTEGER PRIMARY KEY CHECK(id=1),
+  uid TEXT NOT NULL CHECK(length(uid)=32 AND uid NOT GLOB '*[^0-9a-f]*')
+);
 -- Transactional deletion receipts make physical cleanup restartable after a crash.
 CREATE TABLE pending_object_deletes(
   path TEXT PRIMARY KEY
@@ -510,6 +516,7 @@ INSERT INTO catalog_state(id,revision,ranking_salt) VALUES(1,1,randomblob(32));
 -- Settings documents exist from creation so that every editable revision is at least 1.
 INSERT INTO settings(key,revision,payload) VALUES('site',1,'{}'),('public_url',1,'{"override_url":null}'),('upstream_proxy',1,'{"mode":"direct"}');
 INSERT INTO metric_history_state(id,aggregated_before_s) VALUES(1,0);
+INSERT INTO instance(id,uid) VALUES(1,lower(hex(randomblob(16))));
 
 -- Metadata refresh is independent of file prewarm and survives restarts.
 CREATE TABLE release_refresh_status(

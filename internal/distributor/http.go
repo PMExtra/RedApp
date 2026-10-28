@@ -332,6 +332,9 @@ func (c *Client) Send(ctx context.Context, req Request) (*http.Response, error) 
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
 	r.Header.Set("Accept-Encoding", "identity")
+	if via := c.pool.viaValue(); via != "" {
+		r.Header.Set("Via", via)
+	}
 	if req.directory {
 		if !c.IndexBoundary(u) {
 			return nil, errIndexBoundary

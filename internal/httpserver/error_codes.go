@@ -60,6 +60,7 @@ const (
 	codeInternalError             errorCode = "INTERNAL_ERROR"
 	codeUpstreamUnavailable       errorCode = "UPSTREAM_UNAVAILABLE"
 	codeIndexUnsupported          errorCode = "INDEX_UNSUPPORTED"
+	codeLoopDetected              errorCode = "LOOP_DETECTED"
 	codeMetadataUntrusted         errorCode = "METADATA_UNTRUSTED"
 	codeChannelsUnverified        errorCode = "CHANNELS_UNVERIFIED"
 	codeImportSourceFailed        errorCode = "IMPORT_SOURCE_FAILED"
@@ -134,6 +135,7 @@ var errorCatalog = map[errorCode]errorClass{
 	codeInternalError:             {500, false},
 	codeUpstreamUnavailable:       {502, true},
 	codeIndexUnsupported:          {502, false},
+	codeLoopDetected:              {508, false},
 	codeMetadataUntrusted:         {502, false},
 	codeChannelsUnverified:        {502, true},
 	codeImportSourceFailed:        {502, true},

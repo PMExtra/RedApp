@@ -86,6 +86,13 @@ func TestJSONReleasePreviewDownloadsAndInternalAliases(t *testing.T) {
 	if strings.HasPrefix(choices.Artifacts[0].URL, origin) || artifactReads.Load() != 0 {
 		t.Fatal("public metadata bypassed local download")
 	}
+	if choices.Artifacts[0].Path != "releases/"+choices.ReleaseID+"/windows-x64-user" {
+		t.Fatal("download choice lacks its application-relative path", choices.Artifacts[0].Path)
+	}
+	mirror := getJSON[mirrorAppDTO](h, "/api/apps/fixture/editor/mirror")
+	if mirror.Provider != "json-release" || strings.Join(mirror.Channels, ",") != "latest,stable" {
+		t.Fatal("mirror description of a JSON release", mirror)
+	}
 	for _, alias := range []string{"latest", "stable"} {
 		body, headers := h.request("GET", "/fixture/editor/download/"+alias+"/windows-x64-user", nil, 307, nil)
 		if len(body) != 0 || headers.Get("Content-Type") != "" || headers.Get("Location") != "/fixture/editor/releases/"+choices.ReleaseID+"/windows-x64-user" || headers.Get("Cache-Control") != "no-store" {

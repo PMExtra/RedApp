@@ -255,6 +255,10 @@ export const errorCatalog = {
     "status": 502,
     "retryable": true
   },
+  "LOOP_DETECTED": {
+    "status": 508,
+    "retryable": false
+  },
   "INDEX_UNSUPPORTED": {
     "status": 502,
     "retryable": false
