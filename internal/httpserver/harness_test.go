@@ -454,6 +454,21 @@ func (h *harness) serve(r *http.Request) *httptest.ResponseRecorder {
 // harness's global proxy (upstreamProxy) answers every request for it.
 const fixtureUpstream = "http://upstream.example"
 
+// settled polls read until accept is true or five seconds pass, and returns
+// the last value. A download with a declared length can end at the client
+// before its handler records the outcome, so counters written after the last
+// byte must be awaited.
+func settled[T any](read func() (T, error), accept func(T) bool) T {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		value, err := read()
+		if err == nil && accept(value) || time.Now().After(deadline) {
+			return value
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // upstreamProxy installs handler as the global upstream HTTP proxy. Requests
 // for http:// sources (fixtureUpstream) arrive in absolute form; handlers
 // route on r.URL.Path.
