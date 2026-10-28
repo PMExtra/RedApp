@@ -76,6 +76,7 @@ These commands run downloaded scripts. Review them first if your policy requires
 - [Providers](docs/guide/providers.md): provider types, HTTP cache rules, release distribution, usage instructions.
 - [Security](docs/guide/security.md): trust model, authentication, sandboxing, upstream verification.
 - [Metrics](docs/guide/metrics.md): metric names, sampling, retention and gaps.
+- [Mirrors](docs/guide/mirrors.md): mirroring applications of other RedApp instances over several levels.
 - [Development](docs/dev/development.md): building, testing and contributing (Chinese).
 
 ## License

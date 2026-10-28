@@ -54,6 +54,7 @@ runtime-test: $(NODE_MODULES)
 	python3 scripts/test-prewarm-cli.py
 	python3 scripts/test-taxonomy-cli.py
 	python3 scripts/test-configuration-exchange-cli.py
+	python3 scripts/test-mirror-cli.py
 
 # Playwright against the existing binary with a fresh data directory; needs the
 # Chromium browser: cd frontend && npx playwright install --with-deps chromium

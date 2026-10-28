@@ -76,6 +76,7 @@ irm 'https://downloads.example.internal/anthropic/claude-code/install.ps1' | iex
 - [Provider](docs/guide/providers.zh-CN.md)：Provider 类型、HTTP 缓存规则、发布分发和使用说明。
 - [安全](docs/guide/security.zh-CN.md)：信任模型、认证、沙箱和上游校验。
 - [指标](docs/guide/metrics.zh-CN.md)：指标名称、采样、保留和缺失数据。
+- [镜像](docs/guide/mirrors.zh-CN.md)：多级镜像其他 RedApp 实例的应用。
 - [开发](docs/dev/development.md)：构建、测试和参与开发（中文）。
 
 ## 许可
