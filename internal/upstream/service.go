@@ -27,9 +27,42 @@ type Service struct {
 	instanceUID string
 	now         func() time.Time
 	log         *slog.Logger
-	// syncMu serializes checks, so the loop and a manual check of the same
-	// application never record results out of order.
-	syncMu sync.Mutex
+	// checking holds the applications being checked, so the loop and a
+	// manual check of one application never record results out of order;
+	// different applications are checked independently. Guarded by mu.
+	mu       sync.Mutex
+	checking map[string]chan struct{}
+}
+
+// checkTimeout bounds one check of a mirrored application, including its icon.
+const checkTimeout = 2 * time.Minute
+
+// lockApp waits until no other check of the application runs, or ctx ends.
+func (s *Service) lockApp(ctx context.Context, appUID string) (func(), error) {
+	for {
+		s.mu.Lock()
+		if s.checking == nil {
+			s.checking = map[string]chan struct{}{}
+		}
+		busy, ok := s.checking[appUID]
+		if !ok {
+			done := make(chan struct{})
+			s.checking[appUID] = done
+			s.mu.Unlock()
+			return func() {
+				s.mu.Lock()
+				delete(s.checking, appUID)
+				s.mu.Unlock()
+				close(done)
+			}, nil
+		}
+		s.mu.Unlock()
+		select {
+		case <-busy:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 }
 
 type Option func(*Service)
@@ -274,9 +307,12 @@ func (s *Service) Sync(ctx context.Context, appKey string) (store.Binding, error
 	if err != nil {
 		return b, err
 	}
-	s.syncMu.Lock()
+	unlock, err := s.lockApp(ctx, b.AppUID)
+	if err != nil {
+		return b, err
+	}
 	err = s.check(ctx, b)
-	s.syncMu.Unlock()
+	unlock()
 	if err != nil {
 		return b, err
 	}
@@ -286,6 +322,8 @@ func (s *Service) Sync(ctx context.Context, appKey string) (store.Binding, error
 // check refreshes one binding and records the outcome. It returns only
 // failures to record it; an upstream failure is part of the outcome.
 func (s *Service) check(ctx context.Context, b store.Binding) error {
+	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
+	defer cancel()
 	at := s.now()
 	u, err := s.db.Upstream(b.UpstreamUID)
 	if err != nil {
@@ -319,14 +357,21 @@ func (s *Service) check(ctx context.Context, b store.Binding) error {
 		return s.db.UpdateMirror(b.AppUID, store.MirrorUpdate{At: at})
 	}
 	icon := b.Icon
-	if m.Icon != b.RemoteIcon || !b.Available {
+	if m.Icon != b.RemoteIcon || !b.Available || icon == "" && m.Icon != "" {
 		if icon, err = s.icon(ctx, c, m.Icon); err != nil {
 			s.log.Warn("upstream icon not copied", slog.String("app", b.AppKey), logging.Error(err))
 			icon = ""
 		}
 	}
 	snapshot := snapshotOf(m, icon)
-	return s.db.UpdateMirror(b.AppUID, store.MirrorUpdate{Snapshot: &snapshot, RemoteRevision: m.Revision, RemoteIcon: m.Icon, Chain: m.UpstreamChain, At: at})
+	err = s.db.UpdateMirror(b.AppUID, store.MirrorUpdate{Snapshot: &snapshot, RemoteRevision: m.Revision, RemoteIcon: m.Icon, Chain: m.UpstreamChain, At: at})
+	if errors.Is(err, store.ErrInvalidDirectory) {
+		// The upstream sent values this instance does not accept, for example
+		// under other limits: keep the last values and report it.
+		s.log.Warn("upstream values rejected", slog.String("app", b.AppKey), logging.Error(err))
+		return s.db.UpdateMirror(b.AppUID, store.MirrorUpdate{ErrorCode: "UPSTREAM_INCOMPATIBLE", At: at})
+	}
+	return err
 }
 
 // SyncAll checks every mirrored application once.
@@ -336,13 +381,14 @@ func (s *Service) SyncAll(ctx context.Context) {
 		s.log.Error("mirror check failed", logging.Error(err))
 		return
 	}
-	s.syncMu.Lock()
-	defer s.syncMu.Unlock()
 	for _, b := range bindings {
-		if ctx.Err() != nil {
+		unlock, err := s.lockApp(ctx, b.AppUID)
+		if err != nil {
 			return
 		}
-		if err := s.check(ctx, b); err != nil && !errors.Is(err, store.ErrDirectoryDeleted) && !errors.Is(err, store.ErrMirrorNotFound) {
+		err = s.check(ctx, b)
+		unlock()
+		if err != nil && !errors.Is(err, store.ErrDirectoryDeleted) && !errors.Is(err, store.ErrMirrorNotFound) {
 			s.log.Error("mirror check not recorded", slog.String("app", b.AppKey), logging.Error(err))
 		}
 	}

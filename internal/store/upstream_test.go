@@ -175,3 +175,46 @@ func TestAdoptedBuiltinApplicationMirrorsAndUnbinds(t *testing.T) {
 		t.Fatal("binding kept", err)
 	}
 }
+
+// A mirror's template belongs to its binding: copies are independent, a
+// linked export never references it, and re-importing a package that contains
+// a mirrored key only fails when it would update the mirror.
+func TestMirroredApplicationCopiesAndImports(t *testing.T) {
+	s, u := mirrorFixture(t)
+	snapshot := MirrorSnapshot{Name: LocalizedText{"Tools", "工具"}}
+	a, err := s.BindApplication(BindRequest{UpstreamUID: u.UID, RemoteKey: "acme/tools", Vendor: "acme", ID: "tools", Provider: "http-cache", NewVendor: &VendorInput{Name: LocalizedText{"Acme", "示例"}}, Snapshot: snapshot, At: time.Unix(1_800_000_000, 0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.CopyApplication(a.Key, CopyApplicationInput{SourceUID: a.UID, SourceRevision: a.Revision, TargetVendor: "acme", TargetID: "linked", Mode: "linked"}); err == nil {
+		t.Fatal("a linked copy shares the mirror's template")
+	}
+	copied, err := s.CopyApplication(a.Key, CopyApplicationInput{SourceUID: a.UID, SourceRevision: a.Revision, TargetVendor: "acme", TargetID: "copy", Mode: "independent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := s.ExportConfiguration(ExportOptions{Selection: []ExportSelection{{Kind: "App", Key: a.Key}}, Mode: "linked"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range p.Documents {
+		if d.Template != nil && IsUpstreamTemplateRef(*d.Template) {
+			t.Fatal("export references a mirror template")
+		}
+	}
+	if _, err = s.PreviewConfigurationImport(p.Documents, nil); err != nil {
+		t.Fatal("re-importing a mirrored key that is skipped must work", err)
+	}
+	if _, err = s.PreviewConfigurationImport(p.Documents, []ImportChoice{{Kind: "App", Key: a.Key, Action: "update"}}); err == nil {
+		t.Fatal("an import updated a mirror")
+	}
+	if err = s.PermanentlyDeleteApplication(a.Key, a.Revision); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.ApplicationConfiguration(copied.Key); err != nil {
+		t.Fatal("the copy depends on the deleted mirror", err)
+	}
+	if _, err = s.DirectoryConfigurationSnapshot(); err != nil {
+		t.Fatal(err)
+	}
+}

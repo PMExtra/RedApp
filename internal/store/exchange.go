@@ -370,7 +370,7 @@ func makeImportPlan(base, w *configSet, documents []configexchange.Document, cho
 		if isUpstreamRef(d.Template) {
 			return plan, invalidf("mirrored applications cannot be imported as linked; use an independent copy")
 		}
-		if isUpstreamRef(oldCfg.Ref) {
+		if isUpstreamRef(oldCfg.Ref) && row.Action == "update" {
 			return plan, invalidf("%s is mirrored from an upstream; unbind it before importing over it", target)
 		}
 		cfg := ownedConfig{ProviderKey: d.ProviderKey, Ref: d.Template, Spec: cloneObject(Object(d.Spec)), Overrides: cloneObject(Object(d.Overrides))}
@@ -849,6 +849,11 @@ func (s *Store) CopyApplication(source string, input CopyApplicationInput) (Appl
 		}
 		old := src.config
 		cfg := ownedConfig{ProviderKey: src.Provider, Overrides: Object{}}
+		// The template of a mirror belongs to its binding: a copy that shared it
+		// would lose it when the mirror is unbound or deleted.
+		if input.Mode == "linked" && isUpstreamRef(old.Ref) {
+			return invalidf("a mirrored application can only be copied as an independent copy")
+		}
 		if input.Mode == "linked" {
 			if old.Ref == nil {
 				return invalidf("linked copies need a source linked to a template")

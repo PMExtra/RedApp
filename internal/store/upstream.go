@@ -455,10 +455,13 @@ func (s *Store) BindApplication(in BindRequest) (Application, error) {
 			if isUpstreamRef(existing.config.Ref) {
 				return ErrMirrorExists
 			}
-			over := cloneObject(existing.config.Overrides)
-			if existing.config.Ref == nil {
-				over = independentOverrides(existing.config.Spec, existing.Provider)
+			// Local settings keep their current values, including those a
+			// built-in template supplied; display and source follow the upstream.
+			effective, err := w.effective("App", existing.config)
+			if err != nil {
+				return err
 			}
+			over := independentOverrides(effective, existing.Provider)
 			for _, path := range mirroredDisplayPaths {
 				unsetLeaf(over, path)
 			}
