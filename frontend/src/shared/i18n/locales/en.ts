@@ -201,6 +201,10 @@ export default {
       UPSTREAM_UNAVAILABLE: "The upstream server is unavailable. Try again later.",
       INDEX_UNSUPPORTED: "The origin does not list this directory.",
       LOOP_DETECTED: "The request came back to this RedApp through its upstreams.",
+      UPSTREAM_NOT_FOUND: "The upstream no longer exists.",
+      MIRROR_NOT_FOUND: "This application is not mirrored from an upstream.",
+      UPSTREAM_IN_USE: "Applications are still mirrored from this upstream.",
+      UPSTREAM_INCOMPATIBLE: "The upstream is not a compatible RedApp instance or application.",
       METADATA_UNTRUSTED: "Upstream release metadata failed verification.",
       CHANNELS_UNVERIFIED:
         "Release channels could not be verified; nothing was changed. Try again.",

@@ -169,7 +169,9 @@ func exportConfiguration(w *configSet, options ExportOptions) (configexchange.Pa
 			}
 		}
 		d := configexchange.Document{SchemaVersion: 1, Kind: entry.kind, Metadata: meta}
-		if entry.mode == "linked" && cfg.Ref != nil {
+		// A mirrored application leaves as an independent copy of its current
+		// values: its binding and upstream template belong to this instance.
+		if entry.mode == "linked" && cfg.Ref != nil && !isUpstreamRef(cfg.Ref) {
 			ref := *cfg.Ref
 			t, err := w.template(entry.kind, ref)
 			if err != nil {
@@ -364,6 +366,12 @@ func makeImportPlan(base, w *configSet, documents []configexchange.Document, cho
 				return plan, err
 			}
 			before, _ = base.effective(d.Kind, base.config(d.Kind, uid))
+		}
+		if isUpstreamRef(d.Template) {
+			return plan, invalidf("mirrored applications cannot be imported as linked; use an independent copy")
+		}
+		if isUpstreamRef(oldCfg.Ref) {
+			return plan, invalidf("%s is mirrored from an upstream; unbind it before importing over it", target)
 		}
 		cfg := ownedConfig{ProviderKey: d.ProviderKey, Ref: d.Template, Spec: cloneObject(Object(d.Spec)), Overrides: cloneObject(Object(d.Overrides))}
 		if cfg.Overrides == nil {

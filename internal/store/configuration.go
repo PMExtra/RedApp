@@ -815,6 +815,18 @@ func (s *Store) patchConfiguration(kind, key string, patch ConfigurationPatch, e
 			}
 			c, revision, setEnabled, changed, app = &a.config, &a.Revision, &a.Enabled, &a.changed, a
 		}
+		if app != nil && isUpstreamRef(c.Ref) {
+			for path := range patch.Set {
+				if upstreamSourcePaths[path] {
+					return invalidf("the source of a mirrored application follows its upstream")
+				}
+			}
+			for _, path := range patch.Unset {
+				if upstreamSourcePaths[path] {
+					return invalidf("the source of a mirrored application follows its upstream")
+				}
+			}
+		}
 		for _, path := range patch.Unset {
 			ok, err := w.canReset(kind, *c, path)
 			if err != nil {
@@ -1071,6 +1083,10 @@ func (s *Store) ReconcileTemplates(set presets.Set) error {
 				continue
 			}
 			previous[key] = t
+			if IsUpstreamTemplateRef(t.Key) {
+				// Mirrored applications' templates come from their upstreams.
+				continue
+			}
 			missing := *t
 			missing.Present = false
 			w.templates[key] = &missing
@@ -1239,6 +1255,9 @@ func (s *Store) CreateConfiguredApplication(vendor string, in ApplicationInput, 
 		}
 		a := Application{Categories: in.Categories, Tags: in.Tags, UID: uid, ID: in.ID, Key: vendor + "/" + in.ID, VendorID: vendor, VendorUID: parent.UID, Name: in.Name, Description: in.Description, Icon: in.Icon, Provider: in.Provider, JSONRelease: in.JSONRelease, BaseURL: in.BaseURL, BaseURLs: in.BaseURLs, SourceStrategy: in.SourceStrategy, CacheTTLSeconds: in.CacheTTLSeconds, Enabled: in.Enabled, Revision: 1, SourceEpoch: 1}
 		c := ownedConfig{Overrides: Object{}, Spec: appSpec(a, LocalizedText{}, cachepolicy.Empty())}
+		if isUpstreamRef(ref) {
+			return invalidf("unknown or incompatible template")
+		}
 		if ref != nil {
 			t, err := w.template("App", *ref)
 			if err != nil {

@@ -88,6 +88,15 @@ func (s *Server) getMirrorApp(w http.ResponseWriter, r *http.Request) {
 	if e.Protocol != nil {
 		out.Channels = append(out.Channels, e.Descriptor.Channels...)
 	}
+	// A mirrored application passes on its own upstream and that one's chain.
+	instance, chain, mirrored, err := s.store.MirroredFrom(e.UID)
+	if err != nil {
+		s.writeError(w, r, storageError(err))
+		return
+	}
+	if mirrored {
+		out.UpstreamChain = append([]string{instance}, chain...)
+	}
 	identity, _ := json.Marshal(out)
 	digest := sha256.Sum256(identity)
 	out.Revision = hex.EncodeToString(digest[:16])

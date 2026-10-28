@@ -163,8 +163,12 @@ func purgeApplication(tx *sql.Tx, key string, revision int64) error {
 		}
 	}
 	// Every UID-keyed row (sources, configuration, notes, taxonomy, hosted files,
-	// ranking, prewarm, retention, previews) cascades from the application.
+	// ranking, prewarm, retention, previews, mirror binding) cascades from the
+	// application. A mirrored application's template is keyed by its UID.
 	if _, err = tx.Exec(`DELETE FROM applications WHERE uid=?`, a.UID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DELETE FROM template_snapshots WHERE kind='App' AND canonical_key=?`, UpstreamTemplateRef(a.UID)); err != nil {
 		return err
 	}
 	// Existing vendor order/records and globally shared icon objects are not app-owned.
