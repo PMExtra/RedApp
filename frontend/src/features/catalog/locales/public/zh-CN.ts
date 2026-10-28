@@ -32,6 +32,7 @@ export default {
       versionUnknown: "尚未发现版本",
       instructions: "使用说明",
       share: "复制链接以分享",
+      browse: "浏览文件",
       shareCopied: "已复制链接，快去分享给你的好友吧",
     },
     hosted: {

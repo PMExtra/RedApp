@@ -59,6 +59,7 @@ const (
 	codePreviewLimitExceeded      errorCode = "PREVIEW_LIMIT_EXCEEDED"
 	codeInternalError             errorCode = "INTERNAL_ERROR"
 	codeUpstreamUnavailable       errorCode = "UPSTREAM_UNAVAILABLE"
+	codeIndexUnsupported          errorCode = "INDEX_UNSUPPORTED"
 	codeMetadataUntrusted         errorCode = "METADATA_UNTRUSTED"
 	codeChannelsUnverified        errorCode = "CHANNELS_UNVERIFIED"
 	codeImportSourceFailed        errorCode = "IMPORT_SOURCE_FAILED"
@@ -132,6 +133,7 @@ var errorCatalog = map[errorCode]errorClass{
 	codePreviewLimitExceeded:      {429, true},
 	codeInternalError:             {500, false},
 	codeUpstreamUnavailable:       {502, true},
+	codeIndexUnsupported:          {502, false},
 	codeMetadataUntrusted:         {502, false},
 	codeChannelsUnverified:        {502, true},
 	codeImportSourceFailed:        {502, true},

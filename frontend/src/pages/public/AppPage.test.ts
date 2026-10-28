@@ -125,6 +125,22 @@ describe("application page", () => {
     );
   });
 
+  it("links the directory listing of an application with auto_index", async () => {
+    appServer(
+      catalogApp("acme/mirror", {
+        provider: "http-cache",
+        capabilities: httpCacheCapabilities,
+        latest_known_version: null,
+        auto_index: true,
+      }),
+    );
+    await renderEntry("public", "/acme/mirror");
+    expect(await screen.findByRole("link", { name: "Browse files" })).toHaveAttribute(
+      "href",
+      "/acme/mirror/",
+    );
+  });
+
   it("lists hosted downloads 25 per page", async () => {
     appServer(
       catalogApp("acme/tools", {

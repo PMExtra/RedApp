@@ -32,6 +32,7 @@ export default {
       versionUnknown: "No version seen yet",
       instructions: "Usage instructions",
       share: "Copy link to share",
+      browse: "Browse files",
       shareCopied: "Link copied. Go share it with your friends!",
     },
     hosted: {

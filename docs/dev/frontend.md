@@ -95,6 +95,7 @@ frontend/
 | `prewarm` | 自动预热策略、手动预热任务的创建、轮询、重试与取消（`PrewarmPanel`；任务 ID 存在 `localStorage`，刷新后继续跟踪） | 应用缓存页 |
 | `http-cache` | 缓存条目列表与单文件刷新、按规则后台刷新、按时间清理（预览—执行）、自动清理状态 | `http-cache` 应用缓存页 |
 | `hosted` | 托管文件列表、上传/按 URL 导入（进度、取消）、替换与删除（`HostedFilesPanel`） | `hosted` 应用文件页 |
+| `file-index` | 设置页区块 `AutoIndexSection`（`auto_index`：目录列表开关） | `hosted`、`http-cache` 应用设置页 |
 | `cache-policy` | 设置页区块 `CachePolicySection`（`http_policy`：过期回退、路径 TTL 规则、自动清理规则）与 `ChannelTtlSection`（发布类应用的元数据有效期），`PathMatchInput`（服务端试匹配）、`DurationInput` | 应用设置页、缓存维护面板 |
 
 ## 新增页面、路由和功能

@@ -92,6 +92,7 @@ func TestMigration16MaterializesLegacyJSONOverlay(t *testing.T) {
  INSERT INTO application_config_v16 SELECT entity_uid,template_ref,overrides_json,spec_json FROM application_config;
  DROP TABLE application_config;ALTER TABLE application_config_v16 RENAME TO application_config;
  UPDATE application_config SET overrides_json='{"json_release":{"refresh_seconds":777}}' WHERE template_ref='microsoft/vscode';
+ DROP TABLE http_cache_indexes;
  PRAGMA user_version=16;`)
 	if err != nil {
 		db.Close()

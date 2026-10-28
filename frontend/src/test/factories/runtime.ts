@@ -182,6 +182,7 @@ export function httpCacheConfiguration(
     tags: [],
     instructions: { en: "", "zh-CN": "" },
     http_policy: { stale_fallback: true, rules: [], auto_cleanup: [], ...policy },
+    auto_index: false,
   };
   return codexConfiguration({
     template_ref: null,

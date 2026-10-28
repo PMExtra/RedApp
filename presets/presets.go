@@ -64,6 +64,12 @@ func VersionsProvider(provider string) bool {
 	return ok
 }
 
+// AutoIndexProvider reports whether applications of the provider can list
+// their directories (auto_index): hosted files and HTTP cache sources.
+func AutoIndexProvider(provider string) bool {
+	return provider == "hosted" || provider == "http-cache"
+}
+
 // ReleaseTemplateKey names the built-in application template whose reviewed
 // distribution a release provider uses when the application has no template
 // reference of its own.
@@ -96,6 +102,7 @@ type AppSpec struct {
 	CacheTTLSeconds int                   `json:"cache_ttl_seconds"`
 	Instructions    Text                  `json:"instructions"`
 	HTTPPolicy      *cachepolicy.Config   `json:"http_policy,omitempty"`
+	AutoIndex       *bool                 `json:"auto_index,omitempty"`
 }
 type Distribution struct {
 	Protocol           string      `json:"protocol"`
@@ -423,6 +430,9 @@ func LoadFS(input fs.FS) (Set, error) {
 			}
 			if _, e = out.Icon(a.Spec.Icon); e != nil {
 				return fail(e)
+			}
+			if a.Spec.AutoIndex != nil && !AutoIndexProvider(a.Spec.Provider) {
+				return fail(fmt.Errorf("auto_index requires hosted or http-cache"))
 			}
 			if a.Spec.HTTPPolicy != nil {
 				if a.Spec.Provider != "http-cache" {

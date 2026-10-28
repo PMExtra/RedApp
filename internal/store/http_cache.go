@@ -351,3 +351,35 @@ func (s *Store) RetireHTTPCachePreviewItems(ctx context.Context, p Preview, item
 	}
 	return out, tx.Commit()
 }
+
+// HTTPCacheIndex is the last successful source listing of one directory of an
+// http-cache application with auto_index. Entries is a JSON array owned by
+// the HTTP cache.
+type HTTPCacheIndex struct {
+	SourceEpoch int64
+	Entries     []byte
+	Truncated   bool
+	FetchedAt   time.Time
+}
+
+// HTTPCacheIndex returns the stored listing of dir ("" is the root), or
+// ErrNotFound. The caller ignores a listing of an earlier source epoch.
+func (s *Store) HTTPCacheIndex(appUID, dir string) (HTTPCacheIndex, error) {
+	var index HTTPCacheIndex
+	var at int64
+	err := s.read.QueryRow(`SELECT source_epoch,entries_json,truncated,fetched_at_s FROM http_cache_indexes WHERE app_uid=? AND path=?`, appUID, dir).Scan(&index.SourceEpoch, &index.Entries, &index.Truncated, &at)
+	index.FetchedAt = time.Unix(at, 0).UTC()
+	return index, err
+}
+
+// SaveHTTPCacheIndex replaces the stored listing of dir. Nothing is stored for
+// a deleted application or a listing of a source epoch that is no longer
+// current, so a late fetch of an old source cannot replace the new one's.
+func (s *Store) SaveHTTPCacheIndex(appUID, dir string, index HTTPCacheIndex) error {
+	if !json.Valid(index.Entries) || index.SourceEpoch < 1 {
+		return ErrInvalidDirectory
+	}
+	_, err := s.db.Exec(`INSERT INTO http_cache_indexes(app_uid,path,source_epoch,entries_json,truncated,fetched_at_s) SELECT uid,?,?,?,?,? FROM applications WHERE uid=? AND provider='http-cache' AND deleted_at_s IS NULL AND source_epoch=?
+ON CONFLICT(app_uid,path) DO UPDATE SET source_epoch=excluded.source_epoch,entries_json=excluded.entries_json,truncated=excluded.truncated,fetched_at_s=excluded.fetched_at_s`, dir, index.SourceEpoch, index.Entries, index.Truncated, index.FetchedAt.Unix(), appUID, index.SourceEpoch)
+	return err
+}

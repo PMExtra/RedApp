@@ -30,7 +30,7 @@
 
 - **路径**：公开接口 `/api/`，管理接口 `/admin/api/`，应用以 `/apps/{vendor}/{app}` 定位。集合用复数名词，动作是子路径上的 POST（`.../preview`、`.../execute`、`.../cancel`）。
 - **方法与状态码**：GET 读；PUT 整体替换设置文档；PATCH 稀疏修改（实体上只改 `enabled`，配置用 `set`/`unset`）；POST 创建返回 `201`，动作返回 `200`（异步启动返回 `202`）；DELETE 和无内容的动作返回 `204`。
-- **字段**：全部 `snake_case`；时间是 RFC 3339 UTC；缺失值按 schema 用 `null` 或省略，列表不为 `null`。只与某些 Provider 相关的字段（`base_url`、`base_urls`、`source_strategy`、`cache_ttl_seconds`、`http_policy`、`retention`、`prewarm`）只在适用时出现。
+- **字段**：全部 `snake_case`；时间是 RFC 3339 UTC；缺失值按 schema 用 `null` 或省略，列表不为 `null`。只与某些 Provider 相关的字段（`base_url`、`base_urls`、`source_strategy`、`cache_ttl_seconds`、`http_policy`、`auto_index`、`retention`、`prewarm`）只在适用时出现。
 - **并发控制**：每个可编辑资源返回 `revision` 和 `ETag: "<revision>"`。所有写操作必须带 `If-Match`，缺失或格式错误返回 `400 IF_MATCH_REQUIRED`，过期返回 `409 REVISION_CONFLICT`。请求体不再携带 `revision`。按 UID 防止误伤同名重建对象的守卫（`confirm_uid`、`source_uid`、`notes_revision`）不匹配时也返回 `409 REVISION_CONFLICT`。选择 409 而不是 HTTP 标准的 412，是为了让“过期草稿”只有一个错误码，前端统一保留草稿并重新加载。
 - **不需要 `If-Match` 的写操作**：登录/登出/改密码、上传图标、导入导出、对预览或任务 ID 的动作（ID 已绑定冻结的状态）、托管文件删除（文件 ID 不可变，替换用 `expected_id`）、HTTP 缓存单文件刷新与路径匹配测试。依赖已保存配置的动作（保留预览、复制应用）要求 `If-Match`。
 - **分页**：无限增长的列表（事件、版本、资源、缓存条目、预览条目）用游标 `limit`/`cursor` → `items`/`next_cursor`；需要页码的有限列表（厂商、应用、分类、托管文件、保留与预热条目）用 `page`/`limit` → `items`/`page`/`limit`/`total`/`total_pages`。`limit` 最大 100，默认值写在各操作。页码超出时返回空 `items`，不再回退到最后一页。

@@ -59,7 +59,7 @@ func TestSPADocumentsFollowTheRouteFamilies(t *testing.T) {
 	if code, _, header := h.raw("GET", "/admin", nil, "", nil); code != 307 || header.Get("Location") != "/admin/overview" {
 		t.Fatal("admin redirect", code, header)
 	}
-	if code, _, header := h.raw("GET", "/openai/codex/", nil, "", nil); code != 308 || header.Get("Location") != "/openai/codex" {
+	if code, _, header := h.raw("GET", "/openai/codex/", nil, "", nil); code != 307 || header.Get("Location") != "/openai/codex" {
 		t.Fatal("trailing slash redirect", code, header)
 	}
 	for _, path := range []string{"/assets/public-fixture.js", "/assets/style-fixture.css", "/assets/JetBrainsMono-OFL-v2.304.txt"} {

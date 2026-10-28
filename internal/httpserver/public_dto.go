@@ -87,6 +87,7 @@ type publicAppDTO struct {
 	Categories            []categoryLabelDTO `json:"categories"`
 	LatestKnownVersion    *latestVersionDTO  `json:"latest_known_version"`
 	InstructionsAvailable localizedFlags     `json:"instructions_available"`
+	AutoIndex             bool               `json:"auto_index"`
 	Revision              string             `json:"revision"`
 }
 
@@ -132,6 +133,7 @@ func (s *Server) publicApp(e application.Entry, publicURL string, categories []s
 		Capabilities:          capabilitiesFor(e.Provider),
 		Categories:            labels,
 		InstructionsAvailable: localizedFlags{En: instructions.En != "", ZhCN: instructions.ZhCN != ""},
+		AutoIndex:             e.AutoIndex,
 	}
 	if latest != "" {
 		out.LatestKnownVersion = &latestVersionDTO{Version: latest, FirstSeen: firstSeen}

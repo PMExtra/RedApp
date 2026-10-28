@@ -1,6 +1,7 @@
 package httpcache
 
 import (
+	"errors"
 	"io"
 	"net/http"
 
@@ -100,6 +101,11 @@ func (s *Service) upstreamFailure(entry application.Entry, path string, status i
 	return s.db.RecordEvent(event)
 }
 func (s *Service) finishMetrics(w *metricWriter, entry application.Entry, path string, err error) {
+	// A directory is redirected to its listing; it is not a failed download.
+	if errors.Is(err, ErrDirectory) {
+		s.db.SettleCounters()
+		return
+	}
 	key := "download_success"
 	if err != nil || w.failed || w.status >= 400 || w.status == 0 {
 		key = "download_errors"

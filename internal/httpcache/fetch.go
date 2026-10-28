@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
+	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/download"
 	"github.com/PMExtra/RedApp/internal/store"
@@ -97,6 +99,21 @@ func sourceValidators(old *Row, source string) http.Header {
 	return headers
 }
 
+// ErrDirectory reports that the source redirected a path to the same path with
+// a trailing slash: with auto_index the path is a directory, listed there.
+var ErrDirectory = errors.New("path is a source directory")
+
+// directoryRedirect reports a response that the source reached by redirecting
+// source to its directory form. Without auto_index such a response is an
+// ordinary file, as before.
+func directoryRedirect(entry application.Entry, resp *http.Response, source string) bool {
+	if !entry.AutoIndex || resp.Request == nil || resp.Request.URL == nil {
+		return false
+	}
+	u, err := url.Parse(source)
+	return err == nil && strings.EqualFold(resp.Request.URL.Host, u.Host) && resp.Request.URL.Path == u.Path+"/"
+}
+
 func responseSourceURL(resp *http.Response, initial string) string {
 	if resp.Request != nil && resp.Request.URL != nil {
 		return resp.Request.URL.String()
@@ -172,6 +189,9 @@ func (s *Service) fetchAttempt(ctx context.Context, run *fetchRun, old *Row, att
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fetchResult{status: resp.StatusCode}, false, nil
+	}
+	if directoryRedirect(run.entry, resp, source) {
+		return fetchResult{}, false, ErrDirectory
 	}
 	blockReason := run.blockReason(resp.Header)
 	if blockReason == "" && run.shared {

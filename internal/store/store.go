@@ -27,7 +27,7 @@ import (
 
 // SchemaVersion is stored in PRAGMA user_version. Before 1.0 every schema
 // change increments it; only explicitly supported older schemas migrate (ADR 0001).
-const SchemaVersion = 17
+const SchemaVersion = 18
 
 // applicationID ("RdAp") is stored in PRAGMA application_id so that a foreign
 // SQLite file whose user_version happens to match is still refused.

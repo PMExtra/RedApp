@@ -255,6 +255,10 @@ export const errorCatalog = {
     "status": 502,
     "retryable": true
   },
+  "INDEX_UNSUPPORTED": {
+    "status": 502,
+    "retryable": false
+  },
   "METADATA_UNTRUSTED": {
     "status": 502,
     "retryable": false

@@ -707,7 +707,9 @@ paths:
       tags: [pages]
       summary: Serve the SPA document for a published application.
       description: |
-        `/{vendor}/{app}/` (trailing slash) redirects with `308` to `/{vendor}/{app}`. Unknown or unpublished
+        `/{vendor}/{app}/` (trailing slash) lists the root directory of a `hosted` or `http-cache` application with
+        `auto_index` and otherwise redirects with `307` to `/{vendor}/{app}` (temporary, because enabling `auto_index`
+        changes it; see `getDistributionFile`). Unknown or unpublished
         applications and invalid identities return `index.html` with status 404. Paths below `/admin/` (other
         than `x-spa-routes`) return `admin.html` with status 404 (see `getAdminPage`); paths whose first segment is
         `api`, `assets` or `health` return the router-level `404 NOT_FOUND` error.
@@ -940,6 +942,21 @@ paths:
         3. Reviewed static assets of the application descriptor (licences, public keys), `text/plain`.
         4. `codex` / `claude-code`: the release protocol routes in `x-distribution-routes`.
 
+        Directory listings (`auto_index`, `hosted` and `http-cache` only): a path ending in `/`, including the
+        application root `/{vendor}/{app}/`, lists that directory. A client whose `Accept` prefers `application/json`
+        to `text/html` gets a `FileIndex` document; others get an HTML page (server-rendered, relative `<a href>` links,
+        `Content-Security-Policy` allowing only the page's own inline style and script by hash). Both carry
+        `Vary: Accept` and `Cache-Control: no-cache`. A directory has at most 10,000 entries per listing, directories
+        first and then by name; more set `truncated`. There is no pagination. A path without the trailing slash that is
+        a directory (a hosted path below which files exist, or an `http-cache` path the source redirects to the same
+        path with `/`) returns `307` to the directory; a hosted file of the same name takes precedence. `hosted`
+        listings come from the hosted files; `http-cache` listings come only from the source (HTML links, nginx
+        autoindex JSON, Caddy browse JSON or a RedApp listing), never from cached files, so files not cached yet are
+        listed. A source listing younger than the application's cache TTL is reused; when every source fails, the last
+        successful listing of the current source epoch is returned with `stale`, otherwise `502 UPSTREAM_UNAVAILABLE`.
+        A source that answers without a readable listing returns `502 INDEX_UNSUPPORTED`; a missing directory returns
+        `404 FILE_NOT_FOUND`. Listings are not downloads: they take no download slot and are not ranked.
+
         Query strings are rejected (`400 INVALID_PATH` for `http-cache` and `hosted`, `400 INVALID_QUERY` otherwise).
         Every file request increments `counters.requests`. Complete GET downloads (`200`/`206`, full body written,
         client not cancelled) of artifacts, HTTP cache files and hosted files record one ranking hit for the client
@@ -1023,6 +1040,7 @@ paths:
         - ARTIFACT_TOO_LARGE
         - SOURCE_CHANGED
         - UPSTREAM_UNAVAILABLE
+        - INDEX_UNSUPPORTED
         - METADATA_UNTRUSTED
         - TRANSFER_CAPACITY
         - CACHE_CONTENDED
@@ -1033,7 +1051,7 @@ paths:
         '206':
           $ref: '#/components/responses/PartialContent'
         '307':
-          description: Non-cacheable redirect to a RedApp immutable release artifact.
+          description: Non-cacheable redirect to a RedApp immutable release artifact, to a directory path with its trailing slash (`auto_index`), or from `/{vendor}/{app}/` to the application page.
           headers:
             Location:
               schema:
@@ -1071,12 +1089,12 @@ paths:
       description: |
         Same resolution as GET. For an uncached `http-cache` file RedApp sends `HEAD` upstream and stores nothing.
         HEAD never starts a release artifact download and never counts as a download.
-      x-error-codes: [APPLICATION_NOT_FOUND, FILE_NOT_FOUND, SOURCE_CHANGED, UPSTREAM_UNAVAILABLE, METADATA_UNTRUSTED, TRANSFER_CAPACITY]
+      x-error-codes: [APPLICATION_NOT_FOUND, FILE_NOT_FOUND, SOURCE_CHANGED, UPSTREAM_UNAVAILABLE, INDEX_UNSUPPORTED, METADATA_UNTRUSTED, TRANSFER_CAPACITY]
       responses:
         '200':
           description: Headers only.
         '307':
-          description: Non-cacheable redirect to a RedApp immutable release artifact.
+          description: Non-cacheable redirect to a RedApp immutable release artifact, to a directory path with its trailing slash (`auto_index`), or from `/{vendor}/{app}/` to the application page.
           headers:
             Location:
               schema:
@@ -2465,7 +2483,8 @@ paths:
         Same semantics as `patchVendorConfiguration`. Additional rules:
 
         - Paths must apply to the provider (`base_url` only for `codex`/`claude-code`; `base_urls`, `source_strategy`
-          and `http_policy.*` only for `http-cache`; `retention`/`prewarm` only for `codex`/`claude-code`;
+          and `http_policy.*` only for `http-cache`; `auto_index` only for `hosted`/`http-cache`; `retention`/`prewarm`
+          only for `codex`/`claude-code`;
           `cache_ttl_seconds` not for `info`/`hosted`). Otherwise `400 VALIDATION_FAILED`.
         - `proxy`, `prewarm`, `retention`, `base_urls`, `categories`, `tags` and each `http_policy.*` list replace the
           whole value.
@@ -4862,6 +4881,11 @@ components:
             type: string
             contentMediaType: application/octet-stream
         application/json:
+          description: Release metadata, or a `FileIndex` directory listing (`auto_index`).
+          schema:
+            type: string
+        text/html:
+          description: Directory listing page (`auto_index`).
           schema:
             type: string
         text/plain:
@@ -5089,6 +5113,7 @@ components:
     PREVIEW_LIMIT_EXCEEDED: {status: 429, retryable: true, description: Too many active import previews (8); wait for expiry.}
     INTERNAL_ERROR: {status: 500, retryable: false, description: Unexpected server error; report the request ID.}
     UPSTREAM_UNAVAILABLE: {status: 502, retryable: true, description: 'Upstream unreachable, timed out or returned 5xx.'}
+    INDEX_UNSUPPORTED: {status: 502, retryable: false, description: The HTTP cache source answered a directory request without a listing RedApp can read (HTML links, nginx autoindex JSON, Caddy browse JSON or a RedApp listing).}
     METADATA_UNTRUSTED: {status: 502, retryable: false, description: Upstream release metadata failed verification (digest, signature, URL rules).}
     CHANNELS_UNVERIFIED: {status: 502, retryable: true, description: Release channels could not be fetched and verified; nothing was selected or deleted.}
     IMPORT_SOURCE_FAILED: {status: 502, retryable: true, description: The hosted file import URL could not be downloaded.}
@@ -5272,6 +5297,7 @@ components:
         - PREVIEW_LIMIT_EXCEEDED
         - INTERNAL_ERROR
         - UPSTREAM_UNAVAILABLE
+        - INDEX_UNSUPPORTED
         - METADATA_UNTRUSTED
         - CHANNELS_UNVERIFIED
         - IMPORT_SOURCE_FAILED
@@ -5557,7 +5583,7 @@ components:
     PublicApp:
       type: object
       additionalProperties: false
-      required: [key, id, vendor, name, description, icon, provider, capabilities, categories, latest_known_version, instructions_available, revision]
+      required: [key, id, vendor, name, description, icon, provider, capabilities, categories, latest_known_version, instructions_available, auto_index, revision]
       properties:
         key:
           $ref: '#/components/schemas/AppKey'
@@ -5586,6 +5612,9 @@ components:
             - type: 'null'
         instructions_available:
           $ref: '#/components/schemas/LocalizedFlags'
+        auto_index:
+          type: boolean
+          description: The application lists its directories at `/{vendor}/{app}/` (`hosted` and `http-cache` only).
         revision:
           type: string
           description: Opaque; changes whenever the rendered instructions document could change (instructions, latest version, public URL, names).
@@ -6743,10 +6772,50 @@ components:
           maximum: 86400
         http_policy:
           $ref: '#/components/schemas/HttpPolicy'
+        auto_index:
+          type: boolean
+          description: List directories (`hosted` and `http-cache` only); see `getDistributionFile`.
         retention:
           $ref: '#/components/schemas/RetentionPolicy'
         prewarm:
           $ref: '#/components/schemas/PrewarmPolicy'
+    FileIndex:
+      type: object
+      additionalProperties: false
+      required: [path, stale, truncated, entries]
+      description: Directory listing of a `hosted` or `http-cache` application with `auto_index`.
+      properties:
+        path:
+          type: string
+          description: Application-relative directory with a leading and a trailing `/` (`/` is the root).
+        stale:
+          type: boolean
+          description: '`http-cache` only: the source failed and this is its last successful listing.'
+        truncated:
+          type: boolean
+          description: The directory has more than the 10,000 listed entries.
+        entries:
+          type: array
+          maxItems: 10000
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, type]
+            properties:
+              name:
+                type: string
+                description: Decoded name of a direct child; link it as `./<percent-encoded name>` (with `/` for a directory).
+              type:
+                type: string
+                enum: [file, directory]
+              size:
+                type: integer
+                minimum: 0
+                description: Bytes of a file, when known.
+              modified:
+                type: string
+                format: date-time
+                description: Last change, when known. A hosted directory reports its newest file.
     Instructions:
       type: object
       additionalProperties: false
@@ -6863,6 +6932,7 @@ components:
         - http_policy.rules
         - http_policy.auto_cleanup
         - http_policy.stale_fallback
+        - auto_index
         - retention
         - prewarm
         - categories
@@ -7031,6 +7101,8 @@ components:
               items:
                 $ref: '#/components/schemas/CleanupRule'
             http_policy.stale_fallback:
+              type: boolean
+            auto_index:
               type: boolean
             retention:
               $ref: '#/components/schemas/RetentionPolicy'

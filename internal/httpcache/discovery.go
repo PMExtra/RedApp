@@ -1,6 +1,7 @@
 package httpcache
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,26 +11,64 @@ import (
 	"github.com/PMExtra/RedApp/internal/warmplan"
 	"golang.org/x/net/html"
 	"io"
+	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 type indexLink struct {
 	Href      string
 	Directory bool
+	// Size and Modified come from JSON listings that report them.
+	Size     *int64
+	Modified *time.Time
 }
 
-// JSON formats match nginx autoindex and Caddy browse's official array output.
+// indexJSONEntry covers nginx autoindex (mtime), Caddy browse (is_dir,
+// mod_time, url) and RedApp (modified) entries.
+type indexJSONEntry struct {
+	Name     string `json:"name"`
+	URL      string `json:"url"`
+	Type     string `json:"type"`
+	IsDir    *bool  `json:"is_dir"`
+	Size     *int64 `json:"size"`
+	MTime    string `json:"mtime"`
+	ModTime  string `json:"mod_time"`
+	Modified string `json:"modified"`
+}
+
+func (e indexJSONEntry) modified() *time.Time {
+	for _, value := range []string{e.Modified, e.ModTime} {
+		if t, err := time.Parse(time.RFC3339Nano, value); err == nil {
+			return &t
+		}
+	}
+	if t, err := http.ParseTime(e.MTime); err == nil {
+		return &t
+	}
+	return nil
+}
+
+// JSON formats match nginx autoindex and Caddy browse's official array output,
+// and the RedApp listing object whose entries use the same fields.
 func parseIndex(body []byte, contentType string) ([]indexLink, error) {
 	out := []indexLink{}
-	if strings.Contains(contentType, "json") || len(body) > 0 && body[0] == '[' {
-		var entries []struct {
-			Name  string `json:"name"`
-			URL   string `json:"url"`
-			Type  string `json:"type"`
-			IsDir *bool  `json:"is_dir"`
-		}
-		if err := json.Unmarshal(body, &entries); err != nil {
+	trimmed := bytes.TrimSpace(body)
+	if strings.Contains(contentType, "json") || len(trimmed) > 0 && (trimmed[0] == '[' || trimmed[0] == '{') {
+		var entries []indexJSONEntry
+		if len(trimmed) > 0 && trimmed[0] == '{' {
+			var listing struct {
+				Entries []indexJSONEntry `json:"entries"`
+			}
+			if err := json.Unmarshal(body, &listing); err != nil {
+				return nil, err
+			}
+			if listing.Entries == nil {
+				return nil, errors.New("directory listing without entries")
+			}
+			entries = listing.Entries
+		} else if err := json.Unmarshal(body, &entries); err != nil {
 			return nil, err
 		}
 		for _, e := range entries {
@@ -38,13 +77,18 @@ func parseIndex(body []byte, contentType string) ([]indexLink, error) {
 			}
 			href := e.URL
 			if href == "" {
-				href = url.PathEscape(e.Name)
+				// "./" keeps a name such as "a:b" from being read as a URL scheme.
+				href = "./" + url.PathEscape(e.Name)
 			}
 			directory := e.Type == "directory" || e.IsDir != nil && *e.IsDir || strings.HasSuffix(e.Name, "/") || strings.HasSuffix(href, "/")
 			if directory && !strings.HasSuffix(href, "/") {
 				href += "/"
 			}
-			out = append(out, indexLink{href, directory})
+			link := indexLink{Href: href, Directory: directory, Modified: e.modified()}
+			if !directory && e.Size != nil && *e.Size >= 0 {
+				link.Size = e.Size
+			}
+			out = append(out, link)
 		}
 		return out, nil
 	}
@@ -57,7 +101,7 @@ func parseIndex(body []byte, contentType string) ([]indexLink, error) {
 		if n.Type == html.ElementNode && n.Data == "a" {
 			for _, a := range n.Attr {
 				if a.Key == "href" {
-					out = append(out, indexLink{a.Val, strings.HasSuffix(a.Val, "/")})
+					out = append(out, indexLink{Href: a.Val, Directory: strings.HasSuffix(a.Val, "/")})
 				}
 			}
 		}

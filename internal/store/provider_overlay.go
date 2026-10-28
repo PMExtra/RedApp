@@ -14,7 +14,7 @@ import (
 func providerPath(path string) bool {
 	field, _, _ := strings.Cut(path, ".")
 	switch field {
-	case "json_release", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy", "retention", "prewarm":
+	case "json_release", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy", "auto_index", "retention", "prewarm":
 		return true
 	}
 	return false
@@ -39,6 +39,9 @@ func providerDefaults(provider string) Object {
 	if presets.VersionsProvider(provider) {
 		out["retention"] = object(presets.DefaultRetention())
 		out["prewarm"] = object(presets.DefaultPrewarm())
+	}
+	if presets.AutoIndexProvider(provider) {
+		out["auto_index"] = false
 	}
 	return out
 }
