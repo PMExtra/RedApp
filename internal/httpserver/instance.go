@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/distributor"
 )
 
@@ -20,14 +21,17 @@ func (s *Server) getInstance(w http.ResponseWriter, r *http.Request) {
 	writeOK(w, instanceDTO{InstanceID: s.instanceUID, Version: s.version})
 }
 
-// loopDetected refuses a request that already passed through this instance,
-// before it can trigger another upstream request: a chain of instances whose
-// sources lead back to itself. It writes the error and reports true.
-func (s *Server) loopDetected(w http.ResponseWriter, r *http.Request) bool {
-	if !distributor.ViaContains(r.Header.Values("Via"), distributor.ViaPseudonym(s.instanceUID)) {
+// loopDetected refuses a request that the application itself sent: its
+// source leads back to the same application, which would wait on itself.
+// It runs only where a request can read the application's source. Chains
+// across several applications or instances are refused when mirrors are
+// bound (upstream_chain), because shared transfers do not carry the Via of
+// the requests that started them. It writes the error and reports true.
+func (s *Server) loopDetected(w http.ResponseWriter, r *http.Request, entry application.Entry) bool {
+	if !distributor.ViaContains(r.Header.Values("Via"), distributor.ViaPseudonym(s.instanceUID, entry.UID)) {
 		return false
 	}
-	s.fail(w, r, codeLoopDetected, nil, "The request already passed through this RedApp instance")
+	s.fail(w, r, codeLoopDetected, nil, "The request came from this application: its source leads back to itself")
 	return true
 }
 

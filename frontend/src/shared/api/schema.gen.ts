@@ -74,8 +74,10 @@ export interface paths {
         /**
          * Identify this RedApp instance to another instance that uses it as an upstream.
          * @description `instance_id` is random, created with the data directory and kept by its backups; a copied data directory
-         *     shares it. Every upstream request of an instance carries `Via: 1.1 redapp-<instance_id>`; a distribution
-         *     request that already passed through this instance is refused with `508 LOOP_DETECTED`.
+         *     shares it. Every upstream request that reads an application's source carries
+         *     `Via: 1.1 redapp-<instance_id>.<application digest>`. A request that reads an application's source and was
+         *     sent by that same application (its source leads back to itself) is refused with `508 LOOP_DETECTED`; other
+         *     applications of the same instance may use each other as sources.
          */
         get: operations["getInstance"];
         put?: never;
@@ -2849,7 +2851,7 @@ export interface components {
             release_id: string;
             version: string;
             build: string;
-            artifacts: components["schemas"]["ReleaseArtifact"][];
+            artifacts: components["schemas"]["ReleaseDownloadChoice"][];
         };
         JSONReleaseData: {
             version: string;
@@ -2870,8 +2872,21 @@ export interface components {
             checksum_url?: string;
             checksum_filename?: string;
             size?: number;
-            /** @description Download choices only; the artifact address relative to `/{vendor}/{app}/`, for a downstream RedApp that reaches this instance at another address. */
-            path?: string;
+        };
+        ReleaseDownloadChoice: {
+            key: string;
+            /** @enum {string} */
+            os: "windows" | "macos" | "linux" | "unknown";
+            /** @enum {string} */
+            arch: "x64" | "arm64" | "x86" | "arm" | "universal" | "unknown";
+            format: string;
+            scope?: string;
+            variant?: string;
+            url: string;
+            sha256: string;
+            size?: number;
+            /** @description The artifact address relative to `/{vendor}/{app}/`, for a downstream RedApp that reaches this instance at another address. */
+            path: string;
         };
         /** @description Trusted administrator jq configuration. Limits and cancellation are not a hard memory sandbox. Queries receive {body, context}; HTTP is owned by the engine. */
         JSONReleaseConfig: {
@@ -4049,7 +4064,7 @@ export interface components {
                 "application/json": components["schemas"]["Error"];
             };
         };
-        /** @description The request already passed through this RedApp instance (`Via`); its sources lead back to it. */
+        /** @description The request was sent by the application it asks for (`Via`); its source leads back to itself. */
         LoopDetected: {
             headers: {
                 "X-Request-Id": components["headers"]["XRequestId"];

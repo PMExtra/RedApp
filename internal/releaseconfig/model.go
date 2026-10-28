@@ -38,9 +38,6 @@ type Artifact struct {
 	ChecksumURL      string `json:"checksum_url,omitempty"`
 	ChecksumFilename string `json:"checksum_filename,omitempty"`
 	Size             *int64 `json:"size,omitempty"`
-	// Path is set only in public download choices: the artifact's address
-	// relative to the application, for a downstream RedApp.
-	Path string `json:"path,omitempty"`
 }
 
 type Release struct {

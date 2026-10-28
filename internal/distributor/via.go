@@ -1,26 +1,39 @@
 package distributor
 
-import "strings"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
+)
 
-// ViaPseudonym names a RedApp instance in the Via header of its upstream
-// requests, so that another RedApp, or the instance itself, can recognize a
-// request that has already passed through it.
-func ViaPseudonym(instanceUID string) string { return "redapp-" + instanceUID }
+// ViaPseudonym names the sender of an upstream request in its Via header: a
+// RedApp instance, and the application whose source the request reads. The
+// application appears only as a digest. An instance recognizes a request that
+// an application sent to itself, so a source leading back to the same
+// application is refused instead of waiting on itself; other applications of
+// the same instance may still use each other as sources.
+func ViaPseudonym(instanceUID, appUID string) string {
+	if appUID == "" {
+		return "redapp-" + instanceUID
+	}
+	sum := sha256.Sum256([]byte(instanceUID + "\x00" + appUID))
+	return "redapp-" + instanceUID + "." + hex.EncodeToString(sum[:8])
+}
 
-// SetInstance makes every upstream request of the pool carry
-// "Via: 1.1 redapp-<uid>".
+// SetInstance makes every upstream request of the pool's clients carry
+// "Via: 1.1 <pseudonym>".
 func (p *Pool) SetInstance(uid string) {
 	if p != nil {
-		p.via.Store(ViaPseudonym(uid))
+		p.instance.Store(uid)
 	}
 }
 
-func (p *Pool) viaValue() string {
-	if p == nil {
+func (c *Client) viaValue() string {
+	if c.pool == nil {
 		return ""
 	}
-	if v, ok := p.via.Load().(string); ok && v != "" {
-		return "1.1 " + v
+	if uid, ok := c.pool.instance.Load().(string); ok && uid != "" {
+		return "1.1 " + ViaPseudonym(uid, c.appUID)
 	}
 	return ""
 }

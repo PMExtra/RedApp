@@ -32,7 +32,7 @@ func (s *Server) getDistributionFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entry, ok := s.publishedApp(w, r)
-	if !ok || s.loopDetected(w, r) {
+	if !ok {
 		return
 	}
 	file := r.PathValue("file_path")
@@ -143,6 +143,9 @@ func (s *Server) serveHostedFile(w http.ResponseWriter, r *http.Request, entry a
 }
 
 func (s *Server) serveCacheFile(w http.ResponseWriter, r *http.Request, entry application.Entry, relative string) {
+	if s.loopDetected(w, r, entry) {
+		return
+	}
 	if entry.Upstream == nil {
 		s.fail(w, r, codeUpstreamUnavailable, nil, "Application has no source")
 		return
@@ -227,6 +230,9 @@ func (s *Server) serveReleasePath(w http.ResponseWriter, r *http.Request, entry 
 	}
 	switch op.Kind {
 	case application.DownloadAliasOperation:
+		if s.loopDetected(w, r, entry) {
+			return
+		}
 		s.serveReleaseAlias(w, r, entry, op)
 		return
 	case application.InstallerOperation:
@@ -253,6 +259,9 @@ func (s *Server) serveReleasePath(w http.ResponseWriter, r *http.Request, entry 
 		w.Header().Set("Content-Security-Policy", sandboxPolicy)
 		_, _ = w.Write(body)
 	case application.ChannelOperation, application.MetadataOperation:
+		if s.loopDetected(w, r, entry) {
+			return
+		}
 		rep, err := s.catalog.Represent(r.Context(), key, op, appURL)
 		if err != nil {
 			s.writeError(w, r, releaseError(err))
@@ -262,6 +271,9 @@ func (s *Server) serveReleasePath(w http.ResponseWriter, r *http.Request, entry 
 		w.Header().Set("Accept-Ranges", "none")
 		_, _ = w.Write(rep.Body)
 	case application.ArtifactOperation:
+		if s.loopDetected(w, r, entry) {
+			return
+		}
 		resource, err := s.catalog.Authorize(r.Context(), key, op.Target, op.Resource)
 		if err != nil {
 			s.writeError(w, r, releaseError(err))

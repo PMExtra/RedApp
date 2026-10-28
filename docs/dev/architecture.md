@@ -161,8 +161,8 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 
 ## 实例身份与下游镜像
 
-- **实例身份**：`instance` 表在建库时生成随机 `uid`，备份恢复后保留，复制的数据目录共享同一个值。`httpserver.New` 读取它并交给上游连接池（`Pool.SetInstance`），此后每个上游请求带 `Via: 1.1 redapp-<uid>`。
-- **防环**：分发路径与 `/downloads` 是会继续回源的入口，处理前检查请求的 `Via` 是否已含本实例（`loopDetected`），含则 `508 LOOP_DETECTED`。共享的下载代际、HTTP 缓存流和元数据刷新在自身 context 中运行，不携带触发它们的请求的 `Via` 链，所以多跳环路在请求层只表现为超时；镜像绑定时用 `upstream_chain` 静态拒绝环路。
+- **实例身份**：`instance` 表在建库时生成随机 `uid`，备份恢复后保留，复制的数据目录共享同一个值。`httpserver.New` 读取它并交给上游连接池（`Pool.SetInstance`），此后读取应用来源的请求带 `Via: 1.1 redapp-<uid>.<应用摘要>`（`ViaPseudonym`，应用 UID 只以摘要出现；不属于某个应用的请求只带实例）。
+- **防环**：只有会读取来源的入口（HTTP 缓存文件与目录、发布元数据与制品、JSON 发布下载别名与 `/downloads`）检查 `Via` 是否含“本实例 + 被请求的应用”（`loopDetected`），含则 `508 LOOP_DETECTED`，即应用的来源直接绕回了它自己；同一实例的不同应用可以互为来源。共享的下载代际、HTTP 缓存流和元数据刷新在自身 context 中运行，不携带触发它们的请求的 `Via` 链，所以跨应用或跨实例的多跳环路在请求层只表现为超时；镜像绑定时用 `upstream_chain` 静态拒绝。
 - **供下游镜像的描述**：`getMirrorApp` 返回已发布应用的展示字段（使用说明为源文本，下游用自己的地址渲染）、Provider、渠道、`auto_index` 与 `upstream_chain`，`revision` 是这些字段的摘要。`/downloads` 的制品带相对应用根的 `path`，下游按自己访问上游的地址重新拼接。
 
 ## 冻结预览

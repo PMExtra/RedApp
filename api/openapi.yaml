@@ -239,8 +239,10 @@ paths:
       summary: Identify this RedApp instance to another instance that uses it as an upstream.
       description: |
         `instance_id` is random, created with the data directory and kept by its backups; a copied data directory
-        shares it. Every upstream request of an instance carries `Via: 1.1 redapp-<instance_id>`; a distribution
-        request that already passed through this instance is refused with `508 LOOP_DETECTED`.
+        shares it. Every upstream request that reads an application's source carries
+        `Via: 1.1 redapp-<instance_id>.<application digest>`. A request that reads an application's source and was
+        sent by that same application (its source leads back to itself) is refused with `508 LOOP_DETECTED`; other
+        applications of the same instance may use each other as sources.
       x-error-codes: []
       responses:
         '200':
@@ -5077,7 +5079,7 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     LoopDetected:
-      description: The request already passed through this RedApp instance (`Via`); its sources lead back to it.
+      description: The request was sent by the application it asks for (`Via`); its source leads back to itself.
       headers:
         X-Request-Id:
           $ref: '#/components/headers/XRequestId'
@@ -5187,7 +5189,7 @@ components:
     PREVIEW_LIMIT_EXCEEDED: {status: 429, retryable: true, description: Too many active import previews (8); wait for expiry.}
     INTERNAL_ERROR: {status: 500, retryable: false, description: Unexpected server error; report the request ID.}
     UPSTREAM_UNAVAILABLE: {status: 502, retryable: true, description: 'Upstream unreachable, timed out or returned 5xx.'}
-    LOOP_DETECTED: {status: 508, retryable: false, description: 'The request already passed through this RedApp instance: a chain of upstream instances leads back to it.'}
+    LOOP_DETECTED: {status: 508, retryable: false, description: 'A chain of sources leads back to the same application: a request sent by the application it asks for, or a mirror whose upstream chain contains this instance.'}
     INDEX_UNSUPPORTED: {status: 502, retryable: false, description: The HTTP cache source answered a directory request without a listing RedApp can read (HTML links, nginx autoindex JSON, Caddy browse JSON or a RedApp listing).}
     METADATA_UNTRUSTED: {status: 502, retryable: false, description: Upstream release metadata failed verification (digest, signature, URL rules).}
     CHANNELS_UNVERIFIED: {status: 502, retryable: true, description: Release channels could not be fetched and verified; nothing was selected or deleted.}
@@ -6710,7 +6712,7 @@ components:
         artifacts:
           type: array
           items:
-            $ref: '#/components/schemas/ReleaseArtifact'
+            $ref: '#/components/schemas/ReleaseDownloadChoice'
     JSONReleaseData:
       type: object
       additionalProperties: false
@@ -6738,9 +6740,23 @@ components:
         checksum_url: {type: string}
         checksum_filename: {type: string}
         size: {type: integer, minimum: 0}
+    ReleaseDownloadChoice:
+      type: object
+      additionalProperties: false
+      required: [key, os, arch, format, url, sha256, path]
+      properties:
+        key: {type: string}
+        os: {type: string, enum: [windows, macos, linux, unknown]}
+        arch: {type: string, enum: [x64, arm64, x86, arm, universal, unknown]}
+        format: {type: string}
+        scope: {type: string}
+        variant: {type: string}
+        url: {type: string}
+        sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        size: {type: integer, minimum: 0}
         path:
           type: string
-          description: Download choices only; the artifact address relative to `/{vendor}/{app}/`, for a downstream RedApp that reaches this instance at another address.
+          description: The artifact address relative to `/{vendor}/{app}/`, for a downstream RedApp that reaches this instance at another address.
     JSONReleaseConfig:
       type: object
       additionalProperties: false

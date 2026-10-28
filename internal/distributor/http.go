@@ -104,6 +104,7 @@ type Client struct {
 	HTTP       *http.Client
 	mode       ClientMode
 	pool       *Pool
+	appUID     string // application scope, "" for instance-wide clients
 	transports *transportSwitch
 	// releaseSource authorizes explicit administrator-configured origins and
 	// paths for JSON release sources, including every redirect hop.
@@ -161,7 +162,7 @@ func (p *Pool) newClient(base string, mode ClientMode, appUID, vendorUID string)
 		return nil, errors.New("upstream transport is unavailable")
 	}
 	u, _ := url.Parse(base)
-	c := &Client{Base: u, mode: mode, pool: p}
+	c := &Client{Base: u, mode: mode, pool: p, appUID: appUID}
 	c.transports = &transportSwitch{current: transportReference{pool: p, configured: mode != PublicRelease, appUID: appUID, vendorUID: vendorUID}, base: u.Hostname()}
 	// No Client.Timeout: it would bound whole body streaming. The transport
 	// bounds dial/TLS/response headers and Do bounds idle body reads.
@@ -332,7 +333,7 @@ func (c *Client) Send(ctx context.Context, req Request) (*http.Response, error) 
 		return nil, fmt.Errorf("build upstream request: %w", err)
 	}
 	r.Header.Set("Accept-Encoding", "identity")
-	if via := c.pool.viaValue(); via != "" {
+	if via := c.viaValue(); via != "" {
 		r.Header.Set("Via", via)
 	}
 	if req.directory {
