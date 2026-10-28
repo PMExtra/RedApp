@@ -38,7 +38,7 @@ type configurationDTO struct {
 }
 
 var vendorSpecFields = []string{"name", "description", "icon", "localized_icons", "proxy"}
-var appSpecFields = []string{"name", "description", "icon", "provider", "proxy", "categories", "tags", "instructions", "json_release", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy", "retention", "prewarm"}
+var appSpecFields = []string{"name", "description", "icon", "provider", "proxy", "categories", "tags", "instructions", "json_release", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy", "auto_index", "retention", "prewarm"}
 
 // specDocument keeps the spec fields of the kind that apply to provider
 // ("" for vendors). Lists that are absent or null become []. A nil spec
@@ -168,7 +168,7 @@ func (s *Server) configurationPatch(r *http.Request, paths []string, app bool) (
 }
 
 var vendorConfigurationPaths = []string{"name.en", "name.zh-CN", "description.en", "description.zh-CN", "icon", "localized_icons.en", "localized_icons.zh-CN", "proxy"}
-var appConfigurationPaths = []string{"name.en", "name.zh-CN", "description.en", "description.zh-CN", "icon", "proxy", "instructions.en", "instructions.zh-CN", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "retention", "prewarm", "categories", "tags"}
+var appConfigurationPaths = []string{"name.en", "name.zh-CN", "description.en", "description.zh-CN", "icon", "proxy", "instructions.en", "instructions.zh-CN", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "auto_index", "retention", "prewarm", "categories", "tags"}
 
 func (s *Server) patchVendorConfiguration(w http.ResponseWriter, r *http.Request) {
 	id, e := vendorParam(r)
