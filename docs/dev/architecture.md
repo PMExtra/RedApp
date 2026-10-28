@@ -123,7 +123,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 
 发布类 Provider（codex、claude-code）实现 `application.Protocol` 接口：解析路径、校验/比较版本、解析渠道、获取并验证发布元数据、渲染。`internal/apps/builtin` 只接受预置中声明的 `codex-releases-v1` 和 `claude-manifest-v1` 协议。
 
-- **Codex**：`release.json` 中每个资产必须有 `sha256:` 摘要，资产 URL 只能指向配置的上游或官方地址，实际下载地址总是由配置的上游重新构造。
+- **Codex**：`release.json` 中每个资产必须有 `sha256:` 摘要，资产 URL 必须是官方地址，或配置上游下的规范路径（主机不限：镜像，例如另一个 RedApp，会使用自己的公共地址）；实际下载地址总是由配置的上游重新构造。
 - **Claude Code**：`manifest.json` 必须有分离签名 `manifest.json.sig`。服务端用嵌入的固定公钥（指纹 `31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE`）验证 OpenPGP RSA-4096/SHA-512 签名，拒绝额外数据包、未来时间和过期签名。原始清单与签名按原字节保存和返回。客户端只校验摘要，不自行验签。
 
 分发路径的解析顺序：托管文件和 http-cache 文件先被拦截；其余由应用条目的 `ParsePath` 依次匹配公开资产、安装脚本、descriptor 资产，最后交给发布协议。渠道/元数据请求走 `catalog.Represent`，制品请求走 `catalog.Authorize` 获得已授权的 `download.Resource` 后由下载引擎提供。
