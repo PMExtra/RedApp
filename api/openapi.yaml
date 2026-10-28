@@ -956,7 +956,7 @@ paths:
         - provider: codex
           path: releases/{version}/{asset}
           content_type: application/octet-stream
-          description: Release artifact. `X-Expected-SHA256` carries the verified digest.
+          description: 'Release artifact. `X-Expected-SHA256` carries the verified digest; verified content has `ETag: "sha256-<digest>"`.'
         - provider: claude-code
           path: latest | stable
           content_type: text/plain; charset=utf-8
@@ -972,7 +972,7 @@ paths:
         - provider: claude-code
           path: '{version}/{platform}/{binary}'
           content_type: application/octet-stream
-          description: Release artifact for one of 8 platforms. `X-Expected-SHA256` carries the digest from the signed manifest.
+          description: 'Release artifact for one of 8 platforms. `X-Expected-SHA256` carries the digest from the signed manifest; verified content has `ETag: "sha256-<digest>"`.'
         - provider: json-release
           path: releases/{release_id}/{artifact_key}
           description: Immutable verified artifact, served through RedApp cache as an attachment using the authorized source URL filename.
@@ -994,14 +994,21 @@ paths:
             ranges return the full file.
             `Cache-Control: only-if-cached` on a miss returns `504 CACHE_MISS`; other request cache directives are ignored.
             Uncacheable upstream responses (`no-store`/`private` without a matching rule, `Set-Cookie`, `Vary`
-            other than `Accept-Encoding`) are streamed without storing.
+            other than `Accept-Encoding`) are streamed without storing and carry `Cache-Control: no-store`. Other
+            responses carry `Cache-Control: max-age=<seconds>`, the freshness remaining in RedApp (0 when stale), so a
+            downstream cache never keeps the file longer than RedApp does.
         - provider: hosted
           path: '{path}'
           content_type: application/octet-stream
           description: |
             `Content-Disposition: attachment; filename=<base name>`, `ETag: "sha256-<hex>"`, `Cache-Control: no-cache`,
             `Content-Security-Policy: sandbox; default-src 'none'`. Conditional requests and single byte ranges.
-      x-range-support: "hosted and http-cache support a single byte range; release artifacts and metadata do not (`Accept-Ranges: none`)."
+      x-range-support: |
+        hosted and http-cache support a single byte range. Verified, complete release artifacts carry
+        `ETag: "sha256-<digest>"` and support conditional requests and a single byte range (`Accept-Ranges: bytes`);
+        multiple ranges return the whole file. An artifact still being downloaded is streamed whole without an ETag
+        (`Accept-Ranges: none`), so unverified bytes are never offered for resumption. An `If-None-Match` matching the
+        digest ETag returns `304` without starting or counting a download. Release metadata does not support ranges.
       x-streaming: |
         Release artifacts and HTTP cache misses are streamed while the shared upstream download progresses (many
         readers follow one writer). Upstream reads have a 60 s idle timeout and no total limit; a failed transfer is
@@ -1044,11 +1051,11 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
         '412':
-          description: '`If-Match` or `If-Unmodified-Since` precondition of a file request failed (hosted, http-cache). No body.'
+          description: '`If-Match` or `If-Unmodified-Since` precondition of a file request failed (hosted, http-cache, release artifacts). No body.'
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '416':
-          description: Requested range not satisfiable (hosted, http-cache). No body.
+          description: Requested range not satisfiable (hosted, http-cache, release artifacts). No body.
         '500':
           $ref: '#/components/responses/InternalError'
         '502':

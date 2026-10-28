@@ -123,7 +123,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 
 发布类 Provider（codex、claude-code）实现 `application.Protocol` 接口：解析路径、校验/比较版本、解析渠道、获取并验证发布元数据、渲染。`internal/apps/builtin` 只接受预置中声明的 `codex-releases-v1` 和 `claude-manifest-v1` 协议。
 
-- **Codex**：`release.json` 中每个资产必须有 `sha256:` 摘要，资产 URL 只能指向配置的上游或官方地址，实际下载地址总是由配置的上游重新构造。
+- **Codex**：`release.json` 中每个资产必须有 `sha256:` 摘要，资产 URL 必须是官方地址，或配置上游下的规范路径（主机不限：镜像，例如另一个 RedApp，会使用自己的公共地址）；实际下载地址总是由配置的上游重新构造。
 - **Claude Code**：`manifest.json` 必须有分离签名 `manifest.json.sig`。服务端用嵌入的固定公钥（指纹 `31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE`）验证 OpenPGP RSA-4096/SHA-512 签名，拒绝额外数据包、未来时间和过期签名。原始清单与签名按原字节保存和返回。客户端只校验摘要，不自行验签。
 
 分发路径的解析顺序：托管文件和 http-cache 文件先被拦截；其余由应用条目的 `ParsePath` 依次匹配公开资产、安装脚本、descriptor 资产，最后交给发布协议。渠道/元数据请求走 `catalog.Represent`，制品请求走 `catalog.Authorize` 获得已授权的 `download.Resource` 后由下载引擎提供。
@@ -143,7 +143,7 @@ Provider 在编译期定义（`internal/application/providers.go`，[ADR 0002](a
 - **校验不持锁**：整文件哈希不在 `Manager.mu` 内进行。同一资源的并发请求共享一次校验，校验由管理器自己的 goroutine 和 context 执行，请求方取消只是停止等待，不会让有效缓存被判为无效。校验结束后重新加锁，确认代际仍是当前代际、文件 inode/大小/修改时间未变，才应用结果；校验中的代际视为活跃，不会被清理或清除。
 - **恢复**：启动时不对已提交的完整 blob 做整文件哈希，只核对存在和大小，并标为待校验；首次被请求时复用惰性校验（与源失效后恢复的 dormant 代际相同），校验失败才退役重下。已改名为 blob 但尚未提交的代际在恢复时立即校验。清理孤立的 part 和 blob。
 - **清理与保留**：版本清理和保留都是[冻结预览](#冻结预览)，执行只作用于预览中的代际；保留策略按应用保留最新 N 个版本，有效渠道、正在读写的代际和无法比较的版本受保护。
-- 下游响应由服务端自行流式输出，不支持客户端 Range。
+- **下游响应**：与期望摘要的 `ETag: "sha256-<摘要>"` 匹配的 `If-None-Match` 直接返回 `304`，不开始也不计入下载。已校验的完整代际带该 ETag 和 `Accept-Ranges: bytes`，经 `http.ServeContent` 处理条件请求和单段 Range（多段返回完整文件，避免 ServeContent 在独立 goroutine 中读取共享读者），下游缓存（例如另一个 RedApp）可以用 `If-Range` 续传；最后一个字节随 body 的校验后 EOF 一起发送。进行中的代际先等待首字节（立即失败的传输在发送任何内容之前报错），再流式返回完整的 `200`，不带 ETag（`Accept-Ranges: none`）：未校验的字节不能被续传，否则客户端可能把校验失败代际的前缀与另一代际的尾部拼在一起。
 
 ## HTTP 缓存引擎（`internal/httpcache`）
 

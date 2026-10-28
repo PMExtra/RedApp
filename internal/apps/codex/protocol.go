@@ -9,6 +9,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/jsoncheck"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -183,6 +184,27 @@ func (p *Protocol) Render(release application.Release, op application.Operation,
 	return application.Representation{ContentType: "application/json", Body: body}, err
 }
 
+// authorizedAssetURL accepts the official canonical URL or the canonical path
+// under the configured upstream on any host. A mirror, such as another RedApp,
+// renders its public address, which may differ from the address used to reach
+// it. Never use the URL as a fetch destination: the authorized relative path is
+// always rebound to this instance's configured upstream in VerifyRelease.
+func (p *Protocol) authorizedAssetURL(raw, path string) bool {
+	if raw == "https://releases.openai.com/codex/"+path {
+		return true
+	}
+	expected, err := p.upstream.RelativeURL(path)
+	if err != nil {
+		return false
+	}
+	want, err := url.Parse(expected)
+	if err != nil {
+		return false
+	}
+	got, err := url.Parse(raw)
+	return err == nil && (got.Scheme == "https" || got.Scheme == "http") && got.Host != "" && got.User == nil && got.RawQuery == "" && !got.ForceQuery && got.Fragment == "" && got.EscapedPath() == want.EscapedPath()
+}
+
 func (p *Protocol) parse(body []byte, requested string) (Release, error) {
 	if e := jsoncheck.Unique(body); e != nil {
 		return Release{}, e
@@ -216,14 +238,7 @@ func (p *Protocol) parse(body []byte, requested string) (Release, error) {
 		if a.Size != nil && (*a.Size < 0 || *a.Size > 4<<30) {
 			return Release{}, errors.New("invalid asset length")
 		}
-		// A mirror may preserve the official canonical metadata URL. Never use
-		// that field as a fetch destination: the authorized relative path is
-		// always rebound to this instance's configured upstream in VerifyRelease.
-		path := "releases/" + v + "/" + a.Name
-		expected, e := p.upstream.RelativeURL(path)
-		configured := e == nil && a.URL == expected
-		official := a.URL == "https://releases.openai.com/codex/"+path
-		if !configured && !official {
+		if !p.authorizedAssetURL(a.URL, "releases/"+v+"/"+a.Name) {
 			return Release{}, errors.New("asset URL is not authorized")
 		}
 	}

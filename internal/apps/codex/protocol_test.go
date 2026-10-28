@@ -25,7 +25,8 @@ func TestMalformedMetadataRejected(t *testing.T) {
 		"nested asset duplicate": strings.Replace(good, `"name":"asset.tar.gz"`, `"name":"asset.tar.gz","name":"asset.tar.gz"`, 1),
 		"digest algorithm":       strings.Replace(good, "sha256:", "sha512:", 1),
 		"unsafe asset name":      strings.Replace(good, "asset.tar.gz", "../asset.tar.gz", 1),
-		"foreign origin":         strings.Replace(good, c.Base.String(), "https://evil.example", 1),
+		"foreign path":           strings.Replace(good, c.Base.String(), c.Base.String()+"/elsewhere", 1),
+		"query":                  strings.Replace(good, "/releases/0.159.2/asset.tar.gz\"", "/releases/0.159.2/asset.tar.gz?x=1\"", 1),
 		"version mismatch":       strings.Replace(good, "rust-v0.159.2", "rust-v0.159.3", 1),
 		"duplicate asset":        strings.ReplaceAll(good, "other.tgz", "asset.tar.gz"),
 		"trailing data":          good + " trailing",
@@ -84,7 +85,9 @@ func TestCanonicalDistributionPaths(t *testing.T) {
 func TestMirrorMetadataCannotSelectTheArtifactDestination(t *testing.T) {
 	client, _ := testutil.Upstream(t, http.NotFoundHandler())
 	protocol := NewProtocol(client)
-	for _, metadataBase := range []string{client.Base.String(), "https://releases.openai.com/codex"} {
+	// A mirror RedApp renders asset URLs with its own public address, which
+	// may differ from the address this instance uses to reach it.
+	for _, metadataBase := range []string{client.Base.String(), "https://releases.openai.com/codex", "https://redapp.example", "http://redapp.internal:8080"} {
 		raw := fixture(metadataBase, "1.2.3")
 		release, err := protocol.VerifyRelease("1.2.3", application.Envelope{Raw: raw})
 		if err != nil {

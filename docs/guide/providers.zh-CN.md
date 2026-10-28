@@ -90,6 +90,8 @@ RedApp 按以下顺序确定 TTL：
 
 **TTL 0** 表示每次请求都先向来源重新验证。文件仍会被存储，因此来源故障时可以作为回退。
 
+响应带 `Cache-Control: max-age=<秒数>`，值为该文件在 RedApp 中剩余的新鲜时间（已过期时为 0），因此下游缓存（包括以本应用为来源的另一个 RedApp）保留文件的时间不会超过 RedApp 本身。不可缓存的响应带 `Cache-Control: no-store`。
+
 ### 路径规则
 
 规则匹配解码后、以 `/` 开头的应用相对路径。对于 `/example/files/releases/tool.zip`，路径为 `/releases/tool.zip`。
@@ -219,6 +221,8 @@ HTTP 缓存应用可以列出 1 到 16 个来源 URL。
 ## Codex 与 Claude Code
 
 这两个 Provider 分发官方发布。RedApp 从上游获取元数据和二进制，校验、缓存后连同修改过的安装器一起提供。校验内容见[安全](security.zh-CN.md#上游校验)。
+
+RedApp 已下载并校验的发布文件带 `ETag: "sha256-<摘要>"`，支持条件请求和单段字节范围续传。RedApp 仍在下载的文件整体发送且不能续传，因为它的字节尚未校验。
 
 ### 渠道
 
