@@ -143,11 +143,10 @@ func (s *Service) Update(ctx context.Context, uid string, revision int64, name, 
 }
 
 // localProvider is the provider a mirror of an upstream application uses:
-// hosted files are mirrored through the HTTP cache. JSON releases are not
-// mirrored yet.
+// hosted files are mirrored through the HTTP cache.
 func localProvider(remote string) (string, bool) {
 	switch remote {
-	case "info", "http-cache", "codex", "claude-code":
+	case "info", "http-cache", "codex", "claude-code", "json-release":
 		return remote, true
 	case "hosted":
 		return "http-cache", true
@@ -213,13 +212,24 @@ func (s *Service) checkChain(m mirrorApp) error {
 }
 
 func snapshotOf(m mirrorApp, icon string) store.MirrorSnapshot {
-	return store.MirrorSnapshot{
+	out := store.MirrorSnapshot{
 		Name:         store.LocalizedText{En: m.Name.En, ZhCN: m.Name.ZhCN},
 		Description:  store.LocalizedText{En: m.Description.En, ZhCN: m.Description.ZhCN},
 		Instructions: store.LocalizedText{En: m.Instructions.En, ZhCN: m.Instructions.ZhCN},
 		Icon:         icon,
 		AutoIndex:    m.AutoIndex,
 	}
+	if m.Provider == "json-release" {
+		for _, channel := range m.Channels {
+			if channel != "latest" {
+				out.Channels = append(out.Channels, channel)
+			}
+		}
+		if m.DefaultChannel != nil {
+			out.DefaultChannel = *m.DefaultChannel
+		}
+	}
+	return out
 }
 
 // BindInput selects an upstream application and the local application that

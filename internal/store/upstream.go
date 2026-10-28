@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/PMExtra/RedApp/internal/identity"
+	"github.com/PMExtra/RedApp/internal/releaseconfig"
 	"github.com/PMExtra/RedApp/presets"
 )
 
@@ -153,7 +155,7 @@ func (s *Store) UpdateUpstream(uid string, revision int64, name, origin, instanc
 			}
 			next := *t
 			next.Spec = cloneObject(t.Spec)
-			setMirrorSource(next.Spec, fmt.Sprint(next.Spec["provider"]), origin+"/"+b.RemoteKey)
+			setMirrorSource(next.Spec, fmt.Sprint(next.Spec["provider"]), origin, b.RemoteKey)
 			next.Hash = semanticHash(next.Schema, next.Kind, next.Metadata, next.Spec)
 			w.putTemplate(next)
 			a.Revision++
@@ -221,6 +223,36 @@ type MirrorSnapshot struct {
 	Instructions LocalizedText
 	Icon         string
 	AutoIndex    bool
+	// Channels and DefaultChannel of a JSON release application.
+	Channels       []string
+	DefaultChannel string
+}
+
+// mirrorReleaseRefresh is how often a JSON release mirror reads its upstream's
+// download choices.
+const mirrorReleaseRefresh = 300
+
+// mirrorReleaseConfig reads the upstream application's download choices for
+// every channel. The query is fixed: each artifact address is the upstream
+// application's root plus the choice's application-relative path, so the
+// public URL of the upstream never matters. Digests come from the upstream,
+// which verified them, and every download is checked against them.
+func mirrorReleaseConfig(origin, remoteKey string, channels []string, defaultChannel string) releaseconfig.Config {
+	root, _ := json.Marshal(origin + "/" + remoteKey + "/")
+	query := `.body | {version, build: (.build // ""), artifacts: [.artifacts[] | {key, os, arch, format, scope, variant, url: (` + string(root) + ` + .path), sha256, size} | with_entries(select(.value != null and .value != ""))]}`
+	config := releaseconfig.Config{
+		DefaultChannel: defaultChannel,
+		Channels:       map[string]releaseconfig.Channel{},
+		Sources: releaseconfig.Sources{
+			Metadata:  []releaseconfig.Source{{Origin: origin, Prefix: "/api/apps/" + remoteKey + "/"}},
+			Artifacts: []releaseconfig.Source{{Origin: origin, Prefix: "/" + remoteKey + "/releases/"}},
+		},
+		RefreshSeconds: mirrorReleaseRefresh,
+	}
+	for _, name := range channels {
+		config.Channels[name] = releaseconfig.Channel{Requests: []releaseconfig.Request{{URL: origin + "/api/apps/" + remoteKey + "/downloads?channel=" + url.QueryEscape(name)}}, Query: query}
+	}
+	return config
 }
 
 // Binding is the state of a mirrored application.
@@ -316,12 +348,24 @@ func (s *Store) MirroredFrom(appUID string) (instanceID string, chain []string, 
 	return instanceID, chain, err == nil, err
 }
 
-func setMirrorSource(spec Object, provider, source string) {
+// setMirrorSource points the template at the upstream application at origin.
+// A JSON release keeps the channels it already has.
+func setMirrorSource(spec Object, provider, origin, remoteKey string) {
+	source := origin + "/" + remoteKey
 	switch provider {
 	case "http-cache":
 		spec["base_urls"], spec["source_strategy"] = []any{source}, "ordered"
 	case "codex", "claude-code":
 		spec["base_url"] = source
+	case "json-release":
+		var current releaseconfig.Config
+		if raw, err := json.Marshal(spec["json_release"]); err == nil && json.Unmarshal(raw, &current) == nil {
+			channels := make([]string, 0, len(current.Channels))
+			for name := range current.Channels {
+				channels = append(channels, name)
+			}
+			spec["json_release"] = object(mirrorReleaseConfig(origin, remoteKey, channels, current.DefaultChannel))
+		}
 	}
 }
 
@@ -341,7 +385,10 @@ func mirrorTemplate(appUID, upstreamUID, remoteKey, provider, origin string, m M
 	if presets.AutoIndexProvider(provider) {
 		spec["auto_index"] = m.AutoIndex
 	}
-	setMirrorSource(spec, provider, origin+"/"+remoteKey)
+	if provider == "json-release" {
+		spec["json_release"] = mirrorReleaseConfig(origin, remoteKey, m.Channels, m.DefaultChannel)
+	}
+	setMirrorSource(spec, provider, origin, remoteKey)
 	spec = object(spec)
 	metadata := object(map[string]any{"upstream": upstreamUID, "remote_key": remoteKey})
 	return templateSnapshot{Kind: "App", Key: UpstreamTemplateRef(appUID), Schema: 1, Metadata: metadata, Spec: spec, Hash: semanticHash(1, "App", metadata, spec), Present: true}

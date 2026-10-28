@@ -3014,8 +3014,8 @@ paths:
       tags: [mirrors]
       summary: Read one page of the applications an upstream publishes.
       description: |
-        Reads the upstream's `listCatalog` and marks the applications this instance mirrors. JSON release
-        applications cannot be mirrored yet (`supported: false`).
+        Reads the upstream's `listCatalog` and marks the applications this instance mirrors and those it cannot
+        mirror (`supported: false`).
       parameters:
         - $ref: '#/components/parameters/SearchQuery'
         - $ref: '#/components/parameters/Page'
@@ -3065,7 +3065,9 @@ paths:
         created; the vendor is created from the upstream's vendor when it does not exist. With `revision` the existing
         application `vendor/app` of the same provider is adopted: it keeps its local settings, its display follows the
         upstream and its source becomes the upstream application (a new source epoch). Hosted applications are mirrored
-        as HTTP cache applications. The name, description, icon, usage instructions and `auto_index` follow the upstream
+        as HTTP cache applications. A JSON release mirror reads the upstream's `getReleaseDownloads` for each of its
+        channels with a fixed query and downloads every artifact from the upstream; its `json_release` belongs to the
+        upstream, so it has no prewarm selection of its own. The name, description, icon, usage instructions and `auto_index` follow the upstream
         unless overridden per field in the configuration; the source cannot be overridden. An upstream chain that contains
         this instance is refused with `508 LOOP_DETECTED`.
       security:
@@ -7460,7 +7462,7 @@ components:
     MirrorApp:
       type: object
       additionalProperties: false
-      required: [instance_id, key, provider, vendor, name, description, icon, instructions, auto_index, channels, upstream_chain, revision]
+      required: [instance_id, key, provider, vendor, name, description, icon, instructions, auto_index, channels, default_channel, upstream_chain, revision]
       properties:
         instance_id:
           type: string
@@ -7498,6 +7500,11 @@ components:
           description: Release channels (release providers); empty otherwise.
           items:
             type: string
+        default_channel:
+          description: Channel that `latest` names (JSON releases), or `null`.
+          oneOf:
+            - type: string
+            - type: 'null'
         upstream_chain:
           type: array
           description: Instance IDs the content passes through before this instance, nearest first.

@@ -43,18 +43,19 @@ type mirrorVendorDTO struct {
 }
 
 type mirrorAppDTO struct {
-	InstanceID    string          `json:"instance_id"`
-	Key           string          `json:"key"`
-	Provider      string          `json:"provider"`
-	Vendor        mirrorVendorDTO `json:"vendor"`
-	Name          localizedText   `json:"name"`
-	Description   localizedText   `json:"description"`
-	Icon          string          `json:"icon"`
-	Instructions  localizedText   `json:"instructions"`
-	AutoIndex     bool            `json:"auto_index"`
-	Channels      []string        `json:"channels"`
-	UpstreamChain []string        `json:"upstream_chain"`
-	Revision      string          `json:"revision"`
+	InstanceID     string          `json:"instance_id"`
+	Key            string          `json:"key"`
+	Provider       string          `json:"provider"`
+	Vendor         mirrorVendorDTO `json:"vendor"`
+	Name           localizedText   `json:"name"`
+	Description    localizedText   `json:"description"`
+	Icon           string          `json:"icon"`
+	Instructions   localizedText   `json:"instructions"`
+	AutoIndex      bool            `json:"auto_index"`
+	Channels       []string        `json:"channels"`
+	DefaultChannel *string         `json:"default_channel"`
+	UpstreamChain  []string        `json:"upstream_chain"`
+	Revision       string          `json:"revision"`
 }
 
 // getMirrorApp describes a published application for a downstream RedApp that
@@ -87,6 +88,12 @@ func (s *Server) getMirrorApp(w http.ResponseWriter, r *http.Request) {
 	}
 	if e.Protocol != nil {
 		out.Channels = append(out.Channels, e.Descriptor.Channels...)
+	}
+	// "latest" names the default channel; JSON releases configure which.
+	if p, ok := e.Protocol.(application.SnapshotProtocol); ok {
+		if channel, err := p.CanonicalChannel("latest"); err == nil {
+			out.DefaultChannel = &channel
+		}
 	}
 	// A mirrored application passes on its own upstream and that one's chain.
 	instance, chain, mirrored, err := s.store.MirroredFrom(e.UID)

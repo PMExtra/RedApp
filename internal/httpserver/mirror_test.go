@@ -2,13 +2,18 @@ package httpserver
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/networkproxy"
+	"github.com/PMExtra/RedApp/internal/releaseconfig"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -35,10 +40,28 @@ func TestMirrorApplicationsOfAnotherInstance(t *testing.T) {
 	if _, err := a.store.PatchVendorConfiguration("fixture", store.ConfigurationPatch{Revision: vendor.Revision, Set: map[string]json.RawMessage{"proxy": encodeJSON(networkproxy.Config{Mode: "url", URL: proxy.URL})}}); err != nil {
 		t.Fatal(err)
 	}
+	// A JSON release application whose feed is a local server.
+	setup := []byte("setup bytes")
+	var feedURL string
+	feed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/meta":
+			json.NewEncoder(w).Encode(releaseconfig.Release{Version: "2.0.0", Artifacts: []releaseconfig.Artifact{{Key: "win-x64", OS: "windows", Arch: "x64", Format: "exe", URL: feedURL + "/files/setup.exe", SHA256: fmt.Sprintf("%x", sha256.Sum256(setup))}}})
+		case "/files/setup.exe":
+			w.Write(setup)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(feed.Close)
+	feedURL = feed.URL
 	a.createApp("acme", "feed", application.JSONRelease, map[string]any{"json_release": map[string]any{
-		"default_channel": "stable", "refresh_seconds": 60,
-		"channels": map[string]any{"stable": map[string]any{"requests": []any{map[string]any{"url": "https://feed.example/meta"}}, "query": ".body"}},
-		"sources":  map[string]any{"metadata": []any{map[string]any{"origin": "https://feed.example", "prefix": "/"}}, "artifacts": []any{map[string]any{"origin": "https://feed.example", "prefix": "/files/"}}},
+		"default_channel": "beta", "refresh_seconds": 60,
+		"channels": map[string]any{
+			"stable": map[string]any{"requests": []any{map[string]any{"url": feed.URL + "/meta"}}, "query": ".body"},
+			"beta":   map[string]any{"requests": []any{map[string]any{"url": feed.URL + "/meta"}}, "query": ".body"},
+		},
+		"sources": map[string]any{"metadata": []any{map[string]any{"origin": feed.URL, "prefix": "/"}}, "artifacts": []any{map[string]any{"origin": feed.URL, "prefix": "/files/"}}},
 	}})
 
 	b.login("")
@@ -56,7 +79,7 @@ func TestMirrorApplicationsOfAnotherInstance(t *testing.T) {
 	for _, item := range catalog.Items {
 		supported[item.Key] = item.Supported
 	}
-	if !supported["acme/files"] || !supported[codexKey] || supported["acme/feed"] {
+	if !supported["acme/files"] || !supported[codexKey] || !supported["acme/feed"] {
 		t.Fatalf("catalog support %+v", supported)
 	}
 
@@ -107,6 +130,20 @@ func TestMirrorApplicationsOfAnotherInstance(t *testing.T) {
 	}
 	if data, _ := b.request("GET", "/openai/codex/releases/0.159.2/archive.tgz", nil, 200, nil); !bytes.Equal(data, archive) {
 		t.Fatal("Codex artifact through the mirror", string(data))
+	}
+
+	// A JSON release is mirrored without a query to write: B reads A's
+	// download choices and downloads through A.
+	b.request("POST", "/admin/api/upstreams/"+up.UID+"/mirrors", map[string]string{"remote_key": "acme/feed", "vendor": "mirror", "app": "feed"}, 201, nil)
+	if desc := getJSON[mirrorAppDTO](a, "/api/apps/acme/feed/mirror"); desc.DefaultChannel == nil || *desc.DefaultChannel != "beta" {
+		t.Fatalf("A's default channel %+v", desc)
+	}
+	choices := getJSON[releaseDownloadsDTO](b, "/api/apps/mirror/feed/downloads")
+	if choices.Channel != "beta" || choices.Version != "2.0.0" || len(choices.Artifacts) != 1 || !strings.HasPrefix(choices.Artifacts[0].URL, b.http.URL+"/mirror/feed/releases/") {
+		t.Fatalf("B's download choices %+v", choices)
+	}
+	if data, _ := b.request("GET", "/mirror/feed/releases/"+choices.ReleaseID+"/win-x64", nil, 200, nil); !bytes.Equal(data, setup) {
+		t.Fatal("JSON release artifact through the mirror", string(data))
 	}
 
 	// A stops publishing the application: B keeps it, marked unavailable.
