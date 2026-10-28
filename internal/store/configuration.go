@@ -189,15 +189,15 @@ func paths(kind string) []string {
 	if kind == "Vendor" {
 		return append(out, "localized_icons.en", "localized_icons.zh-CN")
 	}
-	return append(out, "instructions.en", "instructions.zh-CN", "json_release", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "auto_index", "retention", "prewarm", "categories", "tags")
+	return append(out, "instructions.en", "instructions.zh-CN", "json_release", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "auto_index", "default_artifact", "hidden_artifacts", "retention", "prewarm", "categories", "tags")
 }
 
 // AppPathApplies reports whether an application configuration path (or a
 // top-level spec field such as http_policy) applies to the provider: base_url
 // to release providers, base_urls, source_strategy and http_policy to
 // http-cache, retention and prewarm to release providers, auto_index to
-// hosted and http-cache and cache_ttl_seconds to every provider with an
-// upstream.
+// hosted and http-cache, default_artifact and hidden_artifacts to JSON
+// releases and cache_ttl_seconds to every provider with an upstream.
 func AppPathApplies(provider, path string) bool {
 	field, _, _ := strings.Cut(path, ".")
 	switch field {
@@ -211,6 +211,8 @@ func AppPathApplies(provider, path string) bool {
 		return provider == "http-cache" || presets.VersionsProvider(provider)
 	case "auto_index":
 		return presets.AutoIndexProvider(provider)
+	case "default_artifact", "hidden_artifacts":
+		return presets.DownloadChoicesProvider(provider)
 	}
 	return true
 }
@@ -416,6 +418,17 @@ func (w *configSet) effective(kind string, c ownedConfig) (Object, error) {
 			return nil, ErrInvalidDirectory
 		} else if spec.AutoIndex == nil && presets.AutoIndexProvider(spec.Provider) {
 			effective["auto_index"] = false
+		}
+		if presets.ValidateDownloadChoices(spec.Provider, spec.DefaultArtifact, spec.HiddenArtifacts) != nil {
+			return nil, ErrInvalidDirectory
+		}
+		if presets.DownloadChoicesProvider(spec.Provider) {
+			if spec.DefaultArtifact == nil {
+				effective["default_artifact"] = ""
+			}
+			if spec.HiddenArtifacts == nil {
+				effective["hidden_artifacts"] = []any{}
+			}
 		}
 		input := ApplicationInput{ID: "effective", Name: LocalizedText{spec.Name.En, spec.Name.ZhCN}, Description: LocalizedText{spec.Description.En, spec.Description.ZhCN}, Icon: spec.Icon, Provider: spec.Provider, JSONRelease: spec.JSONRelease, BaseURL: spec.BaseURL, BaseURLs: spec.BaseURLs, SourceStrategy: spec.SourceStrategy, CacheTTLSeconds: spec.CacheTTLSeconds}
 		if err := validateApplication(&input); err != nil {
@@ -676,7 +689,16 @@ func appSpec(a Application, instructions LocalizedText, policy cachepolicy.Confi
 		autoIndex := a.AutoIndex
 		spec.AutoIndex = &autoIndex
 	}
-	return object(spec)
+	out := object(spec)
+	if presets.DownloadChoicesProvider(a.Provider) {
+		// Set directly: omitempty would drop an empty list.
+		hidden := []any{}
+		for _, key := range a.HiddenArtifacts {
+			hidden = append(hidden, key)
+		}
+		out["default_artifact"], out["hidden_artifacts"] = a.DefaultArtifact, hidden
+	}
+	return out
 }
 func validateInstructions(value LocalizedText) error {
 	for _, text := range []string{value.En, value.ZhCN} {
@@ -729,6 +751,18 @@ func applyPatch(c *ownedConfig, kind string, patch ConfigurationPatch) error {
 		if p == "auto_index" {
 			var value bool
 			if json.Unmarshal(patch.Set[p], &value) != nil {
+				return ErrInvalidDirectory
+			}
+		}
+		if p == "default_artifact" {
+			var value string
+			if json.Unmarshal(patch.Set[p], &value) != nil {
+				return ErrInvalidDirectory
+			}
+		}
+		if p == "hidden_artifacts" {
+			var value []string
+			if json.Unmarshal(patch.Set[p], &value) != nil || value == nil {
 				return ErrInvalidDirectory
 			}
 		}
@@ -1010,6 +1044,13 @@ func snapshots(set presets.Set) ([]templateSnapshot, error) {
 		}
 		if normalized.AutoIndex != nil && !presets.AutoIndexProvider(normalized.Provider) {
 			return nil, ErrInvalidDirectory
+		}
+		if presets.ValidateDownloadChoices(normalized.Provider, normalized.DefaultArtifact, normalized.HiddenArtifacts) != nil {
+			return nil, ErrInvalidDirectory
+		}
+		if presets.DownloadChoicesProvider(normalized.Provider) && normalized.DefaultArtifact == nil {
+			empty := ""
+			normalized.DefaultArtifact = &empty
 		}
 		spec := object(normalized)
 		if _, ok := spec["base_urls"]; !ok {

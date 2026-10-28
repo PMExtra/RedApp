@@ -795,6 +795,16 @@ func (w *configSet) materializeApp(a *appEntry) error {
 		return ErrInvalidDirectory
 	}
 	a.AutoIndex = typed.AutoIndex != nil && *typed.AutoIndex
+	if presets.ValidateDownloadChoices(a.Provider, typed.DefaultArtifact, typed.HiddenArtifacts) != nil {
+		return ErrInvalidDirectory
+	}
+	a.DefaultArtifact, a.HiddenArtifacts = "", []string{}
+	if typed.DefaultArtifact != nil {
+		a.DefaultArtifact = *typed.DefaultArtifact
+	}
+	if typed.HiddenArtifacts != nil {
+		a.HiddenArtifacts = typed.HiddenArtifacts
+	}
 	if a.proxy, err = decodeProxy(spec["proxy"]); err != nil {
 		return ErrInvalidDirectory
 	}
@@ -1108,10 +1118,10 @@ func (v *vendorEntry) write(tx *sql.Tx) error {
 
 func (a *appEntry) write(tx *sql.Tx) error {
 	if a.before == nil {
-		if _, err := tx.Exec(`INSERT INTO applications(uid,vendor_uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,provider,base_url,base_urls_json,json_release_json,source_strategy,cache_ttl_seconds,auto_index,enabled,revision,runtime_revision,source_epoch,deleted_at_s) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.UID, a.VendorUID, a.ID, a.Name.En, a.Name.ZhCN, a.Description.En, a.Description.ZhCN, a.Icon, a.Provider, a.BaseURL, string(encode(a.BaseURLs)), string(encode(a.JSONRelease)), a.SourceStrategy, a.CacheTTLSeconds, a.AutoIndex, a.Enabled, a.Revision, a.RuntimeRevision, a.SourceEpoch, unixPointer(a.DeletedAt)); err != nil {
+		if _, err := tx.Exec(`INSERT INTO applications(uid,vendor_uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,provider,base_url,base_urls_json,json_release_json,source_strategy,cache_ttl_seconds,auto_index,default_artifact,hidden_artifacts_json,enabled,revision,runtime_revision,source_epoch,deleted_at_s) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, a.UID, a.VendorUID, a.ID, a.Name.En, a.Name.ZhCN, a.Description.En, a.Description.ZhCN, a.Icon, a.Provider, a.BaseURL, string(encode(a.BaseURLs)), string(encode(a.JSONRelease)), a.SourceStrategy, a.CacheTTLSeconds, a.AutoIndex, a.DefaultArtifact, string(encode(hiddenArtifacts(a.HiddenArtifacts))), a.Enabled, a.Revision, a.RuntimeRevision, a.SourceEpoch, unixPointer(a.DeletedAt)); err != nil {
 			return err
 		}
-	} else if err := casExec(tx, false, "", nil, `UPDATE applications SET name_en=?,name_zh_cn=?,description_en=?,description_zh_cn=?,icon=?,base_url=?,base_urls_json=?,json_release_json=?,source_strategy=?,cache_ttl_seconds=?,auto_index=?,enabled=?,revision=?,source_epoch=?,deleted_at_s=?,runtime_revision=? WHERE uid=? AND revision=?`, []any{a.Name.En, a.Name.ZhCN, a.Description.En, a.Description.ZhCN, a.Icon, a.BaseURL, string(encode(a.BaseURLs)), string(encode(a.JSONRelease)), a.SourceStrategy, a.CacheTTLSeconds, a.AutoIndex, a.Enabled, a.Revision, a.SourceEpoch, unixPointer(a.DeletedAt), a.RuntimeRevision, a.UID, a.before.Revision}); err != nil {
+	} else if err := casExec(tx, false, "", nil, `UPDATE applications SET name_en=?,name_zh_cn=?,description_en=?,description_zh_cn=?,icon=?,base_url=?,base_urls_json=?,json_release_json=?,source_strategy=?,cache_ttl_seconds=?,auto_index=?,default_artifact=?,hidden_artifacts_json=?,enabled=?,revision=?,source_epoch=?,deleted_at_s=?,runtime_revision=? WHERE uid=? AND revision=?`, []any{a.Name.En, a.Name.ZhCN, a.Description.En, a.Description.ZhCN, a.Icon, a.BaseURL, string(encode(a.BaseURLs)), string(encode(a.JSONRelease)), a.SourceStrategy, a.CacheTTLSeconds, a.AutoIndex, a.DefaultArtifact, string(encode(hiddenArtifacts(a.HiddenArtifacts))), a.Enabled, a.Revision, a.SourceEpoch, unixPointer(a.DeletedAt), a.RuntimeRevision, a.UID, a.before.Revision}); err != nil {
 		return err
 	}
 	if a.before == nil || !bytes.Equal(encode(a.config), encode(a.configBefore)) {

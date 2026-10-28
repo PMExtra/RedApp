@@ -254,6 +254,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/api/apps/{vendor}/{app}/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Vendor ID. */
+                vendor: components["parameters"]["Vendor"];
+                /** @description Application ID within the vendor. */
+                app: components["parameters"]["App"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List the packages of the current releases of a JSON release application.
+         * @description The packages of every channel's current release, in channel order, each key once, for choosing
+         *     `default_artifact` and `hidden_artifacts`. Reads stored releases only: it works for disabled applications,
+         *     never reaches the upstream and is empty before the first refresh.
+         */
+        get: operations["listReleaseArtifacts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/api/apps/{vendor}/{app}/release-preview": {
         parameters: {
             query?: never;
@@ -1121,8 +1148,8 @@ export interface paths {
          * @description Same semantics as `patchVendorConfiguration`. Additional rules:
          *
          *     - Paths must apply to the provider (`base_url` only for `codex`/`claude-code`; `base_urls`, `source_strategy`
-         *       and `http_policy.*` only for `http-cache`; `auto_index` only for `hosted`/`http-cache`; `retention`/`prewarm`
-         *       only for `codex`/`claude-code`;
+         *       and `http_policy.*` only for `http-cache`; `auto_index` only for `hosted`/`http-cache`; `default_artifact` and
+         *       `hidden_artifacts` only for `json-release`; `retention`/`prewarm` only for `codex`/`claude-code`;
          *       `cache_ttl_seconds` not for `info`/`hosted`). Otherwise `400 VALIDATION_FAILED`.
          *     - `proxy`, `prewarm`, `retention`, `base_urls`, `categories`, `tags` and each `http_policy.*` list replace the
          *       whole value.
@@ -1277,8 +1304,8 @@ export interface paths {
          *     upstream and its source becomes the upstream application (a new source epoch). Hosted applications are mirrored
          *     as HTTP cache applications. A JSON release mirror reads the upstream's `getReleaseDownloads` for each of its
          *     channels with a fixed query and downloads every artifact from the upstream; its `json_release` belongs to the
-         *     upstream, so it has no prewarm selection of its own. The name, description, icon, usage instructions and `auto_index` follow the upstream
-         *     unless overridden per field in the configuration; the source cannot be overridden. An upstream chain that contains
+         *     upstream, so it has no prewarm selection of its own. The name, description, icon, usage instructions, `auto_index`,
+         *     `default_artifact` and `hidden_artifacts` follow the upstream unless overridden per field in the configuration; the source cannot be overridden. An upstream chain that contains
          *     this instance is refused with `508 LOOP_DETECTED`.
          */
         post: operations["createMirror"];
@@ -3010,6 +3037,8 @@ export interface components {
             version: string;
             build: string;
             artifacts: components["schemas"]["ReleaseDownloadChoice"][];
+            /** @description The configured `default_artifact` when this release has it, else `null`. */
+            default_artifact: string | null;
         };
         JSONReleaseData: {
             version: string;
@@ -3045,6 +3074,18 @@ export interface components {
             size?: number;
             /** @description The artifact address relative to `/{vendor}/{app}/`, for a downstream RedApp that reaches this instance at another address. */
             path: string;
+            /** @description Listed in `hidden_artifacts`; not offered on the public page, still downloadable. */
+            hidden: boolean;
+        };
+        ReleaseArtifactChoice: {
+            key: string;
+            /** @enum {string} */
+            os: "windows" | "macos" | "linux" | "unknown";
+            /** @enum {string} */
+            arch: "x64" | "arm64" | "x86" | "arm" | "universal" | "unknown";
+            format: string;
+            scope?: string;
+            variant?: string;
         };
         /** @description Trusted administrator jq configuration. Limits and cancellation are not a hard memory sandbox. Queries receive {body, context}; HTTP is owned by the engine. */
         JSONReleaseConfig: {
@@ -3093,6 +3134,16 @@ export interface components {
             http_policy?: components["schemas"]["HttpPolicy"];
             /** @description List directories (`hosted` and `http-cache` only); see `getDistributionFile`. */
             auto_index?: boolean;
+            /**
+             * @description Artifact key of the package recommended when the visitor's environment does not pick one (`json-release`
+             *     only); `""` for none. It need not exist in the current release.
+             */
+            default_artifact?: string;
+            /**
+             * @description Artifact keys not offered on the public page (`json-release` only). They stay downloadable, keep their
+             *     prewarm selection and are listed by `getReleaseDownloads` with `hidden: true`.
+             */
+            hidden_artifacts?: string[];
             retention?: components["schemas"]["RetentionPolicy"];
             prewarm?: components["schemas"]["PrewarmPolicy"];
         };
@@ -3181,6 +3232,10 @@ export interface components {
             channels: string[];
             /** @description Channel that `latest` names (JSON releases), or `null`. */
             default_channel: string | null;
+            /** @description The `default_artifact` of a JSON release; `""` otherwise. */
+            default_artifact: string;
+            /** @description The `hidden_artifacts` of a JSON release; empty otherwise. */
+            hidden_artifacts: string[];
             /** @description Instance IDs the content passes through before this instance, nearest first. */
             upstream_chain: string[];
             /** @description The application's current source epoch; a JSON release mirror starts a new epoch when it changes. */
@@ -3252,7 +3307,7 @@ export interface components {
         /** @enum {string} */
         VendorConfigurationPath: "name.en" | "name.zh-CN" | "description.en" | "description.zh-CN" | "icon" | "localized_icons.en" | "localized_icons.zh-CN" | "proxy";
         /** @enum {string} */
-        AppConfigurationPath: "name.en" | "name.zh-CN" | "description.en" | "description.zh-CN" | "icon" | "proxy" | "instructions.en" | "instructions.zh-CN" | "json_release" | "base_url" | "base_urls" | "source_strategy" | "cache_ttl_seconds" | "http_policy.rules" | "http_policy.auto_cleanup" | "http_policy.stale_fallback" | "auto_index" | "retention" | "prewarm" | "categories" | "tags";
+        AppConfigurationPath: "name.en" | "name.zh-CN" | "description.en" | "description.zh-CN" | "icon" | "proxy" | "instructions.en" | "instructions.zh-CN" | "json_release" | "base_url" | "base_urls" | "source_strategy" | "cache_ttl_seconds" | "http_policy.rules" | "http_policy.auto_cleanup" | "http_policy.stale_fallback" | "auto_index" | "default_artifact" | "hidden_artifacts" | "retention" | "prewarm" | "categories" | "tags";
         VendorConfiguration: {
             revision: components["schemas"]["Revision"];
             /** @description Preset key (vendor ID) when linked to a template. */
@@ -3321,6 +3376,8 @@ export interface components {
                 "http_policy.auto_cleanup"?: components["schemas"]["CleanupRule"][];
                 "http_policy.stale_fallback"?: boolean;
                 auto_index?: boolean;
+                default_artifact?: string;
+                hidden_artifacts?: string[];
                 retention?: components["schemas"]["RetentionPolicy"];
                 prewarm?: components["schemas"]["PrewarmPolicy"];
                 categories?: components["schemas"]["Slug"][];
@@ -4656,6 +4713,37 @@ export interface operations {
             502: components["responses"]["BadGateway"];
             503: components["responses"]["ServiceUnavailable"];
             508: components["responses"]["LoopDetected"];
+        };
+    };
+    listReleaseArtifacts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Vendor ID. */
+                vendor: components["parameters"]["Vendor"];
+                /** @description Application ID within the vendor. */
+                app: components["parameters"]["App"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Known packages. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ReleaseArtifactChoice"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     previewJSONRelease: {

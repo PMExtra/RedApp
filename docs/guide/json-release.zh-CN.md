@@ -50,6 +50,15 @@
 
 公开选择器尽力依据浏览器信息推荐。架构不可靠或有多个包型时要求手选，不猜测 Linux 包管理器；手动选择优先。
 
+## 下载选项
+
+`json_release` 之外的两项应用设置决定公开页面提供哪些安装包：
+
+- `default_artifact`：访问者环境无法确定安装包时推荐的安装包 key，例如 `windows-x64-exe`。预置已设置：VS Code 为 `win32-x64-user`，JetBrains IDE 为 `windows-x64-exe`，dotUltimate 为 `windows-offline-suite`。
+- `hidden_artifacts`：不在公开页面提供的安装包 key。记录隐藏项而不是显示项，因此上游以后新增的安装包无需修改配置即会提供。
+
+两者只影响展示。隐藏的安装包仍可通过链接下载，预热选择不变，`/api/apps/{vendor}/{app}/downloads` 仍会列出并标记 `hidden: true`。修改它们不切换来源代次，已缓存的安装包保留。key 不必存在于当前发布；当前发布没有的默认安装包会被忽略。两项可以分别覆盖，覆盖后应用仍跟随模板的 `json_release`。
+
 不透明 release ID 标识 version/build，不能按语义版本排序。此 Provider 首版不启用旧安装器专用的自动版本保留策略，不能通过排序摘要 ID 删除版本。
 
 ## 预置与更新策略
@@ -77,4 +86,4 @@ dotUltimate 是与独立 Rider 并存的 Windows .NET 套装。官方 `RSU` 元�
 
 ## 存储与部署
 
-来源快照和刷新状态使用 schema 17。schema 15/16 通过迁移前数据库备份及校验事务原地升级；其他不支持的 schema 只读拒绝。blob 路径和内容不变。空间要求、完整目录备份和回退说明见[运维](operations.zh-CN.md#数据目录)。开发版本仍需完成全量验证后才能部署。没有新增必需环境变量、worker 容器或宿主权限；stacks 的未来镜像及受支持升级路径另行对齐。本次不修改 stacks，不执行部署。
+发布元数据、刷新状态和来源快照保存在状态数据库中，随数据库一起升级；支持的升级路径、空间要求和备份见[运维](operations.zh-CN.md#数据目录)。安装包是普通缓存文件。JSON 发布不需要额外的环境变量、容器或宿主权限。

@@ -45,6 +45,8 @@ CREATE TABLE applications(
   source_strategy TEXT NOT NULL CHECK(source_strategy IN ('','ordered','round_robin','random')),
   cache_ttl_seconds INTEGER NOT NULL CHECK(cache_ttl_seconds BETWEEN 0 AND 86400),
   auto_index INTEGER NOT NULL DEFAULT 0 CHECK(auto_index IN (0,1)),
+  default_artifact TEXT NOT NULL DEFAULT '',
+  hidden_artifacts_json TEXT NOT NULL DEFAULT '[]',
   enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
   revision INTEGER NOT NULL CHECK(revision>=1),
   runtime_revision INTEGER NOT NULL CHECK(runtime_revision>=1),

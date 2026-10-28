@@ -33,7 +33,7 @@ func isUpstreamRef(ref *string) bool { return ref != nil && IsUpstreamTemplateRe
 var upstreamSourcePaths = map[string]bool{"json_release": true, "base_url": true, "base_urls": true, "source_strategy": true}
 
 // mirroredDisplayPaths follow the upstream unless overridden locally.
-var mirroredDisplayPaths = []string{"name.en", "name.zh-CN", "description.en", "description.zh-CN", "icon", "instructions.en", "instructions.zh-CN", "auto_index"}
+var mirroredDisplayPaths = []string{"name.en", "name.zh-CN", "description.en", "description.zh-CN", "icon", "instructions.en", "instructions.zh-CN", "auto_index", "default_artifact", "hidden_artifacts"}
 
 var (
 	ErrUpstreamNotFound = fmt.Errorf("upstream not found: %w", sql.ErrNoRows)
@@ -224,11 +224,13 @@ type MirrorSnapshot struct {
 	Instructions LocalizedText
 	Icon         string
 	AutoIndex    bool
-	// Channels, DefaultChannel and the upstream's source epoch of a JSON
-	// release application.
-	Channels       []string
-	DefaultChannel string
-	UpstreamEpoch  int64
+	// Channels, DefaultChannel, the upstream's source epoch and download
+	// choices of a JSON release application.
+	Channels        []string
+	DefaultChannel  string
+	UpstreamEpoch   int64
+	DefaultArtifact string
+	HiddenArtifacts []string
 }
 
 // mirrorReleaseRefresh is how often a JSON release mirror reads its upstream's
@@ -398,6 +400,7 @@ func mirrorTemplate(appUID, upstreamUID, remoteKey, provider, origin string, m M
 	}
 	if provider == "json-release" {
 		spec["json_release"] = mirrorReleaseConfig(origin, remoteKey, m.Channels, m.DefaultChannel, m.UpstreamEpoch)
+		spec["default_artifact"], spec["hidden_artifacts"] = m.DefaultArtifact, hiddenArtifacts(m.HiddenArtifacts)
 	}
 	setMirrorSource(spec, provider, origin, remoteKey)
 	spec = object(spec)

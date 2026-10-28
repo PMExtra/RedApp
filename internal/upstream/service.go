@@ -14,6 +14,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/logging"
 	"github.com/PMExtra/RedApp/internal/media"
 	"github.com/PMExtra/RedApp/internal/store"
+	"github.com/PMExtra/RedApp/presets"
 )
 
 // SyncInterval separates two automatic checks of every mirrored application.
@@ -229,6 +230,7 @@ func snapshotOf(m mirrorApp, icon string) store.MirrorSnapshot {
 			out.DefaultChannel = *m.DefaultChannel
 		}
 		out.UpstreamEpoch = m.SourceEpoch
+		out.DefaultArtifact, out.HiddenArtifacts = m.DefaultArtifact, m.HiddenArtifacts
 	}
 	return out
 }
@@ -242,6 +244,9 @@ func checkReleaseChannels(m mirrorApp) error {
 	snapshot := snapshotOf(m, "")
 	if snapshot.DefaultChannel == "" || !slices.Contains(snapshot.Channels, snapshot.DefaultChannel) || len(snapshot.Channels) > 8 || m.SourceEpoch < 1 {
 		return fmt.Errorf("%w: the upstream does not describe its JSON release channels; it may need a newer RedApp", ErrIncompatible)
+	}
+	if presets.ValidateDownloadChoices(m.Provider, &snapshot.DefaultArtifact, snapshot.HiddenArtifacts) != nil {
+		return fmt.Errorf("%w: invalid download choices", ErrIncompatible)
 	}
 	return nil
 }

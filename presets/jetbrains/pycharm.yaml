@@ -16,6 +16,7 @@
     },
     "icon": "assets/jetbrains/pycharm/icon.svg",
     "provider": "json-release",
+    "default_artifact": "windows-x64-exe",
     "categories": [],
     "tags": [],
     "json_release": {

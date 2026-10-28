@@ -39,6 +39,7 @@ func (s *Server) routeTable() []route {
 	return []route{
 		// Health, public API, pages, assets, distribution, authentication.
 		{method: "GET", path: "/api/apps/{vendor}/{app}/downloads", operation: "getReleaseDownloads", serve: s.getReleaseDownloads, query: []string{"channel"}},
+		{method: "GET", path: "/admin/api/apps/{vendor}/{app}/artifacts", operation: "listReleaseArtifacts", serve: s.listReleaseArtifacts, auth: authAdmin},
 		{method: "POST", path: "/admin/api/apps/{vendor}/{app}/release-preview", operation: "previewJSONRelease", serve: s.previewJSONRelease, auth: authAdmin, maxBody: 1048576},
 		{method: "GET", path: "/health/live", operation: "getLiveness", serve: s.getLiveness},
 		{method: "GET", path: "/health/ready", operation: "getReadiness", serve: s.getReadiness},

@@ -143,7 +143,9 @@ type Entry struct {
 	Upstream              *distributor.Client
 	Upstreams             []*distributor.Client
 	SourceStrategy        string
-	AutoIndex             bool // hosted and http-cache directories are listed
+	AutoIndex             bool     // hosted and http-cache directories are listed
+	DefaultArtifact       string   // JSON release package recommended by default
+	HiddenArtifacts       []string // JSON release packages not offered publicly
 	PublicAssets          map[string]Representation
 	UID                   string
 	Provider              string

@@ -2,8 +2,10 @@ package httpserver
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -22,15 +24,20 @@ type releaseDownloadsDTO struct {
 	Version   string              `json:"version"`
 	Build     string              `json:"build"`
 	Artifacts []downloadChoiceDTO `json:"artifacts"`
+	// DefaultArtifact is the configured default package when this release
+	// has it.
+	DefaultArtifact *string `json:"default_artifact"`
 }
 
 // downloadChoiceDTO is a stored artifact as a public download choice. Path is
 // relative to the application: a downstream RedApp reaches this instance at an
 // address of its own, not at the public URL. The persisted release model is
-// never extended, so stored release identities do not change.
+// never extended, so stored release identities do not change. A hidden
+// choice is not offered on the public page but stays downloadable.
 type downloadChoiceDTO struct {
 	releaseconfig.Artifact
-	Path string `json:"path"`
+	Path   string `json:"path"`
+	Hidden bool   `json:"hidden"`
 }
 
 func (s *Server) getReleaseDownloads(w http.ResponseWriter, r *http.Request) {
@@ -68,7 +75,11 @@ func (s *Server) getReleaseDownloads(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	choices := make([]downloadChoiceDTO, len(data.Artifacts))
+	var defaultArtifact *string
 	for i := range data.Artifacts {
+		if data.Artifacts[i].Key == entry.DefaultArtifact {
+			defaultArtifact = &data.Artifacts[i].Key
+		}
 		path, pathErr := snapshot.DownloadPath(entry.Descriptor.ID, data.Artifacts[i].Key)
 		if pathErr != nil {
 			s.writeError(w, r, storageError(pathErr))
@@ -77,7 +88,7 @@ func (s *Server) getReleaseDownloads(w http.ResponseWriter, r *http.Request) {
 		data.Artifacts[i].URL = s.publicURL(r) + path
 		data.Artifacts[i].ChecksumURL = ""
 		data.Artifacts[i].ChecksumFilename = ""
-		choices[i] = downloadChoiceDTO{Artifact: data.Artifacts[i], Path: strings.TrimPrefix(path, "/"+entry.Descriptor.ID+"/")}
+		choices[i] = downloadChoiceDTO{Artifact: data.Artifacts[i], Path: strings.TrimPrefix(path, "/"+entry.Descriptor.ID+"/"), Hidden: slices.Contains(entry.HiddenArtifacts, data.Artifacts[i].Key)}
 	}
 	head, err := s.store.Channel(entry.StorageID(), canonical)
 	if err != nil {
@@ -96,8 +107,63 @@ func (s *Server) getReleaseDownloads(w http.ResponseWriter, r *http.Request) {
 		stale = true
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeOK(w, releaseDownloadsDTO{Stale: stale, FetchedAt: metadata.FetchedAt, Channel: canonical, ReleaseID: release.Version, Version: data.Version, Build: data.Build, Artifacts: choices})
+	writeOK(w, releaseDownloadsDTO{Stale: stale, FetchedAt: metadata.FetchedAt, Channel: canonical, ReleaseID: release.Version, Version: data.Version, Build: data.Build, Artifacts: choices, DefaultArtifact: defaultArtifact})
 }
+
+// releaseArtifactDTO is a package an administrator can choose as the default
+// or hide.
+type releaseArtifactDTO struct {
+	Key     string `json:"key"`
+	OS      string `json:"os"`
+	Arch    string `json:"arch"`
+	Format  string `json:"format"`
+	Scope   string `json:"scope,omitempty"`
+	Variant string `json:"variant,omitempty"`
+}
+
+type releaseArtifactsDTO struct {
+	Items []releaseArtifactDTO `json:"items"`
+}
+
+// listReleaseArtifacts lists the packages of every channel's current release
+// in channel order, each key once. It reads stored releases only, so it works
+// for disabled applications and never reaches the upstream.
+func (s *Server) listReleaseArtifacts(w http.ResponseWriter, r *http.Request) {
+	entry, ok := s.maintainedApp(w, r, func(e application.Entry) bool { return e.Provider == application.JSONRelease })
+	if !ok {
+		return
+	}
+	out := releaseArtifactsDTO{Items: []releaseArtifactDTO{}}
+	seen := map[string]bool{}
+	for _, channel := range entry.Descriptor.Channels {
+		head, err := s.store.Channel(entry.StorageID(), channel)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			s.writeError(w, r, storageError(err))
+			return
+		}
+		release, err := s.store.Release(entry.StorageID(), head.Version)
+		if err != nil {
+			s.writeError(w, r, storageError(err))
+			return
+		}
+		data, err := jsonrelease.DecodeRelease(release.Raw, true)
+		if err != nil {
+			s.writeError(w, r, storageError(err))
+			return
+		}
+		for _, a := range data.Artifacts {
+			if !seen[a.Key] {
+				seen[a.Key] = true
+				out.Items = append(out.Items, releaseArtifactDTO{Key: a.Key, OS: a.OS, Arch: a.Arch, Format: a.Format, Scope: a.Scope, Variant: a.Variant})
+			}
+		}
+	}
+	writeOK(w, out)
+}
+
 func (s *Server) previewJSONRelease(w http.ResponseWriter, r *http.Request) {
 	entry, ok := s.maintainedApp(w, r, func(e application.Entry) bool { return e.Provider == application.JSONRelease })
 	if !ok {

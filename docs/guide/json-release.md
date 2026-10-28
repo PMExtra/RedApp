@@ -50,6 +50,15 @@ Queries are trusted administrator configuration. They have no installed environm
 
 The public selector makes a best-effort recommendation using browser information. Uncertain architectures or multiple package types require manual choice; Linux package managers are not guessed. Manual selection takes precedence.
 
+## Download choices
+
+Two application settings, outside `json_release`, decide what the public page offers:
+
+- `default_artifact`: the key of the package recommended when the visitor's environment does not pick one, for example `windows-x64-exe`. The presets set one: `win32-x64-user` for VS Code, `windows-x64-exe` for the JetBrains IDEs and `windows-offline-suite` for dotUltimate.
+- `hidden_artifacts`: keys of packages not offered on the public page. Packages are listed as hidden, not as shown, so a package the upstream adds later is offered without a configuration change.
+
+Both are presentation only. Hidden packages stay downloadable by their links, keep their prewarm selection and are still listed by `/api/apps/{vendor}/{app}/downloads` with `hidden: true`. Changing either keeps the source epoch and the cached packages. Keys need not exist in the current release; a default the release lacks is ignored. Each setting can be overridden on its own, so overriding them does not stop the application from following its template's `json_release`.
+
 Opaque release IDs identify version/build and are not semantically sortable. This initial Provider does not enable the older installer-specific automatic retention policy; it must not delete versions by sorting their digest IDs.
 
 ## Presets and update policy
@@ -77,4 +86,4 @@ dotUltimate is a Windows .NET suite that coexists with standalone Rider. The off
 
 ## Storage and deployment
 
-Source snapshots, refresh status and provider-scoped overlays use schema 17. Schemas 15 and 16 are upgraded in place using a pre-migration database backup and a verified transaction; other unsupported schemas are refused unchanged. Blob paths and contents do not change. See [operations](operations.md#data-directory) for space requirements and whole-directory backup/rollback guidance. This development build still requires full validation before deployment. No new mandatory environment variable, worker container or host privilege is introduced. Align the eventual image and supported upgrade path in stacks separately; this implementation does not modify stacks or deploy anything.
+Release metadata, refresh state and source snapshots live in the state database and upgrade with it; see [operations](operations.md#data-directory) for supported upgrades, space requirements and backups. Packages are ordinary cache files. JSON releases need no extra environment variable, container or host privilege.
