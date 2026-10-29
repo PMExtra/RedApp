@@ -62,7 +62,7 @@ Serving an original IDE package does not modify its installed settings, launcher
 
 ### Candidate inventory
 
-The 12 JSON Release presets are VS Code, IntelliJ IDEA, PyCharm, CLion, WebStorm, PhpStorm, GoLand, Rider, DataGrip, RubyMine, RustRover and dotUltimate. New presets start disabled with no prewarm selection. Official metadata and checksum sidecars have been checked; **full package downloads and installation remain unverified**. MPS, DataSpell, AppCode, Fleet, Aqua, Writerside, Gateway and Toolbox are not included.
+The 12 JSON Release presets are VS Code, IntelliJ IDEA, PyCharm, CLion, WebStorm, PhpStorm, GoLand, Rider, DataGrip, RubyMine, RustRover and dotUltimate. New presets start disabled with no prewarm selection. Official metadata and checksum sidecars have been checked; **full package downloads and installation remain unverified**. MPS, DataSpell, AppCode, Fleet, Aqua, Writerside, Gateway and Toolbox are not included. The presets have no usage instructions; write them in application settings if your users need any.
 
 | JetBrains candidate | Configured product code | Artifact/checksum prefix |
 | --- | --- | --- |
