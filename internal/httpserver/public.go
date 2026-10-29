@@ -185,6 +185,8 @@ type searchHitDTO struct {
 	Name           localizedText  `json:"name"`
 	Icon           string         `json:"icon"`
 	LocalizedIcons *localizedText `json:"localized_icons"`
+	// IconHasBackground is false for vendors.
+	IconHasBackground bool `json:"icon_has_background"`
 }
 
 func (s *Server) searchCatalog(w http.ResponseWriter, r *http.Request) {
@@ -214,7 +216,7 @@ func (s *Server) searchCatalog(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, a := range apps.Items {
 		if entry, ok := s.registry.Lookup(a.Key); ok {
-			hits = append(hits, searchHitDTO{Kind: "app", Key: a.Key, Name: fromLocalized(entry.Descriptor.Name), Icon: publicIcon(entry.Descriptor.Icon)})
+			hits = append(hits, searchHitDTO{Kind: "app", Key: a.Key, Name: fromLocalized(entry.Descriptor.Name), Icon: publicIcon(entry.Descriptor.Icon), IconHasBackground: entry.IconHasBackground})
 		}
 	}
 	writeOK(w, map[string][]searchHitDTO{"items": hits})

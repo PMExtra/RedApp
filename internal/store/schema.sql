@@ -38,6 +38,7 @@ CREATE TABLE applications(
   description_en TEXT NOT NULL,
   description_zh_cn TEXT NOT NULL,
   icon TEXT NOT NULL,
+  icon_has_background INTEGER NOT NULL DEFAULT 0 CHECK(icon_has_background IN (0,1)),
   provider TEXT NOT NULL CHECK(provider IN ('info','hosted','http-cache','codex','claude-code','json-release')),
   base_url TEXT NOT NULL,
   base_urls_json TEXT NOT NULL,

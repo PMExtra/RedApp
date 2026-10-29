@@ -105,7 +105,7 @@ const release = ref<string>();
         ]"
       >
         <template #media>
-          <EntityIcon :src="app.icon" size="xl" />
+          <EntityIcon :src="app.icon" size="xl" :has-background="app.icon_has_background" />
         </template>
         <template #actions>
           <!-- The listing is a server page, not an SPA route. -->

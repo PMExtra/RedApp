@@ -114,6 +114,23 @@ describe("application settings", () => {
     expect(screen.getByRole("button", { name: "Delete application" })).toBeDisabled();
   });
 
+  it("marks an icon that includes its background", async () => {
+    const patches = settingsServer();
+    const { user } = await renderAdminPage("/admin/vendors/example/apps/tools/settings");
+    const toggle = await screen.findByRole("switch", { name: "Icon includes background" });
+    expect(toggle).not.toBeChecked();
+    await user.click(toggle);
+    const details = toggle.closest("section");
+    if (!details) throw new Error("no details section");
+    await user.click(within(details).getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(patches.calls).toHaveLength(1);
+    });
+    expect(patches.calls[0]).toMatchObject({
+      body: { set: { icon_has_background: true }, unset: [] },
+    });
+  });
+
   it("saves the redirect protection and allowlist of an HTTP cache", async () => {
     const patches = settingsServer();
     const { user } = await renderAdminPage("/admin/vendors/example/apps/tools/settings");

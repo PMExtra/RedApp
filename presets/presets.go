@@ -167,17 +167,20 @@ type AppSpec struct {
 	Name              Text                   `json:"name"`
 	Description       Text                   `json:"description"`
 	Icon              string                 `json:"icon"`
-	Provider          string                 `json:"provider"`
-	JSONRelease       *releaseconfig.Config  `json:"json_release,omitempty"`
-	BaseURL           string                 `json:"base_url"`
-	BaseURLs          []string               `json:"base_urls"`
-	SourceStrategy    string                 `json:"source_strategy"`
-	CacheTTLSeconds   int                    `json:"cache_ttl_seconds"`
-	Instructions      Text                   `json:"instructions"`
-	HTTPPolicy        *cachepolicy.Config    `json:"http_policy,omitempty"`
-	AutoIndex         *bool                  `json:"auto_index,omitempty"`
-	DefaultArtifact   *string                `json:"default_artifact,omitempty"`
-	HiddenArtifacts   []string               `json:"hidden_artifacts,omitempty"`
+	// IconHasBackground marks an icon that brings its own background: it is
+	// shown without the padded tile the console draws behind other icons.
+	IconHasBackground bool                  `json:"icon_has_background,omitempty"`
+	Provider          string                `json:"provider"`
+	JSONRelease       *releaseconfig.Config `json:"json_release,omitempty"`
+	BaseURL           string                `json:"base_url"`
+	BaseURLs          []string              `json:"base_urls"`
+	SourceStrategy    string                `json:"source_strategy"`
+	CacheTTLSeconds   int                   `json:"cache_ttl_seconds"`
+	Instructions      Text                  `json:"instructions"`
+	HTTPPolicy        *cachepolicy.Config   `json:"http_policy,omitempty"`
+	AutoIndex         *bool                 `json:"auto_index,omitempty"`
+	DefaultArtifact   *string               `json:"default_artifact,omitempty"`
+	HiddenArtifacts   []string              `json:"hidden_artifacts,omitempty"`
 }
 type Distribution struct {
 	Protocol           string      `json:"protocol"`

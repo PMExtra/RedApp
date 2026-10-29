@@ -382,7 +382,7 @@ describe("homepage pins", () => {
         pinnedApp("openai/codex", "Codex"),
         pinnedApp("google/gemini-cli", "Gemini CLI", { state: "disabled" }),
         pinnedApp("acme/tool", "Tool", { state: "deleted" }),
-        { key: "acme/gone", name: null, icon: null, state: "missing" },
+        { key: "acme/gone", name: null, icon: null, icon_has_background: false, state: "missing" },
       ]),
     );
     await renderPage();

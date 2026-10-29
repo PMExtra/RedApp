@@ -41,7 +41,7 @@ type configurationDTO struct {
 }
 
 var vendorSpecFields = []string{"name", "description", "icon", "localized_icons", "proxy", "redirect_protection"}
-var appSpecFields = []string{"name", "description", "icon", "provider", "proxy", "redirect_protection", "redirect_allowlist", "categories", "tags", "instructions", "json_release", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy", "auto_index", "default_artifact", "hidden_artifacts", "retention", "prewarm"}
+var appSpecFields = []string{"name", "description", "icon", "icon_has_background", "provider", "proxy", "redirect_protection", "redirect_allowlist", "categories", "tags", "instructions", "json_release", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy", "auto_index", "default_artifact", "hidden_artifacts", "retention", "prewarm"}
 
 // specDocument keeps the spec fields of the kind that apply to provider
 // ("" for vendors). Lists that are absent or null become []. A nil spec
@@ -172,7 +172,7 @@ func (s *Server) configurationPatch(r *http.Request, paths []string, app bool) (
 }
 
 var vendorConfigurationPaths = []string{"name.en", "name.zh-CN", "description.en", "description.zh-CN", "icon", "localized_icons.en", "localized_icons.zh-CN", "proxy", "redirect_protection"}
-var appConfigurationPaths = []string{"name.en", "name.zh-CN", "description.en", "description.zh-CN", "icon", "proxy", "redirect_protection", "redirect_allowlist", "instructions.en", "instructions.zh-CN", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "auto_index", "default_artifact", "hidden_artifacts", "retention", "prewarm", "categories", "tags"}
+var appConfigurationPaths = []string{"name.en", "name.zh-CN", "description.en", "description.zh-CN", "icon", "icon_has_background", "proxy", "redirect_protection", "redirect_allowlist", "instructions.en", "instructions.zh-CN", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "auto_index", "default_artifact", "hidden_artifacts", "retention", "prewarm", "categories", "tags"}
 
 func (s *Server) patchVendorConfiguration(w http.ResponseWriter, r *http.Request) {
 	id, e := vendorParam(r)

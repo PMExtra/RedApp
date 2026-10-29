@@ -25,7 +25,7 @@ const version = computed(() =>
     class="relative flex h-full flex-col gap-3 rounded-xl border border-border bg-surface p-4 shadow-sm transition-colors hover:border-border-strong hover:bg-surface-hover has-[a:focus-visible]:outline-2 has-[a:focus-visible]:outline-offset-2 has-[a:focus-visible]:outline-focus"
   >
     <div class="flex items-start gap-3">
-      <EntityIcon :src="app.icon" size="lg" />
+      <EntityIcon :src="app.icon" size="lg" :has-background="app.icon_has_background" />
       <div class="flex min-w-0 flex-1 flex-col gap-0.5">
         <component :is="`h${headingLevel}`" class="truncate text-base font-semibold">
           <RouterLink

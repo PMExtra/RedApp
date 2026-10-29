@@ -65,6 +65,7 @@ export function publicApp(overrides: Overrides<Schema<"PublicApp">> = {}): Schem
     name: localized("Codex CLI"),
     description: localized("OpenAI’s coding agent for your terminal.", "OpenAI 的终端编程助手。"),
     icon: "/assets/presets/openai/codex/icon.svg",
+    icon_has_background: false,
     provider: "codex",
     capabilities: {
       details: true,
@@ -99,6 +100,7 @@ export function searchHit(overrides: Overrides<Schema<"SearchHit">> = {}): Schem
     key: "openai/codex",
     name: localized("Codex CLI"),
     icon: "/assets/presets/openai/codex/icon.svg",
+    icon_has_background: false,
     localized_icons: null,
     ...overrides,
   };

@@ -94,6 +94,9 @@ export default {
       remove: "Remove",
       uploading: "Uploading image",
       hint: "PNG, JPEG, WebP or SVG, at most 2 MiB. WebP is stored as PNG. Saved with the form.",
+      hasBackground: "Icon includes background",
+      hasBackgroundHint:
+        "Usually an icon is a foreground shape on a transparent background, and RedApp draws a rounded tile behind it. Turn this on when the icon already has its own background: it is then shown without the tile, only with rounded corners.",
       sanitizeTitle: "Sanitize the SVG before uploading?",
       sanitizeDescription:
         "The image contains scripts, animations or references outside the file, which must be removed before it can be uploaded: {items}. Static shapes and colors are kept; removed effects no longer show.",

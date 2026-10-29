@@ -59,6 +59,7 @@ function choose(option: AppOption) {
             :src="option.app.icon"
             size="xs"
             :disabled="!option.app.enabled || !!option.app.deleted_at"
+            :has-background="option.app.icon_has_background"
           />
           <span class="truncate">{{ localized(option.app.name) }}</span>
           <code class="ms-auto shrink-0 text-xs text-muted">{{ option.value }}</code>

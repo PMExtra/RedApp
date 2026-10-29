@@ -110,31 +110,33 @@ type ApplicationChanges struct {
 }
 
 type Application struct {
-	Categories      []string              `json:"categories"`
-	Tags            []string              `json:"tags"`
-	BuiltinTemplate bool                  `json:"builtin_template"`
-	UID             string                `json:"uid"`
-	ID              string                `json:"id"`
-	Key             string                `json:"key"`
-	VendorUID       string                `json:"vendor_uid"`
-	VendorID        string                `json:"vendor_id"`
-	Name            LocalizedText         `json:"name"`
-	Description     LocalizedText         `json:"description"`
-	Icon            string                `json:"icon"`
-	Provider        string                `json:"provider"`
-	JSONRelease     *releaseconfig.Config `json:"json_release,omitempty"`
-	BaseURL         string                `json:"base_url"`
-	BaseURLs        []string              `json:"base_urls"`
-	SourceStrategy  string                `json:"source_strategy"`
-	CacheTTLSeconds int                   `json:"cache_ttl_seconds"`
-	AutoIndex       bool                  `json:"auto_index"`
-	DefaultArtifact string                `json:"default_artifact"`
-	HiddenArtifacts []string              `json:"hidden_artifacts"`
-	Enabled         bool                  `json:"enabled"`
-	Revision        int64                 `json:"revision"`
-	RuntimeRevision int64                 `json:"runtime_revision"`
-	SourceEpoch     int64                 `json:"source_epoch"`
-	DeletedAt       *time.Time            `json:"deleted_at"`
+	Categories      []string      `json:"categories"`
+	Tags            []string      `json:"tags"`
+	BuiltinTemplate bool          `json:"builtin_template"`
+	UID             string        `json:"uid"`
+	ID              string        `json:"id"`
+	Key             string        `json:"key"`
+	VendorUID       string        `json:"vendor_uid"`
+	VendorID        string        `json:"vendor_id"`
+	Name            LocalizedText `json:"name"`
+	Description     LocalizedText `json:"description"`
+	Icon            string        `json:"icon"`
+	// IconHasBackground: the icon brings its own background (no padded tile).
+	IconHasBackground bool                  `json:"icon_has_background"`
+	Provider          string                `json:"provider"`
+	JSONRelease       *releaseconfig.Config `json:"json_release,omitempty"`
+	BaseURL           string                `json:"base_url"`
+	BaseURLs          []string              `json:"base_urls"`
+	SourceStrategy    string                `json:"source_strategy"`
+	CacheTTLSeconds   int                   `json:"cache_ttl_seconds"`
+	AutoIndex         bool                  `json:"auto_index"`
+	DefaultArtifact   string                `json:"default_artifact"`
+	HiddenArtifacts   []string              `json:"hidden_artifacts"`
+	Enabled           bool                  `json:"enabled"`
+	Revision          int64                 `json:"revision"`
+	RuntimeRevision   int64                 `json:"runtime_revision"`
+	SourceEpoch       int64                 `json:"source_epoch"`
+	DeletedAt         *time.Time            `json:"deleted_at"`
 }
 
 // hiddenArtifacts stores a missing list as an empty one.
@@ -318,7 +320,7 @@ type directoryQuerier interface{ QueryRow(string, ...any) *sql.Row }
 type directoryScanner interface{ Scan(...any) error }
 
 const vendorColumns = `uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,icon_en,icon_zh_cn,enabled,revision,runtime_revision,deleted_at_s`
-const applicationColumns = `a.uid,a.id,v.id||'/'||a.id,a.vendor_uid,v.id,a.name_en,a.name_zh_cn,a.description_en,a.description_zh_cn,a.icon,a.provider,a.base_url,a.base_urls_json,a.json_release_json,a.source_strategy,a.cache_ttl_seconds,a.auto_index,a.default_artifact,a.hidden_artifacts_json,a.enabled,a.revision,a.source_epoch,a.deleted_at_s,a.runtime_revision,EXISTS(SELECT 1 FROM template_snapshots t WHERE t.kind='App' AND t.canonical_key=v.id||'/'||a.id),COALESCE((SELECT json_group_array(category_id) FROM (SELECT category_id FROM application_categories WHERE app_uid=a.uid ORDER BY category_id)),'[]'),COALESCE((SELECT json_group_array(tag) FROM (SELECT tag FROM application_tags WHERE app_uid=a.uid ORDER BY ordinal)),'[]')`
+const applicationColumns = `a.uid,a.id,v.id||'/'||a.id,a.vendor_uid,v.id,a.name_en,a.name_zh_cn,a.description_en,a.description_zh_cn,a.icon,a.icon_has_background,a.provider,a.base_url,a.base_urls_json,a.json_release_json,a.source_strategy,a.cache_ttl_seconds,a.auto_index,a.default_artifact,a.hidden_artifacts_json,a.enabled,a.revision,a.source_epoch,a.deleted_at_s,a.runtime_revision,EXISTS(SELECT 1 FROM template_snapshots t WHERE t.kind='App' AND t.canonical_key=v.id||'/'||a.id),COALESCE((SELECT json_group_array(category_id) FROM (SELECT category_id FROM application_categories WHERE app_uid=a.uid ORDER BY category_id)),'[]'),COALESCE((SELECT json_group_array(tag) FROM (SELECT tag FROM application_tags WHERE app_uid=a.uid ORDER BY ordinal)),'[]')`
 
 // entityLoads, when a test sets it, observes every vendor and application row
 // the store decodes, so tests can check how much of the directory an
@@ -345,7 +347,7 @@ func scanApplication(row directoryScanner) (Application, error) {
 	var a Application
 	var deleted sql.NullInt64
 	var bases, categories, tags, release, hidden []byte
-	err := row.Scan(&a.UID, &a.ID, &a.Key, &a.VendorUID, &a.VendorID, &a.Name.En, &a.Name.ZhCN, &a.Description.En, &a.Description.ZhCN, &a.Icon, &a.Provider, &a.BaseURL, &bases, &release, &a.SourceStrategy, &a.CacheTTLSeconds, &a.AutoIndex, &a.DefaultArtifact, &hidden, &a.Enabled, &a.Revision, &a.SourceEpoch, &deleted, &a.RuntimeRevision, &a.BuiltinTemplate, &categories, &tags)
+	err := row.Scan(&a.UID, &a.ID, &a.Key, &a.VendorUID, &a.VendorID, &a.Name.En, &a.Name.ZhCN, &a.Description.En, &a.Description.ZhCN, &a.Icon, &a.IconHasBackground, &a.Provider, &a.BaseURL, &bases, &release, &a.SourceStrategy, &a.CacheTTLSeconds, &a.AutoIndex, &a.DefaultArtifact, &hidden, &a.Enabled, &a.Revision, &a.SourceEpoch, &deleted, &a.RuntimeRevision, &a.BuiltinTemplate, &categories, &tags)
 	if err == nil {
 		observeLoad("application")
 		err = json.Unmarshal(bases, &a.BaseURLs)

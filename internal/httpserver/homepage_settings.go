@@ -15,10 +15,12 @@ type homepageSettingsDTO struct {
 }
 
 type homepagePinnedDTO struct {
-	Key   string         `json:"key"`
-	Name  *localizedText `json:"name"`
-	Icon  *string        `json:"icon"`
-	State string         `json:"state"`
+	Key  string         `json:"key"`
+	Name *localizedText `json:"name"`
+	Icon *string        `json:"icon"`
+	// IconHasBackground is false for a missing application.
+	IconHasBackground bool   `json:"icon_has_background"`
+	State             string `json:"state"`
 }
 
 // homepageDocument adds the display data of every pin so administrators can
@@ -30,7 +32,7 @@ func (s *Server) homepageDocument(v store.HomepagePins) homepageSettingsDTO {
 		pin := homepagePinnedDTO{Key: key, State: "missing"}
 		if e, ok := s.registry.LookupAny(key); ok {
 			name, icon := fromLocalized(e.Descriptor.Name), publicIcon(e.Descriptor.Icon)
-			pin.Name, pin.Icon = &name, &icon
+			pin.Name, pin.Icon, pin.IconHasBackground = &name, &icon, e.IconHasBackground
 			switch {
 			case e.DeletedAt != nil:
 				pin.State = "deleted"

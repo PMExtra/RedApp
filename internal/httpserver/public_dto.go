@@ -82,6 +82,7 @@ type publicAppDTO struct {
 	Name                  localizedText      `json:"name"`
 	Description           localizedText      `json:"description"`
 	Icon                  string             `json:"icon"`
+	IconHasBackground     bool               `json:"icon_has_background"`
 	Provider              string             `json:"provider"`
 	Capabilities          capabilitiesDTO    `json:"capabilities"`
 	Categories            []categoryLabelDTO `json:"categories"`
@@ -129,6 +130,7 @@ func (s *Server) publicApp(e application.Entry, publicURL string, categories []s
 		Name:                  fromLocalized(e.Descriptor.Name),
 		Description:           fromLocalized(e.Descriptor.Summary),
 		Icon:                  publicIcon(e.Descriptor.Icon),
+		IconHasBackground:     e.IconHasBackground,
 		Provider:              e.Provider,
 		Capabilities:          capabilitiesFor(e.Provider),
 		Categories:            labels,

@@ -43,17 +43,18 @@ type mirrorVendorDTO struct {
 }
 
 type mirrorAppDTO struct {
-	InstanceID     string          `json:"instance_id"`
-	Key            string          `json:"key"`
-	Provider       string          `json:"provider"`
-	Vendor         mirrorVendorDTO `json:"vendor"`
-	Name           localizedText   `json:"name"`
-	Description    localizedText   `json:"description"`
-	Icon           string          `json:"icon"`
-	Instructions   localizedText   `json:"instructions"`
-	AutoIndex      bool            `json:"auto_index"`
-	Channels       []string        `json:"channels"`
-	DefaultChannel *string         `json:"default_channel"`
+	InstanceID        string          `json:"instance_id"`
+	Key               string          `json:"key"`
+	Provider          string          `json:"provider"`
+	Vendor            mirrorVendorDTO `json:"vendor"`
+	Name              localizedText   `json:"name"`
+	Description       localizedText   `json:"description"`
+	Icon              string          `json:"icon"`
+	IconHasBackground bool            `json:"icon_has_background"`
+	Instructions      localizedText   `json:"instructions"`
+	AutoIndex         bool            `json:"auto_index"`
+	Channels          []string        `json:"channels"`
+	DefaultChannel    *string         `json:"default_channel"`
 	// Download choices of a JSON release; empty for other providers.
 	DefaultArtifact string   `json:"default_artifact"`
 	HiddenArtifacts []string `json:"hidden_artifacts"`
@@ -78,20 +79,21 @@ func (s *Server) getMirrorApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := mirrorAppDTO{
-		InstanceID:      s.instanceUID,
-		Key:             e.Descriptor.ID,
-		Provider:        e.Provider,
-		Vendor:          mirrorVendorDTO{ID: e.VendorID, Name: fromLocalized(e.VendorName), Description: fromLocalized(e.VendorDescription), Icon: publicIcon(e.VendorIcon)},
-		Name:            fromLocalized(e.Descriptor.Name),
-		Description:     fromLocalized(e.Descriptor.Summary),
-		Icon:            publicIcon(e.Descriptor.Icon),
-		Instructions:    localizedText{En: instructions.En, ZhCN: instructions.ZhCN},
-		AutoIndex:       e.AutoIndex,
-		Channels:        []string{},
-		DefaultArtifact: e.DefaultArtifact,
-		HiddenArtifacts: append([]string{}, e.HiddenArtifacts...),
-		UpstreamChain:   []string{},
-		SourceEpoch:     e.SourceEpoch,
+		InstanceID:        s.instanceUID,
+		Key:               e.Descriptor.ID,
+		Provider:          e.Provider,
+		Vendor:            mirrorVendorDTO{ID: e.VendorID, Name: fromLocalized(e.VendorName), Description: fromLocalized(e.VendorDescription), Icon: publicIcon(e.VendorIcon)},
+		Name:              fromLocalized(e.Descriptor.Name),
+		Description:       fromLocalized(e.Descriptor.Summary),
+		Icon:              publicIcon(e.Descriptor.Icon),
+		IconHasBackground: e.IconHasBackground,
+		Instructions:      localizedText{En: instructions.En, ZhCN: instructions.ZhCN},
+		AutoIndex:         e.AutoIndex,
+		Channels:          []string{},
+		DefaultArtifact:   e.DefaultArtifact,
+		HiddenArtifacts:   append([]string{}, e.HiddenArtifacts...),
+		UpstreamChain:     []string{},
+		SourceEpoch:       e.SourceEpoch,
 	}
 	if e.Protocol != nil {
 		out.Channels = append(out.Channels, e.Descriptor.Channels...)

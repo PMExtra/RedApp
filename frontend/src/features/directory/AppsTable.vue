@@ -170,6 +170,7 @@ const emptyText = computed(() =>
             :src="row.icon"
             size="sm"
             :disabled="!row.enabled || !vendor.enabled || !!row.deleted_at || !!vendor.deleted_at"
+            :has-background="row.icon_has_background"
           />
           <span class="flex flex-col">
             <span>{{ localized(row.name) || row.id }}</span>

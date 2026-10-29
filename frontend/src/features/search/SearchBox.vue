@@ -12,6 +12,7 @@ import { Combobox, EntityIcon, type ComboboxOption } from "@/shared/ui";
 interface SearchOption extends ComboboxOption {
   kind: "vendor" | "app";
   icon: string;
+  iconHasBackground: boolean;
 }
 
 /**
@@ -60,6 +61,7 @@ const options = computed<SearchOption[]>(() => {
       label: localized(app.name),
       kind: "app" as const,
       icon: app.icon,
+      iconHasBackground: app.icon_has_background,
     }));
   }
   return (results.data.value?.items ?? []).map((hit) => ({
@@ -67,6 +69,7 @@ const options = computed<SearchOption[]>(() => {
     label: localized(hit.name),
     kind: hit.kind,
     icon: (hit.localized_icons && localized(hit.localized_icons)) || hit.icon,
+    iconHasBackground: hit.icon_has_background,
   }));
 });
 const loading = computed(() =>
@@ -103,7 +106,12 @@ async function submit(text: string) {
   >
     <template #leading><Search /></template>
     <template #option="{ option }">
-      <EntityIcon :src="option.icon" size="sm" :vendor="option.kind === 'vendor'" />
+      <EntityIcon
+        :src="option.icon"
+        size="sm"
+        :vendor="option.kind === 'vendor'"
+        :has-background="option.iconHasBackground"
+      />
       <span class="flex min-w-0 flex-col">
         <span class="truncate">{{ option.label }}</span>
         <span class="truncate text-xs text-muted">

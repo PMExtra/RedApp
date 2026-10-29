@@ -208,6 +208,7 @@ func entriesFromConfiguration(snapshot store.DirectorySnapshot, pool *distributo
 		entry.Descriptor.Upstream = config.BaseURL
 		entry.Descriptor.DefaultChannelTTLSeconds = config.CacheTTLSeconds
 		entry.Descriptor.Icon = app.Icon
+		entry.IconHasBackground = app.IconHasBackground && app.Icon != ""
 		if entry.Descriptor.Icon == "" {
 			entry.Descriptor.Icon = vendor.Icon
 		}

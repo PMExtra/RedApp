@@ -158,7 +158,7 @@ python3 scripts/check-docs.py --base main     # 另外要求成对文档同时�
 4. 关闭外键约束，在一个事务中执行全部步骤，然后 `PRAGMA foreign_key_check`、写入新的 `user_version`、把 `sqlite_schema`（去掉注释、多余空白和普通标识符的引号）与全新创建的 schema 逐项比对，全部通过才提交；随后重新开启外键并 checkpoint 到主文件。
 5. 提交前步骤失败会回滚；进程在事务中崩溃由 SQLite 恢复旧状态。提交后 checkpoint 失败不能当成未提交，应重新检查版本。备份保留。
 
-schema 变化时修改 `schema.sql`、提升 `SchemaVersion`，生成新 fixture。合理成本下为支持的旧版本提供迁移并保留其 fixture；当前支持 15→16→17→18→19→20→21→22，不承诺更早版本。
+schema 变化时修改 `schema.sql`、提升 `SchemaVersion`，生成新 fixture。合理成本下为支持的旧版本提供迁移并保留其 fixture；当前支持 15→16→17→18→19→20→21→22→23，不承诺更早版本。
 
 ```sh
 go test ./internal/store -run TestSchemaFixtureOfCurrentVersion -update-schema-fixture
