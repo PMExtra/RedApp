@@ -1278,7 +1278,9 @@ paths:
         hosted and http-cache support a single byte range. Verified, complete release artifacts carry
         `ETag: "sha256-<digest>"` and support conditional requests and a single byte range (`Accept-Ranges: bytes`);
         multiple ranges return the whole file. An artifact still being downloaded is streamed whole without an ETag
-        (`Accept-Ranges: none`), so unverified bytes are never offered for resumption. An `If-None-Match` matching the
+        (`Accept-Ranges: none`), so unverified bytes are never offered for resumption. It declares `Content-Length` when
+        the metadata or the upstream response gives the length, and then withholds the last byte until the digest is
+        verified. An `If-None-Match` matching the
         digest ETag returns `304` without starting or counting a download. Release metadata does not support ranges.
       x-streaming: |
         Release artifacts and HTTP cache misses are streamed while the shared upstream download progresses (many

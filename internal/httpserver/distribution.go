@@ -454,17 +454,31 @@ func (s *Server) serveArtifact(w *downloadReceipt, r *http.Request, resource dow
 		return
 	}
 	w.Header().Set("Accept-Ranges", "none")
+	// The first byte implies the upstream response, so its length is known if
+	// declared. Declaring it lets clients show progress; artifactReader then
+	// withholds the last byte until the digest is verified.
+	var stream io.Reader = rd
+	total := rd.Total()
+	if total >= 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(total, 10))
+		stream = &artifactReader{Reader: rd, total: total}
+	}
+	sent := int64(0)
 	buf := make([]byte, 32<<10)
 	for {
-		n, re := rd.Read(buf)
+		n, re := stream.Read(buf)
 		if n > 0 {
 			written, we := w.Write(buf[:n])
 			count(written)
+			sent += int64(written)
 			if we != nil {
 				_ = s.store.AddFor(metricApp, "download_errors", 1)
 				return
 			}
 			w.Flush()
+		}
+		if re == io.EOF && total >= 0 && sent != total {
+			re = errors.New("artifact is shorter than its declared length")
 		}
 		if re != nil {
 			if re == io.EOF {

@@ -1132,6 +1132,17 @@ func (m *Manager) checkpoint(point string, g *Generation) {
 	}
 }
 
+// Total returns the artifact length declared by the metadata or by the
+// upstream response, or -1 while neither is known.
+func (r *Reader) Total() int64 {
+	if r.g.Resource.Size != nil {
+		return *r.g.Resource.Size
+	}
+	r.m.mu.Lock()
+	defer r.m.mu.Unlock()
+	return r.g.Total
+}
+
 // WaitVerified waits for final size and digest verification without reading bytes.
 func (r *Reader) WaitVerified() error {
 	if err := r.g.body.Wait(r.ctx); err != nil {
