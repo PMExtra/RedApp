@@ -67,7 +67,7 @@ const prefix = computed(
     !hosted.value &&
     !releases.value,
 );
-/** The release a JSON release page offers; undefined is the default channel's. */
+/** The version a JSON release page offers; undefined is the default channel's. */
 const release = ref<string>();
 </script>
 
@@ -119,7 +119,7 @@ const release = ref<string>();
             v-if="releases"
             :vendor="app.vendor.id"
             :app="app.id"
-            :release="release"
+            :version="release"
           />
           <CopyButton
             :text="pageUrl"

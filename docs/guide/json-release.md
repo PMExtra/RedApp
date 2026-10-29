@@ -45,16 +45,16 @@ Queries are trusted administrator configuration. They have no installed environm
 
 - `/{vendor}/{app}/download/latest/{key}` resolves the configured default channel.
 - `/{vendor}/{app}/download/stable/{key}` resolves the declared stable channel.
-- Both return a non-cacheable temporary redirect to `/{vendor}/{app}/releases/{release_id}/{key}` on RedApp.
+- Both return a non-cacheable temporary redirect to `/{vendor}/{app}/releases/{version}/{key}` on RedApp.
 - `/api/apps/{vendor}/{app}/downloads?channel=latest` returns normalized options and local URLs from one snapshot.
 
 The application page downloads from its header. The version badge opens the list of discovered releases; the download button offers one package of the chosen release, and its arrow lists the other visible packages. The offered package fits the visitor's system and, when the browser reports it, architecture: the default package if it fits, else the first fitting package by key. When nothing fits or the system is unknown, the default package is offered, else the first visible one. Detection is a suggestion; check the package before installing.
 
 ## Version history and lookup
 
-Every release the application discovers stays available while its source epoch lasts: `/api/apps/{vendor}/{app}/releases` lists them, newest version first, and `/api/apps/{vendor}/{app}/downloads?release={release_id}` or `?version={version}` returns the packages of one. The public page lets visitors pick one. Version cleanup deletes cached files, not this history; a package downloaded again is verified against the same digest.
+Every release the application discovers stays available while its source epoch lasts: `/api/apps/{vendor}/{app}/releases` lists them, newest version first, and `/api/apps/{vendor}/{app}/downloads?version={version}` returns the packages of one. The public page lets visitors pick one. Version cleanup deletes cached files, not this history; a package downloaded again is verified against the same digest.
 
-In the administration, the versions tab lists the discovered releases by version, each with its cached files, and the metrics tab shows the application's downloads. JSON releases have no cache tab: their prewarm is part of `json_release`, and cached files cannot yet be cleaned up by version.
+In the administration, the versions tab lists the discovered releases by version, each with its cached files; the cache tab removes cached files below a version, and the metrics tab shows the application's downloads. Prewarm is part of `json_release`.
 
 An administrator can discover an older version in the versions tab. The optional `lookup` object has the shape of a channel. `{version}` in its request URLs (escaped) and context values is replaced by the version entered, and its query must return that version. A request answered with 404, or a query result of `null`, means the version has no such package; the version is not found only when no package remains. The discovered release is stored without moving any channel. Changing `lookup` does not start a new source epoch, but its requests must stay inside `sources.metadata`.
 
@@ -69,7 +69,7 @@ Two application settings, outside `json_release`, decide what the public page of
 
 Both are presentation only. Hidden packages stay downloadable by their links, keep their prewarm selection and are still listed by `/api/apps/{vendor}/{app}/downloads` with `hidden: true`. Changing either keeps the source epoch and the cached packages. Keys need not exist in the current release; a default the release lacks is ignored. Each setting can be overridden on its own, so overriding them does not stop the application from following its template's `json_release`.
 
-Opaque release IDs identify version/build and are not semantically sortable. This initial Provider does not enable the older installer-specific automatic retention policy; it must not delete versions by sorting their digest IDs.
+A release is identified by its version, which appears in its download paths; versions order naturally, digit runs as numbers (1.10.0 is newer than 1.9.2). The build is shown but does not identify the release: when the upstream publishes another build of a version RedApp already knows, the refresh is refused as conflicting metadata and the known release keeps being served, until a new version appears or the source changes. JSON releases do not have the automatic version retention of Codex and Claude Code.
 
 ## Presets and update policy
 

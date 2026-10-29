@@ -12,8 +12,8 @@ import (
 	"github.com/PMExtra/RedApp/internal/releaseconfig"
 )
 
-// A JSON release lists every release it discovered, serves each by release ID
-// or version, and discovers older versions on request.
+// A JSON release lists every release it discovered, serves each by version,
+// and discovers older versions on request.
 func TestReleaseHistoryAndLookup(t *testing.T) {
 	packages := map[string][]byte{"1.0.0": []byte("old package"), "1.10.0": []byte("new package")}
 	var origin string
@@ -51,13 +51,13 @@ func TestReleaseHistoryAndLookup(t *testing.T) {
 	h.request("POST", "/admin/api/apps", map[string]any{"vendor": "fixture", "id": "editor", "provider": "json-release", "name": map[string]string{"en": "Editor", "zh-CN": "编辑器"}, "enabled": true, "json_release": cfg}, 201, nil)
 	current := getJSON[releaseDownloadsDTO](h, "/api/apps/fixture/editor/downloads")
 	history := getJSON[releaseHistoryDTO](h, "/api/apps/fixture/editor/releases")
-	if len(history.Items) != 1 || history.Truncated || history.Items[0].ReleaseID != current.ReleaseID || strings.Join(history.Items[0].Channels, ",") != "stable" {
+	if len(history.Items) != 1 || history.Truncated || history.Items[0].Version != current.Version || strings.Join(history.Items[0].Channels, ",") != "stable" {
 		t.Fatalf("history after the first refresh %+v", history)
 	}
 
 	before := h.appRevision("fixture/editor")
 	looked := decodeJSONBody[releaseSummaryDTO](t, mustBody(h.request("POST", "/admin/api/apps/fixture/editor/releases/lookup", map[string]string{"version": " 1.0.0 "}, 200, nil)))
-	if looked.Version != "1.0.0" || len(looked.Channels) != 0 || looked.ReleaseID == current.ReleaseID {
+	if looked.Version != "1.0.0" || len(looked.Channels) != 0 {
 		t.Fatalf("looked-up release %+v", looked)
 	}
 	if h.appRevision("fixture/editor") != before {
@@ -69,13 +69,13 @@ func TestReleaseHistoryAndLookup(t *testing.T) {
 	if len(history.Items) != 2 || history.Items[0].Version != "1.10.0" || history.Items[1].Version != "1.0.0" {
 		t.Fatalf("history is ordered by version %+v", history)
 	}
-	if stable := getJSON[releaseDownloadsDTO](h, "/api/apps/fixture/editor/downloads"); stable.ReleaseID != current.ReleaseID {
+	if stable := getJSON[releaseDownloadsDTO](h, "/api/apps/fixture/editor/downloads"); stable.Version != current.Version {
 		t.Fatal("a lookup moved the channel", stable.Version)
 	}
 
-	for _, query := range []string{"release=" + looked.ReleaseID, "version=1.0.0"} {
+	for _, query := range []string{"version=1.0.0"} {
 		old := getJSON[releaseDownloadsDTO](h, "/api/apps/fixture/editor/downloads?"+query)
-		if old.ReleaseID != looked.ReleaseID || old.Version != "1.0.0" || old.Channel != "" || old.Stale || len(old.Artifacts) != 1 {
+		if old.Version != "1.0.0" || old.Artifacts[0].Path != "releases/1.0.0/win-x64" || old.Channel != "" || old.Stale || len(old.Artifacts) != 1 {
 			t.Fatalf("%s: %+v", query, old)
 		}
 		if data, _ := h.request("GET", "/fixture/editor/"+old.Artifacts[0].Path, nil, 200, nil); string(data) != "old package" {
@@ -85,12 +85,17 @@ func TestReleaseHistoryAndLookup(t *testing.T) {
 	// The versions tab names releases by version, newest first, and the
 	// metrics tab is available.
 	versions := getJSON[cursorPage[versionDTO]](h, "/admin/api/apps/fixture/editor/versions")
-	if len(versions.Items) != 2 || versions.Items[0].DisplayVersion != "1.10.0" || versions.Items[1].DisplayVersion != "1.0.0" || versions.Items[1].Version != looked.ReleaseID {
+	if len(versions.Items) != 2 || versions.Items[0].Version != "1.10.0" || versions.Items[1].Version != "1.0.0" {
 		t.Fatalf("versions %+v", versions.Items)
 	}
 	h.request("GET", "/admin/api/apps/fixture/editor/status", nil, 200, nil)
+	// Versions order naturally, so cleanup below 1.10.0 selects 1.0.0's file.
+	cleanup := decodeJSONBody[versionCleanupDTO](t, mustBody(h.request("POST", "/admin/api/apps/fixture/editor/version-cleanup/preview", map[string]string{"minimum_version": "1.10.0"}, 201, nil)))
+	if len(cleanup.UnknownVersions) != 0 || cleanup.LogicalBytes != int64(len(packages["1.0.0"])) {
+		t.Fatalf("version cleanup %+v", cleanup)
+	}
 	h.expectError("GET", "/api/apps/fixture/editor/downloads?version=3.0.0", nil, 404, codeFileNotFound, nil)
-	h.expectError("GET", "/api/apps/fixture/editor/downloads?release=r-"+strings.Repeat("0", 64), nil, 404, codeFileNotFound, nil)
+	h.expectError("GET", "/api/apps/fixture/editor/downloads?version=a%20b", nil, 404, codeFileNotFound, nil)
 	h.expectError("GET", "/api/apps/fixture/editor/downloads?channel=stable&version=1.0.0", nil, 400, codeInvalidQuery, nil)
 
 	h.expectError("POST", "/admin/api/apps/fixture/editor/releases/lookup", map[string]string{"version": "9.9.9"}, 404, codeVersionNotFound, nil)

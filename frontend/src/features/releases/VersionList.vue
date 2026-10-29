@@ -61,7 +61,7 @@ const columns = computed<DataTableColumn[]>(() => [
         @retry="versions.refetch()"
       >
         <template #cell-version="{ row }">
-          <span class="font-mono font-medium">{{ row.display_version }}</span>
+          <span class="font-mono font-medium">{{ row.version }}</span>
         </template>
         <template #cell-files="{ row }">
           <VersionFilesSummary :files="row.files" />
@@ -81,7 +81,7 @@ const columns = computed<DataTableColumn[]>(() => [
           <Button size="sm" variant="ghost" as-child>
             <RouterLink
               :to="versionRoute(vendor, app, row.version)"
-              :aria-label="t('releases.versions.showOf', { version: row.display_version })"
+              :aria-label="t('releases.versions.showOf', { version: row.version })"
             >
               {{ t("releases.versions.show") }}
               <ChevronRight aria-hidden="true" />

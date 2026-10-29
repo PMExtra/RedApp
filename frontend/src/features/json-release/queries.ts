@@ -4,29 +4,29 @@ import { api, queryKey, unwrap } from "@/shared/api";
 
 /**
  * Download choices of a JSON release: the default channel's release, or the
- * discovered release `release` names. Components showing the same release
+ * discovered release `version` names. Components showing the same release
  * share one request.
  */
 export function useReleaseDownloads(
   vendor: MaybeRefOrGetter<string>,
   app: MaybeRefOrGetter<string>,
-  release?: MaybeRefOrGetter<string | undefined>,
+  version?: MaybeRefOrGetter<string | undefined>,
 ) {
   return useQuery({
     queryKey: computed(() =>
       queryKey("getReleaseDownloads", {
         vendor: toValue(vendor),
         app: toValue(app),
-        release: toValue(release),
+        version: toValue(version),
       }),
     ),
     queryFn: ({ signal }) => {
-      const selected = toValue(release);
+      const selected = toValue(version);
       return unwrap(
         api.GET("/api/apps/{vendor}/{app}/downloads", {
           params: {
             path: { vendor: toValue(vendor), app: toValue(app) },
-            query: selected ? { release: selected } : {},
+            query: selected ? { version: selected } : {},
           },
           signal,
         }),

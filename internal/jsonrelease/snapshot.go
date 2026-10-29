@@ -1,8 +1,6 @@
 package jsonrelease
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -38,10 +36,10 @@ func NewSnapshot(r releaseconfig.Release) (*Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Full digest avoids delimiter ambiguities and keeps the path independent of
-	// vendor version syntax. It is an identity, NOT a sortable version number.
-	sum := sha256.Sum256([]byte(r.Version + "\x00" + r.Build))
-	return &Snapshot{id: "r-" + hex.EncodeToString(sum[:]), release: r, canonical: body}, nil
+	// The version is the identity: readable paths and natural ordering are
+	// worth more than telling apart two builds of one version, which are
+	// refused as an immutability conflict (CheckImmutable).
+	return &Snapshot{id: r.Version, release: r, canonical: body}, nil
 }
 func (s *Snapshot) ID() string                     { return s.id }
 func (s *Snapshot) Release() releaseconfig.Release { return copyRelease(s.release) }

@@ -462,19 +462,15 @@ paths:
       tags: [public]
       summary: Read normalized download choices from one immutable JSON release snapshot.
       description: |
-        The release is a channel's current release (`channel`, the default `latest`), a discovered release
-        (`release`, a `release_id` from `listReleases`) or the newest discovered release with a display version
-        (`version`); give at most one, else `400 INVALID_QUERY`. An unknown release or version is `404 FILE_NOT_FOUND`;
-        only a channel is refreshed, and failure to refresh retains the last valid snapshot. `channel` in the response
-        is empty and `stale` false unless a channel was read. URLs stay on RedApp. No architecture or older-version
-        fallback is performed.
+        The release is a channel's current release (`channel`, the default `latest`) or a discovered release
+        (`version`, as `listReleases` names it); give one at most, else `400 INVALID_QUERY`. A release is identified
+        by its version. An unknown version is `404 FILE_NOT_FOUND`; only a channel is refreshed, and failure to refresh
+        retains the last valid snapshot. `channel` in the response is empty and `stale` false unless a channel was
+        read. URLs stay on RedApp. No architecture or older-version fallback is performed.
       parameters:
         - name: channel
           in: query
           schema: {type: string, default: latest, maxLength: 96}
-        - name: release
-          in: query
-          schema: {type: string, maxLength: 96}
         - name: version
           in: query
           schema: {type: string, maxLength: 96}
@@ -511,7 +507,7 @@ paths:
       description: |
         Every release of the current source epoch, discovered by a channel refresh or `lookupRelease`, newest display
         version first (digit runs compare as numbers). At most 200; `truncated` reports more. Releases of earlier
-        source epochs are not served and not listed. Read `getReleaseDownloads` with `release` for the packages of one.
+        source epochs are not served and not listed. Read `getReleaseDownloads` with `version` for the packages of one.
       x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED]
       responses:
         '200':
@@ -1192,8 +1188,8 @@ paths:
           content_type: application/octet-stream
           description: 'Release artifact for one of 8 platforms. `X-Expected-SHA256` carries the digest from the signed manifest; verified content has `ETag: "sha256-<digest>"`.'
         - provider: json-release
-          path: releases/{release_id}/{artifact_key}
-          description: Immutable verified artifact, served through RedApp cache as an attachment using the authorized source URL filename.
+          path: releases/{version}/{artifact_key}
+          description: Immutable verified artifact, served through RedApp cache as an attachment using the authorized source URL filename. A release is identified by its version; another build of a known version is refused as conflicting metadata.
         - provider: json-release
           path: download/{channel}/{artifact_key}
           description: Non-cacheable 307 to an internal immutable release path; latest aliases the configured default channel.
@@ -3758,8 +3754,7 @@ paths:
       summary: List locally known versions of the current source epoch, newest first.
       description: |
         Ordered by the provider's version order (newest first); versions the provider cannot parse follow in string
-        order. A JSON release's versions are release IDs, ordered by their display version like `listReleases`. A
-        cursor is bound to the source epoch: after a source change it is `400 INVALID_CURSOR`. Available for `codex`,
+        order; JSON release versions compare naturally (digit runs as numbers). A cursor is bound to the source epoch: after a source change it is `400 INVALID_CURSOR`. Available for `codex`,
         `claude-code` and `json-release`.
       parameters:
         - $ref: '#/components/parameters/Limit50'
@@ -4140,7 +4135,7 @@ paths:
       tags: [cache]
       summary: List the source epochs of an application, oldest first.
       description: |
-        Available for `http-cache`, `codex` and `claude-code`. Old epochs stay listed while they own cached data;
+        Available for `http-cache`, `codex`, `claude-code` and `json-release`. Old epochs stay listed while they own cached data;
         select one with `source_epoch` to inspect or clean it. `active` is false while a configuration change is
         being published or after the application was disabled or deleted.
       security:
@@ -7285,12 +7280,11 @@ components:
     ReleaseDownloads:
       type: object
       additionalProperties: false
-      required: [channel, release_id, version, build, artifacts, default_artifact]
+      required: [channel, version, build, artifacts, default_artifact]
       properties:
         stale: {type: boolean}
         fetched_at: {type: string, format: date-time}
         channel: {type: string}
-        release_id: {type: string}
         version: {type: string}
         build: {type: string}
         artifacts:
@@ -7383,9 +7377,8 @@ components:
     ReleaseSummary:
       type: object
       additionalProperties: false
-      required: [release_id, version, build, discovered_at, channels]
+      required: [version, build, discovered_at, channels]
       properties:
-        release_id: {type: string}
         version: {type: string}
         build: {type: string}
         discovered_at: {type: string, format: date-time}
@@ -8429,13 +8422,10 @@ components:
     Version:
       type: object
       additionalProperties: false
-      required: [version, display_version, first_seen, requests, downstream_bytes, files]
+      required: [version, first_seen, requests, downstream_bytes, files]
       properties:
         version:
           type: string
-        display_version:
-          type: string
-          description: The version as people name it; for a JSON release its version and build, else `version`.
         first_seen:
           type: string
           format: date-time

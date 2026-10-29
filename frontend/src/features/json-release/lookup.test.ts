@@ -42,7 +42,6 @@ describe("release lookup form", () => {
       mockApi("post", "/admin/api/apps/{vendor}/{app}/releases/lookup", async ({ request }) => {
         requested = await request.json();
         return {
-          release_id: "r-" + "a".repeat(64),
           version: "1.0.0",
           build: "",
           discovered_at: "2026-10-01T00:00:00Z",

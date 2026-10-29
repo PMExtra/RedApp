@@ -23,24 +23,22 @@ export function hasVersions(provider: ProviderKey): boolean {
   return isReleaseProvider(provider) || provider === "json-release";
 }
 
-/** Providers with cache maintenance (prewarm, retention, cleanup or cached paths). */
+/** Providers with cache maintenance (cached paths, or version cleanup). */
 export function hasCache(provider: ProviderKey): boolean {
-  return provider === "http-cache" || isReleaseProvider(provider);
+  return provider === "http-cache" || hasVersions(provider);
 }
 
-export function hasMetrics(provider: ProviderKey): boolean {
-  return hasCache(provider) || provider === "json-release";
-}
+export const hasMetrics = hasCache;
 
 export function hasHostedFiles(provider: ProviderKey): boolean {
   return provider === "hosted";
 }
 
 /**
- * Tabs an application offers: files for `hosted`; cache for `http-cache`,
- * `codex` and `claude-code`, which also have metrics like `json-release`;
- * versions for `codex`, `claude-code` and `json-release` (not for deleted
- * applications, whose release data is no longer browsable).
+ * Tabs an application offers: files for `hosted`; cache and metrics for
+ * `http-cache`, `codex`, `claude-code` and `json-release`; versions for the
+ * release providers (not for deleted applications, whose release data is no
+ * longer browsable).
  */
 export function appTabs(app: Pick<App, "provider" | "deleted_at">): AppTab[] {
   const tabs: AppTab[] = ["settings"];

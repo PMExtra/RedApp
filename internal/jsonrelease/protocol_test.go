@@ -30,7 +30,7 @@ func TestProtocolFreezesConfigurationAndVerifiesIdentity(t *testing.T) {
 	if release.Artifacts[1].Key != "windows-x64-exe-user" {
 		t.Fatal("configuration mutation reached protocol", release.Artifacts)
 	}
-	if _, err = protocol.VerifyRelease("r-"+strings.Repeat("0", 64), *resolved.Envelope); err == nil {
+	if _, err = protocol.VerifyRelease("9.9.9", *resolved.Envelope); err == nil {
 		t.Fatal("mismatched snapshot identity accepted")
 	}
 	var body map[string]any
@@ -52,24 +52,27 @@ func TestProtocolFreezesConfigurationAndVerifiesIdentity(t *testing.T) {
 		t.Fatal("unexpected extra upstream fetch", calls)
 	}
 }
-func TestProtocolImmutablePathsAndNoInventedOrdering(t *testing.T) {
+
+// A release is named by its version, so release paths are readable and
+// versions order naturally.
+func TestProtocolReleasePathsAndVersionOrder(t *testing.T) {
 	calls := []string{}
 	protocol, err := NewProtocol(discoveryConfig(), Discoverer{Query: fixtureQuery, Fetch: fixtureFetch(&calls)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	version := "r-" + strings.Repeat("a", 64)
+	version := "2024.3.1+B"
 	operation, err := protocol.ParsePath("releases/" + version + "/windows-x64-exe-user")
 	if err != nil || operation.Kind != application.ArtifactOperation || operation.Target != version {
 		t.Fatal(operation, err)
 	}
-	for _, path := range []string{"releases/latest/file", "releases/" + version + "/../file", "releases/" + version + "/file?url=x", "releases/" + version + "/https://upstream", "releases/" + strings.ToUpper(version) + "/file"} {
+	for _, path := range []string{"releases/" + version + "/../file", "releases/" + version + "/file?url=x", "releases/" + version + "/https://upstream", "releases/../file", "releases/a b/file", "releases/" + strings.Repeat("9", 97) + "/file"} {
 		if _, err = protocol.ParsePath(path); err == nil {
 			t.Fatal("invalid path accepted", path)
 		}
 	}
-	if _, err = protocol.CompareVersions(version, "r-"+strings.Repeat("b", 64)); err == nil {
-		t.Fatal("opaque hash sorted as version")
+	if order, err := protocol.CompareVersions("1.10.0", "1.9.2"); err != nil || order != 1 {
+		t.Fatal("natural version order", order, err)
 	}
 	if ch, err := protocol.CanonicalChannel("latest"); err != nil || ch != "stable" {
 		t.Fatal(ch, err)

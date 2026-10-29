@@ -17,6 +17,10 @@ func TestMigration21KeepsApplicationsAndAddsEmptyDownloadChoices(t *testing.T) {
 	if _, err = db.Exec(`UPDATE applications SET auto_index=1`); err != nil {
 		t.Fatal(err)
 	}
+	var epoch int64
+	if err = db.QueryRow(`SELECT source_epoch FROM applications`).Scan(&epoch); err != nil {
+		t.Fatal(err)
+	}
 	db.Close()
 	s, err := Open(dir)
 	if err != nil {
@@ -30,5 +34,10 @@ func TestMigration21KeepsApplicationsAndAddsEmptyDownloadChoices(t *testing.T) {
 	}
 	if apps == 0 || autoIndex != 1 || defaultArtifact != "" || hidden != "[]" {
 		t.Fatalf("applications=%d auto_index=%d default=%q hidden=%q", apps, autoIndex, defaultArtifact, hidden)
+	}
+	// The fixture application is not a JSON release: it keeps its epoch.
+	var after int64
+	if err = s.read.QueryRow(`SELECT source_epoch FROM applications`).Scan(&after); err != nil || after != epoch {
+		t.Fatal("epoch of another provider changed", epoch, after, err)
 	}
 }

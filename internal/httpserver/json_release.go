@@ -20,7 +20,6 @@ type releaseDownloadsDTO struct {
 	Stale     bool                `json:"stale"`
 	FetchedAt time.Time           `json:"fetched_at"`
 	Channel   string              `json:"channel"`
-	ReleaseID string              `json:"release_id"`
 	Version   string              `json:"version"`
 	Build     string              `json:"build"`
 	Artifacts []downloadChoiceDTO `json:"artifacts"`
@@ -51,34 +50,25 @@ func (s *Server) getReleaseDownloads(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	query := r.URL.Query()
-	channel, releaseID, version := query.Get("channel"), query.Get("release"), query.Get("version")
-	given := 0
-	for _, value := range []string{channel, releaseID, version} {
-		if value != "" {
-			given++
-		}
-	}
-	if given > 1 {
-		s.fail(w, r, codeInvalidQuery, nil, "Use only one of channel, release and version")
+	channel, version := query.Get("channel"), query.Get("version")
+	if channel != "" && version != "" {
+		s.fail(w, r, codeInvalidQuery, nil, "Use either channel or version")
 		return
 	}
-	// A channel resolves through the catalog, which may refresh it; a release
-	// or version is one this instance already discovered.
+	// A channel resolves through the catalog, which may refresh it; a version
+	// is one this instance already discovered.
 	var target, canonical string
 	switch {
-	case releaseID != "":
-		if _, err := s.store.Release(entry.StorageID(), releaseID); err != nil {
-			s.writeError(w, r, releaseLookupError(err))
-			return
-		}
-		target = releaseID
 	case version != "":
-		found, err := s.releaseOfVersion(entry, version)
-		if err != nil {
+		if _, err := protocol.ValidateVersion(version); err != nil {
+			s.fail(w, r, codeFileNotFound, err, "Version not found")
+			return
+		}
+		if _, err := s.store.Release(entry.StorageID(), version); err != nil {
 			s.writeError(w, r, releaseLookupError(err))
 			return
 		}
-		target = found
+		target = version
 	default:
 		if channel == "" {
 			channel = "latest"
@@ -142,7 +132,7 @@ func (s *Server) getReleaseDownloads(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeOK(w, releaseDownloadsDTO{Stale: stale, FetchedAt: metadata.FetchedAt, Channel: canonical, ReleaseID: release.Version, Version: data.Version, Build: data.Build, Artifacts: choices, DefaultArtifact: defaultArtifact})
+	writeOK(w, releaseDownloadsDTO{Stale: stale, FetchedAt: metadata.FetchedAt, Channel: canonical, Version: data.Version, Build: data.Build, Artifacts: choices, DefaultArtifact: defaultArtifact})
 }
 
 // releaseArtifactDTO is a package an administrator can choose as the default

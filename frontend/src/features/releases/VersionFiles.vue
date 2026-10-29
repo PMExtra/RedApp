@@ -14,7 +14,6 @@ import {
   type DataTableColumn,
 } from "@/shared/ui";
 import { useResources } from "./queries";
-import { versionLabel } from "./label";
 
 type Resource = Schema<"Resource">;
 
@@ -66,7 +65,7 @@ function expected(resource: Resource): number | null {
 
 <template>
   <Card
-    :title="t('releases.resources.title', { version: versionLabel(version) })"
+    :title="t('releases.resources.title', { version })"
     :description="t('releases.resources.description')"
   >
     <div class="flex flex-col gap-3">
@@ -76,7 +75,7 @@ function expected(resource: Resource): number | null {
         :row-key="(row) => row.id"
         :loading="resources.isPending.value"
         :error="resources.error.value"
-        :caption="t('releases.resources.title', { version: versionLabel(version) })"
+        :caption="t('releases.resources.title', { version })"
         :empty-text="t('releases.resources.empty')"
         @retry="resources.refetch()"
       >
