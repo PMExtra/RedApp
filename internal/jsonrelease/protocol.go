@@ -43,21 +43,27 @@ func (p *Protocol) CanonicalChannel(channel string) (string, error) {
 	return ResolveChannel(p.config, channel)
 }
 
-// ValidateVersion accepts a release's version, which identifies it.
+// ValidateVersion accepts a release's version, which identifies it. Channel
+// names are refused: a path naming one is not a release.
 func (p *Protocol) ValidateVersion(version string) (string, error) {
-	if !releaseconfig.ValidVersion(version) {
+	if _, channel := p.config.Channels[version]; !releaseconfig.ValidVersion(version) || version == "latest" || channel {
 		return "", application.ErrNotFound
 	}
 	return version, nil
 }
 
-// CompareVersions orders versions by semver precedence (package CompareVersions).
+// CompareVersions orders versions by semver precedence (package
+// CompareVersions). Versions outside the semver form have no order here, so
+// version cleanup keeps and reports them instead of guessing.
 func (p *Protocol) CompareVersions(a, b string) (int, error) {
 	if _, err := p.ValidateVersion(a); err != nil {
 		return 0, err
 	}
 	if _, err := p.ValidateVersion(b); err != nil {
 		return 0, err
+	}
+	if !SemverLike(a) || !SemverLike(b) {
+		return 0, errors.New("versions outside the semver form have no order")
 	}
 	return CompareVersions(a, b), nil
 }

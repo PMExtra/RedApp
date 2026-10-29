@@ -227,7 +227,10 @@ func (s *Service) fetch(parent context.Context, e application.Entry, target stri
 			release, err = s.verifyAndPersist(e, target, envelope)
 		}
 	}
-	if err != nil {
+	// An undiscovered version of a snapshot protocol is no metadata failure:
+	// such versions are only ever discovered, never fetched.
+	_, snapshotProtocol := e.Protocol.(application.SnapshotProtocol)
+	if err != nil && !(snapshotProtocol && !isChannel && errors.Is(err, application.ErrNotFound)) {
 		event := store.Event{AppID: e.MetricsID(), Category: "metadata", Code: "metadata_fetch_failed", Message: err.Error()}
 		if !isChannel {
 			event.Version = target
@@ -409,6 +412,14 @@ func (s *Service) Lookup(ctx context.Context, app, version string) (application.
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	// A stored version is returned as stored: a lookup only discovers
+	// versions, so an upstream answering differently for a known one never
+	// conflicts with the channel that published it. Re-fetching replaces it.
+	if v, err := e.Protocol.ValidateVersion(version); err == nil && v == version {
+		if _, err = s.db.Release(e.StorageID(), version); err == nil {
+			return s.release(ctx, e, version)
+		}
+	}
 	resolved, err := protocol.LookupVersion(ctx, version)
 	if err != nil {
 		return application.Release{}, err

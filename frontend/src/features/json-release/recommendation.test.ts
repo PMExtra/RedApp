@@ -58,6 +58,18 @@ describe("package recommendations", () => {
     expect(recommend(vscode, {}, null)).toBe("win32-x64-user");
     expect(recommend(vscode, {}, "gone")).toBe("win32-x64-user");
   });
+  it("prefers a package that also runs emulated when the architecture is unknown", () => {
+    // Safari and Firefox on any Mac report "Intel": x64 runs on Apple silicon too.
+    const jetbrains = [
+      artifact("macos-arm64-dmg", "macos", "arm64", "dmg"),
+      artifact("macos-x64-dmg", "macos", "x64", "dmg"),
+      artifact("windows-x64-exe", "windows", "x64", "exe"),
+    ];
+    expect(recommend(jetbrains, { os: "macos" }, "windows-x64-exe")).toBe("macos-x64-dmg");
+    expect(recommend(jetbrains, { os: "macos", arch: "arm64" }, "windows-x64-exe")).toBe(
+      "macos-arm64-dmg",
+    );
+  });
   it("never offers hidden packages", () => {
     const hidden = vscode.map((a) => ({ ...a, hidden: a.key !== "linux-deb-x64" }));
     expect(recommend(hidden, { os: "windows" }, "win32-x64-user")).toBe("linux-deb-x64");

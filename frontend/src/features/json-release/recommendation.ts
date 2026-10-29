@@ -28,8 +28,9 @@ export function detectEnvironment(
 /**
  * The package offered first. Candidates are the visible packages for the
  * detected OS and, when known, architecture (universal packages always fit):
- * the configured default when it is one, else the first in release order
- * (stored releases list their packages by key).
+ * the configured default when it is one; else, with an unknown architecture,
+ * a universal then an x64 package, which ARM Windows and Macs also run; else
+ * the first in release order (stored releases list their packages by key).
  * Without a detected OS or any candidate, the default, else the first visible
  * package. Undefined only when no package is visible.
  */
@@ -46,5 +47,10 @@ export function recommend(
       a.os === environment.os &&
       (environment.arch === undefined || a.arch === "universal" || a.arch === environment.arch),
   );
-  return (candidates.find((a) => a.key === defaultKey) ?? candidates[0] ?? fallback)?.key;
+  const preferred =
+    candidates.find((a) => a.key === defaultKey) ??
+    (environment.arch === undefined
+      ? (candidates.find((a) => a.arch === "universal") ?? candidates.find((a) => a.arch === "x64"))
+      : undefined);
+  return (preferred ?? candidates[0] ?? fallback)?.key;
 }
