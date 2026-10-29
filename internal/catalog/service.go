@@ -395,6 +395,30 @@ func (s *Service) persistChannel(e application.Entry, r application.Release, cha
 	return s.db.PutReleaseChannel(store.ReleaseMetadata{AppID: e.StorageID(), Version: r.Version, Raw: r.Envelope.Raw, Signature: r.Envelope.Signature, TrustRevision: e.Descriptor.TrustRevision, FetchedAt: now}, resources, store.Channel{AppID: e.StorageID(), Name: channel, Version: r.Version, FetchedAt: now, ExpiresAt: now.Add(time.Duration(e.Descriptor.DefaultChannelTTLSeconds) * time.Second)}, sourceFence(e))
 }
 
+// Lookup discovers one version of an application on request and stores it
+// without moving any channel. A version already stored is verified again and
+// must be identical.
+func (s *Service) Lookup(ctx context.Context, app, version string) (application.Release, error) {
+	e, ok := s.registry.Lookup(app)
+	if !ok {
+		return application.Release{}, application.ErrNotFound
+	}
+	protocol, ok := e.Protocol.(application.VersionLookupProtocol)
+	if !ok || !protocol.CanLookup() {
+		return application.Release{}, application.ErrNotFound
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	resolved, err := protocol.LookupVersion(ctx, version)
+	if err != nil {
+		return application.Release{}, err
+	}
+	if v, err := e.Protocol.ValidateVersion(resolved.Version); err != nil || v != resolved.Version || resolved.Envelope == nil {
+		return application.Release{}, fmt.Errorf("%w: noncanonical version", application.ErrUntrusted)
+	}
+	return s.verifyAndPersist(e, resolved.Version, *resolved.Envelope)
+}
+
 // Refresh explicitly fetches one channel. Unlike normal reads it reports errors
 // even when an older valid snapshot remains available.
 func (s *Service) Refresh(ctx context.Context, app, channel string) (application.Release, error) {

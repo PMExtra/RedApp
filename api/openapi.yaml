@@ -461,11 +461,23 @@ paths:
       operationId: getReleaseDownloads
       tags: [public]
       summary: Read normalized download choices from one immutable JSON release snapshot.
-      description: Failure to refresh retains the last valid snapshot. URLs stay on RedApp. No architecture or older-version fallback is performed.
+      description: |
+        The release is a channel's current release (`channel`, the default `latest`), a discovered release
+        (`release`, a `release_id` from `listReleases`) or the newest discovered release with a display version
+        (`version`); give at most one, else `400 INVALID_QUERY`. An unknown release or version is `404 FILE_NOT_FOUND`;
+        only a channel is refreshed, and failure to refresh retains the last valid snapshot. `channel` in the response
+        is empty and `stale` false unless a channel was read. URLs stay on RedApp. No architecture or older-version
+        fallback is performed.
       parameters:
         - name: channel
           in: query
           schema: {type: string, default: latest, maxLength: 96}
+        - name: release
+          in: query
+          schema: {type: string, maxLength: 96}
+        - name: version
+          in: query
+          schema: {type: string, maxLength: 96}
       x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, FILE_NOT_FOUND, SOURCE_CHANGED, METADATA_UNTRUSTED, UPSTREAM_UNAVAILABLE, TRANSFER_CAPACITY, LOOP_DETECTED]
       responses:
         '200':
@@ -484,6 +496,92 @@ paths:
           $ref: '#/components/responses/BadGateway'
         '508':
           $ref: '#/components/responses/LoopDetected'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /api/apps/{vendor}/{app}/releases:
+    parameters:
+      - $ref: '#/components/parameters/Vendor'
+      - $ref: '#/components/parameters/App'
+    get:
+      operationId: listReleases
+      tags: [public]
+      summary: List the releases a JSON release application discovered.
+      description: |
+        Every release of the current source epoch, discovered by a channel refresh or `lookupRelease`, newest display
+        version first (digit runs compare as numbers). At most 200; `truncated` reports more. Releases of earlier
+        source epochs are not served and not listed. Read `getReleaseDownloads` with `release` for the packages of one.
+      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED]
+      responses:
+        '200':
+          description: Discovered releases.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items, truncated]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ReleaseSummary'
+                  truncated: {type: boolean}
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /admin/api/apps/{vendor}/{app}/releases/lookup:
+    parameters:
+      - $ref: '#/components/parameters/Vendor'
+      - $ref: '#/components/parameters/App'
+    post:
+      operationId: lookupRelease
+      tags: [directory]
+      summary: Discover one version of a JSON release application.
+      description: |
+        Runs the configuration's `lookup` for the version and stores the verified release without moving any channel.
+        It then appears in `listReleases` and the versions tab, and its packages download like any release. A version
+        already discovered is verified again and must be identical. Without a `lookup` the request fails with
+        `VALIDATION_FAILED`; a version the upstream does not have is `VERSION_NOT_FOUND`. Like a channel refresh, it
+        needs an enabled application (`APPLICATION_DISABLED`).
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      x-max-body-bytes: 4096
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [version]
+              properties:
+                version: {type: string, minLength: 1, maxLength: 96}
+      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, VALIDATION_FAILED, VERSION_NOT_FOUND, APPLICATION_DISABLED, ENTITY_DELETED, SOURCE_CHANGED, METADATA_UNTRUSTED, UPSTREAM_UNAVAILABLE, TRANSFER_CAPACITY]
+      responses:
+        '200':
+          description: The discovered release.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReleaseSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/BadGateway'
         '500':
           $ref: '#/components/responses/InternalError'
         '503':
@@ -5638,6 +5736,7 @@ components:
     JOB_NOT_FOUND: {status: 404, retryable: false, description: Prewarm job is unknown or expired (finished jobs are kept 24 hours).}
     TRANSFER_NOT_FOUND: {status: 404, retryable: false, description: No running transfer with this ID.}
     CACHE_ENTRY_NOT_FOUND: {status: 404, retryable: false, description: The path is not cached in the current source epoch.}
+    VERSION_NOT_FOUND: {status: 404, retryable: false, description: The upstream does not have the looked-up version.}
     CAPABILITY_UNSUPPORTED: {status: 404, retryable: false, description: 'The application''s provider does not support this endpoint (for example versions of an HTTP cache application).'}
     METHOD_NOT_ALLOWED: {status: 405, retryable: false, description: Path exists but not for this method.}
     REVISION_CONFLICT: {status: 409, retryable: false, description: '`If-Match` revision (or a body identity guard such as `confirm_uid`, `source_uid`, `notes_revision`) is stale; keep the draft and reload.'}
@@ -5827,6 +5926,7 @@ components:
         - JOB_NOT_FOUND
         - TRANSFER_NOT_FOUND
         - CACHE_ENTRY_NOT_FOUND
+        - VERSION_NOT_FOUND
         - CAPABILITY_UNSUPPORTED
         - METHOD_NOT_ALLOWED
         - REVISION_CONFLICT
@@ -7259,6 +7359,40 @@ components:
         format: {type: string}
         scope: {type: string}
         variant: {type: string}
+    JSONReleaseChannel:
+      type: object
+      additionalProperties: false
+      required: [requests, query]
+      properties:
+        query: {type: string, minLength: 1, maxLength: 16384}
+        requests:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            type: object
+            additionalProperties: false
+            required: [url]
+            properties:
+              url: {type: string, maxLength: 8192}
+              context:
+                type: object
+                maxProperties: 16
+                additionalProperties: {type: string, maxLength: 256}
+    ReleaseSummary:
+      type: object
+      additionalProperties: false
+      required: [release_id, version, build, discovered_at, channels]
+      properties:
+        release_id: {type: string}
+        version: {type: string}
+        build: {type: string}
+        discovered_at: {type: string, format: date-time}
+        channels:
+          type: array
+          description: Channels currently pointing at this release.
+          items:
+            type: string
     JSONReleaseConfig:
       type: object
       additionalProperties: false
@@ -7272,25 +7406,13 @@ components:
           minProperties: 1
           maxProperties: 8
           additionalProperties:
-            type: object
-            additionalProperties: false
-            required: [requests, query]
-            properties:
-              query: {type: string, minLength: 1, maxLength: 16384}
-              requests:
-                type: array
-                minItems: 1
-                maxItems: 32
-                items:
-                  type: object
-                  additionalProperties: false
-                  required: [url]
-                  properties:
-                    url: {type: string, maxLength: 8192}
-                    context:
-                      type: object
-                      maxProperties: 16
-                      additionalProperties: {type: string, maxLength: 256}
+            $ref: '#/components/schemas/JSONReleaseChannel'
+        lookup:
+          $ref: '#/components/schemas/JSONReleaseChannel'
+          description: |
+            Discovers one version an administrator names (`lookupRelease`). `{version}` in request URLs (escaped) and
+            context values stands for that version. The query returns `null` for a package the version does not have;
+            a request answered with 404 is skipped too. Changing it does not start a new source epoch.
         sources:
           type: object
           additionalProperties: false

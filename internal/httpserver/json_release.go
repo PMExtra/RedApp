@@ -50,16 +50,47 @@ func (s *Server) getReleaseDownloads(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, codeCapabilityUnsupported, nil, "Download choices are unavailable")
 		return
 	}
-	channel := r.URL.Query().Get("channel")
-	if channel == "" {
-		channel = "latest"
+	query := r.URL.Query()
+	channel, releaseID, version := query.Get("channel"), query.Get("release"), query.Get("version")
+	given := 0
+	for _, value := range []string{channel, releaseID, version} {
+		if value != "" {
+			given++
+		}
 	}
-	canonical, err := protocol.CanonicalChannel(channel)
-	if err != nil {
-		s.fail(w, r, codeFileNotFound, err, "Channel not found")
+	if given > 1 {
+		s.fail(w, r, codeInvalidQuery, nil, "Use only one of channel, release and version")
 		return
 	}
-	release, err := s.catalog.Release(r.Context(), entry.Descriptor.ID, canonical)
+	// A channel resolves through the catalog, which may refresh it; a release
+	// or version is one this instance already discovered.
+	var target, canonical string
+	switch {
+	case releaseID != "":
+		if _, err := s.store.Release(entry.StorageID(), releaseID); err != nil {
+			s.writeError(w, r, releaseLookupError(err))
+			return
+		}
+		target = releaseID
+	case version != "":
+		found, err := s.releaseOfVersion(entry, version)
+		if err != nil {
+			s.writeError(w, r, releaseLookupError(err))
+			return
+		}
+		target = found
+	default:
+		if channel == "" {
+			channel = "latest"
+		}
+		var err error
+		if canonical, err = protocol.CanonicalChannel(channel); err != nil {
+			s.fail(w, r, codeFileNotFound, err, "Channel not found")
+			return
+		}
+		target = canonical
+	}
+	release, err := s.catalog.Release(r.Context(), entry.Descriptor.ID, target)
 	if err != nil {
 		s.writeError(w, r, releaseError(err))
 		return
@@ -90,11 +121,6 @@ func (s *Server) getReleaseDownloads(w http.ResponseWriter, r *http.Request) {
 		data.Artifacts[i].ChecksumFilename = ""
 		choices[i] = downloadChoiceDTO{Artifact: data.Artifacts[i], Path: strings.TrimPrefix(path, "/"+entry.Descriptor.ID+"/"), Hidden: slices.Contains(entry.HiddenArtifacts, data.Artifacts[i].Key)}
 	}
-	head, err := s.store.Channel(entry.StorageID(), canonical)
-	if err != nil {
-		s.writeError(w, r, storageError(err))
-		return
-	}
 	// Resolve may have raced a later refresh: use this response's captured
 	// release metadata for the timestamp, never another channel's version.
 	metadata, err := s.store.Release(entry.StorageID(), release.Version)
@@ -102,9 +128,18 @@ func (s *Server) getReleaseDownloads(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, storageError(err))
 		return
 	}
-	stale := !time.Now().Before(metadata.FetchedAt.Add(time.Duration(entry.Descriptor.DefaultChannelTTLSeconds) * time.Second))
-	if head.Version == release.Version && !time.Now().Before(head.ExpiresAt) {
-		stale = true
+	// Only a channel can be stale: a release never changes.
+	stale := false
+	if canonical != "" {
+		head, err := s.store.Channel(entry.StorageID(), canonical)
+		if err != nil {
+			s.writeError(w, r, storageError(err))
+			return
+		}
+		stale = !time.Now().Before(metadata.FetchedAt.Add(time.Duration(entry.Descriptor.DefaultChannelTTLSeconds) * time.Second))
+		if head.Version == release.Version && !time.Now().Before(head.ExpiresAt) {
+			stale = true
+		}
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeOK(w, releaseDownloadsDTO{Stale: stale, FetchedAt: metadata.FetchedAt, Channel: canonical, ReleaseID: release.Version, Version: data.Version, Build: data.Build, Artifacts: choices, DefaultArtifact: defaultArtifact})

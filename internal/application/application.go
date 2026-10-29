@@ -90,6 +90,9 @@ type Protocol interface {
 var ErrNotFound = errors.New("application resource not found")
 var ErrUpstream = errors.New("trusted upstream metadata unavailable")
 
+// ErrVersionNotFound reports a looked-up version the upstream does not have.
+var ErrVersionNotFound = errors.New("the upstream does not have this version")
+
 // ErrUntrusted marks upstream metadata that was fetched but failed verification
 // (digest, signature, URL or immutability rules). It also matches ErrUpstream.
 var ErrUntrusted = fmt.Errorf("%w: metadata failed verification", ErrUpstream)

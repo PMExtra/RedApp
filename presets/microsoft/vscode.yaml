@@ -119,11 +119,106 @@
           "query": "{version:.body.productVersion,build:.body.version,artifacts:[{key:.context.key,os:.context.os,arch:.context.arch,format:.context.format,scope:.context.scope,url:.body.url,sha256:.body.sha256hash}]}"
         }
       },
+      "lookup": {
+        "requests": [
+          {
+            "url": "https://update.code.visualstudio.com/api/versions/{version}/win32-x64-user/stable",
+            "context": {
+              "key": "win32-x64-user",
+              "os": "windows",
+              "arch": "x64",
+              "format": "exe",
+              "scope": "user"
+            }
+          },
+          {
+            "url": "https://update.code.visualstudio.com/api/versions/{version}/win32-arm64-user/stable",
+            "context": {
+              "key": "win32-arm64-user",
+              "os": "windows",
+              "arch": "arm64",
+              "format": "exe",
+              "scope": "user"
+            }
+          },
+          {
+            "url": "https://update.code.visualstudio.com/api/versions/{version}/win32-x64/stable",
+            "context": {
+              "key": "win32-x64",
+              "os": "windows",
+              "arch": "x64",
+              "format": "exe",
+              "scope": "system"
+            }
+          },
+          {
+            "url": "https://update.code.visualstudio.com/api/versions/{version}/win32-x64-archive/stable",
+            "context": {
+              "key": "win32-x64-archive",
+              "os": "windows",
+              "arch": "x64",
+              "format": "zip",
+              "scope": "portable"
+            }
+          },
+          {
+            "url": "https://update.code.visualstudio.com/api/versions/{version}/darwin-universal/stable",
+            "context": {
+              "key": "darwin-universal",
+              "os": "macos",
+              "arch": "universal",
+              "format": "zip",
+              "scope": "portable"
+            }
+          },
+          {
+            "url": "https://update.code.visualstudio.com/api/versions/{version}/linux-x64/stable",
+            "context": {
+              "key": "linux-x64",
+              "os": "linux",
+              "arch": "x64",
+              "format": "tar.gz",
+              "scope": "portable"
+            }
+          },
+          {
+            "url": "https://update.code.visualstudio.com/api/versions/{version}/linux-arm64/stable",
+            "context": {
+              "key": "linux-arm64",
+              "os": "linux",
+              "arch": "arm64",
+              "format": "tar.gz",
+              "scope": "portable"
+            }
+          },
+          {
+            "url": "https://update.code.visualstudio.com/api/versions/{version}/linux-deb-x64/stable",
+            "context": {
+              "key": "linux-deb-x64",
+              "os": "linux",
+              "arch": "x64",
+              "format": "deb",
+              "scope": "system"
+            }
+          },
+          {
+            "url": "https://update.code.visualstudio.com/api/versions/{version}/linux-rpm-x64/stable",
+            "context": {
+              "key": "linux-rpm-x64",
+              "os": "linux",
+              "arch": "x64",
+              "format": "rpm",
+              "scope": "system"
+            }
+          }
+        ],
+        "query": "{version:.body.productVersion,build:.body.version,artifacts:[{key:.context.key,os:.context.os,arch:.context.arch,format:.context.format,scope:.context.scope,url:.body.url,sha256:.body.sha256hash}]}"
+      },
       "sources": {
         "metadata": [
           {
             "origin": "https://update.code.visualstudio.com",
-            "prefix": "/api/update/"
+            "prefix": "/api/"
           }
         ],
         "artifacts": [

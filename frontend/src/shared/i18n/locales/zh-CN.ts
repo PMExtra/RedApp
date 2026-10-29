@@ -169,6 +169,7 @@ export default {
       JOB_NOT_FOUND: "该任务已不存在。",
       TRANSFER_NOT_FOUND: "该传输已不在进行中。",
       CACHE_ENTRY_NOT_FOUND: "该路径未被缓存。",
+      VERSION_NOT_FOUND: "上游没有这个版本。",
       CAPABILITY_UNSUPPORTED: "该应用不支持此功能。",
       METHOD_NOT_ALLOWED: "此处不允许该操作。",
       REVISION_CONFLICT: "此项已被他人修改，请重新加载后再保存。",

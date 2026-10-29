@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"time"
@@ -34,6 +35,12 @@ type Discoverer struct {
 var ErrLimit = errors.New("release metadata exceeds resource limits")
 var ErrSource = errors.New("release source is unavailable or unauthorized")
 
+// ErrVersionNotFound reports a looked-up version the upstream does not have.
+var ErrVersionNotFound = errors.New("the upstream does not have this version")
+
+// errMissing is a metadata request the upstream answered with 404.
+var errMissing = fmt.Errorf("%w: not found", ErrSource)
+
 // Discover is also the metadata-only preview path: artifact bodies are never
 // requested. No publication occurs here, including on partial matrix failure.
 func (d Discoverer) Discover(ctx context.Context, c releaseconfig.Config, channel string) (releaseconfig.Release, error) {
@@ -47,13 +54,46 @@ func (d Discoverer) Discover(ctx context.Context, c releaseconfig.Config, channe
 	if err != nil {
 		return releaseconfig.Release{}, err
 	}
+	return d.discover(ctx, c, c.Channels[name], false)
+}
+
+// DiscoverVersion discovers one version with the lookup requests. A request
+// the upstream answers with 404, or whose query returns null, is a package
+// that version does not have; without any package the version is not found.
+// The result must be the requested version. Nothing is published here.
+func (d Discoverer) DiscoverVersion(ctx context.Context, c releaseconfig.Config, version string) (releaseconfig.Release, error) {
+	if err := c.Validate(); err != nil {
+		return releaseconfig.Release{}, err
+	}
+	if d.Query == nil || d.Fetch == nil {
+		return releaseconfig.Release{}, errors.New("release discovery is not configured")
+	}
+	if c.Lookup == nil {
+		return releaseconfig.Release{}, errors.New("the release configuration has no lookup")
+	}
+	if !releaseconfig.ValidVersion(version) {
+		return releaseconfig.Release{}, ErrVersionNotFound
+	}
+	release, err := d.discover(ctx, c, c.LookupChannel(version), true)
+	if err != nil {
+		return releaseconfig.Release{}, err
+	}
+	if release.Version != version {
+		return releaseconfig.Release{}, fmt.Errorf("the lookup returned version %q, not %q", release.Version, version)
+	}
+	return release, nil
+}
+
+func (d Discoverer) discover(ctx context.Context, c releaseconfig.Config, config releaseconfig.Channel, lookup bool) (releaseconfig.Release, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	config := c.Channels[name]
 	parts := make([]releaseconfig.Release, 0, len(config.Requests))
 	inputBudget, outputBudget := releaseconfig.MaxMetadataBytes, releaseconfig.MaxOutputBytes
 	for _, request := range config.Requests {
 		raw, err := d.read(ctx, request.URL, c.Sources.Metadata, inputBudget)
+		if lookup && errors.Is(err, errMissing) {
+			continue
+		}
 		if err != nil {
 			return releaseconfig.Release{}, err
 		}
@@ -82,11 +122,17 @@ func (d Discoverer) Discover(ctx context.Context, c releaseconfig.Config, channe
 			return releaseconfig.Release{}, ErrLimit
 		}
 		outputBudget -= len(output)
+		if lookup && string(output) == "null" {
+			continue
+		}
 		part, err := DecodeRelease(output, false)
 		if err != nil {
 			return releaseconfig.Release{}, err
 		}
 		parts = append(parts, part)
+	}
+	if lookup && len(parts) == 0 {
+		return releaseconfig.Release{}, ErrVersionNotFound
 	}
 	merged, err := releaseconfig.Merge(parts)
 	if err != nil {
@@ -173,6 +219,9 @@ func (d Discoverer) read(ctx context.Context, raw string, sources []releaseconfi
 		return nil, ErrSource
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound && response.Request != nil && response.Request.URL != nil && allow(response.Request.URL.String()) {
+		return nil, errMissing
+	}
 	if response.Request == nil || response.Request.URL == nil || !allow(response.Request.URL.String()) || response.StatusCode != http.StatusOK || response.Uncompressed || response.Header.Get("Content-Encoding") != "" && response.Header.Get("Content-Encoding") != "identity" {
 		return nil, ErrSource
 	}

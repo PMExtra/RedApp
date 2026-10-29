@@ -68,6 +68,28 @@ func (p *Protocol) CompareVersions(a, b string) (int, error) {
 }
 func (p *Protocol) ResolveChannel(ctx context.Context, channel string) (application.ChannelResolution, error) {
 	release, err := p.discover.Discover(ctx, p.config, channel)
+	return resolution(release, err)
+}
+
+var _ application.VersionLookupProtocol = (*Protocol)(nil)
+
+// CanLookup reports whether the configuration has a lookup.
+func (p *Protocol) CanLookup() bool { return p.config.Lookup != nil }
+
+// LookupVersion discovers one version with the configured lookup. A version
+// the upstream does not have is ErrVersionNotFound.
+func (p *Protocol) LookupVersion(ctx context.Context, version string) (application.ChannelResolution, error) {
+	if p.config.Lookup == nil {
+		return application.ChannelResolution{}, application.ErrNotFound
+	}
+	release, err := p.discover.DiscoverVersion(ctx, p.config, version)
+	if errors.Is(err, ErrVersionNotFound) {
+		return application.ChannelResolution{}, fmt.Errorf("%w: %w", application.ErrVersionNotFound, err)
+	}
+	return resolution(release, err)
+}
+
+func resolution(release releaseconfig.Release, err error) (application.ChannelResolution, error) {
 	if err != nil {
 		if errors.Is(err, ErrSource) {
 			return application.ChannelResolution{}, fmt.Errorf("%w: %w", application.ErrUpstream, err)

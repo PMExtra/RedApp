@@ -49,3 +49,30 @@ func TestConfigurationRejectsUnboundedOrAmbiguousSelection(t *testing.T) {
 		}
 	}
 }
+
+// A lookup must use the version, stays inside the metadata sources once the
+// version is filled in, and never starts a new source epoch.
+func TestLookupFillsTheVersionAndKeepsTheSource(t *testing.T) {
+	c := configuration()
+	before := c
+	c.Lookup = &Channel{Query: ".body", Requests: []Request{{URL: "https://updates.example/api/versions/{version}", Context: map[string]string{"label": "v{version}"}}}}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !SameSource(&before, &c) {
+		t.Fatal("a lookup started a new source epoch")
+	}
+	filled := c.LookupChannel("1.0+b")
+	if filled.Requests[0].URL != "https://updates.example/api/versions/1.0%2Bb" || filled.Requests[0].Context["label"] != "v1.0+b" {
+		t.Fatal(filled)
+	}
+	if c.Lookup.Requests[0].URL != "https://updates.example/api/versions/{version}" {
+		t.Fatal("filling the version changed the configuration")
+	}
+	for _, request := range []Request{{URL: "https://updates.example/api/versions/latest"}, {URL: "https://elsewhere.example/api/{version}"}} {
+		c.Lookup = &Channel{Query: ".body", Requests: []Request{request}}
+		if c.Validate() == nil {
+			t.Fatal("invalid lookup accepted", request.URL)
+		}
+	}
+}

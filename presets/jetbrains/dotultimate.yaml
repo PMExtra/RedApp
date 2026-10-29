@@ -35,6 +35,18 @@
           "query": ".body[.context.product][0] as $r | $r.downloads.windowsZIP as $a | if $a == null then error(\"offline suite ZIP metadata is required; do not substitute the web installer\") elif ($a.link | endswith(\".zip\") | not) then error(\"offline suite must be a complete ZIP\") else {version:$r.version,build:$r.build,artifacts:[{key:\"windows-offline-suite\",os:\"windows\",arch:\"unknown\",format:\"zip\",variant:\"offline-suite\",url:$a.link,size:$a.size,checksum_url:$a.checksumLink,checksum_filename:($a.link | split(\"/\") | last)}]} end"
         }
       },
+      "lookup": {
+        "requests": [
+          {
+            "url": "https://data.services.jetbrains.com/products/releases?code=RSU&type=release",
+            "context": {
+              "product": "RSU",
+              "version": "{version}"
+            }
+          }
+        ],
+        "query": ".context.version as $v | (.body[.context.product] | map(select(.version == $v)) | .[0]) as $r | if $r == null then null else $r.downloads.windowsZIP as $a | if $a == null then error(\"offline suite ZIP metadata is required; do not substitute the web installer\") elif ($a.link | endswith(\".zip\") | not) then error(\"offline suite must be a complete ZIP\") else {version:$r.version,build:$r.build,artifacts:[{key:\"windows-offline-suite\",os:\"windows\",arch:\"unknown\",format:\"zip\",variant:\"offline-suite\",url:$a.link,size:$a.size,checksum_url:$a.checksumLink,checksum_filename:($a.link | split(\"/\") | last)}]} end end"
+      },
       "sources": {
         "metadata": [
           {

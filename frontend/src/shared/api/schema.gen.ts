@@ -243,11 +243,72 @@ export interface paths {
         };
         /**
          * Read normalized download choices from one immutable JSON release snapshot.
-         * @description Failure to refresh retains the last valid snapshot. URLs stay on RedApp. No architecture or older-version fallback is performed.
+         * @description The release is a channel's current release (`channel`, the default `latest`), a discovered release
+         *     (`release`, a `release_id` from `listReleases`) or the newest discovered release with a display version
+         *     (`version`); give at most one, else `400 INVALID_QUERY`. An unknown release or version is `404 FILE_NOT_FOUND`;
+         *     only a channel is refreshed, and failure to refresh retains the last valid snapshot. `channel` in the response
+         *     is empty and `stale` false unless a channel was read. URLs stay on RedApp. No architecture or older-version
+         *     fallback is performed.
          */
         get: operations["getReleaseDownloads"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/apps/{vendor}/{app}/releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Vendor ID. */
+                vendor: components["parameters"]["Vendor"];
+                /** @description Application ID within the vendor. */
+                app: components["parameters"]["App"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List the releases a JSON release application discovered.
+         * @description Every release of the current source epoch, discovered by a channel refresh or `lookupRelease`, newest display
+         *     version first (digit runs compare as numbers). At most 200; `truncated` reports more. Releases of earlier
+         *     source epochs are not served and not listed. Read `getReleaseDownloads` with `release` for the packages of one.
+         */
+        get: operations["listReleases"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/api/apps/{vendor}/{app}/releases/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Vendor ID. */
+                vendor: components["parameters"]["Vendor"];
+                /** @description Application ID within the vendor. */
+                app: components["parameters"]["App"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Discover one version of a JSON release application.
+         * @description Runs the configuration's `lookup` for the version and stores the verified release without moving any channel.
+         *     It then appears in `listReleases` and the versions tab, and its packages download like any release. A version
+         *     already discovered is verified again and must be identical. Without a `lookup` the request fails with
+         *     `VALIDATION_FAILED`; a version the upstream does not have is `VERSION_NOT_FOUND`. Like a channel refresh, it
+         *     needs an enabled application (`APPLICATION_DISABLED`).
+         */
+        post: operations["lookupRelease"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2399,7 +2460,7 @@ export interface components {
          * @description Stable error code; see `components.x-error-codes`.
          * @enum {string}
          */
-        ErrorCode: "INVALID_REQUEST" | "VALIDATION_FAILED" | "INVALID_QUERY" | "INVALID_CURSOR" | "INVALID_PATH" | "REQUEST_ORIGIN_INVALID" | "IF_MATCH_REQUIRED" | "CURRENT_PASSWORD_INCORRECT" | "PASSWORD_INVALID" | "PROXY_REDACTED_MISMATCH" | "ICON_INVALID" | "PACKAGE_INVALID" | "INSTRUCTIONS_TRUST_REQUIRED" | "AUTH_REQUIRED" | "LOGIN_FAILED" | "ORIGIN_REJECTED" | "CSRF_REJECTED" | "NOT_FOUND" | "VENDOR_NOT_FOUND" | "APPLICATION_NOT_FOUND" | "CATEGORY_NOT_FOUND" | "FILE_NOT_FOUND" | "SOURCE_NOT_FOUND" | "PREVIEW_NOT_FOUND" | "JOB_NOT_FOUND" | "TRANSFER_NOT_FOUND" | "CACHE_ENTRY_NOT_FOUND" | "CAPABILITY_UNSUPPORTED" | "METHOD_NOT_ALLOWED" | "REVISION_CONFLICT" | "ALREADY_EXISTS" | "VENDOR_NOT_EMPTY" | "BUILTIN_PROTECTED" | "ENTITY_DELETED" | "APPLICATION_DISABLED" | "APPLICATION_DELETE_PENDING" | "CATEGORY_AMBIGUOUS" | "FILE_CONFLICT" | "TRANSFER_ID_IN_USE" | "TRANSFER_CANCELLED" | "PREVIEW_STALE" | "OPERATION_IN_PROGRESS" | "SOURCE_CHANGED" | "IMPORT_NOT_READY" | "PREWARM_BUSY" | "PREWARM_REQUEST_CONFLICT" | "ARTIFACT_TOO_LARGE" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "LOGIN_RATE_LIMITED" | "PREVIEW_LIMIT_EXCEEDED" | "INTERNAL_ERROR" | "UPSTREAM_UNAVAILABLE" | "INDEX_UNSUPPORTED" | "LOOP_DETECTED" | "UPSTREAM_NOT_FOUND" | "MIRROR_NOT_FOUND" | "UPSTREAM_IN_USE" | "UPSTREAM_INCOMPATIBLE" | "METADATA_UNTRUSTED" | "CHANNELS_UNVERIFIED" | "IMPORT_SOURCE_FAILED" | "STORAGE_UNAVAILABLE" | "NOT_READY" | "SESSION_LIMIT_EXCEEDED" | "TRANSFER_CAPACITY" | "CACHE_CONTENDED" | "PREVIEW_BUSY" | "INSTALLER_UNAVAILABLE" | "CACHE_MISS";
+        ErrorCode: "INVALID_REQUEST" | "VALIDATION_FAILED" | "INVALID_QUERY" | "INVALID_CURSOR" | "INVALID_PATH" | "REQUEST_ORIGIN_INVALID" | "IF_MATCH_REQUIRED" | "CURRENT_PASSWORD_INCORRECT" | "PASSWORD_INVALID" | "PROXY_REDACTED_MISMATCH" | "ICON_INVALID" | "PACKAGE_INVALID" | "INSTRUCTIONS_TRUST_REQUIRED" | "AUTH_REQUIRED" | "LOGIN_FAILED" | "ORIGIN_REJECTED" | "CSRF_REJECTED" | "NOT_FOUND" | "VENDOR_NOT_FOUND" | "APPLICATION_NOT_FOUND" | "CATEGORY_NOT_FOUND" | "FILE_NOT_FOUND" | "SOURCE_NOT_FOUND" | "PREVIEW_NOT_FOUND" | "JOB_NOT_FOUND" | "TRANSFER_NOT_FOUND" | "CACHE_ENTRY_NOT_FOUND" | "VERSION_NOT_FOUND" | "CAPABILITY_UNSUPPORTED" | "METHOD_NOT_ALLOWED" | "REVISION_CONFLICT" | "ALREADY_EXISTS" | "VENDOR_NOT_EMPTY" | "BUILTIN_PROTECTED" | "ENTITY_DELETED" | "APPLICATION_DISABLED" | "APPLICATION_DELETE_PENDING" | "CATEGORY_AMBIGUOUS" | "FILE_CONFLICT" | "TRANSFER_ID_IN_USE" | "TRANSFER_CANCELLED" | "PREVIEW_STALE" | "OPERATION_IN_PROGRESS" | "SOURCE_CHANGED" | "IMPORT_NOT_READY" | "PREWARM_BUSY" | "PREWARM_REQUEST_CONFLICT" | "ARTIFACT_TOO_LARGE" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "LOGIN_RATE_LIMITED" | "PREVIEW_LIMIT_EXCEEDED" | "INTERNAL_ERROR" | "UPSTREAM_UNAVAILABLE" | "INDEX_UNSUPPORTED" | "LOOP_DETECTED" | "UPSTREAM_NOT_FOUND" | "MIRROR_NOT_FOUND" | "UPSTREAM_IN_USE" | "UPSTREAM_INCOMPATIBLE" | "METADATA_UNTRUSTED" | "CHANNELS_UNVERIFIED" | "IMPORT_SOURCE_FAILED" | "STORAGE_UNAVAILABLE" | "NOT_READY" | "SESSION_LIMIT_EXCEEDED" | "TRANSFER_CAPACITY" | "CACHE_CONTENDED" | "PREVIEW_BUSY" | "INSTALLER_UNAVAILABLE" | "CACHE_MISS";
         /** @description 32 lowercase hex characters. */
         Uid: string;
         /**
@@ -3087,21 +3148,37 @@ export interface components {
             scope?: string;
             variant?: string;
         };
+        JSONReleaseChannel: {
+            query: string;
+            requests: {
+                url: string;
+                context?: {
+                    [key: string]: string;
+                };
+            }[];
+        };
+        ReleaseSummary: {
+            release_id: string;
+            version: string;
+            build: string;
+            /** Format: date-time */
+            discovered_at: string;
+            /** @description Channels currently pointing at this release. */
+            channels: string[];
+        };
         /** @description Trusted administrator jq configuration. Limits and cancellation are not a hard memory sandbox. Queries receive {body, context}; HTTP is owned by the engine. */
         JSONReleaseConfig: {
             default_channel: string;
             refresh_seconds: number;
             channels: {
-                [key: string]: {
-                    query: string;
-                    requests: {
-                        url: string;
-                        context?: {
-                            [key: string]: string;
-                        };
-                    }[];
-                };
+                [key: string]: components["schemas"]["JSONReleaseChannel"];
             };
+            /**
+             * @description Discovers one version an administrator names (`lookupRelease`). `{version}` in request URLs (escaped) and
+             *     context values stands for that version. The query returns `null` for a package the version does not have;
+             *     a request answered with 404 is skipped too. Changing it does not start a new source epoch.
+             */
+            lookup?: components["schemas"]["JSONReleaseChannel"];
             sources: {
                 metadata: components["schemas"]["ReleaseSources"];
                 artifacts: components["schemas"]["ReleaseSources"];
@@ -4685,6 +4762,8 @@ export interface operations {
         parameters: {
             query?: {
                 channel?: string;
+                release?: string;
+                version?: string;
             };
             header?: never;
             path: {
@@ -4713,6 +4792,76 @@ export interface operations {
             502: components["responses"]["BadGateway"];
             503: components["responses"]["ServiceUnavailable"];
             508: components["responses"]["LoopDetected"];
+        };
+    };
+    listReleases: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Vendor ID. */
+                vendor: components["parameters"]["Vendor"];
+                /** @description Application ID within the vendor. */
+                app: components["parameters"]["App"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discovered releases. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ReleaseSummary"][];
+                        truncated: boolean;
+                    };
+                };
+            };
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    lookupRelease: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Vendor ID. */
+                vendor: components["parameters"]["Vendor"];
+                /** @description Application ID within the vendor. */
+                app: components["parameters"]["App"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    version: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The discovered release. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseSummary"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+            502: components["responses"]["BadGateway"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     listReleaseArtifacts: {

@@ -153,6 +153,10 @@ export const errorCatalog = {
     "status": 404,
     "retryable": false
   },
+  "VERSION_NOT_FOUND": {
+    "status": 404,
+    "retryable": false
+  },
   "CAPABILITY_UNSUPPORTED": {
     "status": 404,
     "retryable": false

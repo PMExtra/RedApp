@@ -35,6 +35,18 @@
           "query": "{\"windows\":{\"key\":\"windows-x64-exe\",\"os\":\"windows\",\"arch\":\"x64\",\"format\":\"exe\"},\"windowsARM64\":{\"key\":\"windows-arm64-exe\",\"os\":\"windows\",\"arch\":\"arm64\",\"format\":\"exe\"},\"linux\":{\"key\":\"linux-x64-tar\",\"os\":\"linux\",\"arch\":\"x64\",\"format\":\"tar.gz\"},\"linuxARM64\":{\"key\":\"linux-arm64-tar\",\"os\":\"linux\",\"arch\":\"arm64\",\"format\":\"tar.gz\"},\"mac\":{\"key\":\"macos-x64-dmg\",\"os\":\"macos\",\"arch\":\"x64\",\"format\":\"dmg\"},\"macM1\":{\"key\":\"macos-arm64-dmg\",\"os\":\"macos\",\"arch\":\"arm64\",\"format\":\"dmg\"}} as $platforms | .body[.context.product][0] as $r | {version:$r.version,build:$r.build,artifacts:[$r.downloads | to_entries[] | select($platforms[.key] != null) | $platforms[.key] + {url:.value.link,size:.value.size,checksum_url:.value.checksumLink,checksum_filename:(.value.link | split(\"?\")[0] | split(\"/\") | last)}]}"
         }
       },
+      "lookup": {
+        "requests": [
+          {
+            "url": "https://data.services.jetbrains.com/products/releases?code=PS&type=release",
+            "context": {
+              "product": "PS",
+              "version": "{version}"
+            }
+          }
+        ],
+        "query": "{\"windows\":{\"key\":\"windows-x64-exe\",\"os\":\"windows\",\"arch\":\"x64\",\"format\":\"exe\"},\"windowsARM64\":{\"key\":\"windows-arm64-exe\",\"os\":\"windows\",\"arch\":\"arm64\",\"format\":\"exe\"},\"linux\":{\"key\":\"linux-x64-tar\",\"os\":\"linux\",\"arch\":\"x64\",\"format\":\"tar.gz\"},\"linuxARM64\":{\"key\":\"linux-arm64-tar\",\"os\":\"linux\",\"arch\":\"arm64\",\"format\":\"tar.gz\"},\"mac\":{\"key\":\"macos-x64-dmg\",\"os\":\"macos\",\"arch\":\"x64\",\"format\":\"dmg\"},\"macM1\":{\"key\":\"macos-arm64-dmg\",\"os\":\"macos\",\"arch\":\"arm64\",\"format\":\"dmg\"}} as $platforms | .context.version as $v | (.body[.context.product] | map(select(.version == $v)) | .[0]) as $r | if $r == null then null else {version:$r.version,build:$r.build,artifacts:[$r.downloads | to_entries[] | select($platforms[.key] != null) | $platforms[.key] + {url:.value.link,size:.value.size,checksum_url:.value.checksumLink,checksum_filename:(.value.link | split(\"?\")[0] | split(\"/\") | last)}]} end"
+      },
       "sources": {
         "metadata": [
           {

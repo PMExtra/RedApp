@@ -58,7 +58,8 @@ func (s *Server) refuseDeleted(w http.ResponseWriter, r *http.Request, e applica
 }
 
 // refuseDisabled writes APPLICATION_DISABLED for actions that need an enabled
-// application (and vendor): retention runs, prewarm and HTTP cache refresh.
+// application (and vendor): retention runs, prewarm, HTTP cache refresh and
+// release lookups.
 func (s *Server) refuseDisabled(w http.ResponseWriter, r *http.Request, e application.Entry) bool {
 	if e.Enabled {
 		return false
