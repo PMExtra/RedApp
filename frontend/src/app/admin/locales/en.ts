@@ -42,6 +42,7 @@ export default {
       cache: "Cache",
       metrics: "Metrics",
       files: "Files",
+      events: "Events",
     },
     notFound: {
       description: "This administration page does not exist.",

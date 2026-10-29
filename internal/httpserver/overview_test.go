@@ -163,8 +163,6 @@ func TestEventsPaginateNewestFirstWithPublicKeys(t *testing.T) {
 	for _, query := range []string{"limit=0", "limit=101", "limit=01", "limit=2&limit=3", "cursor=", "app=" + files.Key} {
 		h.expectError("GET", "/admin/api/events?"+query, nil, 400, codeInvalidQuery, nil)
 	}
-	// The application event list was removed.
-	h.request("GET", "/admin/api/apps/"+files.Key+"/events", nil, 404, nil)
 }
 
 // Application metrics belong to the application's stable identity: they add
@@ -223,4 +221,38 @@ func TestAppMetricsFollowTheApplicationAcrossSourceEpochs(t *testing.T) {
 	if err := h.sql().QueryRow("SELECT count(*) FROM metric_samples WHERE scope='app' AND (app_id=? OR (app_id=? AND metric='versions.total'))", key, files.MetricsID()).Scan(&value); err != nil || value != 0 {
 		t.Fatal("history sampled a public key or an inapplicable metric", value, err)
 	}
+}
+
+// An application's events include those recorded under its source-epoch
+// storage IDs; other applications' and global events are excluded.
+func TestAppEventsListOnlyTheApplication(t *testing.T) {
+	h := newHarness(t)
+	h.login("")
+	h.createVendor("fixture")
+	files := h.createApp("fixture", "files", application.HttpCache, map[string]any{"base_url": fixtureUpstream})
+	other := h.createApp("fixture", "other", application.HttpCache, map[string]any{"base_url": fixtureUpstream})
+	for i, scope := range []string{files.MetricsID(), files.StorageID(), other.MetricsID(), "", files.MetricsID()} {
+		if err := h.store.RecordEvent(store.Event{AppID: scope, Category: "http", Code: "upstream_error", Message: fmt.Sprint("event ", i)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var messages []string
+	path := "/admin/api/apps/" + files.Key + "/events?limit=2"
+	for {
+		body, _ := h.request("GET", path, nil, 200, nil)
+		page := decodeJSONBody[cursorPage[eventDTO]](t, body)
+		for _, event := range page.Items {
+			messages = append(messages, event.Message)
+		}
+		if page.NextCursor == nil {
+			break
+		}
+		// A cursor of the application list is not one of the global list.
+		h.expectError("GET", "/admin/api/events?cursor="+*page.NextCursor, nil, 400, codeInvalidCursor, nil)
+		path = "/admin/api/apps/" + files.Key + "/events?limit=2&cursor=" + *page.NextCursor
+	}
+	if strings.Join(messages, ",") != "Event 4,Event 1,Event 0" {
+		t.Fatal("application events", messages)
+	}
+	h.expectError("GET", "/admin/api/apps/fixture/unknown/events", nil, 404, codeApplicationNotFound, nil)
 }

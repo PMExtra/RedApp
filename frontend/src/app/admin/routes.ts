@@ -142,6 +142,11 @@ export const adminRoutes: RouteRecordRaw[] = [
             component: () => import("@/pages/admin/apps/AppMetricsPage.vue"),
           },
           {
+            path: "events",
+            name: "admin-app-events",
+            component: () => import("@/pages/admin/apps/AppEventsPage.vue"),
+          },
+          {
             path: "files",
             name: "admin-app-files",
             component: () => import("@/pages/admin/apps/AppFilesPage.vue"),

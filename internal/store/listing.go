@@ -39,8 +39,10 @@ func (s *Store) EventPage(app string, beforeID int64, limit int) ([]ListedEvent,
 	query := "SELECT id,time_s,app_id,version,resource_key,generation_id,category,code,message,upstream_status FROM events WHERE time_s>=?"
 	args := []any{time.Now().Add(-30 * 24 * time.Hour).Unix()}
 	if app != "" {
-		query += " AND app_id=?"
-		args = append(args, app)
+		// An application's events may also carry one of its source-epoch
+		// storage IDs ("<app>-e<epoch>"); the range keeps the index usable.
+		query += " AND (app_id=? OR (app_id>=? AND app_id<?))"
+		args = append(args, app, app+"-e", app+"-f")
 	}
 	if beforeID > 0 {
 		query += " AND id<?"
