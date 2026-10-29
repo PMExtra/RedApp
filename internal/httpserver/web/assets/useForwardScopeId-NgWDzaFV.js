@@ -1,0 +1,1 @@
+import{En as e}from"./ui-CZuG5WnY.js";function t(){let t=e()?.vnode?.scopeId;return t?{[t]:``}:{}}export{t};

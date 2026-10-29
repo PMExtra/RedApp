@@ -97,6 +97,9 @@ func oneOf(v string, values ...string) bool {
 // ValidKey accepts one canonical stable artifact key, not a filename or URL.
 func ValidKey(s string) bool { return token.MatchString(s) }
 
+// ValidVersion reports whether s can be a release version or build.
+func ValidVersion(s string) bool { return identity.MatchString(s) }
+
 func ValidSHA256(s string) bool {
 	if len(s) != 64 || strings.ToLower(s) != s {
 		return false

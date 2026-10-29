@@ -3,6 +3,7 @@ package jsonrelease_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/PMExtra/RedApp/internal/jsonrelease"
 	"github.com/PMExtra/RedApp/internal/releaseconfig"
@@ -28,6 +29,9 @@ func TestIDEConfigurationsUseOneQueryEngine(t *testing.T) {
 				}
 				var body string
 				switch {
+				case strings.Contains(raw, "/api/versions/9.9.9/"):
+					request, _ := http.NewRequest(http.MethodGet, raw, nil)
+					return &http.Response{StatusCode: 404, Header: http.Header{}, Request: request, Body: io.NopCloser(strings.NewReader(""))}, nil
 				case strings.HasPrefix(raw, "https://update.code.visualstudio.com/"):
 					encoded, _ := json.Marshal(map[string]any{"productVersion": "1.2.3", "version": "abc123", "url": "https://vscode.download.prss.microsoft.com/dbazure/download/stable/abc/setup.zip", "sha256hash": strings.Repeat("a", 64)})
 					body = string(encoded)
@@ -69,6 +73,16 @@ func TestIDEConfigurationsUseOneQueryEngine(t *testing.T) {
 				if strings.Contains(a.URL, "libraries") || (a.Arch == "unknown" && app.Key() != "jetbrains/dotultimate") || a.SHA256 != strings.Repeat("a", 64) {
 					t.Fatal(a)
 				}
+			}
+			// The lookup maps the same metadata to the same release, and a
+			// version the upstream lacks is not found.
+			discoverer := jsonrelease.Discoverer{Query: jsonrelease.NewRunner().Run, Fetch: fetch}
+			looked, err := discoverer.DiscoverVersion(context.Background(), config, result.Version)
+			if err != nil || looked.Version != result.Version || looked.Build != result.Build || len(looked.Artifacts) != len(result.Artifacts) {
+				t.Fatal("lookup", looked, err)
+			}
+			if _, err = discoverer.DiscoverVersion(context.Background(), config, "9.9.9"); !errors.Is(err, jsonrelease.ErrVersionNotFound) {
+				t.Fatal("unknown version", err)
 			}
 		})
 	}

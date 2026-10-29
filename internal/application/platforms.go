@@ -1,5 +1,7 @@
 package application
 
+import "context"
+
 // PlatformProtocol is the small optional immutable-release prewarm capability.
 // Selection only returns keys from an already verified Release.
 type Platform struct {
@@ -18,6 +20,13 @@ type SnapshotProtocol interface {
 	Protocol
 	CanonicalChannel(string) (string, error)
 	PrewarmKeys(string) []string
+}
+
+// VersionLookupProtocol discovers a given version on request, when its
+// configuration can (CanLookup).
+type VersionLookupProtocol interface {
+	CanLookup() bool
+	LookupVersion(ctx context.Context, version string) (ChannelResolution, error)
 }
 
 // ArtifactKeyProtocol selects precise normalized package variants, independently

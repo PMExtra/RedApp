@@ -4,8 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"strings"
 )
+
+// VersionPlaceholder in a lookup request's URL or context values stands for
+// the version an administrator looks up.
+const VersionPlaceholder = "{version}"
 
 // Request is one explicitly configured matrix row. Context carries normalized
 // labels to the pure transform; it cannot alter the request destination.
@@ -24,6 +29,10 @@ type PrewarmSelection struct {
 type Config struct {
 	DefaultChannel string             `json:"default_channel"`
 	Channels       map[string]Channel `json:"channels"`
+	// Lookup discovers one given version on request. Its requests may contain
+	// VersionPlaceholder; its query returns null for a package the version
+	// does not have.
+	Lookup         *Channel           `json:"lookup,omitempty"`
 	Sources        Sources            `json:"sources"`
 	RefreshSeconds int                `json:"refresh_seconds"`
 	Prewarm        []PrewarmSelection `json:"prewarm,omitempty"`
@@ -56,21 +65,24 @@ func (c Config) Validate() error {
 		if !token.MatchString(name) || name == "latest" {
 			return errors.New("invalid channel; latest is reserved for the default alias")
 		}
-		if len(ch.Requests) == 0 || len(ch.Requests) > MaxRequests || len(ch.Query) > MaxQueryBytes || strings.TrimSpace(ch.Query) == "" {
-			return errors.New("invalid request matrix or query size")
+		if err := c.validateRequests(ch); err != nil {
+			return err
 		}
-		for _, request := range ch.Requests {
-			if !Allows(c.Sources.Metadata, request.URL) {
-				return errors.New("metadata request is outside authorized sources")
+	}
+	if c.Lookup != nil {
+		mentioned := false
+		for _, request := range c.Lookup.Requests {
+			mentioned = mentioned || strings.Contains(request.URL, VersionPlaceholder)
+			for _, v := range request.Context {
+				mentioned = mentioned || strings.Contains(v, VersionPlaceholder)
 			}
-			if len(request.Context) > 16 {
-				return errors.New("too many context fields")
-			}
-			for k, v := range request.Context {
-				if !token.MatchString(k) || len(v) > 256 {
-					return errors.New("invalid request context")
-				}
-			}
+		}
+		if !mentioned {
+			return errors.New("lookup requests must use " + VersionPlaceholder)
+		}
+		// A sample version checks the requests as they will be sent.
+		if err := c.validateRequests(c.LookupChannel("0")); err != nil {
+			return err
 		}
 	}
 	if len(c.Prewarm) > len(c.Channels) {
@@ -96,6 +108,42 @@ func (c Config) Validate() error {
 	return nil
 }
 
+func (c Config) validateRequests(ch Channel) error {
+	if len(ch.Requests) == 0 || len(ch.Requests) > MaxRequests || len(ch.Query) > MaxQueryBytes || strings.TrimSpace(ch.Query) == "" {
+		return errors.New("invalid request matrix or query size")
+	}
+	for _, request := range ch.Requests {
+		if !Allows(c.Sources.Metadata, request.URL) {
+			return errors.New("metadata request is outside authorized sources")
+		}
+		if len(request.Context) > 16 {
+			return errors.New("too many context fields")
+		}
+		for k, v := range request.Context {
+			if !token.MatchString(k) || len(v) > 256 {
+				return errors.New("invalid request context")
+			}
+		}
+	}
+	return nil
+}
+
+// LookupChannel is the lookup with VersionPlaceholder replaced by version:
+// escaped in URLs, as is in context values. It requires a lookup.
+func (c Config) LookupChannel(version string) Channel {
+	out := Channel{Query: c.Lookup.Query, Requests: make([]Request, len(c.Lookup.Requests))}
+	for i, request := range c.Lookup.Requests {
+		out.Requests[i].URL = strings.ReplaceAll(request.URL, VersionPlaceholder, url.QueryEscape(version))
+		if request.Context != nil {
+			out.Requests[i].Context = map[string]string{}
+			for k, v := range request.Context {
+				out.Requests[i].Context[k] = strings.ReplaceAll(v, VersionPlaceholder, version)
+			}
+		}
+	}
+	return out
+}
+
 // AuthorizeArtifacts is applied both before fetching sidecars and when a
 // persisted snapshot is read under current configuration.
 func (c Config) AuthorizeArtifacts(r Release) error {
@@ -110,8 +158,8 @@ func (c Config) AuthorizeArtifacts(r Release) error {
 	return nil
 }
 
-// SameSource excludes scheduling and prewarm choices: changing those must not
-// discard verified immutable artifacts. Query/origin changes create a new epoch.
+// SameSource excludes scheduling, prewarm choices and the lookup, which only
+// adds releases: changing those must not discard verified immutable artifacts. Query/origin changes create a new epoch.
 func SameSource(a, b *Config) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
@@ -119,6 +167,7 @@ func SameSource(a, b *Config) bool {
 	left, right := *a, *b
 	left.RefreshSeconds, right.RefreshSeconds = 0, 0
 	left.Prewarm, right.Prewarm = nil, nil
+	left.Lookup, right.Lookup = nil, nil
 	x, _ := json.Marshal(left)
 	y, _ := json.Marshal(right)
 	return bytes.Equal(x, y)

@@ -245,6 +245,7 @@ const mirrorReleaseRefresh = 300
 // upstream's source epoch is part of every request's context: when the
 // upstream changes its source, the mirror's configuration changes too, so it
 // starts a new epoch instead of finding a known release with other fields.
+// The lookup reads the upstream's download choices of one version.
 func mirrorReleaseConfig(origin, remoteKey string, channels []string, defaultChannel string, upstreamEpoch int64) releaseconfig.Config {
 	root, _ := json.Marshal(origin + "/" + remoteKey + "/")
 	query := `.body | {version, build: (.build // ""), artifacts: [.artifacts[] | {key, os, arch, format, scope, variant, url: (` + string(root) + ` + .path), sha256, size} | with_entries(select(.value != null and .value != ""))]}`
@@ -257,10 +258,15 @@ func mirrorReleaseConfig(origin, remoteKey string, channels []string, defaultCha
 		},
 		RefreshSeconds: mirrorReleaseRefresh,
 	}
+	context := map[string]string{"upstream_epoch": strconv.FormatInt(upstreamEpoch, 10)}
 	for _, name := range channels {
-		request := releaseconfig.Request{URL: origin + "/api/apps/" + remoteKey + "/downloads?channel=" + url.QueryEscape(name), Context: map[string]string{"upstream_epoch": strconv.FormatInt(upstreamEpoch, 10)}}
+		request := releaseconfig.Request{URL: origin + "/api/apps/" + remoteKey + "/downloads?channel=" + url.QueryEscape(name), Context: context}
 		config.Channels[name] = releaseconfig.Channel{Requests: []releaseconfig.Request{request}, Query: query}
 	}
+	// A lookup finds any version the upstream has discovered; the upstream
+	// answers 404 for one it has not.
+	lookup := releaseconfig.Request{URL: origin + "/api/apps/" + remoteKey + "/downloads?version=" + releaseconfig.VersionPlaceholder, Context: context}
+	config.Lookup = &releaseconfig.Channel{Requests: []releaseconfig.Request{lookup}, Query: query}
 	return config
 }
 

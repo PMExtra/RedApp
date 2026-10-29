@@ -50,6 +50,14 @@ Queries are trusted administrator configuration. They have no installed environm
 
 The public selector makes a best-effort recommendation using browser information. Uncertain architectures or multiple package types require manual choice; Linux package managers are not guessed. Manual selection takes precedence.
 
+## Version history and lookup
+
+Every release the application discovers stays available while its source epoch lasts: `/api/apps/{vendor}/{app}/releases` lists them, newest version first, and `/api/apps/{vendor}/{app}/downloads?release={release_id}` or `?version={version}` returns the packages of one. The public page lets visitors pick one. Version cleanup deletes cached files, not this history; a package downloaded again is verified against the same digest.
+
+An administrator can discover an older version in the versions tab. The optional `lookup` object has the shape of a channel. `{version}` in its request URLs (escaped) and context values is replaced by the version entered, and its query must return that version. A request answered with 404, or a query result of `null`, means the version has no such package; the version is not found only when no package remains. The discovered release is stored without moving any channel. Changing `lookup` does not start a new source epoch, but its requests must stay inside `sources.metadata`.
+
+The VS Code preset looks versions up at `/api/versions/{version}/<platform>/stable`, so its metadata source covers `/api/`. The JetBrains presets read the product's complete release list and select the version in the query. A mirror looks up the versions its upstream has discovered.
+
 ## Download choices
 
 Two application settings, outside `json_release`, decide what the public page offers:

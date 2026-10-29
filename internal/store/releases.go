@@ -161,6 +161,37 @@ func (s *Store) Release(app, version string) (ReleaseMetadata, error) {
 	m.FetchedAt = time.Unix(at, 0).UTC()
 	return m, err
 }
+
+// StoredRelease is stored release metadata and when the release was first
+// seen.
+type StoredRelease struct {
+	ReleaseMetadata
+	FirstSeen time.Time
+}
+
+// Releases lists every stored release of an application storage ID, most
+// recently first seen first.
+func (s *Store) Releases(app string) ([]StoredRelease, error) {
+	if err := requireApp(app); err != nil {
+		return nil, err
+	}
+	rows, err := s.read.Query("SELECT m.version,m.raw,m.signature,m.trust_revision,m.fetched_at_s,v.first_seen_s FROM release_metadata m JOIN app_versions v ON v.app_id=m.app_id AND v.version=m.version WHERE m.app_id=? ORDER BY v.first_seen_s DESC,m.version", app)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []StoredRelease
+	for rows.Next() {
+		r := StoredRelease{ReleaseMetadata: ReleaseMetadata{AppID: app}}
+		var fetched, seen int64
+		if err = rows.Scan(&r.Version, &r.Raw, &r.Signature, &r.TrustRevision, &fetched, &seen); err != nil {
+			return nil, err
+		}
+		r.FetchedAt, r.FirstSeen = time.Unix(fetched, 0).UTC(), time.Unix(seen, 0).UTC()
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
 func (s *Store) Resource(app, version, key string) (Resource, error) {
 	r := Resource{AppID: app, Version: version, Key: key}
 	if err := requireApp(app); err != nil {

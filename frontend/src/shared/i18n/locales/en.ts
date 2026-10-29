@@ -173,6 +173,7 @@ export default {
       JOB_NOT_FOUND: "This task no longer exists.",
       TRANSFER_NOT_FOUND: "This transfer is no longer running.",
       CACHE_ENTRY_NOT_FOUND: "This path is not cached.",
+      VERSION_NOT_FOUND: "The upstream does not have this version.",
       CAPABILITY_UNSUPPORTED: "This application does not support this feature.",
       METHOD_NOT_ALLOWED: "This action is not allowed here.",
       REVISION_CONFLICT: "Someone else changed this item. Reload before saving.",

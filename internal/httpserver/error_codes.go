@@ -33,6 +33,7 @@ const (
 	codeJobNotFound               errorCode = "JOB_NOT_FOUND"
 	codeTransferNotFound          errorCode = "TRANSFER_NOT_FOUND"
 	codeCacheEntryNotFound        errorCode = "CACHE_ENTRY_NOT_FOUND"
+	codeVersionNotFound           errorCode = "VERSION_NOT_FOUND"
 	codeCapabilityUnsupported     errorCode = "CAPABILITY_UNSUPPORTED"
 	codeMethodNotAllowed          errorCode = "METHOD_NOT_ALLOWED"
 	codeRevisionConflict          errorCode = "REVISION_CONFLICT"
@@ -112,6 +113,7 @@ var errorCatalog = map[errorCode]errorClass{
 	codeJobNotFound:               {404, false},
 	codeTransferNotFound:          {404, false},
 	codeCacheEntryNotFound:        {404, false},
+	codeVersionNotFound:           {404, false},
 	codeCapabilityUnsupported:     {404, false},
 	codeMethodNotAllowed:          {405, false},
 	codeRevisionConflict:          {409, false},

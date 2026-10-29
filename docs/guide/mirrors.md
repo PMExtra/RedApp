@@ -32,7 +32,7 @@ To make an existing local application come from the upstream, for example the bu
 - **Source**: the address of the upstream application. It cannot be changed in the application; change the upstream's address instead, which starts a new source epoch for every application mirrored from it.
 - **Local settings**: everything else (proxy, categories, tags, cache rules, retention, prewarm) is local and never follows the upstream.
 
-A JSON release mirror requests the upstream's download choices for each channel every 300 seconds and downloads every package from the upstream, verified against the upstream's SHA-256 digests. Because its release settings belong to the upstream, it has no prewarm selection of its own.
+A JSON release mirror requests the upstream's download choices for each channel every 300 seconds and downloads every package from the upstream, verified against the upstream's SHA-256 digests. Looking up a version on the mirror finds any version the upstream has discovered. Because its release settings belong to the upstream, it has no prewarm selection of its own.
 
 ## Checks and states
 

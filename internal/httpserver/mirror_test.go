@@ -176,6 +176,11 @@ func TestMirrorApplicationsOfAnotherInstance(t *testing.T) {
 	if got := getJSON[releaseDownloadsDTO](b, "/api/apps/mirror/feed/downloads"); got.DefaultArtifact == nil || got.Artifacts[0].Hidden {
 		t.Fatalf("overridden download choices %+v", got)
 	}
+	// A mirror looks up versions among those its upstream discovered.
+	if looked := decodeJSONBody[releaseSummaryDTO](t, mustBody(b.request("POST", "/admin/api/apps/mirror/feed/releases/lookup", map[string]string{"version": "2.0.0"}, 200, nil))); looked.Version != "2.0.0" {
+		t.Fatalf("mirror lookup %+v", looked)
+	}
+	b.expectError("POST", "/admin/api/apps/mirror/feed/releases/lookup", map[string]string{"version": "9.9.9"}, 404, codeVersionNotFound, nil)
 
 	// A stops publishing the application: B keeps it, marked unavailable.
 	a.setAppEnabled(files.Key, false)

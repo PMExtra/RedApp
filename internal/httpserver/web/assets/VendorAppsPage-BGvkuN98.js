@@ -1,1 +1,0 @@
-import{Tn as e,_n as t,bn as n,on as r,pr as i,yn as a,zn as o}from"./ui-D719Augw.js";import{C as s,l as c}from"./directory-BDxIDthM.js";var l=e({__name:`VendorAppsPage`,setup(e){let l=r(),u=s(t(()=>String(l.params.vendor)));return(e,t)=>i(u).data.value?(o(),a(i(c),{key:i(u).data.value.uid,vendor:i(u).data.value},null,8,[`vendor`])):n(``,!0)}});export{l as default};
