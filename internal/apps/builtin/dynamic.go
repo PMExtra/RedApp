@@ -164,6 +164,7 @@ func entriesFromConfiguration(snapshot store.DirectorySnapshot, pool *distributo
 		entry.VendorID, entry.VendorName, entry.VendorDescription, entry.VendorIcon = vendor.ID, localized(vendor.Name), localized(vendor.Description), vendor.Icon
 		entry.Enabled, entry.DeletedAt = app.Enabled && vendor.Enabled && vendor.DeletedAt == nil, app.DeletedAt
 		entry.AutoIndex = app.AutoIndex
+		entry.DefaultArtifact, entry.HiddenArtifacts = app.DefaultArtifact, app.HiddenArtifacts
 		entry.Descriptor.ID = app.Key
 		entry.Descriptor.Name, entry.Descriptor.Summary = localized(app.Name), localized(app.Description)
 		entry.Descriptor.Publisher = vendor.Name.En

@@ -163,6 +163,19 @@ func TestMirrorApplicationsOfAnotherInstance(t *testing.T) {
 	if again := getJSON[releaseDownloadsDTO](b, "/api/apps/mirror/feed/downloads"); again.ReleaseID != choices.ReleaseID {
 		t.Fatalf("release after the upstream epoch change %+v", again)
 	}
+	// Download choices follow the upstream like the display fields, without
+	// a new epoch, and a local override survives the next sync.
+	epoch = b.adminApp("mirror/feed").SourceEpoch
+	a.patchApp("acme/feed", map[string]any{"default_artifact": "win-x64", "hidden_artifacts": []string{"win-x64"}})
+	b.request("POST", "/admin/api/apps/mirror/feed/mirror/sync", nil, 200, nil)
+	if got := getJSON[releaseDownloadsDTO](b, "/api/apps/mirror/feed/downloads"); got.DefaultArtifact == nil || *got.DefaultArtifact != "win-x64" || !got.Artifacts[0].Hidden || b.adminApp("mirror/feed").SourceEpoch != epoch {
+		t.Fatalf("followed download choices %+v", got)
+	}
+	b.patchApp("mirror/feed", map[string]any{"hidden_artifacts": []string{}})
+	b.request("POST", "/admin/api/apps/mirror/feed/mirror/sync", nil, 200, nil)
+	if got := getJSON[releaseDownloadsDTO](b, "/api/apps/mirror/feed/downloads"); got.DefaultArtifact == nil || got.Artifacts[0].Hidden {
+		t.Fatalf("overridden download choices %+v", got)
+	}
 
 	// A stops publishing the application: B keeps it, marked unavailable.
 	a.setAppEnabled(files.Key, false)

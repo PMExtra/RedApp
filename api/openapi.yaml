@@ -488,6 +488,43 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /admin/api/apps/{vendor}/{app}/artifacts:
+    parameters:
+      - $ref: '#/components/parameters/Vendor'
+      - $ref: '#/components/parameters/App'
+    get:
+      operationId: listReleaseArtifacts
+      tags: [directory]
+      summary: List the packages of the current releases of a JSON release application.
+      description: |
+        The packages of every channel's current release, in channel order, each key once, for choosing
+        `default_artifact` and `hidden_artifacts`. Reads stored releases only: it works for disabled applications,
+        never reaches the upstream and is empty before the first refresh.
+      security:
+        - sessionCookie: []
+      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED]
+      responses:
+        '200':
+          description: Known packages.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ReleaseArtifactChoice'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /admin/api/apps/{vendor}/{app}/release-preview:
     parameters:
       - $ref: '#/components/parameters/Vendor'
@@ -2554,8 +2591,8 @@ paths:
         Same semantics as `patchVendorConfiguration`. Additional rules:
 
         - Paths must apply to the provider (`base_url` only for `codex`/`claude-code`; `base_urls`, `source_strategy`
-          and `http_policy.*` only for `http-cache`; `auto_index` only for `hosted`/`http-cache`; `retention`/`prewarm`
-          only for `codex`/`claude-code`;
+          and `http_policy.*` only for `http-cache`; `auto_index` only for `hosted`/`http-cache`; `default_artifact` and
+          `hidden_artifacts` only for `json-release`; `retention`/`prewarm` only for `codex`/`claude-code`;
           `cache_ttl_seconds` not for `info`/`hosted`). Otherwise `400 VALIDATION_FAILED`.
         - `proxy`, `prewarm`, `retention`, `base_urls`, `categories`, `tags` and each `http_policy.*` list replace the
           whole value.
@@ -3069,8 +3106,8 @@ paths:
         upstream and its source becomes the upstream application (a new source epoch). Hosted applications are mirrored
         as HTTP cache applications. A JSON release mirror reads the upstream's `getReleaseDownloads` for each of its
         channels with a fixed query and downloads every artifact from the upstream; its `json_release` belongs to the
-        upstream, so it has no prewarm selection of its own. The name, description, icon, usage instructions and `auto_index` follow the upstream
-        unless overridden per field in the configuration; the source cannot be overridden. An upstream chain that contains
+        upstream, so it has no prewarm selection of its own. The name, description, icon, usage instructions, `auto_index`,
+        `default_artifact` and `hidden_artifacts` follow the upstream unless overridden per field in the configuration; the source cannot be overridden. An upstream chain that contains
         this instance is refused with `508 LOOP_DETECTED`.
       security:
         - sessionCookie: []
@@ -7147,7 +7184,7 @@ components:
     ReleaseDownloads:
       type: object
       additionalProperties: false
-      required: [channel, release_id, version, build, artifacts]
+      required: [channel, release_id, version, build, artifacts, default_artifact]
       properties:
         stale: {type: boolean}
         fetched_at: {type: string, format: date-time}
@@ -7159,6 +7196,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ReleaseDownloadChoice'
+        default_artifact:
+          description: The configured `default_artifact` when this release has it, else `null`.
+          oneOf:
+            - type: string
+            - type: 'null'
     JSONReleaseData:
       type: object
       additionalProperties: false
@@ -7189,7 +7231,7 @@ components:
     ReleaseDownloadChoice:
       type: object
       additionalProperties: false
-      required: [key, os, arch, format, url, sha256, path]
+      required: [key, os, arch, format, url, sha256, path, hidden]
       properties:
         key: {type: string}
         os: {type: string, enum: [windows, macos, linux, unknown]}
@@ -7203,6 +7245,20 @@ components:
         path:
           type: string
           description: The artifact address relative to `/{vendor}/{app}/`, for a downstream RedApp that reaches this instance at another address.
+        hidden:
+          type: boolean
+          description: Listed in `hidden_artifacts`; not offered on the public page, still downloadable.
+    ReleaseArtifactChoice:
+      type: object
+      additionalProperties: false
+      required: [key, os, arch, format]
+      properties:
+        key: {type: string}
+        os: {type: string, enum: [windows, macos, linux, unknown]}
+        arch: {type: string, enum: [x64, arm64, x86, arm, universal, unknown]}
+        format: {type: string}
+        scope: {type: string}
+        variant: {type: string}
     JSONReleaseConfig:
       type: object
       additionalProperties: false
@@ -7316,6 +7372,22 @@ components:
         auto_index:
           type: boolean
           description: List directories (`hosted` and `http-cache` only); see `getDistributionFile`.
+        default_artifact:
+          type: string
+          maxLength: 96
+          description: |
+            Artifact key of the package recommended when the visitor's environment does not pick one (`json-release`
+            only); `""` for none. It need not exist in the current release.
+        hidden_artifacts:
+          type: array
+          maxItems: 128
+          uniqueItems: true
+          description: |
+            Artifact keys not offered on the public page (`json-release` only). They stay downloadable, keep their
+            prewarm selection and are listed by `getReleaseDownloads` with `hidden: true`.
+          items:
+            type: string
+            maxLength: 96
         retention:
           $ref: '#/components/schemas/RetentionPolicy'
         prewarm:
@@ -7464,7 +7536,7 @@ components:
     MirrorApp:
       type: object
       additionalProperties: false
-      required: [instance_id, key, provider, vendor, name, description, icon, instructions, auto_index, channels, default_channel, upstream_chain, source_epoch, revision]
+      required: [instance_id, key, provider, vendor, name, description, icon, instructions, auto_index, channels, default_channel, default_artifact, hidden_artifacts, upstream_chain, source_epoch, revision]
       properties:
         instance_id:
           type: string
@@ -7507,6 +7579,14 @@ components:
           oneOf:
             - type: string
             - type: 'null'
+        default_artifact:
+          type: string
+          description: The `default_artifact` of a JSON release; `""` otherwise.
+        hidden_artifacts:
+          type: array
+          description: The `hidden_artifacts` of a JSON release; empty otherwise.
+          items:
+            type: string
         upstream_chain:
           type: array
           description: Instance IDs the content passes through before this instance, nearest first.
@@ -7673,6 +7753,8 @@ components:
         - http_policy.auto_cleanup
         - http_policy.stale_fallback
         - auto_index
+        - default_artifact
+        - hidden_artifacts
         - retention
         - prewarm
         - categories
@@ -7844,6 +7926,16 @@ components:
               type: boolean
             auto_index:
               type: boolean
+            default_artifact:
+              type: string
+              maxLength: 96
+            hidden_artifacts:
+              type: array
+              maxItems: 128
+              uniqueItems: true
+              items:
+                type: string
+                maxLength: 96
             retention:
               $ref: '#/components/schemas/RetentionPolicy'
             prewarm:

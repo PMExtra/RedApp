@@ -54,9 +54,12 @@ type mirrorAppDTO struct {
 	AutoIndex      bool            `json:"auto_index"`
 	Channels       []string        `json:"channels"`
 	DefaultChannel *string         `json:"default_channel"`
-	UpstreamChain  []string        `json:"upstream_chain"`
-	SourceEpoch    int64           `json:"source_epoch"`
-	Revision       string          `json:"revision"`
+	// Download choices of a JSON release; empty for other providers.
+	DefaultArtifact string   `json:"default_artifact"`
+	HiddenArtifacts []string `json:"hidden_artifacts"`
+	UpstreamChain   []string `json:"upstream_chain"`
+	SourceEpoch     int64    `json:"source_epoch"`
+	Revision        string   `json:"revision"`
 }
 
 // getMirrorApp describes a published application for a downstream RedApp that
@@ -75,18 +78,20 @@ func (s *Server) getMirrorApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := mirrorAppDTO{
-		InstanceID:    s.instanceUID,
-		Key:           e.Descriptor.ID,
-		Provider:      e.Provider,
-		Vendor:        mirrorVendorDTO{ID: e.VendorID, Name: fromLocalized(e.VendorName), Description: fromLocalized(e.VendorDescription), Icon: publicIcon(e.VendorIcon)},
-		Name:          fromLocalized(e.Descriptor.Name),
-		Description:   fromLocalized(e.Descriptor.Summary),
-		Icon:          publicIcon(e.Descriptor.Icon),
-		Instructions:  localizedText{En: instructions.En, ZhCN: instructions.ZhCN},
-		AutoIndex:     e.AutoIndex,
-		Channels:      []string{},
-		UpstreamChain: []string{},
-		SourceEpoch:   e.SourceEpoch,
+		InstanceID:      s.instanceUID,
+		Key:             e.Descriptor.ID,
+		Provider:        e.Provider,
+		Vendor:          mirrorVendorDTO{ID: e.VendorID, Name: fromLocalized(e.VendorName), Description: fromLocalized(e.VendorDescription), Icon: publicIcon(e.VendorIcon)},
+		Name:            fromLocalized(e.Descriptor.Name),
+		Description:     fromLocalized(e.Descriptor.Summary),
+		Icon:            publicIcon(e.Descriptor.Icon),
+		Instructions:    localizedText{En: instructions.En, ZhCN: instructions.ZhCN},
+		AutoIndex:       e.AutoIndex,
+		Channels:        []string{},
+		DefaultArtifact: e.DefaultArtifact,
+		HiddenArtifacts: append([]string{}, e.HiddenArtifacts...),
+		UpstreamChain:   []string{},
+		SourceEpoch:     e.SourceEpoch,
 	}
 	if e.Protocol != nil {
 		out.Channels = append(out.Channels, e.Descriptor.Channels...)

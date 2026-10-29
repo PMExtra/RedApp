@@ -16,6 +16,7 @@
     },
     "icon": "assets/jetbrains/dotultimate/icon.svg",
     "provider": "json-release",
+    "default_artifact": "windows-offline-suite",
     "categories": [],
     "tags": [],
     "json_release": {

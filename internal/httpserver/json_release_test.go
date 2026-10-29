@@ -93,6 +93,7 @@ func TestJSONReleasePreviewDownloadsAndInternalAliases(t *testing.T) {
 	if mirror.Provider != "json-release" || strings.Join(mirror.Channels, ",") != "latest,stable" {
 		t.Fatal("mirror description of a JSON release", mirror)
 	}
+	testDownloadChoices(t, h, choices.ReleaseID)
 	for _, alias := range []string{"latest", "stable"} {
 		body, headers := h.request("GET", "/fixture/editor/download/"+alias+"/windows-x64-user", nil, 307, nil)
 		if len(body) != 0 || headers.Get("Content-Type") != "" || headers.Get("Location") != "/fixture/editor/releases/"+choices.ReleaseID+"/windows-x64-user" || headers.Get("Cache-Control") != "no-store" {
@@ -105,4 +106,50 @@ func TestJSONReleasePreviewDownloadsAndInternalAliases(t *testing.T) {
 	if string(data) != string(body) || artifactReads.Load() != 1 || headers.Get("Content-Disposition") != "attachment; filename=setup.exe" {
 		t.Fatal("download", string(data), artifactReads.Load())
 	}
+}
+
+// Download choices are presentation only: they never start a source epoch,
+// hidden packages stay listed and downloadable, and they apply to JSON
+// releases only.
+func testDownloadChoices(t *testing.T, h *harness, releaseID string) {
+	t.Helper()
+	if vscode, err := h.store.Application("microsoft/vscode"); err != nil || vscode.DefaultArtifact != "win32-x64-user" || len(vscode.HiddenArtifacts) != 0 {
+		t.Fatal("preset download choices", vscode.DefaultArtifact, vscode.HiddenArtifacts, err)
+	}
+	choices := getJSON[releaseDownloadsDTO](h, "/api/apps/fixture/editor/downloads")
+	if choices.DefaultArtifact != nil || choices.Artifacts[0].Hidden {
+		t.Fatal("no download choices configured", choices)
+	}
+	if known := getJSON[releaseArtifactsDTO](h, "/admin/api/apps/fixture/editor/artifacts"); len(known.Items) != 1 || known.Items[0] != (releaseArtifactDTO{Key: "windows-x64-user", OS: "windows", Arch: "x64", Format: "exe", Scope: "user"}) {
+		t.Fatal("known artifacts", known)
+	}
+	before, err := h.store.Application("fixture/editor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.request("PATCH", "/admin/api/apps/fixture/editor/configuration", map[string]any{"set": map[string]any{"default_artifact": "windows-x64-user", "hidden_artifacts": []string{"windows-x64-user", "gone-key"}}}, 200, ifMatchHeader(before.Revision))
+	after, err := h.store.Application("fixture/editor")
+	if err != nil || after.SourceEpoch != before.SourceEpoch || after.DefaultArtifact != "windows-x64-user" || strings.Join(after.HiddenArtifacts, ",") != "windows-x64-user,gone-key" {
+		t.Fatal("download choices", after, err)
+	}
+	choices = getJSON[releaseDownloadsDTO](h, "/api/apps/fixture/editor/downloads")
+	if choices.ReleaseID != releaseID || choices.DefaultArtifact == nil || *choices.DefaultArtifact != "windows-x64-user" || !choices.Artifacts[0].Hidden {
+		t.Fatal("configured download choices", choices)
+	}
+	if mirror := getJSON[mirrorAppDTO](h, "/api/apps/fixture/editor/mirror"); mirror.DefaultArtifact != "windows-x64-user" || strings.Join(mirror.HiddenArtifacts, ",") != "windows-x64-user,gone-key" {
+		t.Fatal("mirror description lacks download choices", mirror)
+	}
+	// A default the current release lacks is not reported.
+	h.request("PATCH", "/admin/api/apps/fixture/editor/configuration", map[string]any{"set": map[string]any{"default_artifact": "gone-key"}}, 200, ifMatchHeader(after.Revision))
+	if choices = getJSON[releaseDownloadsDTO](h, "/api/apps/fixture/editor/downloads"); choices.DefaultArtifact != nil {
+		t.Fatal("default artifact missing from the release", *choices.DefaultArtifact)
+	}
+	revision := h.appRevision("fixture/editor")
+	for _, set := range []map[string]any{{"default_artifact": "Bad Key"}, {"hidden_artifacts": []string{"a", "a"}}} {
+		h.expectError("PATCH", "/admin/api/apps/fixture/editor/configuration", map[string]any{"set": set}, 400, codeValidationFailed, ifMatchHeader(revision))
+	}
+	h.expectError("PATCH", "/admin/api/apps/fixture/editor/configuration", map[string]any{"set": map[string]any{"hidden_artifacts": nil}}, 400, codeInvalidRequest, ifMatchHeader(revision))
+	h.request("POST", "/admin/api/apps", map[string]any{"vendor": "fixture", "id": "plain", "provider": "http-cache", "name": map[string]string{"en": "Plain", "zh-CN": "普通"}, "base_urls": []string{"https://plain.example"}, "enabled": true}, 201, nil)
+	h.expectError("PATCH", "/admin/api/apps/fixture/plain/configuration", map[string]any{"set": map[string]any{"default_artifact": "x"}}, 400, codeValidationFailed, ifMatchHeader(h.appRevision("fixture/plain")))
+	h.expectError("GET", "/admin/api/apps/fixture/plain/artifacts", nil, 404, codeCapabilityUnsupported, nil)
 }

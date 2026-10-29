@@ -20,6 +20,7 @@ const response: Schema<"ReleaseDownloads"> = {
       url: "/microsoft/vscode/releases/fixed/win-user",
       path: "releases/fixed/win-user",
       sha256: "b".repeat(64),
+      hidden: false,
     },
     {
       key: "linux-deb",
@@ -30,8 +31,10 @@ const response: Schema<"ReleaseDownloads"> = {
       url: "/microsoft/vscode/releases/fixed/linux-deb",
       path: "releases/fixed/linux-deb",
       sha256: "c".repeat(64),
+      hidden: false,
     },
   ],
+  default_artifact: null,
 };
 describe("public release downloads", () => {
   it.each(["en", "zh-CN"] as const)(

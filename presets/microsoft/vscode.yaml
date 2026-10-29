@@ -16,6 +16,7 @@
     },
     "icon": "assets/microsoft/vscode/icon.svg",
     "provider": "json-release",
+    "default_artifact": "win32-x64-user",
     "categories": [],
     "tags": [],
     "json_release": {

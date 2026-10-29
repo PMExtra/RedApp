@@ -14,7 +14,7 @@ import (
 func providerPath(path string) bool {
 	field, _, _ := strings.Cut(path, ".")
 	switch field {
-	case "json_release", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy", "auto_index", "retention", "prewarm":
+	case "json_release", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy", "auto_index", "default_artifact", "hidden_artifacts", "retention", "prewarm":
 		return true
 	}
 	return false
@@ -42,6 +42,9 @@ func providerDefaults(provider string) Object {
 	}
 	if presets.AutoIndexProvider(provider) {
 		out["auto_index"] = false
+	}
+	if presets.DownloadChoicesProvider(provider) {
+		out["default_artifact"], out["hidden_artifacts"] = "", []any{}
 	}
 	return out
 }

@@ -134,9 +134,12 @@ type mirrorApp struct {
 	AutoIndex      bool      `json:"auto_index"`
 	Channels       []string  `json:"channels"`
 	DefaultChannel *string   `json:"default_channel"`
-	UpstreamChain  []string  `json:"upstream_chain"`
-	SourceEpoch    int64     `json:"source_epoch"`
-	Revision       string    `json:"revision"`
+	// Download choices of a JSON release; absent before RedApp 0.11.1.
+	DefaultArtifact string   `json:"default_artifact"`
+	HiddenArtifacts []string `json:"hidden_artifacts"`
+	UpstreamChain   []string `json:"upstream_chain"`
+	SourceEpoch     int64    `json:"source_epoch"`
+	Revision        string   `json:"revision"`
 }
 
 func (c client) mirror(ctx context.Context, key string) (mirrorApp, error) {

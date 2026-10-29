@@ -70,6 +70,38 @@ func AutoIndexProvider(provider string) bool {
 	return provider == "hosted" || provider == "http-cache"
 }
 
+// DownloadChoicesProvider reports whether applications of the provider offer
+// download choices with a default and hidden packages (default_artifact,
+// hidden_artifacts): JSON releases.
+func DownloadChoicesProvider(provider string) bool {
+	return provider == "json-release"
+}
+
+// ValidateDownloadChoices checks default_artifact and hidden_artifacts. The
+// keys need not exist in any release: packages come and go.
+func ValidateDownloadChoices(provider string, defaultArtifact *string, hidden []string) error {
+	if !DownloadChoicesProvider(provider) {
+		if defaultArtifact != nil || hidden != nil {
+			return fmt.Errorf("download choices require json-release")
+		}
+		return nil
+	}
+	if defaultArtifact != nil && *defaultArtifact != "" && !releaseconfig.ValidKey(*defaultArtifact) {
+		return fmt.Errorf("invalid default artifact key")
+	}
+	if len(hidden) > releaseconfig.MaxArtifacts {
+		return fmt.Errorf("too many hidden artifacts")
+	}
+	seen := map[string]bool{}
+	for _, key := range hidden {
+		if !releaseconfig.ValidKey(key) || seen[key] {
+			return fmt.Errorf("invalid or duplicate hidden artifact key")
+		}
+		seen[key] = true
+	}
+	return nil
+}
+
 // ReleaseTemplateKey names the built-in application template whose reviewed
 // distribution a release provider uses when the application has no template
 // reference of its own.
@@ -103,6 +135,8 @@ type AppSpec struct {
 	Instructions    Text                  `json:"instructions"`
 	HTTPPolicy      *cachepolicy.Config   `json:"http_policy,omitempty"`
 	AutoIndex       *bool                 `json:"auto_index,omitempty"`
+	DefaultArtifact *string               `json:"default_artifact,omitempty"`
+	HiddenArtifacts []string              `json:"hidden_artifacts,omitempty"`
 }
 type Distribution struct {
 	Protocol           string      `json:"protocol"`
@@ -433,6 +467,9 @@ func LoadFS(input fs.FS) (Set, error) {
 			}
 			if a.Spec.AutoIndex != nil && !AutoIndexProvider(a.Spec.Provider) {
 				return fail(fmt.Errorf("auto_index requires hosted or http-cache"))
+			}
+			if e = ValidateDownloadChoices(a.Spec.Provider, a.Spec.DefaultArtifact, a.Spec.HiddenArtifacts); e != nil {
+				return fail(e)
 			}
 			if a.Spec.HTTPPolicy != nil {
 				if a.Spec.Provider != "http-cache" {
