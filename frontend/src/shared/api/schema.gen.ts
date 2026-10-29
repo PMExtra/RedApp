@@ -272,8 +272,10 @@ export interface paths {
         };
         /**
          * List the releases a JSON release application discovered.
-         * @description Every release of the current source epoch, discovered by a channel refresh or `lookupRelease`, newest display
-         *     version first (digit runs compare as numbers). At most 200; `truncated` reports more. Releases of earlier
+         * @description Every release of the current source epoch, discovered by a channel refresh or `lookupRelease`, newest version
+         *     first by semantic versioning precedence with any number of numeric core parts (`2024.3` is a version; a missing
+         *     part counts as 0): pre-releases precede their release, build metadata has no precedence, and versions outside
+         *     this form follow, in string order. At most 200; `truncated` reports more. Releases of earlier
          *     source epochs are not served and not listed. Read `getReleaseDownloads` with `version` for the packages of one.
          */
         get: operations["listReleases"];
@@ -1594,7 +1596,7 @@ export interface paths {
         /**
          * List locally known versions of the current source epoch, newest first.
          * @description Ordered by the provider's version order (newest first); versions the provider cannot parse follow in string
-         *     order; JSON release versions compare naturally (digit runs as numbers). A cursor is bound to the source epoch: after a source change it is `400 INVALID_CURSOR`. Available for `codex`,
+         *     order; JSON release versions follow semantic versioning precedence (see `listReleases`). A cursor is bound to the source epoch: after a source change it is `400 INVALID_CURSOR`. Available for `codex`,
          *     `claude-code` and `json-release`.
          */
         get: operations["listVersions"];

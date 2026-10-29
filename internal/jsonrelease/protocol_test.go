@@ -54,7 +54,7 @@ func TestProtocolFreezesConfigurationAndVerifiesIdentity(t *testing.T) {
 }
 
 // A release is named by its version, so release paths are readable and
-// versions order naturally.
+// versions order by semver precedence.
 func TestProtocolReleasePathsAndVersionOrder(t *testing.T) {
 	calls := []string{}
 	protocol, err := NewProtocol(discoveryConfig(), Discoverer{Query: fixtureQuery, Fetch: fixtureFetch(&calls)})

@@ -51,7 +51,7 @@ func (p *Protocol) ValidateVersion(version string) (string, error) {
 	return version, nil
 }
 
-// CompareVersions orders versions naturally (CompareDisplayVersions).
+// CompareVersions orders versions by semver precedence (package CompareVersions).
 func (p *Protocol) CompareVersions(a, b string) (int, error) {
 	if _, err := p.ValidateVersion(a); err != nil {
 		return 0, err
@@ -59,7 +59,7 @@ func (p *Protocol) CompareVersions(a, b string) (int, error) {
 	if _, err := p.ValidateVersion(b); err != nil {
 		return 0, err
 	}
-	return CompareDisplayVersions(a, b), nil
+	return CompareVersions(a, b), nil
 }
 func (p *Protocol) ResolveChannel(ctx context.Context, channel string) (application.ChannelResolution, error) {
 	release, err := p.discover.Discover(ctx, p.config, channel)

@@ -89,7 +89,8 @@ func TestReleaseHistoryAndLookup(t *testing.T) {
 		t.Fatalf("versions %+v", versions.Items)
 	}
 	h.request("GET", "/admin/api/apps/fixture/editor/status", nil, 200, nil)
-	// Versions order naturally, so cleanup below 1.10.0 selects 1.0.0's file.
+	// Versions order by semver precedence, so cleanup below 1.10.0 selects
+	// 1.0.0's file.
 	cleanup := decodeJSONBody[versionCleanupDTO](t, mustBody(h.request("POST", "/admin/api/apps/fixture/editor/version-cleanup/preview", map[string]string{"minimum_version": "1.10.0"}, 201, nil)))
 	if len(cleanup.UnknownVersions) != 0 || cleanup.LogicalBytes != int64(len(packages["1.0.0"])) {
 		t.Fatalf("version cleanup %+v", cleanup)

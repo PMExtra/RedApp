@@ -62,7 +62,7 @@ func (s *Server) releaseHistory(e application.Entry) ([]releaseSummaryDTO, error
 		out = append(out, releaseSummaryDTO{Version: data.Version, Build: data.Build, DiscoveredAt: r.FirstSeen, Channels: channels})
 	}
 	slices.SortStableFunc(out, func(a, b releaseSummaryDTO) int {
-		return jsonrelease.CompareDisplayVersions(b.Version, a.Version)
+		return jsonrelease.CompareVersions(b.Version, a.Version)
 	})
 	return out, nil
 }
