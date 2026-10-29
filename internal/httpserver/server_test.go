@@ -117,7 +117,8 @@ func TestDownloadCountersCSRFAndPasswordChange(t *testing.T) {
 		if ranges == "bytes" {
 			etag = `"sha256-` + header.Get("X-Expected-SHA256") + `"`
 		}
-		if !bytes.Equal(body, data) || header.Get("X-Expected-SHA256") == "" || header.Get("Accept-Ranges") != ranges || header.Get("ETag") != etag {
+		// The miss declares the upstream length, so clients can show progress.
+		if !bytes.Equal(body, data) || header.Get("X-Expected-SHA256") == "" || header.Get("Accept-Ranges") != ranges || header.Get("ETag") != etag || header.Get("Content-Length") != strconv.Itoa(len(data)) {
 			t.Fatal(string(body), header)
 		}
 	}
@@ -223,8 +224,38 @@ func TestReleaseArtifactDigestFailureNeverLooksComplete(t *testing.T) {
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(response.Body)
-	if err == nil || response.Header.Get("ETag") != "" || response.Header.Get("Accept-Ranges") != "none" {
+	// A failure found before any byte is sent is a retryable error response;
+	// once streaming started, the connection is aborted.
+	if response.StatusCode == http.StatusOK && (err == nil || response.Header.Get("ETag") != "" || response.Header.Get("Accept-Ranges") != "none") {
 		t.Fatalf("digest failure looked complete: %d bytes, %v, %v", len(body), err, response.Header)
+	}
+	if response.StatusCode != http.StatusOK {
+		expectCode(t, body, codeUpstreamUnavailable)
+	}
+}
+
+// Without an upstream length the stream is sent chunked and still completes.
+func TestReleaseArtifactWithoutUpstreamLength(t *testing.T) {
+	data := []byte("official archive bytes")
+	h := newHarness(t)
+	metadata := codexRelease("0.159.2", map[string][]byte{"archive.tgz": data}, nil)
+	h.upstreamProxy(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/archive.tgz") {
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
+			_, _ = w.Write(data)
+			return
+		}
+		metadata.ServeHTTP(w, r)
+	}))
+	key := h.releaseApp("fixture", "codex", "codex")
+	body, header := h.request("GET", "/"+key+"/releases/0.159.2/archive.tgz", nil, 200, nil)
+	if !bytes.Equal(body, data) || header.Get("Content-Length") != "" || header.Get("Accept-Ranges") != "none" {
+		t.Fatal(string(body), header)
+	}
+	counters := settled(h.store.Counters, func(c map[string]int64) bool { return c["download_success"] == 1 })
+	if counters["download_errors"] != 0 {
+		t.Fatal(counters)
 	}
 }
 
