@@ -106,12 +106,8 @@ async function submit(text: string) {
   >
     <template #leading><Search /></template>
     <template #option="{ option }">
-      <EntityIcon
-        :src="option.icon"
-        size="sm"
-        :vendor="option.kind === 'vendor'"
-        :has-background="option.iconHasBackground"
-      />
+      <!-- Vendor logos sit on the same tile as application icons, never inverted. -->
+      <EntityIcon :src="option.icon" size="sm" :has-background="option.iconHasBackground" />
       <span class="flex min-w-0 flex-col">
         <span class="truncate">{{ option.label }}</span>
         <span class="truncate text-xs text-muted">
