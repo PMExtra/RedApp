@@ -17,6 +17,7 @@ import (
 	"sync"
 
 	"github.com/PMExtra/RedApp/internal/fsutil"
+	_ "golang.org/x/image/webp" // registers WebP with image.Decode
 )
 
 const (
@@ -276,8 +277,8 @@ func normalize(input []byte, sanitize bool) ([]byte, string, error) {
 		return content, ".svg", err
 	}
 	config, format, err := image.DecodeConfig(bytes.NewReader(input))
-	if err != nil || (format != "png" && format != "jpeg") {
-		return nil, "", fmt.Errorf("%w: expected PNG, JPEG, or static SVG", ErrInvalidIcon)
+	if err != nil || (format != "png" && format != "jpeg" && format != "webp") {
+		return nil, "", fmt.Errorf("%w: expected PNG, JPEG, WebP or SVG", ErrInvalidIcon)
 	}
 	if config.Width < 1 || config.Height < 1 {
 		return nil, "", ErrInvalidIcon
@@ -295,6 +296,7 @@ func normalize(input []byte, sanitize bool) ([]byte, string, error) {
 		extension = ".jpg"
 		err = jpeg.Encode(output, pixels, &jpeg.Options{Quality: 90})
 	} else {
+		// Go has no WebP encoder; WebP is stored as lossless PNG.
 		err = png.Encode(output, pixels)
 	}
 	if err != nil {

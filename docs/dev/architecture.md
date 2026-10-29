@@ -69,7 +69,7 @@ RedApp 是单进程 Go 服务：一个二进制、一个 SQLite 数据库、一�
 | | `internal/warmplan` | 预热计划的上限与字节预算 |
 | | `internal/networkproxy` | 代理设置的数据类型与继承解析（不含 transport） |
 | | `internal/pathmatch` | 应用内相对路径匹配 |
-| | `internal/media` | 图标（SVG 删除主动与外部内容、PNG/JPEG 重编码）按内容哈希存储 |
+| | `internal/media` | 图标（SVG 删除主动与外部内容、PNG/JPEG 重编码，WebP 转 PNG）按内容哈希存储 |
 | | `internal/fsutil` | 持久文件原语：建目录、目录 fsync、拒绝符号链接的只读打开、暂存文件或已写完文件的 rename 发布、原子写、删除、随机 ID |
 | | `internal/spool` | 两个缓存引擎共享的流式文件核心：单写者填充、多读者跟随、有界重试与字节范围续传、整文件校验与并发校验合并、文件状态 |
 | | `internal/jsoncheck` | 拒绝重复键、过深嵌套和尾随数据 |

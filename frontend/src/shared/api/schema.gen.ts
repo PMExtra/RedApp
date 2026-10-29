@@ -1171,7 +1171,8 @@ export interface paths {
         put?: never;
         /**
          * Upload an icon image.
-         * @description PNG and JPEG are decoded and re-encoded (metadata removed; at most 4096 px per side and 4,194,304 px total).
+         * @description PNG, JPEG and still WebP are decoded and re-encoded (metadata removed; at most 4096 px per side and 4,194,304 px
+         *     total); WebP is stored as PNG.
          *     SVG is stored byte for byte unless it contains scripts, event handlers, animations, HTML or MathML elements,
          *     processing instructions, `xml:base`, or references outside the file (any `href` other than `#id`, except PNG,
          *     JPEG, GIF or WebP `data:` URLs on `image`; `url()` other than `url(#id)`; CSS at-rules, escapes or image
@@ -3104,7 +3105,7 @@ export interface components {
             cleanup_pending: boolean;
         };
         IconUpload: {
-            /** @description One PNG, JPEG or SVG image, at most 2 MiB. */
+            /** @description One PNG, JPEG, WebP or SVG image, at most 2 MiB. */
             file: string;
         };
         StoredIcon: {

@@ -2554,7 +2554,8 @@ paths:
       tags: [directory]
       summary: Upload an icon image.
       description: |
-        PNG and JPEG are decoded and re-encoded (metadata removed; at most 4096 px per side and 4,194,304 px total).
+        PNG, JPEG and still WebP are decoded and re-encoded (metadata removed; at most 4096 px per side and 4,194,304 px
+        total); WebP is stored as PNG.
         SVG is stored byte for byte unless it contains scripts, event handlers, animations, HTML or MathML elements,
         processing instructions, `xml:base`, or references outside the file (any `href` other than `#id`, except PNG,
         JPEG, GIF or WebP `data:` URLs on `image`; `url()` other than `url(#id)`; CSS at-rules, escapes or image
@@ -2582,7 +2583,7 @@ paths:
               $ref: '#/components/schemas/IconUpload'
             encoding:
               file:
-                contentType: image/png, image/jpeg, image/svg+xml
+                contentType: image/png, image/jpeg, image/webp, image/svg+xml
       x-error-codes: [ICON_INVALID, ICON_SANITIZE_REQUIRED]
       responses:
         '201':
@@ -7314,7 +7315,7 @@ components:
         file:
           type: string
           contentMediaType: application/octet-stream
-          description: One PNG, JPEG or SVG image, at most 2 MiB.
+          description: One PNG, JPEG, WebP or SVG image, at most 2 MiB.
     StoredIcon:
       type: object
       additionalProperties: false
