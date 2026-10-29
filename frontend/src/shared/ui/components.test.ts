@@ -242,7 +242,7 @@ describe("IconButton", () => {
 });
 
 describe("EntityIcon", () => {
-  it("draws the padded tile unless the icon includes its background", async () => {
+  it("draws the padded tile in both themes unless the icon includes its background", async () => {
     const tile = async (hasBackground: boolean) => {
       const view = await renderWithApp(EntityIcon, {
         props: { src: "/assets/icons/app.svg", alt: "App", hasBackground },
@@ -254,11 +254,12 @@ describe("EntityIcon", () => {
       return classes;
     };
     const plain = await tile(false);
-    expect(plain.box).toContain("bg-icon-bg");
-    expect(plain.image).toContain("dark:p-[12%]");
+    expect(plain.box).toContain("bg-icon-tile");
+    // Not dark-only: the icon keeps its size when the theme changes.
+    expect(plain.image.split(" ")).toContain("p-[12%]");
     const background = await tile(true);
-    expect(background.box).not.toContain("bg-icon-bg");
-    expect(background.image).not.toContain("dark:p-[12%]");
+    expect(background.box).not.toContain("bg-icon-tile");
+    expect(background.image).not.toContain("p-[12%]");
     // The rounded clipping stays, so a square image gets rounded corners.
     expect(background.box).toContain("rounded-lg");
     expect(background.box).toContain("overflow-hidden");

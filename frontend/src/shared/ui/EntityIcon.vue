@@ -7,8 +7,9 @@ import { cn } from "./cn";
  * Vendor or application icon from an `IconPath` (`""` for none). Square icons
  * fall back to a generic glyph when missing or broken; `logo` keeps the aspect
  * ratio at a fixed height and renders nothing without an image. Icons are
- * drawn for light backgrounds: the light theme shows them on the page itself,
- * the dark theme on a dimmed light tile. A `decorative` logo (mood only, next
+ * drawn for light backgrounds. Square icons sit on a padded light tile in
+ * both themes, so their size never changes with the theme; logos show on the
+ * page itself in the light theme and on a dimmed light tile in the dark one. A `decorative` logo (mood only, next
  * to the vendor name) stays transparent and dimmed instead, and the dark theme
  * renders it in grayscale with inverted brightness. Disabled entities use
  * grayscale in both themes; application tiles retain their light background.
@@ -68,7 +69,7 @@ const heights = { xs: "h-5", sm: "h-7", md: "h-9", lg: "h-12", xl: "h-16" };
     :class="
       cn(
         'inline-flex shrink-0 items-center justify-center overflow-hidden rounded-lg',
-        hasBackground && src && !failed ? 'bg-transparent' : 'bg-icon-bg',
+        hasBackground && src && !failed ? 'bg-transparent' : 'bg-icon-tile',
         squares[size],
         vendor && 'dark:invert',
         disabled && 'grayscale',
@@ -79,14 +80,14 @@ const heights = { xs: "h-5", sm: "h-7", md: "h-9", lg: "h-12", xl: "h-16" };
       v-if="src && !failed"
       :src="src"
       :alt="alt"
-      :class="cn('size-full object-contain', !hasBackground && 'dark:p-[12%]')"
+      :class="cn('size-full object-contain', !hasBackground && 'p-[12%]')"
       @error="failed = true"
     />
     <!-- Same box as an image so the glyph matches uploaded icons in size. -->
     <Box
       v-else
       :stroke-width="1.5"
-      class="size-full text-subtle dark:p-[12%] dark:text-[#6b7280]"
+      class="size-full p-[12%] text-subtle dark:text-[#6b7280]"
       :aria-label="alt || undefined"
       :aria-hidden="!alt"
     />
