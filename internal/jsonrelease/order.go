@@ -24,6 +24,13 @@ func CompareVersions(a, b string) int {
 	return strings.Compare(a, b)
 }
 
+// SemverLike reports whether CompareVersions orders s by precedence rather
+// than as a string.
+func SemverLike(s string) bool {
+	_, ok := parseVersion(s)
+	return ok
+}
+
 type version struct {
 	core       []string
 	prerelease []string

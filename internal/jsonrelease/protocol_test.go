@@ -74,6 +74,14 @@ func TestProtocolReleasePathsAndVersionOrder(t *testing.T) {
 	if order, err := protocol.CompareVersions("1.10.0", "1.9.2"); err != nil || order != 1 {
 		t.Fatal("natural version order", order, err)
 	}
+	if _, err = protocol.CompareVersions("1.0.0", "nightly"); err == nil {
+		t.Fatal("a version outside the semver form was ordered")
+	}
+	for _, channel := range []string{"latest", "stable"} {
+		if _, err = protocol.ParsePath("releases/" + channel + "/windows-x64-exe-user"); err == nil {
+			t.Fatal("a channel name accepted as a release", channel)
+		}
+	}
 	if ch, err := protocol.CanonicalChannel("latest"); err != nil || ch != "stable" {
 		t.Fatal(ch, err)
 	}

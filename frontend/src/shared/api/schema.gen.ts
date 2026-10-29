@@ -305,7 +305,7 @@ export interface paths {
          * Discover one version of a JSON release application.
          * @description Runs the configuration's `lookup` for the version and stores the verified release without moving any channel.
          *     It then appears in `listReleases` and the versions tab, and its packages download like any release. A version
-         *     already discovered is verified again and must be identical. Without a `lookup` the request fails with
+         *     already stored is returned as stored without asking the upstream. Without a `lookup` the request fails with
          *     `VALIDATION_FAILED`; a version the upstream does not have is `VERSION_NOT_FOUND`. Like a channel refresh, it
          *     needs an enabled application (`APPLICATION_DISABLED`).
          */

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -97,6 +98,14 @@ func TestReleaseHistoryAndLookup(t *testing.T) {
 	}
 	h.expectError("GET", "/api/apps/fixture/editor/downloads?version=3.0.0", nil, 404, codeFileNotFound, nil)
 	h.expectError("GET", "/api/apps/fixture/editor/downloads?version=a%20b", nil, 404, codeFileNotFound, nil)
+	for _, channel := range []string{"latest", "stable"} {
+		h.expectError("GET", "/fixture/editor/releases/"+channel+"/win-x64", nil, 404, codeFileNotFound, nil)
+	}
+	// Unknown versions are not metadata failures.
+	h.request("GET", "/fixture/editor/releases/7.7.7/win-x64", nil, 404, nil)
+	if events, err := h.store.Events(); err != nil || slices.ContainsFunc(events, func(e map[string]any) bool { return e["code"] == "metadata_fetch_failed" && e["version"] == "7.7.7" }) {
+		t.Fatal("unknown version recorded as a metadata failure", err)
+	}
 	h.expectError("GET", "/api/apps/fixture/editor/downloads?channel=stable&version=1.0.0", nil, 400, codeInvalidQuery, nil)
 
 	h.expectError("POST", "/admin/api/apps/fixture/editor/releases/lookup", map[string]string{"version": "9.9.9"}, 404, codeVersionNotFound, nil)

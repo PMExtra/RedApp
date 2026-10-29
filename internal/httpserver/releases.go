@@ -109,11 +109,11 @@ func versionFiles(views []download.View) map[string]versionFilesDTO {
 }
 
 // newestFirst orders versions by the provider's version order, newest first.
-// Versions the provider cannot parse follow in string order.
+// Versions the provider cannot parse or order follow in string order.
 func newestFirst(protocol application.Protocol, versions []string) []string {
 	var comparable, other []string
 	for _, v := range versions {
-		if canonical, err := protocol.ValidateVersion(v); err == nil && canonical == v {
+		if canonical, err := protocol.ValidateVersion(v); err == nil && canonical == v && orderable(protocol, v) {
 			comparable = append(comparable, v)
 		} else {
 			other = append(other, v)
@@ -126,6 +126,11 @@ func newestFirst(protocol application.Protocol, versions []string) []string {
 		return err == nil && order > 0
 	})
 	return append(comparable, other...)
+}
+
+func orderable(protocol application.Protocol, v string) bool {
+	_, err := protocol.CompareVersions(v, v)
+	return err == nil
 }
 
 func (s *Server) listVersions(w http.ResponseWriter, r *http.Request) {
