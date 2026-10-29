@@ -78,8 +78,8 @@
       "prewarm": []
     },
     "instructions": {
-      "en": "The RSU product supplies the complete offline suite as downloads.windowsZIP. Download and preserve the whole ZIP, including its EXE and .dat; never mirror only the EXE or substitute windowsWeb, windowsWebLP or toolboxWindows. No duplicate artifacts are registered for suite components. Architecture remains unknown. Validate the package and offline installation before enabling prewarm; metadata and checksum validation alone do not verify archive contents. These downloads do not reconfigure the IDE’s built-in updater. Metadata, query mappings and official download response headers have been checked. These checks do not verify every package’s full contents or installation behavior. These downloads do not reconfigure the IDE’s built-in updater. Validate packages and installation in your environment before enabling automatic prewarm.",
-      "zh-CN": "RSU 产品通过 downloads.windowsZIP 提供完整离线套件。下载并保留整个 ZIP（包括 EXE 和 .dat），不单独分发 EXE，不以 windowsWeb、windowsWebLP 或 toolboxWindows 替代，不为套装子组件重复登记制品。架构保持未知。启用预热前须验证安装包及离线安装；元数据与校验文件验证不代表归档内容已验证。这些下载不会修改 IDE 自带更新器。 元数据、查询映射和官方下载响应头已经核对。这些检查不代表所有安装包的完整内容或安装行为均已验证。这些下载不会修改 IDE 自带更新器。启用自动预热前，应在自己的环境中验证安装包与安装行为。"
+      "en": "",
+      "zh-CN": ""
     }
   }
 }

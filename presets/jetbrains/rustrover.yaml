@@ -78,8 +78,8 @@
       "prewarm": []
     },
     "instructions": {
-      "en": "Metadata, query mappings and official download response headers have been checked. These checks do not verify every package’s full contents or installation behavior. These downloads do not reconfigure the IDE’s built-in updater. Validate packages and installation in your environment before enabling automatic prewarm.",
-      "zh-CN": "元数据、查询映射和官方下载响应头已经核对。这些检查不代表所有安装包的完整内容或安装行为均已验证。这些下载不会修改 IDE 自带更新器。启用自动预热前，应在自己的环境中验证安装包与安装行为。"
+      "en": "",
+      "zh-CN": ""
     }
   }
 }

@@ -79,7 +79,7 @@ VS Code 使用各平台更新 JSON：`productVersion` 为显示版本，`version
 
 ### 候选预置清单
 
-12 个 JSON Release 预置为 VS Code、IntelliJ IDEA、PyCharm、CLion、WebStorm、PhpStorm、GoLand、Rider、DataGrip、RubyMine、RustRover、dotUltimate。新预置默认禁用且不预热，官方元数据及校验文件已经核对，**完整安装包下载与安装仍未验证**。不包含 MPS、DataSpell、AppCode、Fleet、Aqua、Writerside、Gateway、Toolbox。
+12 个 JSON Release 预置为 VS Code、IntelliJ IDEA、PyCharm、CLion、WebStorm、PhpStorm、GoLand、Rider、DataGrip、RubyMine、RustRover、dotUltimate。新预置默认禁用且不预热，官方元数据及校验文件已经核对，**完整安装包下载与安装仍未验证**。不包含 MPS、DataSpell、AppCode、Fleet、Aqua、Writerside、Gateway、Toolbox。预置不带使用说明；用户需要时，在应用设置中编写。
 
 | JetBrains 候选 | 配置产品码 | 制品/校验文件前缀 |
 | --- | --- | --- |
