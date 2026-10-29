@@ -1,1 +1,0 @@
-import{Wt as e}from"./ui-BH7QG4x2.js";var t=e({name:`chevron-left`,size:24,node:[[`path`,{d:`m15 18-6-6 6-6`,key:`1wnfg3`}]]});export{t};

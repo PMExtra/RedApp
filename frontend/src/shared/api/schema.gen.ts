@@ -1172,9 +1172,13 @@ export interface paths {
         /**
          * Upload an icon image.
          * @description PNG and JPEG are decoded and re-encoded (metadata removed; at most 4096 px per side and 4,194,304 px total).
-         *     SVG must pass the static allowlist (no scripts, event handlers, external references, foreign elements or entities);
-         *     violations are rejected, never stripped. Storage is content-addressed, so uploading the same image twice returns
-         *     the same path. The returned path can then be set as `icon` or `localized_icons.*`.
+         *     SVG is stored byte for byte unless it contains scripts, event handlers, animations, HTML or MathML elements,
+         *     processing instructions, `xml:base`, or references outside the file (any `href` other than `#id`, except PNG,
+         *     JPEG, GIF or WebP `data:` URLs on `image`; `url()` other than `url(#id)`; CSS at-rules, escapes or image
+         *     functions). Such content is removed only when `sanitize=true`; otherwise the upload fails with
+         *     `ICON_SANITIZE_REQUIRED` listing it in `details`. Malformed XML, DOCTYPE and entity declarations are always
+         *     rejected. Storage is content-addressed, so uploading the same image twice returns the same path. The returned
+         *     path can then be set as `icon` or `localized_icons.*`.
          */
         post: operations["uploadIcon"];
         delete?: never;
@@ -2487,13 +2491,15 @@ export interface components {
                 request_id: string;
                 /** @description The same request may succeed later without changes. */
                 retryable: boolean;
+                /** @description Only for `ICON_SANITIZE_REQUIRED`: the removed elements, attributes and processing instructions, for example `<script>` or `<svg onload>`. */
+                details?: string[];
             };
         };
         /**
          * @description Stable error code; see `components.x-error-codes`.
          * @enum {string}
          */
-        ErrorCode: "INVALID_REQUEST" | "VALIDATION_FAILED" | "INVALID_QUERY" | "INVALID_CURSOR" | "INVALID_PATH" | "REQUEST_ORIGIN_INVALID" | "IF_MATCH_REQUIRED" | "CURRENT_PASSWORD_INCORRECT" | "PASSWORD_INVALID" | "PROXY_REDACTED_MISMATCH" | "ICON_INVALID" | "PACKAGE_INVALID" | "INSTRUCTIONS_TRUST_REQUIRED" | "AUTH_REQUIRED" | "LOGIN_FAILED" | "ORIGIN_REJECTED" | "CSRF_REJECTED" | "NOT_FOUND" | "VENDOR_NOT_FOUND" | "APPLICATION_NOT_FOUND" | "CATEGORY_NOT_FOUND" | "FILE_NOT_FOUND" | "SOURCE_NOT_FOUND" | "PREVIEW_NOT_FOUND" | "JOB_NOT_FOUND" | "TRANSFER_NOT_FOUND" | "CACHE_ENTRY_NOT_FOUND" | "VERSION_NOT_FOUND" | "CAPABILITY_UNSUPPORTED" | "METHOD_NOT_ALLOWED" | "REVISION_CONFLICT" | "ALREADY_EXISTS" | "VENDOR_NOT_EMPTY" | "BUILTIN_PROTECTED" | "ENTITY_DELETED" | "APPLICATION_DISABLED" | "APPLICATION_DELETE_PENDING" | "CATEGORY_AMBIGUOUS" | "FILE_CONFLICT" | "TRANSFER_ID_IN_USE" | "TRANSFER_CANCELLED" | "PREVIEW_STALE" | "OPERATION_IN_PROGRESS" | "SOURCE_CHANGED" | "IMPORT_NOT_READY" | "PREWARM_BUSY" | "PREWARM_REQUEST_CONFLICT" | "ARTIFACT_TOO_LARGE" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "LOGIN_RATE_LIMITED" | "PREVIEW_LIMIT_EXCEEDED" | "INTERNAL_ERROR" | "UPSTREAM_UNAVAILABLE" | "INDEX_UNSUPPORTED" | "LOOP_DETECTED" | "UPSTREAM_NOT_FOUND" | "MIRROR_NOT_FOUND" | "UPSTREAM_IN_USE" | "UPSTREAM_INCOMPATIBLE" | "METADATA_UNTRUSTED" | "CHANNELS_UNVERIFIED" | "IMPORT_SOURCE_FAILED" | "STORAGE_UNAVAILABLE" | "NOT_READY" | "SESSION_LIMIT_EXCEEDED" | "TRANSFER_CAPACITY" | "CACHE_CONTENDED" | "PREVIEW_BUSY" | "INSTALLER_UNAVAILABLE" | "CACHE_MISS";
+        ErrorCode: "INVALID_REQUEST" | "VALIDATION_FAILED" | "INVALID_QUERY" | "INVALID_CURSOR" | "INVALID_PATH" | "REQUEST_ORIGIN_INVALID" | "IF_MATCH_REQUIRED" | "CURRENT_PASSWORD_INCORRECT" | "PASSWORD_INVALID" | "PROXY_REDACTED_MISMATCH" | "ICON_INVALID" | "ICON_SANITIZE_REQUIRED" | "PACKAGE_INVALID" | "INSTRUCTIONS_TRUST_REQUIRED" | "AUTH_REQUIRED" | "LOGIN_FAILED" | "ORIGIN_REJECTED" | "CSRF_REJECTED" | "NOT_FOUND" | "VENDOR_NOT_FOUND" | "APPLICATION_NOT_FOUND" | "CATEGORY_NOT_FOUND" | "FILE_NOT_FOUND" | "SOURCE_NOT_FOUND" | "PREVIEW_NOT_FOUND" | "JOB_NOT_FOUND" | "TRANSFER_NOT_FOUND" | "CACHE_ENTRY_NOT_FOUND" | "VERSION_NOT_FOUND" | "CAPABILITY_UNSUPPORTED" | "METHOD_NOT_ALLOWED" | "REVISION_CONFLICT" | "ALREADY_EXISTS" | "VENDOR_NOT_EMPTY" | "BUILTIN_PROTECTED" | "ENTITY_DELETED" | "APPLICATION_DISABLED" | "APPLICATION_DELETE_PENDING" | "CATEGORY_AMBIGUOUS" | "FILE_CONFLICT" | "TRANSFER_ID_IN_USE" | "TRANSFER_CANCELLED" | "PREVIEW_STALE" | "OPERATION_IN_PROGRESS" | "SOURCE_CHANGED" | "IMPORT_NOT_READY" | "PREWARM_BUSY" | "PREWARM_REQUEST_CONFLICT" | "ARTIFACT_TOO_LARGE" | "PAYLOAD_TOO_LARGE" | "UNSUPPORTED_MEDIA_TYPE" | "LOGIN_RATE_LIMITED" | "PREVIEW_LIMIT_EXCEEDED" | "INTERNAL_ERROR" | "UPSTREAM_UNAVAILABLE" | "INDEX_UNSUPPORTED" | "LOOP_DETECTED" | "UPSTREAM_NOT_FOUND" | "MIRROR_NOT_FOUND" | "UPSTREAM_IN_USE" | "UPSTREAM_INCOMPATIBLE" | "METADATA_UNTRUSTED" | "CHANNELS_UNVERIFIED" | "IMPORT_SOURCE_FAILED" | "STORAGE_UNAVAILABLE" | "NOT_READY" | "SESSION_LIMIT_EXCEEDED" | "TRANSFER_CAPACITY" | "CACHE_CONTENDED" | "PREVIEW_BUSY" | "INSTALLER_UNAVAILABLE" | "CACHE_MISS";
         /** @description 32 lowercase hex characters. */
         Uid: string;
         /**
@@ -6492,7 +6498,10 @@ export interface operations {
     };
     uploadIcon: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Store an SVG with the content listed by `ICON_SANITIZE_REQUIRED` removed. */
+                sanitize?: "true";
+            };
             header?: never;
             path?: never;
             cookie?: never;

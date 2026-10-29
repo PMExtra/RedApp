@@ -94,6 +94,10 @@ export default {
       remove: "Remove",
       uploading: "Uploading image",
       hint: "PNG, JPEG or SVG, at most 2 MiB. Saved with the form.",
+      sanitizeTitle: "Sanitize the SVG before uploading?",
+      sanitizeDescription:
+        "The image contains scripts, animations or references outside the file, which must be removed before it can be uploaded: {items}. Static shapes and colors are kept; removed effects no longer show.",
+      sanitizeConfirm: "Sanitize and upload",
     },
     source: {
       urls: "Source URLs",

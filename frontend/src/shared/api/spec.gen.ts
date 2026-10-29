@@ -89,6 +89,10 @@ export const errorCatalog = {
     "status": 400,
     "retryable": false
   },
+  "ICON_SANITIZE_REQUIRED": {
+    "status": 400,
+    "retryable": false
+  },
   "PACKAGE_INVALID": {
     "status": 400,
     "retryable": false

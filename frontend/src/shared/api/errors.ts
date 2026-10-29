@@ -17,6 +17,8 @@ export class ApiError extends Error {
   readonly requestId: string | null;
   /** The same request may succeed later without changes. */
   readonly retryable: boolean;
+  /** Code-specific items, such as the content `ICON_SANITIZE_REQUIRED` removes. */
+  readonly details: readonly string[];
 
   constructor(init: {
     code: AnyErrorCode;
@@ -24,12 +26,14 @@ export class ApiError extends Error {
     status: number;
     requestId?: string | null;
     retryable?: boolean;
+    details?: readonly string[];
   }) {
     super(init.message);
     this.code = init.code;
     this.status = init.status;
     this.requestId = init.requestId ?? null;
     this.retryable = init.retryable ?? false;
+    this.details = init.details ?? [];
   }
 
   is(...codes: AnyErrorCode[]): boolean {
@@ -61,7 +65,7 @@ export function apiErrorFromBody(status: number, body: unknown, headers?: Header
   const error =
     typeof body === "object" && body !== null && "error" in body ? body.error : undefined;
   if (typeof error === "object" && error !== null) {
-    const { code, message, request_id, retryable } = error as Record<string, unknown>;
+    const { code, message, request_id, retryable, details } = error as Record<string, unknown>;
     if (isErrorCode(code)) {
       return new ApiError({
         code,
@@ -69,6 +73,9 @@ export function apiErrorFromBody(status: number, body: unknown, headers?: Header
         status,
         requestId: typeof request_id === "string" ? request_id : headerId,
         retryable: typeof retryable === "boolean" ? retryable : errorCatalog[code].retryable,
+        details: Array.isArray(details)
+          ? details.filter((item): item is string => typeof item === "string")
+          : [],
       });
     }
   }

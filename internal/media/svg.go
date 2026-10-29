@@ -5,416 +5,370 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
-	"regexp"
 	"strconv"
 	"strings"
 )
 
-const svgNamespace = "http://www.w3.org/2000/svg"
-
-var (
-	svgID        = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]{0,127}$`)
-	svgNumber    = regexp.MustCompile(`^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$`)
-	svgPathData  = regexp.MustCompile(`^[MmZzLlHhVvCcSsQqTtAa0-9eE.,+\-\s]*$`)
-	svgHexColor  = regexp.MustCompile(`^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$`)
-	svgColor     = regexp.MustCompile(`^(?:[A-Za-z]{1,24}|(?:rgb|rgba|hsl|hsla)\([0-9.,%+\-\s]+\))$`)
-	svgTransform = regexp.MustCompile(`^(?:(?:matrix|translate|scale|rotate|skewX|skewY)\([0-9eE.,+\-\s]+\)[,\s]*)+$`)
+const (
+	svgNamespace   = "http://www.w3.org/2000/svg"
+	xhtmlNamespace = "http://www.w3.org/1999/xhtml"
+	mathNamespace  = "http://www.w3.org/1998/Math/MathML"
+	xmlNamespace   = "http://www.w3.org/XML/1998/namespace"
 )
 
-// This is deliberately a static icon subset, not an SVG sanitizer that tries
-// to preserve arbitrary input. Unsupported elements and attributes are errors.
-var svgElementAttrs = map[string]string{
-	"svg":            "viewBox width height preserveAspectRatio version role",
-	"g":              "",
-	"defs":           "",
-	"title":          "",
-	"desc":           "",
-	"path":           "d pathLength",
-	"rect":           "x y width height rx ry pathLength",
-	"circle":         "cx cy r pathLength",
-	"ellipse":        "cx cy rx ry pathLength",
-	"line":           "x1 y1 x2 y2 pathLength",
-	"polyline":       "points pathLength",
-	"polygon":        "points pathLength",
-	"linearGradient": "x1 y1 x2 y2 gradientUnits gradientTransform spreadMethod",
-	"radialGradient": "cx cy r fx fy fr gradientUnits gradientTransform spreadMethod",
-	"stop":           "offset stop-color stop-opacity",
-	"clipPath":       "clipPathUnits",
+// SVG icons are only displayed as images under a sandbox CSP, which already
+// keeps them inert. Sanitizing is defense in depth with one goal: the stored
+// file has no script, event handler, animation or reference outside itself.
+// Everything else, including editor metadata, is kept byte for byte.
+var svgActiveElements = map[string]bool{
+	"script": true, "foreignObject": true, "handler": true, "listener": true,
+	"animate": true, "animateColor": true, "animateMotion": true, "animateTransform": true, "set": true,
 }
 
-const svgCommonAttrs = "id fill fill-rule fill-opacity stroke stroke-width stroke-linecap stroke-linejoin stroke-miterlimit stroke-dasharray stroke-dashoffset stroke-opacity opacity color transform clip-path clip-rule vector-effect"
+// SanitizeRequiredError lists the SVG content an upload removes only after the
+// caller agrees to sanitizing.
+type SanitizeRequiredError struct {
+	Removed []string
+}
 
-func normalizeSVG(input []byte) ([]byte, error) { return normalizeSVGMode(input, false) }
+func (e *SanitizeRequiredError) Error() string {
+	return "SVG content must be removed: " + strings.Join(e.Removed, ", ")
+}
 
-func normalizeSVGMode(input []byte, staticEffects bool) ([]byte, error) {
-	decoder := xml.NewDecoder(bytes.NewReader(input))
-	output := &boundedBuffer{limit: MaxStoredBytes}
-	encoder := xml.NewEncoder(output)
-	var tokens []xml.Token
-	var rules []svgStyleRule
-	var styleText strings.Builder
-	var stack []string
-	ids := make(map[string]bool)
-	var references []string
-	rootSeen, rootDone, nodes := false, false, 0
-	effects := 0
-	invalid := func(reason string) ([]byte, error) {
-		return nil, fmt.Errorf("%w: SVG %s", ErrInvalidIcon, reason)
+// svgEdit replaces input[start:end] with text.
+type svgEdit struct {
+	start, end int64
+	text       string
+}
+
+type svgElement struct {
+	raw       string
+	namespace string
+	prefixes  map[string]string
+	start     int64
+	removed   bool // removed with its subtree
+	style     *strings.Builder
+	styleSafe bool
+}
+
+// sanitizeSVG returns input with active and external content removed and a
+// summary of what was removed; output is input itself when nothing is.
+func sanitizeSVG(input []byte) ([]byte, []string, error) {
+	invalid := func(reason string) ([]byte, []string, error) {
+		return nil, nil, fmt.Errorf("%w: SVG %s", ErrInvalidIcon, reason)
 	}
-	for {
-		token, err := decoder.Token()
+	decoder := xml.NewDecoder(bytes.NewReader(input))
+	var edits []svgEdit
+	var removed []string
+	var stack []*svgElement
+	rootSeen, rootDone, nodes := false, false, 0
+	for first := true; ; first = false {
+		start := decoder.InputOffset()
+		token, err := decoder.RawToken()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
 			return invalid("is malformed XML")
 		}
+		var parent *svgElement
+		if len(stack) > 0 {
+			parent = stack[len(stack)-1]
+		}
+		skipped := parent != nil && parent.removed
 		switch node := token.(type) {
 		case xml.StartElement:
 			if rootDone {
-				return invalid("must have exactly one root")
+				return invalid("must have exactly one root element")
 			}
 			nodes++
 			if nodes > 4096 || len(stack) >= 32 || len(node.Attr) > 64 {
-				return nil, ErrTooLarge
+				return nil, nil, ErrTooLarge
 			}
-			name := node.Name.Local
-			if len(stack) > 0 && stack[len(stack)-1] == "style" {
-				return invalid("style cannot contain elements")
+			element, err := openSVGElement(node, parent, start)
+			if err != nil {
+				return nil, nil, err
 			}
-			allowed, ok := svgElementAttrs[name]
-			if name == "style" {
-				if len(stack) == 0 || (stack[len(stack)-1] != "svg" && stack[len(stack)-1] != "defs") || len(node.Attr) != 0 {
-					return invalid("unsupported style placement or attributes")
-				}
-				allowed, ok = "", true
-				styleText.Reset()
-			}
-			if staticEffects {
-				parent := ""
-				if len(stack) > 0 {
-					parent = stack[len(stack)-1]
-				}
-				if extra, exists := staticSVGEffects[name]; exists {
-					effects++
-					if effects > 32 {
-						return nil, ErrTooLarge
-					}
-					if name == "filter" && parent != "defs" || name == "mask" && parent != "defs" && parent != "svg" || strings.HasPrefix(name, "fe") && parent != "filter" {
-						return invalid("invalid effect nesting")
-					}
-					allowed, ok = extra, true
-				}
-				if parent == "filter" && !strings.HasPrefix(name, "fe") || parent == "mask" && name != "path" {
-					return invalid("invalid effect child")
-				}
-				if name == "g" {
-					allowed += " mask filter style"
-				}
-			}
-			if !ok || (node.Name.Space != "" && node.Name.Space != svgNamespace) {
-				return invalid("contains an unsupported element")
-			}
-			if len(stack) == 0 {
-				if name != "svg" || rootSeen {
-					return invalid("root must be svg")
-				}
+			stack = append(stack, element)
+			if !rootSeen {
 				rootSeen = true
-			} else if name == "svg" {
-				return invalid("nested svg is unsupported")
+				if node.Name.Local != "svg" || element.namespace != svgNamespace {
+					return invalid("root must be an svg element in the SVG namespace")
+				}
+				if err := checkSVGRootSize(node); err != nil {
+					return nil, nil, err
+				}
 			}
-			clean := xml.StartElement{Name: xml.Name{Local: name}}
-			if len(stack) == 0 {
-				clean.Attr = append(clean.Attr, xml.Attr{Name: xml.Name{Local: "xmlns"}, Value: svgNamespace})
+			if skipped {
+				element.removed = true
+				continue
 			}
-			attributes := make(map[string]bool)
-			var rootWidth, rootHeight float64
-			for _, attr := range node.Attr {
-				if attr.Name.Space == "" && attr.Name.Local == "xmlns" {
-					if attr.Value != svgNamespace || len(stack) != 0 || attributes["xmlns"] {
-						return invalid("contains an unsupported namespace")
-					}
-					attributes["xmlns"] = true
-					continue
-				}
-				key := attr.Name.Local
-				if attr.Name.Space != "" || attributes[key] || (!wordIn(allowed, key) && !wordIn(svgCommonAttrs, key) && key != "class" && key != "data-name") {
-					return invalid("contains an unsupported attribute")
-				}
-				attributes[key] = true
-				value := strings.TrimSpace(attr.Value)
-				if key == "data-name" {
-					continue
-				}
-				if key == "class" {
-					for _, class := range strings.Fields(value) {
-						if !svgClassName.MatchString(class) {
-							return invalid("unsupported class name")
-						}
-					}
-					clean.Attr = append(clean.Attr, xml.Attr{Name: xml.Name{Local: key}, Value: value})
-					continue
-				}
-				valid := validSVGAttribute(key, value)
-				if staticEffects && (wordIn(staticSVGEffects[name], key) || key == "mask" || key == "filter" || key == "style") {
-					valid = validStaticSVGEffectAttribute(key, value)
-				}
-				if !valid {
-					return invalid("contains an unsupported attribute value")
-				}
-				if len(stack) == 0 && (key == "width" || key == "height") {
-					dimension, _ := svgNumeric(strings.TrimSuffix(value, "px"), true)
-					if dimension > MaxDimension || strings.HasSuffix(value, "%") && dimension > 1 {
-						return nil, ErrTooLarge
-					}
-					if !strings.HasSuffix(value, "%") {
-						if key == "width" {
-							rootWidth = dimension
-						} else {
-							rootHeight = dimension
-						}
-					}
-				}
-				if key == "id" {
-					if ids[value] {
-						return invalid("contains duplicate ids")
-					}
-					ids[value] = true
-				}
-
-				clean.Attr = append(clean.Attr, xml.Attr{Name: xml.Name{Local: key}, Value: value})
+			if parent != nil && parent.style != nil {
+				parent.styleSafe = false
 			}
-			if rootWidth*rootHeight > MaxPixels {
-				return nil, ErrTooLarge
+			if element.namespace == xhtmlNamespace || element.namespace == mathNamespace ||
+				element.namespace == svgNamespace && svgActiveElements[node.Name.Local] {
+				element.removed = true
+				removed = append(removed, "<"+element.raw+">")
+				continue
 			}
-			if name != "style" {
-				tokens = append(tokens, clean)
+			if element.namespace == svgNamespace && node.Name.Local == "style" {
+				element.style, element.styleSafe = &strings.Builder{}, true
 			}
-			stack = append(stack, name)
+			kept, dropped := sanitizeSVGAttributes(node)
+			if len(dropped) > 0 {
+				for _, attr := range dropped {
+					removed = append(removed, "<"+element.raw+" "+attr+">")
+				}
+				// A self-closing tag is reported twice at the same offset.
+				end := decoder.InputOffset()
+				closing := ">"
+				if bytes.HasSuffix(input[start:end], []byte("/>")) {
+					closing = "/>"
+				}
+				edits = append(edits, svgEdit{start, end, startTag(element.raw, kept) + closing})
+			}
 		case xml.EndElement:
-			if len(stack) == 0 {
-				return invalid("has an unmatched end tag")
-			}
-			name := stack[len(stack)-1]
-			if name == "style" {
-				parsed, err := parseSVGStyles(styleText.String())
-				if err != nil {
-					return nil, err
-				}
-				rules = append(rules, parsed...)
-				if len(rules) > 256 {
-					return nil, ErrTooLarge
-				}
-			} else {
-				tokens = append(tokens, xml.EndElement{Name: xml.Name{Local: name}})
+			if parent == nil || rawName(node.Name) != parent.raw {
+				return invalid("has mismatched tags")
 			}
 			stack = stack[:len(stack)-1]
+			outerRemoved := len(stack) > 0 && stack[len(stack)-1].removed
+			unsafeStyle := !parent.removed && parent.style != nil && (!parent.styleSafe || unsafeCSS(parent.style.String(), true))
+			if unsafeStyle {
+				removed = append(removed, "<"+parent.raw+">")
+			}
+			if parent.removed && !outerRemoved || unsafeStyle {
+				// The whole element goes, including edits made inside it.
+				edits = dropNested(edits, parent.start)
+				edits = append(edits, svgEdit{parent.start, decoder.InputOffset(), ""})
+			}
 			if len(stack) == 0 {
 				rootDone = true
 			}
 		case xml.CharData:
-			if len(stack) > 0 && stack[len(stack)-1] == "style" {
-				styleText.Write(node)
+			if parent == nil {
+				if len(bytes.TrimSpace(node)) != 0 {
+					return invalid("has text outside the root element")
+				}
 				continue
 			}
-			if len(bytes.TrimSpace(node)) == 0 {
-				continue
+			if parent.style != nil {
+				parent.style.Write(node)
 			}
-			if len(stack) == 0 || (stack[len(stack)-1] != "title" && stack[len(stack)-1] != "desc") {
-				return invalid("text is only supported in title and desc")
-			}
-			tokens = append(tokens, xml.CopyToken(node))
 		case xml.Comment:
-			// Comments and processing metadata are not part of the stored icon.
+			// Comments are inert and kept.
 		case xml.ProcInst:
-			if node.Target != "xml" || rootSeen {
-				return invalid("processing instructions are unsupported")
+			if strings.EqualFold(node.Target, "xml") {
+				if !first {
+					return invalid("has a misplaced XML declaration")
+				}
+				continue
+			}
+			if !skipped {
+				removed = append(removed, "<?"+node.Target+"?>")
+				edits = append(edits, svgEdit{start, decoder.InputOffset(), ""})
 			}
 		case xml.Directive:
-			return invalid("directives and entities are unsupported")
+			return invalid("contains a DOCTYPE or entity declaration")
 		default:
 			return invalid("contains unsupported XML")
 		}
 	}
-	if !rootSeen || !rootDone || len(stack) != 0 {
-		return invalid("must contain a complete svg root")
+	if !rootSeen || !rootDone {
+		return invalid("must contain a complete svg root element")
 	}
-	for _, token := range tokens {
-		if node, ok := token.(xml.StartElement); ok {
-			node, err := expandSVGClasses(node, rules)
-			if err != nil {
-				return nil, err
-			}
-			for _, attr := range node.Attr {
-				if strings.HasPrefix(attr.Value, "url(#") {
-					references = append(references, strings.TrimSuffix(strings.TrimPrefix(attr.Value, "url(#"), ")"))
-				}
-			}
-			token = node
-		}
-		if err := encoder.EncodeToken(token); err != nil {
-			return nil, err
-		}
+	if len(edits) == 0 {
+		return input, nil, nil
 	}
-	for _, ref := range references {
-		if !ids[ref] {
-			return invalid("references an unknown local id")
-		}
+	var output bytes.Buffer
+	offset := int64(0)
+	for _, edit := range edits {
+		output.Write(input[offset:edit.start])
+		output.WriteString(edit.text)
+		offset = edit.end
 	}
-	if err := encoder.Flush(); err != nil {
-		return nil, err
-	}
-	return output.Bytes(), nil
+	output.Write(input[offset:])
+	return output.Bytes(), summarize(removed), nil
 }
 
-func wordIn(words, value string) bool {
-	return strings.Contains(" "+words+" ", " "+value+" ")
+// openSVGElement resolves the element's namespace from the declarations in
+// scope; undeclared prefixes and duplicate attributes are not well-formed.
+func openSVGElement(node xml.StartElement, parent *svgElement, start int64) (*svgElement, error) {
+	element := &svgElement{raw: rawName(node.Name), start: start, prefixes: map[string]string{}}
+	if parent != nil {
+		for prefix, namespace := range parent.prefixes {
+			element.prefixes[prefix] = namespace
+		}
+	}
+	seen := map[string]bool{}
+	for _, attr := range node.Attr {
+		name := rawName(attr.Name)
+		if seen[name] {
+			return nil, fmt.Errorf("%w: SVG has a duplicate attribute", ErrInvalidIcon)
+		}
+		seen[name] = true
+		if attr.Name.Space == "" && attr.Name.Local == "xmlns" {
+			element.prefixes[""] = attr.Value
+		} else if attr.Name.Space == "xmlns" {
+			element.prefixes[attr.Name.Local] = attr.Value
+		}
+	}
+	for _, attr := range node.Attr {
+		if prefix := attr.Name.Space; prefix != "" && prefix != "xmlns" && prefix != "xml" && element.prefixes[prefix] == "" {
+			return nil, fmt.Errorf("%w: SVG uses an undeclared namespace prefix", ErrInvalidIcon)
+		}
+	}
+	namespace, ok := element.prefixes[node.Name.Space]
+	if node.Name.Space != "" && (!ok || namespace == "") {
+		return nil, fmt.Errorf("%w: SVG uses an undeclared namespace prefix", ErrInvalidIcon)
+	}
+	element.namespace = namespace
+	return element, nil
 }
 
-func validSVGAttribute(key, value string) bool {
-	switch key {
-	case "role":
-		return value == "img"
-	case "id":
-		return svgID.MatchString(value)
-	case "fill", "stroke", "stop-color", "color":
-		return svgHexColor.MatchString(value) || svgColor.MatchString(value) || localSVGReference(value)
-	case "clip-path":
-		return value == "none" || localSVGReference(value)
-	case "d":
-		return svgPathData.MatchString(value)
-	case "transform", "gradientTransform":
-		return svgTransform.MatchString(value)
-	case "viewBox":
-		values := strings.FieldsFunc(value, func(c rune) bool { return c == ',' || c == ' ' || c == '\t' || c == '\r' || c == '\n' })
-		if len(values) != 4 {
-			return false
+// sanitizeSVGAttributes keeps attributes that cannot run code or reach
+// outside the file and returns the raw names of the others.
+func sanitizeSVGAttributes(node xml.StartElement) (kept []xml.Attr, dropped []string) {
+	for _, attr := range node.Attr {
+		local, value := attr.Name.Local, strings.TrimSpace(attr.Value)
+		safe := true
+		switch {
+		case attr.Name.Space == "xmlns" || attr.Name.Space == "" && local == "xmlns":
+		case len(local) > 2 && strings.EqualFold(local[:2], "on"):
+			safe = false
+		case attr.Name.Space == "xml" && local == "base":
+			safe = false
+		case local == "href":
+			safe = strings.HasPrefix(value, "#") || node.Name.Local == "image" && embeddedRaster(value)
+		case local == "style":
+			safe = !unsafeCSS(value, true)
+		default:
+			safe = !unsafeCSS(value, false)
 		}
-		for i, v := range values {
-			number, ok := svgNumeric(v, false)
-			if !ok || i >= 2 && number <= 0 {
-				return false
-			}
+		if safe {
+			kept = append(kept, attr)
+		} else {
+			dropped = append(dropped, rawName(attr.Name))
 		}
+	}
+	return kept, dropped
+}
+
+func embeddedRaster(value string) bool {
+	for _, kind := range []string{"png", "jpeg", "gif", "webp"} {
+		if strings.HasPrefix(strings.ToLower(value), "data:image/"+kind+";base64,") {
+			return true
+		}
+	}
+	return false
+}
+
+// unsafeCSS reports CSS that may load a resource: url() other than a local
+// #id, image functions, escapes that could spell those and, in style sheets
+// and style attributes, every at-rule.
+func unsafeCSS(value string, styleSheet bool) bool {
+	lower := strings.ToLower(value)
+	if strings.Contains(lower, `\`) {
 		return true
-	case "points":
-		return svgNumberList(value)
-	case "stroke-dasharray":
-		return value == "none" || svgNumberList(value)
-	case "fill-rule", "clip-rule":
-		return value == "nonzero" || value == "evenodd"
-	case "stroke-linecap":
-		return wordIn("butt round square", value)
-	case "stroke-linejoin":
-		return wordIn("miter round bevel", value)
-	case "gradientUnits", "clipPathUnits":
-		return wordIn("userSpaceOnUse objectBoundingBox", value)
-	case "spreadMethod":
-		return wordIn("pad reflect repeat", value)
-	case "vector-effect":
-		return wordIn("none non-scaling-stroke", value)
-	case "preserveAspectRatio":
-		parts := strings.Fields(value)
-		return len(parts) == 1 && parts[0] == "none" || len(parts) >= 1 && len(parts) <= 2 && wordIn("xMinYMin xMidYMin xMaxYMin xMinYMid xMidYMid xMaxYMid xMinYMax xMidYMax xMaxYMax", parts[0]) && (len(parts) == 1 || wordIn("meet slice", parts[1]))
-	case "version":
-		return value == "1.0" || value == "1.1" || value == "2.0"
-	case "opacity", "fill-opacity", "stroke-opacity", "stop-opacity", "offset":
-		number, ok := svgNumeric(value, true)
-		return ok && number >= 0 && number <= 1
-	default:
-		number, ok := svgNumeric(strings.TrimSuffix(value, "px"), true)
-		if !ok {
-			return false
+	}
+	if styleSheet {
+		if strings.Contains(lower, "@") {
+			return true
 		}
-		switch key {
-		case "width", "height", "r", "rx", "ry", "fr", "pathLength", "stroke-width", "stroke-miterlimit":
-			return number >= 0
-		}
-		return true
-	}
-}
-
-func svgNumberList(value string) bool {
-	values := strings.FieldsFunc(value, func(c rune) bool { return c == ',' || c == ' ' || c == '\t' || c == '\r' || c == '\n' })
-	if len(values) == 0 {
-		return false
-	}
-	for _, v := range values {
-		if _, ok := svgNumeric(v, false); !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func svgNumeric(value string, percent bool) (float64, bool) {
-	isPercent := percent && strings.HasSuffix(value, "%")
-	if isPercent {
-		value = strings.TrimSuffix(value, "%")
-	}
-	if !svgNumber.MatchString(value) {
-		return 0, false
-	}
-	number, err := strconv.ParseFloat(value, 64)
-	if isPercent {
-		number /= 100
-	}
-	return number, err == nil
-}
-
-func localSVGReference(value string) bool {
-	return strings.HasPrefix(value, "url(#") && strings.HasSuffix(value, ")") && svgID.MatchString(value[5:len(value)-1])
-}
-
-// Only reviewed build-time assets may use this bounded, inert effect subset.
-// Uploads retain their existing allowlist. No images, scripts, hrefs or arbitrary CSS.
-var staticSVGEffects = map[string]string{
-	"mask":           "mask-type maskUnits x y width height",
-	"filter":         "x y width height filterUnits color-interpolation-filters",
-	"feFlood":        "flood-opacity result",
-	"feColorMatrix":  "in type values",
-	"feOffset":       "dx dy",
-	"feGaussianBlur": "stdDeviation",
-	"feBlend":        "mode in in2 result",
-}
-
-func validStaticSVGEffectAttribute(key, value string) bool {
-	switch key {
-	case "style":
-		return value == "mix-blend-mode:overlay"
-	case "mask", "filter":
-		return localSVGReference(value)
-	case "mask-type":
-		return value == "alpha"
-	case "maskUnits", "filterUnits":
-		return value == "userSpaceOnUse"
-	case "color-interpolation-filters":
-		return value == "sRGB"
-	case "in", "in2", "result":
-		return svgID.MatchString(value)
-	case "type":
-		return value == "matrix"
-	case "mode":
-		return value == "normal" || value == "overlay"
-	case "values":
-		parts := strings.Fields(value)
-		if len(parts) != 20 {
-			return false
-		}
-		for _, p := range parts {
-			n, ok := svgNumeric(p, false)
-			if !ok || n < -128 || n > 128 {
-				return false
+		for _, function := range []string{"image(", "image-set(", "cross-fade(", "element(", "src(", "expression("} {
+			if strings.Contains(lower, function) {
+				return true
 			}
 		}
-		return true
-	case "stdDeviation":
-		n, ok := svgNumeric(value, false)
-		return ok && n >= 0 && n <= 8
-	case "x", "y", "dx", "dy", "width", "height":
-		n, ok := svgNumeric(value, false)
-		return ok && n >= -512 && n <= 512 && (key != "width" && key != "height" || n > 0)
-	default:
-		return validSVGAttribute(key, value)
 	}
+	for rest := lower; ; {
+		i := strings.Index(rest, "url(")
+		if i < 0 {
+			return false
+		}
+		rest = strings.TrimLeft(rest[i+4:], " \t\r\n\f\"'")
+		if !strings.HasPrefix(rest, "#") {
+			return true
+		}
+	}
+}
+
+// checkSVGRootSize bounds the intrinsic size declared in pixels or percent.
+func checkSVGRootSize(node xml.StartElement) error {
+	var width, height float64
+	for _, attr := range node.Attr {
+		if attr.Name.Space != "" || attr.Name.Local != "width" && attr.Name.Local != "height" {
+			continue
+		}
+		value := strings.TrimSuffix(strings.TrimSpace(attr.Value), "px")
+		percent := strings.HasSuffix(value, "%")
+		number, err := strconv.ParseFloat(strings.TrimSuffix(value, "%"), 64)
+		if err != nil {
+			continue
+		}
+		if percent && number > 100 || !percent && number > MaxDimension {
+			return ErrTooLarge
+		}
+		if !percent && attr.Name.Local == "width" {
+			width = number
+		} else if !percent {
+			height = number
+		}
+	}
+	if width*height > MaxPixels {
+		return ErrTooLarge
+	}
+	return nil
+}
+
+func rawName(name xml.Name) string {
+	if name.Space == "" {
+		return name.Local
+	}
+	return name.Space + ":" + name.Local
+}
+
+func startTag(name string, attrs []xml.Attr) string {
+	var tag strings.Builder
+	tag.WriteString("<" + name)
+	for _, attr := range attrs {
+		tag.WriteString(" " + rawName(attr.Name) + `="`)
+		xml.EscapeText(&tag, []byte(attr.Value))
+		tag.WriteString(`"`)
+	}
+	return tag.String()
+}
+
+// dropNested removes edits inside an element that is removed as a whole.
+func dropNested(edits []svgEdit, start int64) []svgEdit {
+	for len(edits) > 0 && edits[len(edits)-1].start >= start {
+		edits = edits[:len(edits)-1]
+	}
+	return edits
+}
+
+// summarize counts repeated items and bounds the list for display.
+func summarize(items []string) []string {
+	const limit = 20
+	counts := map[string]int{}
+	var order []string
+	for _, item := range items {
+		if counts[item] == 0 {
+			order = append(order, item)
+		}
+		counts[item]++
+	}
+	var summary []string
+	for i, item := range order {
+		if i == limit {
+			summary = append(summary, fmt.Sprintf("… +%d", len(order)-limit))
+			break
+		}
+		if counts[item] > 1 {
+			item += fmt.Sprintf(" ×%d", counts[item])
+		}
+		summary = append(summary, item)
+	}
+	return summary
 }

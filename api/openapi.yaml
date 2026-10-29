@@ -2555,12 +2555,24 @@ paths:
       summary: Upload an icon image.
       description: |
         PNG and JPEG are decoded and re-encoded (metadata removed; at most 4096 px per side and 4,194,304 px total).
-        SVG must pass the static allowlist (no scripts, event handlers, external references, foreign elements or entities);
-        violations are rejected, never stripped. Storage is content-addressed, so uploading the same image twice returns
-        the same path. The returned path can then be set as `icon` or `localized_icons.*`.
+        SVG is stored byte for byte unless it contains scripts, event handlers, animations, HTML or MathML elements,
+        processing instructions, `xml:base`, or references outside the file (any `href` other than `#id`, except PNG,
+        JPEG, GIF or WebP `data:` URLs on `image`; `url()` other than `url(#id)`; CSS at-rules, escapes or image
+        functions). Such content is removed only when `sanitize=true`; otherwise the upload fails with
+        `ICON_SANITIZE_REQUIRED` listing it in `details`. Malformed XML, DOCTYPE and entity declarations are always
+        rejected. Storage is content-addressed, so uploading the same image twice returns the same path. The returned
+        path can then be set as `icon` or `localized_icons.*`.
       security:
         - sessionCookie: []
           csrfToken: []
+      parameters:
+        - name: sanitize
+          in: query
+          required: false
+          description: Store an SVG with the content listed by `ICON_SANITIZE_REQUIRED` removed.
+          schema:
+            type: string
+            enum: ['true']
       x-max-body-bytes: 2162688
       requestBody:
         required: true
@@ -2571,7 +2583,7 @@ paths:
             encoding:
               file:
                 contentType: image/png, image/jpeg, image/svg+xml
-      x-error-codes: [ICON_INVALID]
+      x-error-codes: [ICON_INVALID, ICON_SANITIZE_REQUIRED]
       responses:
         '201':
           description: Stored icon.
@@ -5772,7 +5784,8 @@ components:
     CURRENT_PASSWORD_INCORRECT: {status: 400, retryable: false, description: The current password is wrong.}
     PASSWORD_INVALID: {status: 400, retryable: false, description: The new password is not 12 to 72 bytes long.}
     PROXY_REDACTED_MISMATCH: {status: 400, retryable: false, description: 'The redacted password `****` was submitted for a proxy whose scheme, user or host differs from the saved one.'}
-    ICON_INVALID: {status: 400, retryable: false, description: Unsupported image format, unsafe SVG or raster dimensions over the limit.}
+    ICON_INVALID: {status: 400, retryable: false, description: 'Unsupported image format, malformed SVG, DOCTYPE or entity declarations, or dimensions over the limit; `message` names the reason.'}
+    ICON_SANITIZE_REQUIRED: {status: 400, retryable: false, description: 'The SVG contains active or external content; `details` lists what `sanitize=true` removes.'}
     PACKAGE_INVALID: {status: 400, retryable: false, description: 'Configuration package is malformed, exceeds a limit or contains forbidden content (unknown files, traversal, links, distribution or trust fields).'}
     INSTRUCTIONS_TRUST_REQUIRED: {status: 400, retryable: false, description: The import changes usage instructions and `trust_instructions` is not `true`.}
     AUTH_REQUIRED: {status: 401, retryable: false, description: No valid session; sign in again.}
@@ -5948,6 +5961,12 @@ components:
             retryable:
               type: boolean
               description: The same request may succeed later without changes.
+            details:
+              type: array
+              maxItems: 21
+              description: 'Only for `ICON_SANITIZE_REQUIRED`: the removed elements, attributes and processing instructions, for example `<script>` or `<svg onload>`.'
+              items:
+                type: string
     ErrorCode:
       type: string
       description: Stable error code; see `components.x-error-codes`.
@@ -5963,6 +5982,7 @@ components:
         - PASSWORD_INVALID
         - PROXY_REDACTED_MISMATCH
         - ICON_INVALID
+        - ICON_SANITIZE_REQUIRED
         - PACKAGE_INVALID
         - INSTRUCTIONS_TRUST_REQUIRED
         - AUTH_REQUIRED

@@ -122,7 +122,7 @@ func TestBuildAssetsAndUploadedIcons(t *testing.T) {
 	for _, path := range []string{"/assets/missing.js", "/assets/index.html", "/assets/" + script + ".map"} {
 		h.expectError("GET", path, nil, 404, codeFileNotFound, nil)
 	}
-	icon, err := h.server.icons.Put(bytes.NewReader([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1"/></svg>`)))
+	icon, err := h.server.icons.Put(bytes.NewReader([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1"/></svg>`)), false)
 	if err != nil {
 		t.Fatal(err)
 	}

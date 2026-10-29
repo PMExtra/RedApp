@@ -87,11 +87,10 @@ func New(dir string) (*Store, error) {
 func (s *Store) Close() error { return nil }
 
 // Put accepts image bytes, never a caller-provided filename. The returned path
-// is immutable and names the normalized content, not the original upload.
-func (s *Store) Put(reader io.Reader) (string, error) {
-	return s.put(reader)
-}
-func (s *Store) put(reader io.Reader) (string, error) {
+// is immutable and names the normalized content, not the original upload. An
+// SVG that needs content removed fails with *SanitizeRequiredError unless
+// sanitize is set.
+func (s *Store) Put(reader io.Reader, sanitize bool) (string, error) {
 	input, err := io.ReadAll(io.LimitReader(reader, MaxBytes+1))
 	if err != nil {
 		return "", err
@@ -99,7 +98,7 @@ func (s *Store) put(reader io.Reader) (string, error) {
 	if len(input) > MaxBytes {
 		return "", ErrTooLarge
 	}
-	content, extension, err := normalize(input)
+	content, extension, err := normalize(input, sanitize)
 	if err != nil {
 		return "", err
 	}
@@ -236,31 +235,17 @@ func parsePath(path string) (name, contentType string, ok bool) {
 	return name, contentType, true
 }
 
-// ValidateStaticImage validates reviewed image bytes without changing their identity.
-// Uploads continue to normalize; static assets retain their original bytes.
+// ValidateStaticImage validates reviewed image bytes without changing their
+// identity: an SVG must not need sanitizing.
 func ValidateStaticImage(input []byte, extension string) (string, error) {
-	return validateStaticImage(input, extension, false)
-}
-
-// ValidatePresetImage additionally permits bounded static SVG effects in reviewed,
-// embedded preset assets. It must not be used for uploads or configuration imports.
-func ValidatePresetImage(input []byte, extension string) (string, error) {
-	return validateStaticImage(input, extension, true)
-}
-
-func validateStaticImage(input []byte, extension string, staticEffects bool) (string, error) {
 	if len(input) > MaxBytes {
 		return "", ErrTooLarge
 	}
-	var detected string
-	var err error
-	if extension == ".svg" && staticEffects {
-		_, err = normalizeSVGMode(bytes.TrimSpace(bytes.TrimPrefix(input, []byte{0xef, 0xbb, 0xbf})), true)
-		detected = ".svg"
-	} else {
-		_, detected, err = normalize(input)
+	_, detected, err := normalize(input, false)
+	var sanitize *SanitizeRequiredError
+	if errors.As(err, &sanitize) {
+		err = fmt.Errorf("%w: %s", ErrInvalidIcon, sanitize.Error())
 	}
-
 	if err != nil {
 		return "", err
 	}
@@ -281,10 +266,13 @@ func validateStaticImage(input []byte, extension string, staticEffects bool) (st
 	return "", ErrInvalidIcon
 }
 
-func normalize(input []byte) ([]byte, string, error) {
+func normalize(input []byte, sanitize bool) ([]byte, string, error) {
 	trimmed := bytes.TrimSpace(bytes.TrimPrefix(input, []byte{0xef, 0xbb, 0xbf}))
 	if len(trimmed) > 0 && trimmed[0] == '<' {
-		content, err := normalizeSVG(trimmed)
+		content, removed, err := sanitizeSVG(trimmed)
+		if err == nil && len(removed) > 0 && !sanitize {
+			return nil, "", &SanitizeRequiredError{Removed: removed}
+		}
 		return content, ".svg", err
 	}
 	config, format, err := image.DecodeConfig(bytes.NewReader(input))

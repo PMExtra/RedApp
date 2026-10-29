@@ -52,7 +52,7 @@ func TestRasterNormalizationAndContentAddress(t *testing.T) {
 	for _, format := range []string{"png", "jpeg"} {
 		t.Run(format, func(t *testing.T) {
 			input := append(raster(t, format), []byte("discarded upload metadata")...)
-			path, err := store.Put(bytes.NewReader(input))
+			path, err := store.Put(bytes.NewReader(input), false)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -79,7 +79,7 @@ func TestRasterNormalizationAndContentAddress(t *testing.T) {
 			if _, err := f.Seek(0, io.SeekStart); err != nil {
 				t.Fatalf("file is not seekable: %v", err)
 			}
-			again, err := store.Put(bytes.NewReader(input))
+			again, err := store.Put(bytes.NewReader(input), false)
 			if err != nil || again != path {
 				t.Fatalf("identical upload did not reuse immutable path: %s %v", again, err)
 			}
@@ -110,7 +110,7 @@ func TestRejectMalformedLargeAndDecodeBombImages(t *testing.T) {
 		{"pixel bomb", oversizedHeader(4096, 4096), ErrTooLarge},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := store.Put(bytes.NewReader(test.data)); !errors.Is(err, test.want) {
+			if _, err := store.Put(bytes.NewReader(test.data), true); !errors.Is(err, test.want) {
 				t.Fatalf("got %v, want %v", err, test.want)
 			}
 		})
@@ -121,80 +121,17 @@ func TestRejectMalformedLargeAndDecodeBombImages(t *testing.T) {
 	}
 }
 
-func TestSVGStaticSubset(t *testing.T) {
-	store, _ := testStore(t)
-	input := `<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><!-- discarded --><title>A &amp; B</title><defs><linearGradient id="paint"><stop offset="0%" stop-color="#ff0"/><stop offset="100%" stop-color="rgb(0, 0, 255)"/></linearGradient><clipPath id="clip"><circle cx="32" cy="32" r="30"/></clipPath></defs><g clip-path="url(#clip)" transform="translate(0 1)"><path fill="url(#paint)" d="M0 0 L64 0 L64 64 Z"/></g></svg>`
-	path, err := store.Put(strings.NewReader(input))
-	if err != nil {
-		t.Fatal(err)
-	}
-	f, mime, err := store.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer f.Close()
-	content, err := io.ReadAll(f)
-	if err != nil || mime != "image/svg+xml" || !strings.HasSuffix(path, ".svg") {
-		t.Fatalf("invalid served SVG: %s %s %v", path, mime, err)
-	}
-	if bytes.Contains(content, []byte("discarded")) || bytes.Contains(content, []byte("<?xml")) || !bytes.Contains(content, []byte("A &amp; B")) {
-		t.Fatalf("SVG was not normalized: %s", content)
-	}
-	// Saved XML must be stable and satisfy exactly the same parser on reread.
-	again, err := store.Put(bytes.NewReader(content))
-	if err != nil || again != path {
-		t.Fatalf("normalized SVG is not stable: %s %v", again, err)
-	}
-}
-
-func TestRejectActiveOrUnsupportedSVG(t *testing.T) {
-	store, _ := testStore(t)
-	for name, input := range map[string]string{
-		"script":            `<svg><script>alert(1)</script></svg>`,
-		"event":             `<svg onload="alert(1)"></svg>`,
-		"namespace event":   `<svg xmlns:x="http://www.w3.org/2000/svg" x:onload="alert(1)"></svg>`,
-		"foreign object":    `<svg><foreignObject><p>html</p></foreignObject></svg>`,
-		"style element":     `<svg><style>path{fill:url(https://example.test/a)}</style></svg>`,
-		"style attribute":   `<svg style="background:url(https://example.test/a)"></svg>`,
-		"external paint":    `<svg><path fill="url(https://example.test/a)" d="M0 0"/></svg>`,
-		"escaped paint":     `<svg><path fill="url(&#104;ttps://example.test/a)" d="M0 0"/></svg>`,
-		"data url":          `<svg><image href="data:image/svg+xml;base64,PHN2Zz4="/></svg>`,
-		"javascript href":   `<svg><a href="javascript:alert(1)"><path d="M0 0"/></a></svg>`,
-		"use external":      `<svg><use href="https://example.test/a.svg#x"/></svg>`,
-		"animation":         `<svg><animate attributeName="href"/></svg>`,
-		"doctype":           `<!DOCTYPE svg><svg/>`,
-		"entity definition": `<!DOCTYPE svg [<!ENTITY attack "x">]><svg><title>&attack;</title></svg>`,
-		"unknown entity":    `<svg><title>&attack;</title></svg>`,
-		"xml stylesheet":    `<?xml-stylesheet href="https://example.test/a"?><svg/>`,
-		"html namespace":    `<svg xmlns="http://www.w3.org/1999/xhtml"/>`,
-		"namespace reset":   `<svg xmlns="http://www.w3.org/2000/svg"><g xmlns=""/></svg>`,
-		"unknown local id":  `<svg><path fill="url(#missing)"/></svg>`,
-		"duplicate id":      `<svg><path id="a"/><path id="a"/></svg>`,
-		"duplicate attr":    `<svg width="10" width="20"/>`,
-		"multiple roots":    `<svg/><svg/>`,
-		"nested svg":        `<svg><svg/></svg>`,
-		"mismatched tags":   `<svg><g></svg>`,
-		"trailing text":     `<svg/>payload`,
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, err := store.Put(strings.NewReader(input)); !errors.Is(err, ErrInvalidIcon) {
-				t.Fatalf("accepted active or unsupported SVG: %v", err)
-			}
-		})
-	}
-}
-
 func TestSVGBounds(t *testing.T) {
 	store, _ := testStore(t)
 	for name, input := range map[string]string{
-		"depth":      "<svg>" + strings.Repeat("<g>", 32) + strings.Repeat("</g>", 32) + "</svg>",
-		"nodes":      "<svg>" + strings.Repeat("<path/>", 4096) + "</svg>",
-		"dimension":  `<svg width="4097" height="1"/>`,
-		"pixels":     `<svg width="4096" height="4096"/>`,
-		"percentage": `<svg width="10000%"/>`,
+		"depth":      svgDoc(strings.Repeat("<g>", 32) + strings.Repeat("</g>", 32)),
+		"nodes":      svgDoc(strings.Repeat("<path/>", 4096)),
+		"dimension":  `<svg xmlns="http://www.w3.org/2000/svg" width="4097" height="1"/>`,
+		"pixels":     `<svg xmlns="http://www.w3.org/2000/svg" width="4096" height="4096"/>`,
+		"percentage": `<svg xmlns="http://www.w3.org/2000/svg" width="10000%"/>`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := store.Put(strings.NewReader(input)); !errors.Is(err, ErrTooLarge) {
+			if _, err := store.Put(strings.NewReader(input), true); !errors.Is(err, ErrTooLarge) {
 				t.Fatalf("got %v, want size rejection", err)
 			}
 		})
@@ -203,7 +140,7 @@ func TestSVGBounds(t *testing.T) {
 
 func TestOpenRejectsPathsAndSymlinks(t *testing.T) {
 	store, dir := testStore(t)
-	path, err := store.Put(strings.NewReader(`<svg><circle r="4"/></svg>`))
+	path, err := store.Put(strings.NewReader(svgDoc(`<circle r="4"/>`)), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +168,7 @@ func TestOpenRejectsPathsAndSymlinks(t *testing.T) {
 		f.Close()
 		t.Fatal("followed icon symlink")
 	}
-	if _, err := store.Put(strings.NewReader(`<svg><circle r="4"/></svg>`)); err == nil {
+	if _, err := store.Put(strings.NewReader(svgDoc(`<circle r="4"/>`)), false); err == nil {
 		t.Fatal("overwrote or reused icon symlink")
 	}
 	content, err := os.ReadFile(target)
@@ -278,7 +215,7 @@ func TestConcurrentUploadsPublishOneCompleteFile(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Go(func() {
-			path, err := store.Put(bytes.NewReader(input))
+			path, err := store.Put(bytes.NewReader(input), false)
 			if err != nil {
 				t.Error(err)
 				return

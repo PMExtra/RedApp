@@ -93,14 +93,15 @@ Configuration packages may come from another administrator or another organizati
 
 | Rule | Value |
 | --- | --- |
-| Formats | PNG, JPEG, static SVG |
+| Formats | PNG, JPEG, SVG |
 | Upload size | 2 MiB |
 | Raster dimensions | Up to 4096 pixels per side and 4,194,304 pixels in total |
 
 - PNG and JPEG images are decoded and re-encoded, which removes metadata.
-- SVG files are checked against an allowlist of shapes, gradients and presentation attributes. Scripts, event handlers, external references, foreign elements and entities are rejected, not stripped.
-- Simple `.class` rules containing allowlisted presentation properties are converted to SVG attributes; editor `data-name` metadata is discarded. Complex selectors, other CSS properties and inline styles are rejected.
-- Icons are served with a restrictive Content Security Policy.
+- SVG files without active content are stored byte for byte, including CSS classes and editor metadata.
+- Active content and references outside the file are removed only after the administrator confirms: scripts, event handlers, animations, HTML and MathML elements, processing instructions such as `xml-stylesheet`, `xml:base`, links other than `#id` (embedded PNG, JPEG, GIF or WebP images are kept), `url()` other than `url(#id)`, and CSS at-rules, escapes or image functions. The confirmation lists what is removed.
+- Malformed XML, DOCTYPE and entity declarations are always rejected.
+- Icons are shown only as images and are served with a restrictive Content Security Policy, so the browser neither runs scripts nor loads resources from them.
 
 ### Hosted files
 

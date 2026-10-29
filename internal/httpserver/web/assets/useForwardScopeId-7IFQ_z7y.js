@@ -1,1 +1,0 @@
-import{An as e}from"./ui-BH7QG4x2.js";function t(){let t=e()?.vnode?.scopeId;return t?{[t]:``}:{}}export{t};

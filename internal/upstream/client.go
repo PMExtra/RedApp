@@ -231,6 +231,7 @@ func (c client) getAPI(ctx context.Context, relative string, query url.Values, o
 
 // icon copies an upstream icon into the local media store. Icons are
 // optional: a missing or invalid icon leaves the application without one.
+// Without an administrator to confirm, an SVG that needs sanitizing is invalid.
 func (s *Service) icon(ctx context.Context, c client, remote string) (string, error) {
 	if remote == "" {
 		return "", nil
@@ -250,5 +251,5 @@ func (s *Service) icon(ctx context.Context, c client, remote string) (string, er
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("%w: icon HTTP %d", ErrUnavailable, resp.StatusCode)
 	}
-	return s.icons.Put(io.LimitReader(resp.Body, media.MaxBytes+1))
+	return s.icons.Put(io.LimitReader(resp.Body, media.MaxBytes+1), false)
 }
