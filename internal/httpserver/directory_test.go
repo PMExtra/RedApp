@@ -3,6 +3,7 @@ package httpserver
 import (
 	"bytes"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -262,7 +263,7 @@ func TestIconUploadValidatesAndServesInertImages(t *testing.T) {
 	if code, data, _ := h.raw("POST", "/admin/api/icons", body, contentType, map[string]string{"X-CSRF-Token": ""}); code != 403 {
 		t.Fatal("upload without CSRF", code, string(data))
 	}
-	h.uploadIcon(`<svg onload="alert(1)"><script>alert(1)</script></svg>`, 400)
+	h.uploadIcon(`<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(1)</script></svg>`, 400)
 	code, data, _ := h.raw("POST", "/admin/api/icons", strings.NewReader(static), "image/svg+xml", nil)
 	if code != 415 {
 		t.Fatal("non-multipart upload", code, string(data))
@@ -295,20 +296,52 @@ func TestIconUploadValidatesAndServesInertImages(t *testing.T) {
 func TestExporterIconUpload(t *testing.T) {
 	h := newHarness(t)
 	h.login("")
-	raw, err := os.ReadFile("../media/testdata/hillstone-networks-logo-en.svg")
-	if err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"hillstone-networks-logo-en.svg", "hillstone-networks-logo-cn.svg"} {
+		raw, err := os.ReadFile("../media/testdata/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := h.uploadIcon(string(raw), 201)
+		served, headers := h.request("GET", path, nil, 200, nil)
+		if string(served) != strings.TrimSpace(string(raw)) {
+			t.Fatal("exporter icon was changed", name)
+		}
+		if headers.Get("Content-Type") != "image/svg+xml" || headers.Get("Content-Security-Policy") != "sandbox; default-src 'none'" {
+			t.Fatal("lost inert image headers", headers)
+		}
 	}
-	path := h.uploadIcon(string(raw), 201)
-	served, headers := h.request("GET", path, nil, 200, nil)
-	if !bytes.Contains(served, []byte(`fill="#003285"`)) || bytes.Contains(served, []byte("<style")) || bytes.Contains(served, []byte("class=")) || bytes.Contains(served, []byte("data-name=")) {
-		t.Fatal("exporter icon lost paint or retained CSS/metadata")
+}
+
+func TestIconUploadSanitizesOnlyWithConsent(t *testing.T) {
+	h := newHarness(t)
+	h.login("")
+	unsafe := `<svg xmlns="http://www.w3.org/2000/svg"><style>.a{fill:url(https://example.test/evil)}</style><path class="a" onclick="x()"/></svg>`
+	upload := func(query, content string) (int, []byte) {
+		body, contentType := multipartForm(t, [3]string{"file", "a.svg", content})
+		code, data, _ := h.raw("POST", "/admin/api/icons"+query, body, contentType, nil)
+		return code, data
 	}
-	if headers.Get("Content-Type") != "image/svg+xml" || headers.Get("Content-Security-Policy") != "sandbox; default-src 'none'" {
-		t.Fatal("lost inert image headers", headers)
+	code, data := upload("", unsafe)
+	failure := decodeJSONBody[errorBody](t, data).Error
+	if code != 400 || failure.Code != codeIconSanitizeRequired || !slices.Equal(failure.Details, []string{"<style>", "<path onclick>"}) {
+		t.Fatal("unsafe SVG without consent", code, string(data))
 	}
-	if again := h.uploadIcon(string(served), 201); again != path {
-		t.Fatal("normalized upload is not stable")
+	code, data = upload("?sanitize=true", unsafe)
+	if code != 201 {
+		t.Fatal("sanitized upload", code, string(data))
 	}
-	h.uploadIcon(`<svg><style>.a{fill:url(https://example.test/evil)}</style><path class="a"/></svg>`, 400)
+	served, _ := h.request("GET", decodeJSONBody[storedIconDTO](t, data).Icon, nil, 200, nil)
+	if string(served) != `<svg xmlns="http://www.w3.org/2000/svg"><path class="a"/></svg>` {
+		t.Fatal("sanitized icon", string(served))
+	}
+	code, data = upload("?sanitize=false", unsafe)
+	if code != 400 {
+		t.Fatal("invalid sanitize value", code)
+	}
+	expectCode(t, data, codeInvalidQuery)
+	code, data = upload("?sanitize=true", `<!DOCTYPE svg><svg xmlns="http://www.w3.org/2000/svg"/>`)
+	failure = decodeJSONBody[errorBody](t, data).Error
+	if code != 400 || failure.Code != codeIconInvalid || !strings.Contains(failure.Message, "DOCTYPE") || failure.Details != nil {
+		t.Fatal("malformed SVG", code, string(data))
+	}
 }

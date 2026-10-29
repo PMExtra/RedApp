@@ -88,7 +88,7 @@ func (s *Server) routeTable() []route {
 		{method: "GET", path: "/admin/api/apps/{vendor}/{app}", operation: "getApp", serve: s.getApp, auth: authAdmin},
 		{method: "PATCH", path: "/admin/api/apps/{vendor}/{app}", operation: "updateApp", serve: s.updateApp, auth: authAdmin, maxBody: 8192},
 		{method: "DELETE", path: "/admin/api/apps/{vendor}/{app}", operation: "deleteApp", serve: s.deleteApp, auth: authAdmin, query: []string{"confirm_uid"}},
-		{method: "POST", path: "/admin/api/icons", operation: "uploadIcon", serve: s.uploadIcon, auth: authAdmin, maxBody: 2162688},
+		{method: "POST", path: "/admin/api/icons", operation: "uploadIcon", serve: s.uploadIcon, auth: authAdmin, query: []string{"sanitize"}, maxBody: 2162688},
 		{method: "GET", path: "/admin/api/vendors/{vendor}/configuration", operation: "getVendorConfiguration", serve: s.getVendorConfiguration, auth: authAdmin},
 		{method: "PATCH", path: "/admin/api/vendors/{vendor}/configuration", operation: "patchVendorConfiguration", serve: s.patchVendorConfiguration, auth: authAdmin, maxBody: 262144},
 		{method: "GET", path: "/admin/api/apps/{vendor}/{app}/configuration", operation: "getAppConfiguration", serve: s.getAppConfiguration, auth: authAdmin},

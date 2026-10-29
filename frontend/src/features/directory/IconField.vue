@@ -2,7 +2,8 @@
 import { ref, useId } from "vue";
 import { ImageUp, Trash2 } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
-import { notifyError } from "@/shared/lib";
+import { isApiError } from "@/shared/api";
+import { confirm, notifyError } from "@/shared/lib";
 import { Button, EntityIcon, ProgressBar } from "@/shared/ui";
 import { uploadIcon } from "./queries";
 
@@ -32,18 +33,37 @@ async function choose(event: Event): Promise<void> {
   target.value = "";
   if (!file || props.disabled) return;
   uploading.value = true;
-  progress.value = null;
   try {
-    model.value = await uploadIcon(file, {
-      onProgress: ({ loaded, total }) => {
-        progress.value = total ? Math.round((loaded / total) * 100) : null;
-      },
-    });
+    model.value = await upload(file, false);
   } catch (error) {
-    notifyError(error);
+    if (!isApiError(error, "ICON_SANITIZE_REQUIRED")) {
+      notifyError(error);
+    } else if (
+      await confirm({
+        title: t("directory.icon.sanitizeTitle"),
+        description: t("directory.icon.sanitizeDescription", { items: error.details.join(", ") }),
+        confirmLabel: t("directory.icon.sanitizeConfirm"),
+      })
+    ) {
+      try {
+        model.value = await upload(file, true);
+      } catch (retry) {
+        notifyError(retry);
+      }
+    }
   } finally {
     uploading.value = false;
   }
+}
+
+function upload(file: File, sanitize: boolean): Promise<string> {
+  progress.value = null;
+  return uploadIcon(file, {
+    sanitize,
+    onProgress: ({ loaded, total }) => {
+      progress.value = total ? Math.round((loaded / total) * 100) : null;
+    },
+  });
 }
 </script>
 

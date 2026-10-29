@@ -90,6 +90,10 @@ export default {
       remove: "移除",
       uploading: "正在上传图片",
       hint: "PNG、JPEG 或 SVG，最大 2 MiB。随表单一起保存。",
+      sanitizeTitle: "清洗后再上传这张 SVG？",
+      sanitizeDescription:
+        "图片包含脚本、动画或指向文件外部的引用，必须删除后才能上传：{items}。静态图形和颜色会保留，被删除的效果将不再显示。",
+      sanitizeConfirm: "清洗并上传",
     },
     source: {
       urls: "源地址",

@@ -17,6 +17,7 @@ const (
 	codePasswordInvalid           errorCode = "PASSWORD_INVALID"
 	codeProxyRedactedMismatch     errorCode = "PROXY_REDACTED_MISMATCH"
 	codeIconInvalid               errorCode = "ICON_INVALID"
+	codeIconSanitizeRequired      errorCode = "ICON_SANITIZE_REQUIRED"
 	codePackageInvalid            errorCode = "PACKAGE_INVALID"
 	codeInstructionsTrustRequired errorCode = "INSTRUCTIONS_TRUST_REQUIRED"
 	codeAuthRequired              errorCode = "AUTH_REQUIRED"
@@ -97,6 +98,7 @@ var errorCatalog = map[errorCode]errorClass{
 	codePasswordInvalid:           {400, false},
 	codeProxyRedactedMismatch:     {400, false},
 	codeIconInvalid:               {400, false},
+	codeIconSanitizeRequired:      {400, false},
 	codePackageInvalid:            {400, false},
 	codeInstructionsTrustRequired: {400, false},
 	codeAuthRequired:              {401, false},

@@ -1,0 +1,1 @@
+import{An as e}from"./ui-BTfaPVgx.js";function t(){let t=e()?.vnode?.scopeId;return t?{[t]:``}:{}}export{t};

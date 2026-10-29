@@ -70,7 +70,7 @@ export function useHandlers(...handlers: Parameters<typeof server.use>) {
 /** A spec `Error` response with the catalog's status and `retryable`. */
 export function apiError(
   code: CatalogErrorCode,
-  init: { message?: string; requestId?: string; status?: number } = {},
+  init: { message?: string; requestId?: string; status?: number; details?: string[] } = {},
 ): Response {
   const entry = errorCatalog[code];
   const requestId = init.requestId ?? "fedcba9876543210";
@@ -81,6 +81,7 @@ export function apiError(
         message: init.message ?? code,
         request_id: requestId,
         retryable: entry.retryable,
+        ...(init.details ? { details: init.details } : {}),
       },
     },
     { status: init.status ?? entry.status, headers: { "X-Request-Id": requestId } },

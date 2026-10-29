@@ -153,6 +153,7 @@ export default {
       PASSWORD_INVALID: "新密码长度必须为 12 到 72 字节。",
       PROXY_REDACTED_MISMATCH: "代理的协议、用户或主机已变化，请重新输入代理密码。",
       ICON_INVALID: "不支持该图片，或图片过大。",
+      ICON_SANITIZE_REQUIRED: "该 SVG 包含必须删除后才能上传的内容。",
       PACKAGE_INVALID: "配置包无效。",
       INSTRUCTIONS_TRUST_REQUIRED: "此次导入会修改使用说明，请确认你信任其内容。",
       AUTH_REQUIRED: "会话已过期，请重新登录。",

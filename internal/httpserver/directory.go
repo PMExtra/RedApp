@@ -8,6 +8,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"strings"
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/apps/builtin"
@@ -399,6 +400,11 @@ func readPart(part *multipart.Part, limit int64) (body []byte, tooLarge bool, e 
 }
 
 func (s *Server) uploadIcon(w http.ResponseWriter, r *http.Request) {
+	sanitize := r.URL.Query().Get("sanitize")
+	if sanitize != "" && sanitize != "true" {
+		s.fail(w, r, codeInvalidQuery, nil, "sanitize must be true when present")
+		return
+	}
 	reader, e := multipartBody(r)
 	if e != nil {
 		s.writeError(w, r, e)
@@ -426,13 +432,29 @@ func (s *Server) uploadIcon(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, codeInvalidRequest, err, "Exactly one part named file is required")
 		return
 	}
-	path, err := s.icons.Put(bytes.NewReader(body))
+	path, err := s.icons.Put(bytes.NewReader(body), sanitize == "true")
+	var required *media.SanitizeRequiredError
 	switch {
-	case errors.Is(err, media.ErrInvalidIcon), errors.Is(err, media.ErrTooLarge):
-		s.fail(w, r, codeIconInvalid, err, "Unsupported or unsafe image, or raster dimensions over the limit")
+	case errors.As(err, &required):
+		e := newError(codeIconSanitizeRequired, nil, "The SVG contains content that is removed only with sanitize=true")
+		e.details = required.Removed
+		s.writeError(w, r, e)
+	case errors.Is(err, media.ErrTooLarge):
+		s.fail(w, r, codeIconInvalid, err, "The image exceeds the size or dimension limit")
+	case errors.Is(err, media.ErrInvalidIcon):
+		s.fail(w, r, codeIconInvalid, err, iconInvalidMessage(err))
 	case err != nil:
 		s.writeError(w, r, storageError(err))
 	default:
 		writeCreated(w, "", 0, storedIconDTO{Icon: path})
 	}
+}
+
+// iconInvalidMessage names the reason media gives after its sentinel prefix.
+func iconInvalidMessage(err error) string {
+	_, reason, ok := strings.Cut(err.Error(), media.ErrInvalidIcon.Error()+": ")
+	if !ok {
+		return "Unsupported image; expected PNG, JPEG or SVG"
+	}
+	return "Unsupported image: " + reason
 }

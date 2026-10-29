@@ -353,15 +353,26 @@ export function useDeleteApp() {
   });
 }
 
-/** Uploads an icon image; resolves with the stored `IconPath`. */
+/**
+ * Uploads an icon image; resolves with the stored `IconPath`. An SVG with
+ * active or external content fails with ICON_SANITIZE_REQUIRED unless
+ * `sanitize` agrees to its removal.
+ */
 export async function uploadIcon(
   file: File,
-  options: { signal?: AbortSignal; onProgress?: (progress: UploadProgress) => void } = {},
+  {
+    sanitize = false,
+    ...options
+  }: {
+    sanitize?: boolean;
+    signal?: AbortSignal;
+    onProgress?: (progress: UploadProgress) => void;
+  } = {},
 ): Promise<string> {
   const body = new FormData();
   body.append("file", file);
   const stored = await uploadWithProgress<Schema<"StoredIcon">>({
-    url: "/admin/api/icons",
+    url: sanitize ? "/admin/api/icons?sanitize=true" : "/admin/api/icons",
     body,
     ...options,
   });

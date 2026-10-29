@@ -15,6 +15,7 @@ type apiError struct {
 	code    errorCode
 	message string
 	cause   error
+	details []string
 }
 
 func (e *apiError) Error() string {
@@ -39,6 +40,7 @@ type errorDetail struct {
 	Message   string    `json:"message"`
 	RequestID string    `json:"request_id"`
 	Retryable bool      `json:"retryable"`
+	Details   []string  `json:"details,omitempty"`
 }
 
 // writeError writes the standard Error document. Status and retryable come
@@ -72,7 +74,7 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, e *apiError)
 		h.Del(key)
 	}
 	h.Set("Cache-Control", "no-store")
-	writeJSON(w, class.status, errorBody{Error: errorDetail{Code: e.code, Message: e.message, RequestID: info.id, Retryable: class.retryable}})
+	writeJSON(w, class.status, errorBody{Error: errorDetail{Code: e.code, Message: e.message, RequestID: info.id, Retryable: class.retryable, Details: e.details}})
 }
 
 // fail is the short form for handlers: writeError(newError(...)).

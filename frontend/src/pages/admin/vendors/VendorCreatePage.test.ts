@@ -90,4 +90,36 @@ describe("vendor creation", () => {
     expect(created.calls[0]?.body.icon).toBe("");
     expect(csrf).toEqual(["c".repeat(64)]);
   });
+
+  it("asks before uploading a sanitized SVG", async () => {
+    const queries: string[] = [];
+    const stored = `/assets/icons/${"d".repeat(64)}.svg`;
+    useHandlers(
+      mockApi("post", "/admin/api/icons", ({ request }) => {
+        const query = new URL(request.url).search;
+        queries.push(query);
+        if (query === "?sanitize=true") return { icon: stored };
+        return apiError("ICON_SANITIZE_REQUIRED", { details: ["<script>", "<path onclick>"] });
+      }),
+    );
+    const { user } = await renderAdminPage("/admin/vendors/new");
+    const upload = await screen.findByLabelText("Default logo: Upload image", {
+      selector: "input",
+    });
+    const file = new File(["<svg/>"], "logo.svg", { type: "image/svg+xml" });
+
+    await user.upload(upload, file);
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("<script>, <path onclick>");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog")).toBeNull();
+    });
+    expect(screen.queryByRole("button", { name: "Default logo: Remove" })).toBeNull();
+
+    await user.upload(upload, file);
+    await user.click(await screen.findByRole("button", { name: "Sanitize and upload" }));
+    expect(await screen.findByRole("button", { name: "Default logo: Remove" })).toBeInTheDocument();
+    expect(queries).toEqual(["", "", "?sanitize=true"]);
+  });
 });

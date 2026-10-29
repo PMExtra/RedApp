@@ -156,6 +156,7 @@ export default {
       PROXY_REDACTED_MISMATCH:
         "Enter the proxy password again: the scheme, user or host changed since it was saved.",
       ICON_INVALID: "The image is not supported or is too large.",
+      ICON_SANITIZE_REQUIRED: "The SVG contains content that must be removed before uploading.",
       PACKAGE_INVALID: "The configuration package is invalid.",
       INSTRUCTIONS_TRUST_REQUIRED:
         "This import changes usage instructions; confirm that you trust them.",

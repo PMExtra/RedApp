@@ -69,7 +69,7 @@ RedApp 是单进程 Go 服务：一个二进制、一个 SQLite 数据库、一�
 | | `internal/warmplan` | 预热计划的上限与字节预算 |
 | | `internal/networkproxy` | 代理设置的数据类型与继承解析（不含 transport） |
 | | `internal/pathmatch` | 应用内相对路径匹配 |
-| | `internal/media` | 图标（SVG 白名单、PNG/JPEG 重编码）按内容哈希存储 |
+| | `internal/media` | 图标（SVG 删除主动与外部内容、PNG/JPEG 重编码）按内容哈希存储 |
 | | `internal/fsutil` | 持久文件原语：建目录、目录 fsync、拒绝符号链接的只读打开、暂存文件或已写完文件的 rename 发布、原子写、删除、随机 ID |
 | | `internal/spool` | 两个缓存引擎共享的流式文件核心：单写者填充、多读者跟随、有界重试与字节范围续传、整文件校验与并发校验合并、文件状态 |
 | | `internal/jsoncheck` | 拒绝重复键、过深嵌套和尾随数据 |
@@ -285,7 +285,7 @@ HTTP 层只有一处映射（`previews.go`）：未知、其他应用或其他�
 - **上游信任**：只从配置的固定上游获取；Codex 依赖 HTTPS 和官方元数据中的摘要，Claude 额外验证固定公钥签名。下载完成并校验摘要后才发布缓存。回源强制 `Accept-Encoding: identity`，拒绝非 identity 编码（[ADR 0003](adr/0003-no-http-compression.md)）。
 - **重定向地址类别**：内置公共来源只连接公网地址。管理员配置的来源主机可以在内网，但重定向到其他主机时只能连接与来源同类的地址（公网来源只到公网，非公网来源只到非公网；来源同时解析到两类时拒绝跨主机重定向）。检查在拨号时按解析出的 IP 进行，并直接连接这些 IP，DNS 重绑定无法绕过。配置出口代理时由代理解析主机名，本地不做此检查。
 - **管理认证**：单个管理员密码（bcrypt），内存会话（8 小时，`Path=/admin`、HttpOnly、SameSite=Strict），所有非 GET 请求要求 `X-CSRF-Token`，并检查 Origin。登录按 IP 限速。
-- **输入校验**：JSON 拒绝重复键和未知字段，有大小上限；查询参数白名单；SVG 按白名单解析，位图重编码。
+- **输入校验**：JSON 拒绝重复键和未知字段，有大小上限；查询参数白名单；SVG 删除主动内容与外部引用（上传需管理员确认，导入与预置必须无需删除），位图重编码。
 - **响应头**：全部响应带 `nosniff`、`X-Frame-Options: DENY`、`Cache-Control: no-store`；SPA 有严格 CSP。
 - **使用说明文档**：管理员编写的 HTML/JS，在无同源权限的沙箱 iframe 中运行（[ADR 0006](adr/0006-sandboxed-usage-instructions.md)）。
 
