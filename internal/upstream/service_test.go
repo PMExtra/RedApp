@@ -2,6 +2,7 @@ package upstream
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -38,5 +39,16 @@ func TestReleaseChannelsMustBeDescribed(t *testing.T) {
 	}
 	if err := checkReleaseChannels(mirrorApp{Provider: "codex", Channels: []string{"latest"}}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A mirror keeps the upstream's icon background only with the copied icon.
+func TestMirrorSnapshotIconBackground(t *testing.T) {
+	m := mirrorApp{Provider: "hosted", IconHasBackground: true}
+	if !snapshotOf(m, "/assets/icons/"+strings.Repeat("a", 64)+".png").IconHasBackground {
+		t.Fatal("copied icon lost its background flag")
+	}
+	if snapshotOf(m, "").IconHasBackground {
+		t.Fatal("flag kept without an icon")
 	}
 }

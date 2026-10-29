@@ -200,7 +200,7 @@ func paths(kind string) []string {
 	if kind == "Vendor" {
 		return append(out, "localized_icons.en", "localized_icons.zh-CN")
 	}
-	return append(out, "instructions.en", "instructions.zh-CN", "json_release", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "auto_index", "default_artifact", "hidden_artifacts", "retention", "prewarm", "categories", "tags", "redirect_allowlist")
+	return append(out, "instructions.en", "instructions.zh-CN", "json_release", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "auto_index", "default_artifact", "hidden_artifacts", "retention", "prewarm", "categories", "tags", "redirect_allowlist", "icon_has_background")
 }
 
 // AppPathApplies reports whether an application configuration path (or a
@@ -444,6 +444,9 @@ func (w *configSet) effective(kind string, c ownedConfig) (Object, error) {
 		}
 		if spec.Provider == "http-cache" && spec.RedirectAllowlist == nil {
 			effective["redirect_allowlist"] = []any{}
+		}
+		if _, ok := effective["icon_has_background"]; !ok {
+			effective["icon_has_background"] = false
 		}
 		if presets.DownloadChoicesProvider(spec.Provider) {
 			if spec.DefaultArtifact == nil {
@@ -734,7 +737,7 @@ func vendorSpec(v Vendor) Object {
 }
 
 func appSpec(a Application, instructions LocalizedText, policy cachepolicy.Config) Object {
-	spec := presets.AppSpec{Categories: append([]string{}, a.Categories...), Tags: append([]string{}, a.Tags...), Proxy: networkproxy.Inherit(), Name: presets.Text{En: a.Name.En, ZhCN: a.Name.ZhCN}, Description: presets.Text{En: a.Description.En, ZhCN: a.Description.ZhCN}, Icon: a.Icon, Provider: a.Provider, JSONRelease: a.JSONRelease, BaseURL: a.BaseURL, BaseURLs: a.BaseURLs, SourceStrategy: a.SourceStrategy, CacheTTLSeconds: a.CacheTTLSeconds, Instructions: presets.Text{En: instructions.En, ZhCN: instructions.ZhCN}}
+	spec := presets.AppSpec{Categories: append([]string{}, a.Categories...), Tags: append([]string{}, a.Tags...), Proxy: networkproxy.Inherit(), Name: presets.Text{En: a.Name.En, ZhCN: a.Name.ZhCN}, Description: presets.Text{En: a.Description.En, ZhCN: a.Description.ZhCN}, Icon: a.Icon, IconHasBackground: a.IconHasBackground, Provider: a.Provider, JSONRelease: a.JSONRelease, BaseURL: a.BaseURL, BaseURLs: a.BaseURLs, SourceStrategy: a.SourceStrategy, CacheTTLSeconds: a.CacheTTLSeconds, Instructions: presets.Text{En: instructions.En, ZhCN: instructions.ZhCN}}
 	if presets.VersionsProvider(a.Provider) {
 		spec.Retention = presets.DefaultRetention()
 		spec.Prewarm = presets.DefaultPrewarm()
@@ -808,7 +811,7 @@ func applyPatch(c *ownedConfig, kind string, patch ConfigurationPatch) error {
 				return ErrInvalidDirectory
 			}
 		}
-		if p == "auto_index" {
+		if p == "auto_index" || p == "icon_has_background" {
 			var value bool
 			if json.Unmarshal(patch.Set[p], &value) != nil {
 				return ErrInvalidDirectory
@@ -1132,6 +1135,9 @@ func snapshots(set presets.Set) ([]templateSnapshot, error) {
 		}
 		if _, ok := spec["redirect_allowlist"]; !ok && a.Spec.Provider == "http-cache" {
 			spec["redirect_allowlist"] = []any{}
+		}
+		if _, ok := spec["icon_has_background"]; !ok {
+			spec["icon_has_background"] = false
 		}
 		icon, err := set.Icon(a.Spec.Icon)
 		if err != nil {

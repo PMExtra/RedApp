@@ -64,32 +64,33 @@ func vendorDocument(v store.Vendor) vendorDTO {
 // appDTO is the App schema. Upstream fields are present only for the
 // providers they apply to (store.AppPathApplies).
 type appDTO struct {
-	JSONRelease     *releaseconfig.Config `json:"json_release,omitempty"`
-	UID             string                `json:"uid"`
-	ID              string                `json:"id"`
-	Key             string                `json:"key"`
-	VendorUID       string                `json:"vendor_uid"`
-	VendorID        string                `json:"vendor_id"`
-	Name            localizedText         `json:"name"`
-	Description     localizedText         `json:"description"`
-	Icon            string                `json:"icon"`
-	Provider        string                `json:"provider"`
-	BaseURL         *string               `json:"base_url,omitempty"`
-	BaseURLs        []string              `json:"base_urls,omitempty"`
-	SourceStrategy  string                `json:"source_strategy,omitempty"`
-	CacheTTLSeconds *int                  `json:"cache_ttl_seconds,omitempty"`
-	Categories      []string              `json:"categories"`
-	Tags            []string              `json:"tags"`
-	Enabled         bool                  `json:"enabled"`
-	BuiltinTemplate bool                  `json:"builtin_template"`
-	SourceEpoch     int64                 `json:"source_epoch"`
-	Revision        int64                 `json:"revision"`
-	DeletedAt       *time.Time            `json:"deleted_at"`
+	JSONRelease       *releaseconfig.Config `json:"json_release,omitempty"`
+	UID               string                `json:"uid"`
+	ID                string                `json:"id"`
+	Key               string                `json:"key"`
+	VendorUID         string                `json:"vendor_uid"`
+	VendorID          string                `json:"vendor_id"`
+	Name              localizedText         `json:"name"`
+	Description       localizedText         `json:"description"`
+	Icon              string                `json:"icon"`
+	IconHasBackground bool                  `json:"icon_has_background"`
+	Provider          string                `json:"provider"`
+	BaseURL           *string               `json:"base_url,omitempty"`
+	BaseURLs          []string              `json:"base_urls,omitempty"`
+	SourceStrategy    string                `json:"source_strategy,omitempty"`
+	CacheTTLSeconds   *int                  `json:"cache_ttl_seconds,omitempty"`
+	Categories        []string              `json:"categories"`
+	Tags              []string              `json:"tags"`
+	Enabled           bool                  `json:"enabled"`
+	BuiltinTemplate   bool                  `json:"builtin_template"`
+	SourceEpoch       int64                 `json:"source_epoch"`
+	Revision          int64                 `json:"revision"`
+	DeletedAt         *time.Time            `json:"deleted_at"`
 }
 
 func appDocument(a store.Application) appDTO {
 	out := appDTO{UID: a.UID, ID: a.ID, Key: a.Key, VendorUID: a.VendorUID, VendorID: a.VendorID, Name: fromStoreText(a.Name), Description: fromStoreText(a.Description),
-		Icon: publicIcon(a.Icon), Provider: a.Provider, JSONRelease: a.JSONRelease, Categories: nonNil(a.Categories), Tags: nonNil(a.Tags), Enabled: a.Enabled,
+		Icon: publicIcon(a.Icon), IconHasBackground: a.IconHasBackground && a.Icon != "", Provider: a.Provider, JSONRelease: a.JSONRelease, Categories: nonNil(a.Categories), Tags: nonNil(a.Tags), Enabled: a.Enabled,
 		BuiltinTemplate: a.BuiltinTemplate, SourceEpoch: a.SourceEpoch, Revision: a.Revision, DeletedAt: utcTime(a.DeletedAt)}
 	if a.Provider != "json-release" && !store.AppPathApplies(a.Provider, "cache_ttl_seconds") {
 		out.SourceEpoch = 0

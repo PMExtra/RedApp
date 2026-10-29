@@ -18,6 +18,8 @@ const props = defineProps<{
   emptyText: string;
   variant?: "square" | "logo";
   disabled?: boolean;
+  /** Preview an application icon that brings its own background. */
+  hasBackground?: boolean;
 }>();
 defineSlots<{ reset?: () => unknown }>();
 const { t } = useI18n();
@@ -76,7 +78,14 @@ function upload(file: File, sanitize: boolean): Promise<string> {
     <div
       class="flex h-20 items-center justify-center rounded-lg border border-border bg-surface-sunken p-2"
     >
-      <EntityIcon v-if="model" :src="model" :variant="variant ?? 'square'" :alt="label" size="xl" />
+      <EntityIcon
+        v-if="model"
+        :src="model"
+        :variant="variant ?? 'square'"
+        :alt="label"
+        size="xl"
+        :has-background="hasBackground"
+      />
       <span v-else class="text-xs text-muted">{{ emptyText }}</span>
     </div>
     <ProgressBar v-if="uploading" :value="progress" :label="t('directory.icon.uploading')" />

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, useId } from "vue";
 import { useI18n } from "vue-i18n";
 import { z } from "zod";
 import {
@@ -11,7 +11,7 @@ import {
   useAppConfigurationPatch,
 } from "@/features/configuration";
 import { useLocalized } from "@/shared/i18n";
-import { AsyncState } from "@/shared/ui";
+import { AsyncState, Switch } from "@/shared/ui";
 import IconField from "./IconField.vue";
 import { isReleaseProvider } from "./links";
 import LocalizedTextFields from "./LocalizedTextFields.vue";
@@ -39,12 +39,21 @@ const provider = props.app.provider;
 const vendor = () => props.app.vendor_id;
 const appId = () => props.app.id;
 
-const DETAILS_PATHS = ["name.en", "name.zh-CN", "description.en", "description.zh-CN", "icon"];
+const DETAILS_PATHS = [
+  "name.en",
+  "name.zh-CN",
+  "description.en",
+  "description.zh-CN",
+  "icon",
+  "icon_has_background",
+];
 const detailsSchema = z.object({
   name: nameSchema,
   description: descriptionSchema,
   icon: iconSchema,
+  icon_has_background: z.boolean(),
 });
+const backgroundId = useId();
 const SOURCE_PATHS: readonly string[] =
   provider === "http-cache"
     ? ["base_urls", "source_strategy", "cache_ttl_seconds"]
@@ -129,6 +138,7 @@ const providerName = computed(() => {
             :label="t('directory.icon.appIcon')"
             :empty-text="t('directory.icon.none')"
             :disabled="readOnly"
+            :has-background="section.form.values.icon_has_background"
             @update:model-value="(value: string) => section.form.setFieldValue('icon', value)"
           >
             <template #reset>
@@ -139,6 +149,27 @@ const providerName = computed(() => {
               />
             </template>
           </IconField>
+          <div class="mt-3 flex flex-col gap-1">
+            <div class="flex items-center justify-between gap-2">
+              <label :for="backgroundId" class="flex items-center gap-2 text-sm font-medium">
+                <Switch
+                  :id="backgroundId"
+                  :model-value="section.form.values.icon_has_background"
+                  :disabled="readOnly"
+                  @update:model-value="
+                    (value: boolean) => section.form.setFieldValue('icon_has_background', value)
+                  "
+                />
+                {{ t("directory.icon.hasBackground") }}
+              </label>
+              <FieldReset
+                v-bind="section.resetBinding('icon_has_background')"
+                :disabled="readOnly"
+                @reset="section.reset('icon_has_background')"
+              />
+            </div>
+            <p class="text-xs text-muted">{{ t("directory.icon.hasBackgroundHint") }}</p>
+          </div>
         </div>
       </OverlaySectionCard>
 

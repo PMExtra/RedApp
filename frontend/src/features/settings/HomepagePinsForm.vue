@@ -41,6 +41,7 @@ type PinState = HomepagePinnedApp["state"];
 interface PinInfo {
   name: HomepagePinnedApp["name"];
   icon: string;
+  iconHasBackground: boolean;
   state: PinState;
 }
 const info = ref(new Map<string, PinInfo>());
@@ -51,6 +52,7 @@ function remember(apps: readonly HomepagePinnedApp[]) {
     info.value.set(app.key, {
       name: app.name,
       icon: app.icon ?? "",
+      iconHasBackground: app.icon_has_background,
       state: app.state,
     });
   }
@@ -88,6 +90,7 @@ function add(app: AppListItem) {
   info.value.set(app.key, {
     name: app.name,
     icon: app.icon,
+    iconHasBackground: app.icon_has_background,
     state: app.deleted_at ? "deleted" : app.enabled ? "published" : "disabled",
   });
   draft.value = [...draft.value, app.key];
@@ -157,7 +160,12 @@ function discard() {
           <template #item="{ item, index }">
             <div class="flex items-center gap-3">
               <span class="w-6 text-end text-xs text-muted tabular-nums">{{ index + 1 }}</span>
-              <EntityIcon :src="info.get(item)?.icon ?? ''" size="sm" :disabled="!!hidden(item)" />
+              <EntityIcon
+                :src="info.get(item)?.icon ?? ''"
+                size="sm"
+                :disabled="!!hidden(item)"
+                :has-background="info.get(item)?.iconHasBackground"
+              />
               <span class="flex min-w-0 flex-1 flex-col">
                 <span v-if="pinName(item)" class="truncate text-sm">
                   {{ pinName(item) }}

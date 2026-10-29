@@ -2706,6 +2706,8 @@ export interface components {
             name: components["schemas"]["LocalizedText"];
             description: components["schemas"]["LocalizedText"];
             icon: components["schemas"]["IconPath"];
+            /** @description Whether the application's own icon brings its background; then it is shown without the padded tile, only clipped to the rounded corners. */
+            icon_has_background: boolean;
             provider: components["schemas"]["ProviderKey"];
             capabilities: components["schemas"]["Capabilities"];
             categories: components["schemas"]["CategoryLabel"][];
@@ -2751,6 +2753,8 @@ export interface components {
             key: string;
             name: components["schemas"]["LocalizedText"];
             icon: components["schemas"]["IconPath"];
+            /** @description Always `false` for vendors; see `PublicApp.icon_has_background`. */
+            icon_has_background: boolean;
             /** @description Vendors only; `null` for applications. */
             localized_icons: components["schemas"]["LocalizedIcons"] | null;
         };
@@ -3009,6 +3013,8 @@ export interface components {
             name: components["schemas"]["LocalizedText"] | null;
             /** @description Application icon; `null` when `state` is `missing`. */
             icon: components["schemas"]["IconPath"] | null;
+            /** @description `false` for a missing application; see `PublicApp.icon_has_background`. */
+            icon_has_background: boolean;
             /**
              * @description `published`: the application and its vendor are enabled. `disabled`: the application or its vendor is disabled.
              *     `deleted`: the application is deleted and its data is being removed. `missing`: the application no longer exists.
@@ -3102,6 +3108,8 @@ export interface components {
             name: components["schemas"]["LocalizedText"];
             description: components["schemas"]["LocalizedText"];
             icon: components["schemas"]["IconPath"];
+            /** @description The icon brings its own background; `false` without an own icon. See `PublicApp.icon_has_background`. */
+            icon_has_background: boolean;
             provider: components["schemas"]["ProviderKey"];
             json_release?: components["schemas"]["JSONReleaseConfig"];
             base_url?: string;
@@ -3132,6 +3140,8 @@ export interface components {
             name: components["schemas"]["LocalizedText"];
             description: components["schemas"]["LocalizedText"];
             icon: components["schemas"]["IconPath"];
+            /** @description See `App.icon_has_background`. */
+            icon_has_background: boolean;
             provider: components["schemas"]["ProviderKey"];
             json_release?: components["schemas"]["JSONReleaseConfig"];
             base_url?: string;
@@ -3323,6 +3333,8 @@ export interface components {
             name: components["schemas"]["LocalizedText"];
             description: components["schemas"]["LocalizedText"];
             icon: components["schemas"]["IconPath"];
+            /** @description The icon brings its own background (see `PublicApp.icon_has_background`). */
+            icon_has_background?: boolean;
             provider: components["schemas"]["ProviderKey"];
             proxy: components["schemas"]["ProxyConfig"];
             redirect_protection?: components["schemas"]["RedirectProtectionMode"];
@@ -3429,6 +3441,8 @@ export interface components {
             name: components["schemas"]["LocalizedText"];
             description: components["schemas"]["LocalizedText"];
             icon: components["schemas"]["IconPath"];
+            /** @description See `PublicApp.icon_has_background`. */
+            icon_has_background: boolean;
             /** @description Usage instructions source text (Markdown with template variables), per language. */
             instructions: components["schemas"]["LocalizedText"];
             auto_index: boolean;
@@ -3511,7 +3525,7 @@ export interface components {
         /** @enum {string} */
         VendorConfigurationPath: "name.en" | "name.zh-CN" | "description.en" | "description.zh-CN" | "icon" | "localized_icons.en" | "localized_icons.zh-CN" | "proxy" | "redirect_protection";
         /** @enum {string} */
-        AppConfigurationPath: "name.en" | "name.zh-CN" | "description.en" | "description.zh-CN" | "icon" | "proxy" | "redirect_protection" | "redirect_allowlist" | "instructions.en" | "instructions.zh-CN" | "json_release" | "base_url" | "base_urls" | "source_strategy" | "cache_ttl_seconds" | "http_policy.rules" | "http_policy.auto_cleanup" | "http_policy.stale_fallback" | "auto_index" | "default_artifact" | "hidden_artifacts" | "retention" | "prewarm" | "categories" | "tags";
+        AppConfigurationPath: "name.en" | "name.zh-CN" | "description.en" | "description.zh-CN" | "icon" | "proxy" | "redirect_protection" | "redirect_allowlist" | "icon_has_background" | "instructions.en" | "instructions.zh-CN" | "json_release" | "base_url" | "base_urls" | "source_strategy" | "cache_ttl_seconds" | "http_policy.rules" | "http_policy.auto_cleanup" | "http_policy.stale_fallback" | "auto_index" | "default_artifact" | "hidden_artifacts" | "retention" | "prewarm" | "categories" | "tags";
         VendorConfiguration: {
             revision: components["schemas"]["Revision"];
             /** @description Preset key (vendor ID) when linked to a template. */
@@ -3574,6 +3588,7 @@ export interface components {
                 proxy?: components["schemas"]["ProxyConfig"];
                 redirect_protection?: components["schemas"]["RedirectProtectionMode"];
                 redirect_allowlist?: components["schemas"]["RedirectAllowlist"];
+                icon_has_background?: boolean;
                 "instructions.en"?: string;
                 json_release?: components["schemas"]["JSONReleaseConfig"];
                 "instructions.zh-CN"?: string;

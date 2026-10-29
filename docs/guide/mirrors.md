@@ -28,7 +28,7 @@ To make an existing local application come from the upstream, for example the bu
 
 ## What follows the upstream
 
-- **Display**: the name, description, icon, usage instructions, directory listing setting and the default and hidden download packages of a JSON release follow the upstream. Each can be overridden per language in the application settings; resetting a field follows the upstream again. Usage instructions keep their template variables, so `{{base_url}}` and `{{app_url}}` show this instance's addresses.
+- **Display**: the name, description, icon (and whether it includes its background), usage instructions, directory listing setting and the default and hidden download packages of a JSON release follow the upstream. Each can be overridden per language in the application settings; resetting a field follows the upstream again. Usage instructions keep their template variables, so `{{base_url}}` and `{{app_url}}` show this instance's addresses.
 - **Source**: the address of the upstream application. It cannot be changed in the application; change the upstream's address instead, which starts a new source epoch for every application mirrored from it.
 - **Local settings**: everything else (proxy, categories, tags, cache rules, retention, prewarm) is local and never follows the upstream.
 

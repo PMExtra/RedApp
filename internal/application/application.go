@@ -166,6 +166,9 @@ type Entry struct {
 	VendorDescription     Localized
 	VendorIcon            string
 	VendorLocalizedIcons  Localized
+	// IconHasBackground: the application's own icon brings its background, so
+	// it is shown without the padded tile. False when the vendor icon stands in.
+	IconHasBackground bool
 }
 
 // StorageID isolates cache data whenever an application's source changes.

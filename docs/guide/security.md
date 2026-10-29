@@ -102,6 +102,7 @@ Configuration packages may come from another administrator or another organizati
 - Active content and references outside the file are removed only after the administrator confirms: scripts, event handlers, animations, HTML and MathML elements, processing instructions such as `xml-stylesheet`, `xml:base`, links other than `#id` (embedded PNG, JPEG, GIF or WebP images are kept), `url()` other than `url(#id)`, and CSS at-rules, escapes or image functions. The confirmation lists what is removed.
 - Malformed XML, DOCTYPE and entity declarations are always rejected.
 - Icons are shown only as images and are served with a restrictive Content Security Policy, so the browser neither runs scripts nor loads resources from them.
+- An application icon is usually a shape on a transparent background, and RedApp draws a rounded tile behind it. For an icon that already has its own background, turn on **Icon includes background** in the application settings: the icon is then shown without the tile, only clipped to rounded corners.
 
 ### Hosted files
 

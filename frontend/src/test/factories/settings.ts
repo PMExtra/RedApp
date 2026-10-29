@@ -21,7 +21,14 @@ export function pinnedApp(
   name: string,
   overrides: Overrides<Schema<"HomepagePinnedApp">> = {},
 ): Schema<"HomepagePinnedApp"> {
-  return { key, name: localized(name), icon: "", state: "published", ...overrides };
+  return {
+    key,
+    name: localized(name),
+    icon: "",
+    icon_has_background: false,
+    state: "published",
+    ...overrides,
+  };
 }
 
 /** Homepage pins; `pinned_app_keys` follows `pinned_apps`. */

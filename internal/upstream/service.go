@@ -219,6 +219,8 @@ func snapshotOf(m mirrorApp, icon string) store.MirrorSnapshot {
 		Instructions: store.LocalizedText{En: m.Instructions.En, ZhCN: m.Instructions.ZhCN},
 		Icon:         icon,
 		AutoIndex:    m.AutoIndex,
+		// A copied icon keeps the upstream's background flag.
+		IconHasBackground: m.IconHasBackground && icon != "",
 	}
 	if m.Provider == "json-release" {
 		for _, channel := range m.Channels {

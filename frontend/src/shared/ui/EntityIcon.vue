@@ -12,6 +12,9 @@ import { cn } from "./cn";
  * to the vendor name) stays transparent and dimmed instead, and the dark theme
  * renders it in grayscale with inverted brightness. Disabled entities use
  * grayscale in both themes; application tiles retain their light background.
+ * An application icon with `hasBackground` brings its own background: it
+ * fills the box without the padded tile but keeps its rounded clipping, so a
+ * square image still gets rounded corners.
  */
 const props = withDefaults(
   defineProps<{
@@ -23,6 +26,7 @@ const props = withDefaults(
     decorative?: boolean;
     vendor?: boolean;
     disabled?: boolean;
+    hasBackground?: boolean;
   }>(),
   { alt: "", size: "md", variant: "square" },
 );
@@ -63,7 +67,8 @@ const heights = { xs: "h-5", sm: "h-7", md: "h-9", lg: "h-12", xl: "h-16" };
     v-else
     :class="
       cn(
-        'inline-flex shrink-0 items-center justify-center overflow-hidden rounded-lg bg-icon-bg',
+        'inline-flex shrink-0 items-center justify-center overflow-hidden rounded-lg',
+        hasBackground && src && !failed ? 'bg-transparent' : 'bg-icon-bg',
         squares[size],
         vendor && 'dark:invert',
         disabled && 'grayscale',
@@ -74,7 +79,7 @@ const heights = { xs: "h-5", sm: "h-7", md: "h-9", lg: "h-12", xl: "h-16" };
       v-if="src && !failed"
       :src="src"
       :alt="alt"
-      class="size-full object-contain dark:p-[12%]"
+      :class="cn('size-full object-contain', !hasBackground && 'dark:p-[12%]')"
       @error="failed = true"
     />
     <!-- Same box as an image so the glyph matches uploaded icons in size. -->

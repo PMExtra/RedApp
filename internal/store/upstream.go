@@ -33,7 +33,7 @@ func isUpstreamRef(ref *string) bool { return ref != nil && IsUpstreamTemplateRe
 var upstreamSourcePaths = map[string]bool{"json_release": true, "base_url": true, "base_urls": true, "source_strategy": true}
 
 // mirroredDisplayPaths follow the upstream unless overridden locally.
-var mirroredDisplayPaths = []string{"name.en", "name.zh-CN", "description.en", "description.zh-CN", "icon", "instructions.en", "instructions.zh-CN", "auto_index", "default_artifact", "hidden_artifacts"}
+var mirroredDisplayPaths = []string{"name.en", "name.zh-CN", "description.en", "description.zh-CN", "icon", "icon_has_background", "instructions.en", "instructions.zh-CN", "auto_index", "default_artifact", "hidden_artifacts"}
 
 var (
 	ErrUpstreamNotFound = fmt.Errorf("upstream not found: %w", sql.ErrNoRows)
@@ -223,7 +223,9 @@ type MirrorSnapshot struct {
 	Description  LocalizedText
 	Instructions LocalizedText
 	Icon         string
-	AutoIndex    bool
+	// IconHasBackground follows the upstream; absent before RedApp 0.11.3.
+	IconHasBackground bool
+	AutoIndex         bool
 	// Channels, DefaultChannel, the upstream's source epoch and download
 	// choices of a JSON release application.
 	Channels        []string
@@ -392,11 +394,12 @@ func setMirrorSource(spec Object, provider, origin, remoteKey string) {
 // application's root is its source.
 func mirrorTemplate(appUID, upstreamUID, remoteKey, provider, origin string, m MirrorSnapshot) templateSnapshot {
 	spec := Object{
-		"provider":     provider,
-		"name":         map[string]any{"en": m.Name.En, "zh-CN": m.Name.ZhCN},
-		"description":  map[string]any{"en": m.Description.En, "zh-CN": m.Description.ZhCN},
-		"instructions": map[string]any{"en": m.Instructions.En, "zh-CN": m.Instructions.ZhCN},
-		"icon":         m.Icon,
+		"provider":            provider,
+		"name":                map[string]any{"en": m.Name.En, "zh-CN": m.Name.ZhCN},
+		"description":         map[string]any{"en": m.Description.En, "zh-CN": m.Description.ZhCN},
+		"instructions":        map[string]any{"en": m.Instructions.En, "zh-CN": m.Instructions.ZhCN},
+		"icon":                m.Icon,
+		"icon_has_background": m.IconHasBackground,
 		// Local settings are not followed; the proxy, like every template's,
 		// defaults to inheritance.
 		"proxy": map[string]any{"mode": "inherit"},

@@ -228,6 +228,9 @@ describe("public shell", () => {
     await user.type(box, "claude");
     expect(await screen.findByRole("option", { name: /Claude Code/ })).toBeInTheDocument();
     expect(searches.at(-1)).toBe("claude");
+    // A vendor suggestion shows its logo like an application icon, not inverted.
+    const vendor = screen.getByRole("option", { name: /^Anthropic/ });
+    expect(vendor.querySelector(String.raw`.dark\:invert`)).toBeNull();
     await user.click(screen.getByRole("option", { name: /Claude Code/ }));
     await waitFor(() => {
       expect(router.currentRoute.value.path).toBe("/anthropic/claude-code");

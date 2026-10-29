@@ -127,13 +127,15 @@ type mirrorApp struct {
 		Description localized `json:"description"`
 		Icon        string    `json:"icon"`
 	} `json:"vendor"`
-	Name           localized `json:"name"`
-	Description    localized `json:"description"`
-	Icon           string    `json:"icon"`
-	Instructions   localized `json:"instructions"`
-	AutoIndex      bool      `json:"auto_index"`
-	Channels       []string  `json:"channels"`
-	DefaultChannel *string   `json:"default_channel"`
+	Name        localized `json:"name"`
+	Description localized `json:"description"`
+	Icon        string    `json:"icon"`
+	// IconHasBackground is absent before RedApp 0.11.3.
+	IconHasBackground bool      `json:"icon_has_background"`
+	Instructions      localized `json:"instructions"`
+	AutoIndex         bool      `json:"auto_index"`
+	Channels          []string  `json:"channels"`
+	DefaultChannel    *string   `json:"default_channel"`
 	// Download choices of a JSON release; absent before RedApp 0.11.1.
 	DefaultArtifact string   `json:"default_artifact"`
 	HiddenArtifacts []string `json:"hidden_artifacts"`

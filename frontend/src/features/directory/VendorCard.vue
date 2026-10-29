@@ -203,6 +203,7 @@ onBeforeUnmount(() => {
                 :src="app.icon"
                 size="lg"
                 :disabled="appState(app) !== '' || !!vendor.deleted_at"
+                :has-background="app.icon_has_background"
               />
               <span class="line-clamp-2 h-8 w-full break-words">
                 {{ localized(app.name) || app.id }}

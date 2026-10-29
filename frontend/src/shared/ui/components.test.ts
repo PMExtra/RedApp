@@ -6,6 +6,7 @@ import { toast } from "@/shared/lib";
 import Harness from "@/test/components/UiHarness.vue";
 import { renderWithApp } from "@/test/render";
 import CodeBlock from "./CodeBlock.vue";
+import EntityIcon from "./EntityIcon.vue";
 import IconButton from "./IconButton.vue";
 
 const rows = [
@@ -237,5 +238,29 @@ describe("IconButton", () => {
     await renderWithApp(IconButton, { props: { label: "Remove", noTooltip, onClick } });
     await userEvent.setup().click(screen.getByRole("button", { name: "Remove" }));
     expect(onClick).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("EntityIcon", () => {
+  it("draws the padded tile unless the icon includes its background", async () => {
+    const tile = async (hasBackground: boolean) => {
+      const view = await renderWithApp(EntityIcon, {
+        props: { src: "/assets/icons/app.svg", alt: "App", hasBackground },
+      });
+      const image = screen.getByRole("img", { name: "App" });
+      const box = image.parentElement;
+      const classes = { box: box?.className ?? "", image: image.className };
+      view.unmount();
+      return classes;
+    };
+    const plain = await tile(false);
+    expect(plain.box).toContain("bg-icon-bg");
+    expect(plain.image).toContain("dark:p-[12%]");
+    const background = await tile(true);
+    expect(background.box).not.toContain("bg-icon-bg");
+    expect(background.image).not.toContain("dark:p-[12%]");
+    // The rounded clipping stays, so a square image gets rounded corners.
+    expect(background.box).toContain("rounded-lg");
+    expect(background.box).toContain("overflow-hidden");
   });
 });
