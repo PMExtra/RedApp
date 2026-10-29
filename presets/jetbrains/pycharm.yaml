@@ -62,6 +62,10 @@
           {
             "origin": "https://download-cdn.jetbrains.com",
             "prefix": "/python/"
+          },
+          {
+            "origin": "https://download-cdn.clf.jetbrains.com.cn",
+            "prefix": "/python/"
           }
         ],
         "checksums": [
@@ -71,6 +75,10 @@
           },
           {
             "origin": "https://download-cdn.jetbrains.com",
+            "prefix": "/python/"
+          },
+          {
+            "origin": "https://download-cdn.clf.jetbrains.com.cn",
             "prefix": "/python/"
           }
         ]

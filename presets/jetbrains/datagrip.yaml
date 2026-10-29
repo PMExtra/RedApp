@@ -62,6 +62,10 @@
           {
             "origin": "https://download-cdn.jetbrains.com",
             "prefix": "/datagrip/"
+          },
+          {
+            "origin": "https://download-cdn.clf.jetbrains.com.cn",
+            "prefix": "/datagrip/"
           }
         ],
         "checksums": [
@@ -71,6 +75,10 @@
           },
           {
             "origin": "https://download-cdn.jetbrains.com",
+            "prefix": "/datagrip/"
+          },
+          {
+            "origin": "https://download-cdn.clf.jetbrains.com.cn",
             "prefix": "/datagrip/"
           }
         ]
