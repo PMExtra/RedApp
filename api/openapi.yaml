@@ -532,6 +532,52 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /admin/api/apps/{vendor}/{app}/versions/{version}/refetch:
+    parameters:
+      - $ref: '#/components/parameters/Vendor'
+      - $ref: '#/components/parameters/App'
+      - name: version
+        in: path
+        required: true
+        schema: {type: string, maxLength: 96}
+    post:
+      operationId: refetchRelease
+      tags: [releases]
+      summary: Replace a stored JSON release with what the upstream publishes now.
+      description: |
+        For an upstream that published another build of a version RedApp already knows, which a refresh refuses as
+        conflicting metadata. The version's cached files are cleaned up, its metadata is forgotten, and it is
+        discovered again: by the channels that pointed at it, else by the configuration's `lookup`
+        (`VALIDATION_FAILED` when neither can). Files being transferred refuse the request with
+        `OPERATION_IN_PROGRESS`; retry later. `VERSION_NOT_FOUND` when the upstream no longer publishes the
+        version; it is then forgotten. JSON releases only; needs an enabled application.
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      x-error-codes: [APPLICATION_NOT_FOUND, CAPABILITY_UNSUPPORTED, FILE_NOT_FOUND, VALIDATION_FAILED, VERSION_NOT_FOUND, OPERATION_IN_PROGRESS, APPLICATION_DISABLED, ENTITY_DELETED, SOURCE_CHANGED, METADATA_UNTRUSTED, UPSTREAM_UNAVAILABLE, TRANSFER_CAPACITY]
+      responses:
+        '200':
+          description: The release as discovered again.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReleaseSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /admin/api/apps/{vendor}/{app}/releases/lookup:
     parameters:
       - $ref: '#/components/parameters/Vendor'

@@ -1,5 +1,13 @@
 import type { LocaleModule } from "@/shared/i18n";
 export default {
+  releaseRefetch: {
+    action: "重新获取",
+    title: "重新获取版本 {version}？",
+    description:
+      "适用于上游为这个版本重新出包的情况。它的缓存文件会被删除，然后通过渠道或按版本查找重新发现这个版本；文件在需要时重新下载。",
+    confirm: "重新获取",
+    done: "已重新获取版本 {version}",
+  },
   releaseLookup: {
     title: "发现版本",
     description:

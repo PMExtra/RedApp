@@ -419,6 +419,17 @@ func (s *Service) Lookup(ctx context.Context, app, version string) (application.
 	return s.verifyAndPersist(e, resolved.Version, *resolved.Envelope)
 }
 
+// Forget deletes a stored release of an application so that it can be
+// discovered again, and returns the channels that pointed at it. Its cached
+// files must be gone (store.ErrReleaseInUse otherwise).
+func (s *Service) Forget(app, version string) ([]string, error) {
+	e, ok := s.registry.Lookup(app)
+	if !ok {
+		return nil, application.ErrNotFound
+	}
+	return s.db.ForgetRelease(e.StorageID(), version, sourceFence(e))
+}
+
 // Refresh explicitly fetches one channel. Unlike normal reads it reports errors
 // even when an older valid snapshot remains available.
 func (s *Service) Refresh(ctx context.Context, app, channel string) (application.Release, error) {
