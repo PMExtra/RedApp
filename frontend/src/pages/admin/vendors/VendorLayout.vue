@@ -90,6 +90,7 @@ const tabs = computed<NavTabItem[]>(() => [
             <template #actions>
               <EntityIcon
                 :src="vendorLogo(vendor.data.value, locale)"
+                :disabled="!vendor.data.value.enabled || !!vendor.data.value.deleted_at"
                 variant="logo"
                 size="lg"
                 decorative

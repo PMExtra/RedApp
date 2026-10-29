@@ -166,7 +166,11 @@ const emptyText = computed(() =>
           class="flex items-center gap-3 rounded-md font-medium hover:underline focus-ring"
           :class="(!row.enabled || !vendor.enabled || row.deleted_at) && 'opacity-60'"
         >
-          <EntityIcon :src="row.icon" size="sm" />
+          <EntityIcon
+            :src="row.icon"
+            size="sm"
+            :disabled="!row.enabled || !vendor.enabled || !!row.deleted_at || !!vendor.deleted_at"
+          />
           <span class="flex flex-col">
             <span>{{ localized(row.name) || row.id }}</span>
             <span class="font-mono text-xs font-normal text-muted">{{ row.id }}</span>

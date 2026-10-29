@@ -103,7 +103,7 @@ async function submit(text: string) {
   >
     <template #leading><Search /></template>
     <template #option="{ option }">
-      <EntityIcon :src="option.icon" size="sm" />
+      <EntityIcon :src="option.icon" size="sm" :vendor="option.kind === 'vendor'" />
       <span class="flex min-w-0 flex-col">
         <span class="truncate">{{ option.label }}</span>
         <span class="truncate text-xs text-muted">

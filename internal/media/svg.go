@@ -50,6 +50,9 @@ func normalizeSVGMode(input []byte, staticEffects bool) ([]byte, error) {
 	decoder := xml.NewDecoder(bytes.NewReader(input))
 	output := &boundedBuffer{limit: MaxStoredBytes}
 	encoder := xml.NewEncoder(output)
+	var tokens []xml.Token
+	var rules []svgStyleRule
+	var styleText strings.Builder
 	var stack []string
 	ids := make(map[string]bool)
 	var references []string
@@ -76,7 +79,17 @@ func normalizeSVGMode(input []byte, staticEffects bool) ([]byte, error) {
 				return nil, ErrTooLarge
 			}
 			name := node.Name.Local
+			if len(stack) > 0 && stack[len(stack)-1] == "style" {
+				return invalid("style cannot contain elements")
+			}
 			allowed, ok := svgElementAttrs[name]
+			if name == "style" {
+				if len(stack) == 0 || (stack[len(stack)-1] != "svg" && stack[len(stack)-1] != "defs") || len(node.Attr) != 0 {
+					return invalid("unsupported style placement or attributes")
+				}
+				allowed, ok = "", true
+				styleText.Reset()
+			}
 			if staticEffects {
 				parent := ""
 				if len(stack) > 0 {
@@ -125,11 +138,23 @@ func normalizeSVGMode(input []byte, staticEffects bool) ([]byte, error) {
 					continue
 				}
 				key := attr.Name.Local
-				if attr.Name.Space != "" || attributes[key] || (!wordIn(allowed, key) && !wordIn(svgCommonAttrs, key)) {
+				if attr.Name.Space != "" || attributes[key] || (!wordIn(allowed, key) && !wordIn(svgCommonAttrs, key) && key != "class" && key != "data-name") {
 					return invalid("contains an unsupported attribute")
 				}
 				attributes[key] = true
 				value := strings.TrimSpace(attr.Value)
+				if key == "data-name" {
+					continue
+				}
+				if key == "class" {
+					for _, class := range strings.Fields(value) {
+						if !svgClassName.MatchString(class) {
+							return invalid("unsupported class name")
+						}
+					}
+					clean.Attr = append(clean.Attr, xml.Attr{Name: xml.Name{Local: key}, Value: value})
+					continue
+				}
 				valid := validSVGAttribute(key, value)
 				if staticEffects && (wordIn(staticSVGEffects[name], key) || key == "mask" || key == "filter" || key == "style") {
 					valid = validStaticSVGEffectAttribute(key, value)
@@ -156,39 +181,49 @@ func normalizeSVGMode(input []byte, staticEffects bool) ([]byte, error) {
 					}
 					ids[value] = true
 				}
-				if strings.HasPrefix(value, "url(#") {
-					references = append(references, strings.TrimSuffix(strings.TrimPrefix(value, "url(#"), ")"))
-				}
+
 				clean.Attr = append(clean.Attr, xml.Attr{Name: xml.Name{Local: key}, Value: value})
 			}
 			if rootWidth*rootHeight > MaxPixels {
 				return nil, ErrTooLarge
 			}
-			if err := encoder.EncodeToken(clean); err != nil {
-				return nil, err
+			if name != "style" {
+				tokens = append(tokens, clean)
 			}
 			stack = append(stack, name)
 		case xml.EndElement:
 			if len(stack) == 0 {
 				return invalid("has an unmatched end tag")
 			}
-			if err := encoder.EncodeToken(xml.EndElement{Name: xml.Name{Local: stack[len(stack)-1]}}); err != nil {
-				return nil, err
+			name := stack[len(stack)-1]
+			if name == "style" {
+				parsed, err := parseSVGStyles(styleText.String())
+				if err != nil {
+					return nil, err
+				}
+				rules = append(rules, parsed...)
+				if len(rules) > 256 {
+					return nil, ErrTooLarge
+				}
+			} else {
+				tokens = append(tokens, xml.EndElement{Name: xml.Name{Local: name}})
 			}
 			stack = stack[:len(stack)-1]
 			if len(stack) == 0 {
 				rootDone = true
 			}
 		case xml.CharData:
+			if len(stack) > 0 && stack[len(stack)-1] == "style" {
+				styleText.Write(node)
+				continue
+			}
 			if len(bytes.TrimSpace(node)) == 0 {
 				continue
 			}
 			if len(stack) == 0 || (stack[len(stack)-1] != "title" && stack[len(stack)-1] != "desc") {
 				return invalid("text is only supported in title and desc")
 			}
-			if err := encoder.EncodeToken(node); err != nil {
-				return nil, err
-			}
+			tokens = append(tokens, xml.CopyToken(node))
 		case xml.Comment:
 			// Comments and processing metadata are not part of the stored icon.
 		case xml.ProcInst:
@@ -203,6 +238,23 @@ func normalizeSVGMode(input []byte, staticEffects bool) ([]byte, error) {
 	}
 	if !rootSeen || !rootDone || len(stack) != 0 {
 		return invalid("must contain a complete svg root")
+	}
+	for _, token := range tokens {
+		if node, ok := token.(xml.StartElement); ok {
+			node, err := expandSVGClasses(node, rules)
+			if err != nil {
+				return nil, err
+			}
+			for _, attr := range node.Attr {
+				if strings.HasPrefix(attr.Value, "url(#") {
+					references = append(references, strings.TrimSuffix(strings.TrimPrefix(attr.Value, "url(#"), ")"))
+				}
+			}
+			token = node
+		}
+		if err := encoder.EncodeToken(token); err != nil {
+			return nil, err
+		}
 	}
 	for _, ref := range references {
 		if !ids[ref] {

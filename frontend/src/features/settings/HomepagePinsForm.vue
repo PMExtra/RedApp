@@ -157,7 +157,7 @@ function discard() {
           <template #item="{ item, index }">
             <div class="flex items-center gap-3">
               <span class="w-6 text-end text-xs text-muted tabular-nums">{{ index + 1 }}</span>
-              <EntityIcon :src="info.get(item)?.icon ?? ''" size="sm" />
+              <EntityIcon :src="info.get(item)?.icon ?? ''" size="sm" :disabled="!!hidden(item)" />
               <span class="flex min-w-0 flex-1 flex-col">
                 <span v-if="pinName(item)" class="truncate text-sm">
                   {{ pinName(item) }}
