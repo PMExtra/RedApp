@@ -122,18 +122,18 @@ func TestRetiredSourceClientsDoNotDependOnPublicRegistry(t *testing.T) {
 	pool := distributor.NewPool()
 	appUID, vendorUID := strings.Repeat("a", 32), strings.Repeat("b", 32)
 	for _, input := range [][2]string{{application.Codex, "http://intranet.example:8081/codex"}, {application.ClaudeCode, "https://intranet.example/claude"}, {application.HttpCache, "http://intranet.example/files"}} {
-		client, err := NewScopedSourceClient(input[0], input[1], "", appUID, vendorUID, pool)
+		client, err := NewScopedSourceClient(input[0], input[1], "", appUID, vendorUID, pool, store.RedirectPolicy{})
 		if err != nil || client.Base.String() != input[1] {
 			t.Fatal("independent historical source binding unavailable", err)
 		}
 	}
-	if _, err := NewScopedSourceClient("unknown", "https://example/files", "", appUID, vendorUID, pool); err == nil {
+	if _, err := NewScopedSourceClient("unknown", "https://example/files", "", appUID, vendorUID, pool, store.RedirectPolicy{}); err == nil {
 		t.Fatal("unregistered provider constructed")
 	}
-	if _, err := NewScopedSourceClient(application.HttpCache, "https://example/files", "", appUID, vendorUID, nil); err == nil {
+	if _, err := NewScopedSourceClient(application.HttpCache, "https://example/files", "", appUID, vendorUID, nil, store.RedirectPolicy{}); err == nil {
 		t.Fatal("dynamic source accepted a nil transport pool")
 	}
-	if _, err := NewScopedSourceClient(application.HttpCache, "https://example/files", "", "", vendorUID, pool); err == nil {
+	if _, err := NewScopedSourceClient(application.HttpCache, "https://example/files", "", "", vendorUID, pool, store.RedirectPolicy{}); err == nil {
 		t.Fatal("source client built without an owner scope")
 	}
 }

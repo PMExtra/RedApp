@@ -11,7 +11,11 @@ import (
 func TestGeneralRedirectDropsResourceConditionsAndRanges(t *testing.T) {
 	for _, destination := range []string{"http://source.example/files/next", "https://cdn.example/next"} {
 		t.Run(destination, func(t *testing.T) {
-			client, err := NewPool().NewClient("http://source.example/files", GeneralHTTP)
+			source, err := NewPool().NewClient("http://source.example/files", GeneralHTTP)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client, err := source.WithRedirectProtection("basic", nil)
 			if err != nil {
 				t.Fatal(err)
 			}

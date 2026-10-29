@@ -253,7 +253,7 @@ func (s *Service) head(w http.ResponseWriter, r *http.Request, f fill, old *Row)
 		headers := sourceValidators(old, source)
 		resp, err := attempt.Client.Head(ctx, source, headers)
 		if err != nil {
-			if e := s.upstreamFailure(entry, path, 0); e != nil {
+			if e := s.upstreamFailure(entry, path, 0, err); e != nil {
 				return e
 			}
 			if !errors.Is(err, distributor.ErrConnection) {
@@ -264,7 +264,7 @@ func (s *Service) head(w http.ResponseWriter, r *http.Request, f fill, old *Row)
 		}
 		if resp.StatusCode >= 500 && resp.StatusCode <= 599 {
 			resp.Body.Close()
-			if e := s.upstreamFailure(entry, path, resp.StatusCode); e != nil {
+			if e := s.upstreamFailure(entry, path, resp.StatusCode, nil); e != nil {
 				return e
 			}
 			lastErr = ErrUpstream

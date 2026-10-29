@@ -3,15 +3,24 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { RouterView } from "vue-router";
 import type { Schema } from "@/shared/api";
-import { globalProxyState } from "@/test/factories/settings";
+import { globalProxyState, redirectProtectionState } from "@/test/factories/settings";
 import { apiError, mockApi, useHandlers } from "@/test/msw";
 import { renderWithApp } from "@/test/render";
 import ProxySettingsPage from "./ProxySettingsPage.vue";
 
 function proxyServer() {
   let state = globalProxyState();
+  let redirect = redirectProtectionState();
   const puts: { ifMatch: string | null; body: unknown }[] = [];
+  const redirectPuts: { ifMatch: string | null; body: unknown }[] = [];
   useHandlers(
+    mockApi("get", "/admin/api/settings/redirect-protection", () => redirect),
+    mockApi("put", "/admin/api/settings/redirect-protection", async ({ request }) => {
+      const body = (await request.json()) as Schema<"RedirectProtectionSettings">;
+      redirectPuts.push({ ifMatch: request.headers.get("If-Match"), body });
+      redirect = { mode: body.mode, revision: redirect.revision + 1 };
+      return redirect;
+    }),
     mockApi("get", "/admin/api/settings/proxy", () => state),
     mockApi("put", "/admin/api/settings/proxy", async ({ request }) => {
       const body = (await request.json()) as Schema<"GlobalProxySettings">;
@@ -24,7 +33,7 @@ function proxyServer() {
       return state;
     }),
   );
-  return { puts };
+  return { puts, redirectPuts };
 }
 
 function renderPage() {
@@ -87,5 +96,25 @@ describe("global proxy", () => {
     await user.click(screen.getByRole("button", { name: "Save proxy" }));
     expect(await screen.findByText("Enter the proxy URL.")).toBeVisible();
     expect(server.puts).toEqual([]);
+  });
+
+  it("saves the global redirect protection and explains each mode", async () => {
+    const server = proxyServer();
+    await renderPage();
+    const strict = await screen.findByRole("radio", { name: "Strict" });
+    expect(strict).toBeChecked();
+    expect(screen.queryByRole("radio", { name: "Inherit" })).toBeNull();
+    expect(
+      screen.getByText(/^Upstream redirects may only reach the configured sources/),
+    ).toBeVisible();
+    const save = screen.getByRole("button", { name: "Save redirect protection" });
+    expect(save).toBeDisabled();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("radio", { name: "Basic" }));
+    expect(screen.getByText(/^Any target is allowed/)).toBeVisible();
+    await user.click(save);
+    expect(await screen.findByText(/^Redirect protection saved\./)).toBeVisible();
+    expect(server.redirectPuts).toEqual([{ ifMatch: '"1"', body: { mode: "basic" } }]);
   });
 });

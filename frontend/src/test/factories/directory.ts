@@ -182,6 +182,7 @@ export function vendorConfiguration(
     icon: "",
     localized_icons: { en: "", "zh-CN": "" },
     proxy: { mode: "inherit" },
+    redirect_protection: "inherit",
   };
   return {
     revision: 3,
@@ -201,9 +202,11 @@ export function vendorConfiguration(
         "localized_icons.en",
         "localized_icons.zh-CN",
         "proxy",
+        "redirect_protection",
       ].map((path) => [path, origin("custom", null)]),
     ),
     proxy_effective: { mode: "direct", source_scope: "global", source_id: "", dns: "local" },
+    redirect_protection_effective: { mode: "strict", source_scope: "global", source_id: "" },
     ...overrides,
   };
 }
@@ -218,6 +221,7 @@ export function linkedVendorConfiguration(
     icon: "/assets/presets/openai/icon.svg",
     localized_icons: { en: "", "zh-CN": "" },
     proxy: { mode: "inherit" },
+    redirect_protection: "inherit",
   };
   return vendorConfiguration({
     template_ref: "openai",
@@ -233,6 +237,7 @@ export function linkedVendorConfiguration(
       "localized_icons.en": origin("inherited"),
       "localized_icons.zh-CN": origin("inherited"),
       proxy: origin("inherited"),
+      redirect_protection: origin("inherited"),
     },
     ...overrides,
   });
@@ -248,6 +253,8 @@ export function appConfiguration(
     icon: "",
     provider: "http-cache",
     proxy: { mode: "inherit" },
+    redirect_protection: "inherit",
+    redirect_allowlist: [],
     categories: [],
     tags: [],
     instructions: localized("## Install", "## 安装"),
@@ -266,6 +273,7 @@ export function appConfiguration(
     effective: spec,
     fields: {},
     proxy_effective: { mode: "direct", source_scope: "global", source_id: "", dns: "local" },
+    redirect_protection_effective: { mode: "strict", source_scope: "global", source_id: "" },
     ...overrides,
   };
 }

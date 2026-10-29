@@ -122,9 +122,8 @@ Common rules for all upstream traffic:
 - TLS certificates are always verified. There is no option to skip verification.
 - A downloaded file is published only after its full size and checksum are verified. Resumed downloads are verified again.
 - Upstream responses must not use content encoding, so checksums apply to the exact bytes served.
-- Release providers follow redirects only within the configured source. HTTPS is never downgraded to HTTP.
-- The HTTP cache may follow redirects to other HTTPS hosts. It drops credentials and cookies when the host changes.
-- A redirect to another host can only reach the same kind of address as the configured source: a source on the public internet can only redirect to public addresses, and an intranet source only to intranet addresses. The source host itself may be on the intranet. With an outbound proxy, the proxy resolves host names and this check does not apply.
+- Redirects follow the [redirect protection](configuration.md#redirect-protection) of the application, which is strict by default: release providers and the HTTP cache follow redirects only to their configured sources and the HTTP cache's redirect allowlist. Credentials and cookies are dropped when the origin changes, in every mode.
+- Under strict and basic protection, HTTPS is never downgraded to HTTP, and a redirect to another host can only reach the same kind of address as the configured source: a source on the public internet can only redirect to public addresses, and an intranet source only to intranet addresses. The source host itself may be on the intranet. With an outbound proxy, the proxy resolves host names and this check does not apply. Turning protection off disables these checks for redirects.
 - Clients cannot choose the upstream host; they can only request paths below the configured source.
 - Requests that read an application's source carry `Via: 1.1 redapp-<instance ID>.<application digest>`. The instance ID is random, created with the data directory and also returned by `/api/instance`. A request that an application sent to itself, because its source leads back to it, is refused with `508 LOOP_DETECTED`; applications of the same instance may still use each other as sources.
 

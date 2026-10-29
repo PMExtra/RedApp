@@ -184,6 +184,54 @@ func (s *Server) replacePublicUrlSettings(w http.ResponseWriter, r *http.Request
 	s.writePublicURL(w, r)
 }
 
+// ---------------------------------------------------------------- redirect protection
+
+type redirectProtectionStateDTO struct {
+	Mode     string `json:"mode"`
+	Revision int64  `json:"revision"`
+}
+
+func (s *Server) writeRedirectProtection(w http.ResponseWriter, r *http.Request) {
+	mode, revision, err := s.store.GlobalRedirectProtection()
+	if err != nil {
+		s.writeError(w, r, storageError(err))
+		return
+	}
+	writeRevision(w, http.StatusOK, revision, redirectProtectionStateDTO{Mode: mode, Revision: revision})
+}
+
+func (s *Server) getRedirectProtectionSettings(w http.ResponseWriter, r *http.Request) {
+	s.writeRedirectProtection(w, r)
+}
+
+func (s *Server) replaceRedirectProtectionSettings(w http.ResponseWriter, r *http.Request) {
+	revision, e := ifMatch(r)
+	if e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	var input struct {
+		Mode *string `json:"mode"`
+	}
+	if e = decodeJSON(r, &input); e != nil {
+		s.writeError(w, r, e)
+		return
+	}
+	if input.Mode == nil {
+		s.fail(w, r, codeInvalidRequest, nil, "mode is required")
+		return
+	}
+	if !networkproxy.ValidRedirectProtection(*input.Mode, false) {
+		s.fail(w, r, codeValidationFailed, nil, "mode must be strict, basic or off")
+		return
+	}
+	if _, err := s.store.PatchGlobalRedirectProtection(revision, *input.Mode); err != nil {
+		s.writeError(w, r, settingsWriteError(err))
+		return
+	}
+	s.writeRedirectProtection(w, r)
+}
+
 // ---------------------------------------------------------------- global proxy
 
 type globalProxyStateDTO struct {

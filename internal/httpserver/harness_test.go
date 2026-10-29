@@ -179,7 +179,7 @@ func newHarness(t *testing.T, opts ...harnessOption) *harness {
 	must(err)
 	clients := map[string]*distributor.Client{}
 	for _, source := range snapshot.Sources {
-		client, err := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, snapshot.ProviderDefaults[source.Provider], source.AppUID, snapshot.ProxyScopes[source.AppUID].VendorUID, pool, source.JSONRelease)
+		client, err := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, snapshot.ProviderDefaults[source.Provider], source.AppUID, snapshot.ProxyScopes[source.AppUID].VendorUID, pool, snapshot.RedirectPolicies[source.AppUID], source.JSONRelease)
 		must(err)
 		clients[source.StorageID()] = client
 	}

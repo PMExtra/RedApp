@@ -1965,6 +1965,84 @@ paths:
           $ref: '#/components/responses/InternalError'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /admin/api/settings/redirect-protection:
+    get:
+      operationId: getRedirectProtectionSettings
+      tags: [settings]
+      summary: Read the global redirect protection.
+      security:
+        - sessionCookie: []
+      x-error-codes: []
+      responses:
+        '200':
+          description: Global redirect protection.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RedirectProtectionState'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    put:
+      operationId: replaceRedirectProtectionSettings
+      tags: [settings]
+      summary: Replace the global redirect protection.
+      description: |
+        Vendors and applications set to `inherit` use it. `inherit` is not allowed globally; the default is `strict`.
+        A change applies to new upstream requests only.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      security:
+        - sessionCookie: []
+          csrfToken: []
+      x-max-body-bytes: 1024
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RedirectProtectionSettings'
+      x-error-codes: [VALIDATION_FAILED]
+      responses:
+        '200':
+          description: Saved state.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RedirectProtectionState'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /admin/api/settings/homepage:
     get:
       operationId: getHomepageSettings
@@ -6832,6 +6910,68 @@ components:
           enum: [override, environment, request]
         revision:
           $ref: '#/components/schemas/Revision'
+    RedirectProtectionMode:
+      type: string
+      enum: [inherit, strict, basic, off]
+      description: |
+        How upstream redirects of release and HTTP cache applications are checked. Initial URLs are always limited to
+        the configured sources.
+        - `strict`: the target must also be allowed: a JSON release source of the request's role, the fixed root of a
+          Codex or Claude Code source, or an HTTP cache base URL or `redirect_allowlist` entry.
+        - `basic`: only the general rules: a redirect to another origin uses HTTPS, HTTPS never downgrades to HTTP, the
+          target has no credentials or path traversal, and a new host stays in the address class of the source (a
+          public source cannot reach intranet addresses and the reverse).
+        - `off`: nothing is checked.
+        In every mode credentials and cookies are dropped across origins and at most 4 redirects are followed.
+        `inherit` uses the vendor's setting, then the global one.
+    RedirectProtectionSettings:
+      type: object
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [strict, basic, off]
+    RedirectProtectionState:
+      type: object
+      additionalProperties: false
+      required: [mode, revision]
+      properties:
+        mode:
+          type: string
+          enum: [strict, basic, off]
+        revision:
+          $ref: '#/components/schemas/Revision'
+    RedirectProtectionEffective:
+      type: object
+      additionalProperties: false
+      required: [mode, source_scope, source_id]
+      description: Resolved redirect protection after inheritance (application → vendor → global).
+      properties:
+        mode:
+          type: string
+          enum: [strict, basic, off]
+        source_scope:
+          type: string
+          enum: [app, vendor, global]
+        source_id:
+          type: string
+          description: Key of the scope that supplied the setting (`vendor/app`, vendor ID, or `""` for global).
+    RedirectAllowlist:
+      type: array
+      maxItems: 32
+      description: Extra targets an HTTP cache may be redirected to under `strict` protection, besides its base URLs.
+      items:
+        type: object
+        additionalProperties: false
+        required: [origin, prefix]
+        properties:
+          origin:
+            type: string
+            description: Canonical `http(s)://host[:port]` without path.
+          prefix:
+            type: string
+            description: Absolute directory path ending in `/`, for example `/` or `/downloads/`.
     GlobalProxySettings:
       type: object
       additionalProperties: false
@@ -7357,6 +7497,8 @@ components:
           $ref: '#/components/schemas/LocalizedIcons'
         proxy:
           $ref: '#/components/schemas/ProxyConfig'
+        redirect_protection:
+          $ref: '#/components/schemas/RedirectProtectionMode'
     ReleaseDownloads:
       type: object
       additionalProperties: false
@@ -7539,6 +7681,10 @@ components:
           $ref: '#/components/schemas/ProviderKey'
         proxy:
           $ref: '#/components/schemas/ProxyConfig'
+        redirect_protection:
+          $ref: '#/components/schemas/RedirectProtectionMode'
+        redirect_allowlist:
+          $ref: '#/components/schemas/RedirectAllowlist'
         categories:
           type: array
           items:
@@ -7928,7 +8074,7 @@ components:
       enum: [darwin-arm64, darwin-x64, linux-arm64, linux-x64, win32-arm64, win32-x64, linux-arm64-musl, linux-x64-musl]
     VendorConfigurationPath:
       type: string
-      enum: [name.en, name.zh-CN, description.en, description.zh-CN, icon, localized_icons.en, localized_icons.zh-CN, proxy]
+      enum: [name.en, name.zh-CN, description.en, description.zh-CN, icon, localized_icons.en, localized_icons.zh-CN, proxy, redirect_protection]
     AppConfigurationPath:
       type: string
       enum:
@@ -7938,6 +8084,8 @@ components:
         - description.zh-CN
         - icon
         - proxy
+        - redirect_protection
+        - redirect_allowlist
         - instructions.en
         - instructions.zh-CN
         - json_release
@@ -7958,7 +8106,7 @@ components:
     VendorConfiguration:
       type: object
       additionalProperties: false
-      required: [revision, template_ref, template_hash, template_missing, defaults, overrides, effective, fields, proxy_effective]
+      required: [revision, template_ref, template_hash, template_missing, defaults, overrides, effective, fields, proxy_effective, redirect_protection_effective]
       properties:
         revision:
           $ref: '#/components/schemas/Revision'
@@ -7990,10 +8138,12 @@ components:
             $ref: '#/components/schemas/FieldOrigin'
         proxy_effective:
           $ref: '#/components/schemas/ProxyEffective'
+        redirect_protection_effective:
+          $ref: '#/components/schemas/RedirectProtectionEffective'
     AppConfiguration:
       type: object
       additionalProperties: false
-      required: [revision, template_ref, template_hash, template_missing, defaults, overrides, effective, fields, proxy_effective]
+      required: [revision, template_ref, template_hash, template_missing, defaults, overrides, effective, fields, proxy_effective, redirect_protection_effective]
       properties:
         revision:
           $ref: '#/components/schemas/Revision'
@@ -8024,6 +8174,8 @@ components:
             $ref: '#/components/schemas/FieldOrigin'
         proxy_effective:
           $ref: '#/components/schemas/ProxyEffective'
+        redirect_protection_effective:
+          $ref: '#/components/schemas/RedirectProtectionEffective'
     VendorConfigurationPatch:
       type: object
       additionalProperties: false
@@ -8054,6 +8206,8 @@ components:
               $ref: '#/components/schemas/IconPath'
             proxy:
               $ref: '#/components/schemas/ProxyConfig'
+            redirect_protection:
+              $ref: '#/components/schemas/RedirectProtectionMode'
         unset:
           type: array
           uniqueItems: true
@@ -8085,6 +8239,10 @@ components:
               $ref: '#/components/schemas/IconPath'
             proxy:
               $ref: '#/components/schemas/ProxyConfig'
+            redirect_protection:
+              $ref: '#/components/schemas/RedirectProtectionMode'
+            redirect_allowlist:
+              $ref: '#/components/schemas/RedirectAllowlist'
             instructions.en:
               type: string
               maxLength: 12000

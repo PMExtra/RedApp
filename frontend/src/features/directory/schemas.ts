@@ -68,6 +68,57 @@ export const proxySchema = z
 
 export const iconSchema = z.string();
 
+export const redirectProtectionSchema = z.enum(["inherit", "strict", "basic", "off"]);
+
+/** Spec `RedirectAllowlist` limit. */
+export const MAX_REDIRECT_ALLOWLIST = 32;
+
+/** A canonical `http(s)://host[:port]` origin without path, as the server requires. */
+export function isRedirectOrigin(value: string): boolean {
+  if (!/^https?:\/\/[^/?#@\s]+$/.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return url.origin === value && url.hostname !== "";
+  } catch {
+    return false;
+  }
+}
+
+/** An absolute directory path: starts and ends with `/`, no dot segments. */
+export function isRedirectPrefix(value: string): boolean {
+  return (
+    value.startsWith("/") &&
+    value.endsWith("/") &&
+    !/[\\%?#\s]/.test(value) &&
+    !value.split("/").some((segment) => segment === "." || segment === "..")
+  );
+}
+
+export const redirectAllowlistSchema = z
+  .array(z.object({ origin: z.string(), prefix: z.string() }))
+  .max(MAX_REDIRECT_ALLOWLIST)
+  .superRefine((entries, context) => {
+    const seen = new Set<string>();
+    entries.forEach((entry, index) => {
+      const key = `${entry.origin} ${entry.prefix}`;
+      if (!isRedirectOrigin(entry.origin) || seen.has(key)) {
+        context.addIssue({
+          code: "custom",
+          path: [index, "origin"],
+          message: formError("directory.validation.redirectOrigin"),
+        });
+      }
+      if (!isRedirectPrefix(entry.prefix)) {
+        context.addIssue({
+          code: "custom",
+          path: [index, "prefix"],
+          message: formError("directory.validation.redirectPrefix"),
+        });
+      }
+      seen.add(key);
+    });
+  });
+
 export const vendorIdSchema = z
   .string()
   .refine((value) => isVendorId(value), formError("directory.validation.vendorId"));

@@ -137,8 +137,8 @@ func (s *Service) runStream(ctx context.Context, st *stream, resp *http.Response
 			return nil
 		},
 		Resumable: func() bool { return st.validator != "" },
-		Retrying: func(error) {
-			_ = s.upstreamFailure(st.fill.entry, st.fill.path, 0)
+		Retrying: func(cause error) {
+			_ = s.upstreamFailure(st.fill.entry, st.fill.path, 0, cause)
 		},
 	}
 	err := fill.Run(ctx, &spool.Segment{Body: resp.Body, Total: resp.ContentLength})
@@ -149,7 +149,7 @@ func (s *Service) runStream(ctx context.Context, st *stream, resp *http.Response
 		if ctx.Err() == nil && !errors.Is(err, spool.ErrLength) {
 			var status spool.StatusError
 			errors.As(err, &status)
-			_ = s.upstreamFailure(st.fill.entry, st.fill.path, int(status))
+			_ = s.upstreamFailure(st.fill.entry, st.fill.path, int(status), nil)
 		}
 		s.endStream(st, err, "")
 		return

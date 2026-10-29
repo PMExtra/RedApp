@@ -40,11 +40,12 @@ type Metadata struct {
 	Vendor string `json:"vendor,omitempty"`
 }
 type VendorSpec struct {
-	Proxy          networkproxy.Config `json:"proxy"`
-	Name           Text                `json:"name"`
-	Description    Text                `json:"description"`
-	Icon           string              `json:"icon"`
-	LocalizedIcons Text                `json:"localized_icons"`
+	Proxy              networkproxy.Config `json:"proxy"`
+	RedirectProtection string              `json:"redirect_protection,omitempty"`
+	Name               Text                `json:"name"`
+	Description        Text                `json:"description"`
+	Icon               string              `json:"icon"`
+	LocalizedIcons     Text                `json:"localized_icons"`
 }
 type Retention struct {
 	Enabled    bool `json:"enabled"`
@@ -117,26 +118,66 @@ func ReleaseTemplateKey(provider string) (string, bool) {
 
 func DefaultRetention() *Retention { return &Retention{KeepLatest: 3} }
 
+// MaxRedirectAllowlist bounds the extra strict redirect targets of an HTTP cache.
+const MaxRedirectAllowlist = 32
+
+// ValidateRedirectProtection checks an entity's own redirect protection.
+func ValidateRedirectProtection(mode string) error {
+	if mode != "" && !networkproxy.ValidRedirectProtection(mode, true) {
+		return fmt.Errorf("redirect_protection must be inherit, strict, basic or off")
+	}
+	return nil
+}
+
+// ValidateRedirectAllowlist checks the extra strict redirect targets, which
+// only an HTTP cache has; release sources are their own allowlist.
+func ValidateRedirectAllowlist(provider string, list []releaseconfig.Source) error {
+	if list == nil {
+		return nil
+	}
+	if provider != "http-cache" {
+		return fmt.Errorf("redirect_allowlist requires the http-cache provider")
+	}
+	if len(list) > MaxRedirectAllowlist {
+		return fmt.Errorf("redirect_allowlist has at most %d entries", MaxRedirectAllowlist)
+	}
+	seen := map[releaseconfig.Source]bool{}
+	for _, source := range list {
+		if err := source.Validate(); err != nil {
+			return fmt.Errorf("redirect_allowlist: %w", err)
+		}
+		if seen[source] {
+			return fmt.Errorf("redirect_allowlist has a duplicate entry")
+		}
+		seen[source] = true
+	}
+	return nil
+}
+
 type AppSpec struct {
-	Categories      []string              `json:"categories"`
-	Tags            []string              `json:"tags"`
-	Prewarm         *Prewarm              `json:"prewarm,omitempty"`
-	Retention       *Retention            `json:"retention,omitempty"`
-	Proxy           networkproxy.Config   `json:"proxy"`
-	Name            Text                  `json:"name"`
-	Description     Text                  `json:"description"`
-	Icon            string                `json:"icon"`
-	Provider        string                `json:"provider"`
-	JSONRelease     *releaseconfig.Config `json:"json_release,omitempty"`
-	BaseURL         string                `json:"base_url"`
-	BaseURLs        []string              `json:"base_urls"`
-	SourceStrategy  string                `json:"source_strategy"`
-	CacheTTLSeconds int                   `json:"cache_ttl_seconds"`
-	Instructions    Text                  `json:"instructions"`
-	HTTPPolicy      *cachepolicy.Config   `json:"http_policy,omitempty"`
-	AutoIndex       *bool                 `json:"auto_index,omitempty"`
-	DefaultArtifact *string               `json:"default_artifact,omitempty"`
-	HiddenArtifacts []string              `json:"hidden_artifacts,omitempty"`
+	Categories []string            `json:"categories"`
+	Tags       []string            `json:"tags"`
+	Prewarm    *Prewarm            `json:"prewarm,omitempty"`
+	Retention  *Retention          `json:"retention,omitempty"`
+	Proxy      networkproxy.Config `json:"proxy"`
+	// RedirectProtection is inherit, strict, basic or off; absent means inherit.
+	RedirectProtection string `json:"redirect_protection,omitempty"`
+	// RedirectAllowlist adds strict redirect targets of an HTTP cache.
+	RedirectAllowlist []releaseconfig.Source `json:"redirect_allowlist,omitempty"`
+	Name              Text                   `json:"name"`
+	Description       Text                   `json:"description"`
+	Icon              string                 `json:"icon"`
+	Provider          string                 `json:"provider"`
+	JSONRelease       *releaseconfig.Config  `json:"json_release,omitempty"`
+	BaseURL           string                 `json:"base_url"`
+	BaseURLs          []string               `json:"base_urls"`
+	SourceStrategy    string                 `json:"source_strategy"`
+	CacheTTLSeconds   int                    `json:"cache_ttl_seconds"`
+	Instructions      Text                   `json:"instructions"`
+	HTTPPolicy        *cachepolicy.Config    `json:"http_policy,omitempty"`
+	AutoIndex         *bool                  `json:"auto_index,omitempty"`
+	DefaultArtifact   *string                `json:"default_artifact,omitempty"`
+	HiddenArtifacts   []string               `json:"hidden_artifacts,omitempty"`
 }
 type Distribution struct {
 	Protocol           string      `json:"protocol"`
@@ -395,6 +436,9 @@ func LoadFS(input fs.FS) (Set, error) {
 			if e = v.Spec.Proxy.Validate(true); e != nil {
 				return fail(e)
 			}
+			if e = ValidateRedirectProtection(v.Spec.RedirectProtection); e != nil {
+				return fail(e)
+			}
 			if v.SchemaVersion != 1 {
 				return yamlconfig.ErrorAt(raw, file, "schema_version", fmt.Errorf("expected 1"))
 			}
@@ -442,6 +486,12 @@ func LoadFS(input fs.FS) (Set, error) {
 				a.Spec.Proxy = networkproxy.Inherit()
 			}
 			if e = a.Spec.Proxy.Validate(true); e != nil {
+				return fail(e)
+			}
+			if e = ValidateRedirectProtection(a.Spec.RedirectProtection); e != nil {
+				return fail(e)
+			}
+			if e = ValidateRedirectAllowlist(a.Spec.Provider, a.Spec.RedirectAllowlist); e != nil {
 				return fail(e)
 			}
 			if a.SchemaVersion != 1 {

@@ -142,7 +142,7 @@ RedApp can reach upstream sources through an HTTP, HTTPS or SOCKS5 proxy. The pr
 
 | Scope | Modes | Where to set |
 | --- | --- | --- |
-| Global | `direct`, `url` | **Upstream proxy** page (`/admin/settings/proxy`) |
+| Global | `direct`, `url` | **Network** page (`/admin/settings/proxy`) |
 | Vendor | `inherit`, `direct`, `url` | Vendor settings |
 | Application | `inherit`, `direct`, `url` | Application settings |
 
@@ -164,6 +164,22 @@ Behavior:
 - A change applies to new upstream connections. Transfers already in progress finish on their old connection.
 - Proxy passwords are never returned in full. The console shows them redacted. Saving without changing the password keeps the stored one.
 
+## Redirect protection
+
+Redirect protection decides which upstream redirects release applications (JSON releases, Codex, Claude Code) and HTTP cache applications follow. It covers metadata, checksums and downloads. Like the proxy it is resolved in three levels: **global → vendor → application**. The global setting is on the **Network** page and defaults to strict; vendors and applications inherit it unless they set their own.
+
+| Mode | Redirect targets |
+| --- | --- |
+| Strict | Only allowed sources: a JSON release's sources of the same role, the fixed root of a Codex or Claude Code source, or an HTTP cache's base URLs and **redirect allowlist**. The basic rules also apply. |
+| Basic | Any host, but a redirect to another origin must use HTTPS, HTTPS never downgrades to HTTP, the target has no credentials or path traversal, and a public source cannot reach intranet addresses (nor an intranet source public ones). |
+| Off | Any target, without checks. Use only for trusted sources. |
+
+- The initial request of every application always stays within its configured sources; the setting only concerns redirects.
+- In every mode, credentials and cookies are dropped when the origin changes, and at most 4 redirects are followed.
+- An HTTP cache application has a redirect allowlist of origins and directory prefixes (`https://cdn.example.com` with prefix `/` allows the whole origin). It is used only in strict mode.
+- A refused redirect is recorded in the application's events with both URLs and the reason, for example `upstream redirect from https://download.example.com/app.exe to https://cdn.example.net/app.exe is not allowed: the target is not an allowed source`. Credentials and query strings, which often hold signed CDN tokens, are removed from these URLs. Download clients only see a generic error.
+- HTTP cache applications used to follow HTTPS redirects to any public host. Under the strict default they now follow only their own base URLs; add the redirect targets to the allowlist or choose basic protection for applications that rely on other hosts.
+
 ## Presets and overrides
 
 RedApp ships built-in presets for vendors, applications and categories. They are compiled into the binary.
@@ -172,7 +188,7 @@ RedApp ships built-in presets for vendors, applications and categories. They are
 - A preset-based vendor or application stores only the fields you changed (overrides). All other fields follow the preset and pick up preset updates when you upgrade RedApp.
 - A value equal to the preset, a valid empty string/list, `false` and `0` still count as your own override. Historic values whose intent is unknown are preserved; genuinely absent fields may inherit.
 - Common settings inherit across providers. Provider-specific settings inherit only from a template with the same provider; otherwise only that provider's own defaults apply. The provider itself is immutable. The editor shows both the current and template providers.
-- English and Chinese texts are separate fields. Lists (sources, cache rules, categories, tags) and the proxy, prewarm, retention and complete JSON release configuration are each replaced as a whole. JSON request/query/source blocks are never recursively combined with the template.
+- English and Chinese texts are separate fields. Lists (sources, cache rules, categories, tags, the redirect allowlist) and the proxy, prewarm, retention and complete JSON release configuration are each replaced as a whole. JSON request/query/source blocks are never recursively combined with the template.
 - Built-in vendors and applications cannot be deleted (their delete button is disabled). Disable them instead.
 - A category cannot be renamed to a name that another category already uses in either language (ignoring case).
 

@@ -99,6 +99,16 @@ export default {
         "The image contains scripts, animations or references outside the file, which must be removed before it can be uploaded: {items}. Static shapes and colors are kept; removed effects no longer show.",
       sanitizeConfirm: "Sanitize and upload",
     },
+    redirect: {
+      allowlist: "Redirect allowlist",
+      allowlistHint:
+        "Under strict redirect protection, the sources may also redirect to these origins and directory prefixes. Use prefix / for the whole origin.",
+      allowlistEmpty: "No extra redirect targets.",
+      origin: "Allowed origin {number}",
+      prefix: "Path prefix {number}",
+      remove: "Remove redirect target {number}",
+      add: "Add redirect target",
+    },
     source: {
       urls: "Source URLs",
       urlsHint:
@@ -195,6 +205,9 @@ export default {
       urlsUnique: "Each source URL may appear only once.",
       ttl: "Enter whole seconds from 0 to 86400.",
       proxyUrl: "Enter the proxy URL.",
+      redirectOrigin: "Enter a unique origin such as https://cdn.example.com, without a path.",
+      redirectPrefix: "Enter a directory path that starts and ends with /.",
+      redirectUnique: "This origin and prefix are already listed.",
       vendorId:
         "Use lowercase letters, digits and single hyphens (not admin, api, assets, health or all).",
       appId: "Use lowercase letters, digits and single hyphens.",

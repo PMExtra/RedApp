@@ -77,6 +77,24 @@ func oldRows(t *testing.T, path string, queries map[string]string) (map[string]s
 	return queries, data
 }
 
+// preserved reports whether every old row is still present: later migrations
+// may add rows, such as new settings, but never change or drop old ones.
+func preserved(before, after map[string][]string) bool {
+	for table, rows := range before {
+		left := map[string]int{}
+		for _, row := range after[table] {
+			left[row]++
+		}
+		for _, row := range rows {
+			if left[row] == 0 {
+				return false
+			}
+			left[row]--
+		}
+	}
+	return true
+}
+
 func TestMigration15PreservesDataAndObjects(t *testing.T) {
 	dir := t.TempDir()
 	path := loadSchemaFixture(t, dir, fixturePath(15))
@@ -123,7 +141,7 @@ func TestMigration15PreservesDataAndObjects(t *testing.T) {
 	}
 	s.Close()
 	_, after := oldRows(t, path, queries)
-	if !reflect.DeepEqual(before, after) {
+	if !preserved(before, after) {
 		t.Fatal("old table rows changed")
 	}
 	if body, err := os.ReadFile(object); err != nil || string(body) != "kept" {

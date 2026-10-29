@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/PMExtra/RedApp/internal/networkproxy"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -35,10 +36,12 @@ type configurationDTO struct {
 	Effective       map[string]any            `json:"effective"`
 	Fields          map[string]fieldOriginDTO `json:"fields"`
 	ProxyEffective  proxyEffectiveDTO         `json:"proxy_effective"`
+	// RedirectEffective is the redirect protection the entity uses and its level.
+	RedirectEffective networkproxy.RedirectEffective `json:"redirect_protection_effective"`
 }
 
-var vendorSpecFields = []string{"name", "description", "icon", "localized_icons", "proxy"}
-var appSpecFields = []string{"name", "description", "icon", "provider", "proxy", "categories", "tags", "instructions", "json_release", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy", "auto_index", "default_artifact", "hidden_artifacts", "retention", "prewarm"}
+var vendorSpecFields = []string{"name", "description", "icon", "localized_icons", "proxy", "redirect_protection"}
+var appSpecFields = []string{"name", "description", "icon", "provider", "proxy", "redirect_protection", "redirect_allowlist", "categories", "tags", "instructions", "json_release", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy", "auto_index", "default_artifact", "hidden_artifacts", "retention", "prewarm"}
 
 // specDocument keeps the spec fields of the kind that apply to provider
 // ("" for vendors). Lists that are absent or null become []. A nil spec
@@ -57,7 +60,7 @@ func specDocument(spec store.Object, provider string, sparse bool) map[string]an
 		if provider != "" && !store.AppPathApplies(provider, field) {
 			continue
 		}
-		if !sparse && (field == "categories" || field == "tags" || field == "base_urls") && value == nil {
+		if !sparse && (field == "categories" || field == "tags" || field == "base_urls" || field == "redirect_allowlist") && value == nil {
 			value, ok = []any{}, true
 		}
 		if ok && value != nil {
@@ -84,6 +87,7 @@ func configurationDocument(c store.Configuration, provider string) configuration
 	}
 	proxy := c.ProxyEffective.Config.Redacted()
 	out.ProxyEffective = proxyEffectiveDTO{Mode: proxy.Mode, URL: proxy.URL, SourceScope: c.ProxyEffective.SourceScope, SourceID: c.ProxyEffective.SourceID, DNS: c.ProxyEffective.DNS}
+	out.RedirectEffective = c.RedirectEffective
 	return out
 }
 
@@ -167,8 +171,8 @@ func (s *Server) configurationPatch(r *http.Request, paths []string, app bool) (
 	return store.ConfigurationPatch{Revision: revision, Set: in.Set, Unset: in.Unset, NewCategories: in.NewCategories}, nil
 }
 
-var vendorConfigurationPaths = []string{"name.en", "name.zh-CN", "description.en", "description.zh-CN", "icon", "localized_icons.en", "localized_icons.zh-CN", "proxy"}
-var appConfigurationPaths = []string{"name.en", "name.zh-CN", "description.en", "description.zh-CN", "icon", "proxy", "instructions.en", "instructions.zh-CN", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "auto_index", "default_artifact", "hidden_artifacts", "retention", "prewarm", "categories", "tags"}
+var vendorConfigurationPaths = []string{"name.en", "name.zh-CN", "description.en", "description.zh-CN", "icon", "localized_icons.en", "localized_icons.zh-CN", "proxy", "redirect_protection"}
+var appConfigurationPaths = []string{"name.en", "name.zh-CN", "description.en", "description.zh-CN", "icon", "proxy", "redirect_protection", "redirect_allowlist", "instructions.en", "instructions.zh-CN", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "auto_index", "default_artifact", "hidden_artifacts", "retention", "prewarm", "categories", "tags"}
 
 func (s *Server) patchVendorConfiguration(w http.ResponseWriter, r *http.Request) {
 	id, e := vendorParam(r)

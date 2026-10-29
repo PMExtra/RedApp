@@ -150,6 +150,8 @@ func (s *Server) routeTable() []route {
 		{method: "PUT", path: "/admin/api/settings/public-url", operation: "replacePublicUrlSettings", serve: s.replacePublicUrlSettings, auth: authAdmin, maxBody: 8192},
 		{method: "GET", path: "/admin/api/settings/proxy", operation: "getGlobalProxySettings", serve: s.getGlobalProxySettings, auth: authAdmin},
 		{method: "PUT", path: "/admin/api/settings/proxy", operation: "replaceGlobalProxySettings", serve: s.replaceGlobalProxySettings, auth: authAdmin, maxBody: 8192},
+		{method: "GET", path: "/admin/api/settings/redirect-protection", operation: "getRedirectProtectionSettings", serve: s.getRedirectProtectionSettings, auth: authAdmin},
+		{method: "PUT", path: "/admin/api/settings/redirect-protection", operation: "replaceRedirectProtectionSettings", serve: s.replaceRedirectProtectionSettings, auth: authAdmin, maxBody: 1024},
 		{method: "GET", path: "/admin/api/settings/homepage", operation: "getHomepageSettings", serve: s.getHomepageSettings, auth: authAdmin},
 		{method: "PUT", path: "/admin/api/settings/homepage", operation: "replaceHomepageSettings", serve: s.replaceHomepageSettings, auth: authAdmin, maxBody: 16384},
 		{method: "GET", path: "/admin/api/apps/{vendor}/{app}/sources", operation: "listSources", serve: s.listSources, auth: authAdmin},

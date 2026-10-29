@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/PMExtra/RedApp/internal/identity"
+	"github.com/PMExtra/RedApp/internal/networkproxy"
 )
 
 // ClientMode separates built-in public release sources from administrator-configured
@@ -89,7 +90,27 @@ func Classify(err error) ErrorKind {
 	return KindNetwork
 }
 
-type redirectPolicyError struct{ error }
+// redirectPolicyError is a refused redirect hop. from and to are redacted.
+type redirectPolicyError struct {
+	error
+	from, to string
+}
+
+func (e *redirectPolicyError) message() string {
+	return fmt.Sprintf("upstream redirect from %s to %s is not allowed: %s", e.from, e.to, e.error)
+}
+
+// redactURL keeps scheme, host and path. Credentials and the query, which
+// often holds a signed CDN token, are dropped.
+func redactURL(u *url.URL) string {
+	if u == nil {
+		return "(unknown)"
+	}
+	clean := url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path, RawPath: u.RawPath}
+	return clean.String()
+}
+
+var errRedirectNotAllowed = errors.New("the target is not an allowed source")
 
 type ClientMode uint8
 
@@ -109,6 +130,38 @@ type Client struct {
 	// releaseSource authorizes explicit administrator-configured origins and
 	// paths for JSON release sources, including every redirect hop.
 	releaseSource func(string) bool
+	// redirects is the redirect protection mode (networkproxy.Redirect*); ""
+	// is strict. redirectAllow adds strict targets of a general HTTP source.
+	redirects     string
+	redirectAllow func(string) bool
+}
+
+// RedirectProtection is the client's redirect protection mode.
+func (c *Client) RedirectProtection() string {
+	if c.redirects == "" {
+		return networkproxy.RedirectStrict
+	}
+	return c.redirects
+}
+
+// WithRedirectProtection returns an independent client whose redirects follow
+// mode. allow adds the targets a strict general HTTP source may reach beyond
+// its own base; release clients ignore it.
+func (c *Client) WithRedirectProtection(mode string, allow func(string) bool) (*Client, error) {
+	if c == nil || c.HTTP == nil || c.transports == nil || !networkproxy.ValidRedirectProtection(mode, false) {
+		return nil, errors.New("invalid redirect protection")
+	}
+	clone := *c
+	transports := *c.transports
+	transports.unchecked = mode == networkproxy.RedirectOff
+	clone.transports = &transports
+	httpClient := *c.HTTP
+	httpClient.Transport = clone.transports
+	httpClient.Jar = nil
+	clone.HTTP = &httpClient
+	clone.redirects, clone.redirectAllow = mode, allow
+	httpClient.CheckRedirect = clone.checkRedirect
+	return &clone, nil
 }
 
 // NormalizeBase validates a directory-like base without fetching it. Configured
@@ -257,28 +310,45 @@ func (c *Client) checkRedirect(r *http.Request, via []*http.Request) error {
 			r.Header.Del(header)
 		}
 	}
+	if c.redirects == networkproxy.RedirectOff {
+		return nil
+	}
+	// The general rules. Which addresses a new host may resolve to is decided
+	// when the hop is dialed (transportSet.forRequest), because only then are
+	// the addresses known.
 	if previous.Scheme == "https" && r.URL.Scheme != "https" {
-		return errors.New("upstream HTTPS downgrade is not allowed")
+		return errors.New("HTTPS cannot redirect to HTTP")
 	}
-	if c.releaseSource != nil {
-		if !sameOrigin(previous, r.URL) && r.URL.Scheme != "https" {
-			return errors.New("cross-origin release redirects require HTTPS")
-		}
-		return c.Validate(r.URL)
+	if !sameOrigin(previous, r.URL) && r.URL.Scheme != "https" {
+		return errors.New("a redirect to another origin requires HTTPS")
 	}
-	if c.mode != GeneralHTTP || sameOrigin(r.URL, c.Base) {
-		return c.Validate(r.URL)
+	if r.URL.User != nil {
+		return errors.New("the target contains credentials")
 	}
-	// An arbitrary initial URL remains forbidden. Only upstream redirects may
-	// change origin, and an origin-changing hop must arrive over HTTPS. An
-	// HTTP source can upgrade to HTTPS, but HTTPS can never downgrade. Which
-	// addresses the new host may resolve to is decided when the hop is dialed
-	// (transportSet.forRequest), because only then are the addresses known.
-	if r.URL.Scheme != "https" {
-		return errors.New("cross-origin upstream redirects require HTTPS")
-	}
-	if _, err := NormalizeBase(r.URL.String(), GeneralHTTP); err != nil {
+	if err := validatePath(r.URL); err != nil {
 		return err
+	}
+	if c.redirects == networkproxy.RedirectBasic {
+		return nil
+	}
+	// Strict: release sources follow their allowlist or fixed root on every
+	// hop; a general HTTP source stays on its base or its allowlist.
+	if c.releaseSource != nil || c.mode != GeneralHTTP || sameOrigin(r.URL, c.Base) {
+		if c.Validate(r.URL) != nil {
+			return errRedirectNotAllowed
+		}
+		return nil
+	}
+	// An HTTP source may move to the same root over HTTPS.
+	if c.Base.Scheme == "http" && r.URL.Scheme == "https" && strings.EqualFold(r.URL.Hostname(), c.Base.Hostname()) && r.URL.Port() == "" {
+		upgraded := *r.URL
+		upgraded.Scheme, upgraded.Host = c.Base.Scheme, c.Base.Host
+		if c.Validate(&upgraded) == nil {
+			return nil
+		}
+	}
+	if c.redirectAllow == nil || !c.redirectAllow(r.URL.String()) {
+		return errRedirectNotAllowed
 	}
 	return nil
 }
@@ -366,7 +436,11 @@ func (c *Client) Send(ctx context.Context, req Request) (*http.Response, error) 
 			return errIndexBoundary
 		}
 		if err := c.checkRedirect(request, via); err != nil {
-			return &redirectPolicyError{err}
+			var from *url.URL
+			if len(via) > 0 {
+				from = via[len(via)-1].URL
+			}
+			return &redirectPolicyError{error: err, from: redactURL(from), to: redactURL(request.URL)}
 		}
 		return nil
 	}
@@ -378,11 +452,15 @@ func (c *Client) Send(ctx context.Context, req Request) (*http.Response, error) 
 		var unknownAuthority x509.UnknownAuthorityError
 		var hostname x509.HostnameError
 		var invalidCertificate x509.CertificateInvalidError
+		var address *addressError
 		if errors.As(err, &redirect) {
-			return nil, &RequestError{Kind: KindRedirect, message: "upstream redirect is not allowed"}
+			return nil, &RequestError{Kind: KindRedirect, message: redirect.message()}
+		}
+		if errors.As(err, &address) {
+			return nil, &RequestError{Kind: KindNetwork, message: address.Error(), cause: ErrAddressNotAllowed}
 		}
 		if errors.Is(err, ErrAddressNotAllowed) {
-			return nil, &RequestError{Kind: KindNetwork, message: "Upstream address is not allowed", cause: ErrAddressNotAllowed}
+			return nil, &RequestError{Kind: KindNetwork, message: "upstream address is not allowed", cause: ErrAddressNotAllowed}
 		}
 		if errors.As(err, &certificate) || errors.As(err, &unknownAuthority) || errors.As(err, &hostname) || errors.As(err, &invalidCertificate) {
 			return nil, &RequestError{Kind: KindTLS}

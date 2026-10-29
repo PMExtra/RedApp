@@ -18,4 +18,21 @@ export default {
       global: "global setting",
     },
   },
+  redirectProtection: {
+    legend: "Redirect protection",
+    modes: {
+      inherit: "Inherit",
+      strict: "Strict",
+      basic: "Basic",
+      off: "Off",
+    },
+    hints: {
+      strict:
+        "Upstream redirects may only reach the configured sources: release sources, or an HTTP cache's base URLs and redirect allowlist. The basic checks also apply.",
+      basic:
+        "Any target is allowed, but a redirect to another host must use HTTPS, HTTPS never downgrades to HTTP and a public source cannot redirect into the intranet.",
+      off: "Redirects are followed without any check. Use this only for trusted sources.",
+    },
+    effective: "Effective: {mode} (from {scope})",
+  },
 } satisfies LocaleModule;

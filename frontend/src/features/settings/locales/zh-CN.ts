@@ -82,5 +82,12 @@ export default {
       save: "保存代理",
       saved: "代理已保存。新的上游连接将使用它；进行中的传输不受影响。",
     },
+    redirectProtection: {
+      title: "全局重定向保护",
+      description:
+        "发布类应用和 HTTP 缓存应用如何检查上游跳转，除非厂商或应用另有设置。初始请求始终限定在已配置的来源内。",
+      save: "保存重定向保护",
+      saved: "重定向保护已保存。新的上游请求将使用它。",
+    },
   },
 } satisfies LocaleModule;

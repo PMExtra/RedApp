@@ -47,6 +47,12 @@ export function globalProxyState(
   };
 }
 
+export function redirectProtectionState(
+  overrides: Overrides<Schema<"RedirectProtectionState">> = {},
+): Schema<"RedirectProtectionState"> {
+  return { mode: "strict", revision: 1, ...overrides };
+}
+
 export function operationalEvent(
   id: number,
   overrides: Overrides<Schema<"Event">> = {},

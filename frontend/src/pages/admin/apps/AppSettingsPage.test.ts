@@ -114,6 +114,47 @@ describe("application settings", () => {
     expect(screen.getByRole("button", { name: "Delete application" })).toBeDisabled();
   });
 
+  it("saves the redirect protection and allowlist of an HTTP cache", async () => {
+    const patches = settingsServer();
+    const { user } = await renderAdminPage("/admin/vendors/example/apps/tools/settings");
+    const network = await waitFor(() => container("Network"));
+    const protection = within(network).getByRole("group", { name: "Redirect protection" });
+    expect(within(protection).getByRole("radio", { name: "Inherit" })).toBeChecked();
+    expect(within(protection).getByText("Effective: Strict (from global setting)")).toBeVisible();
+
+    await user.click(within(protection).getByRole("radio", { name: "Basic" }));
+    await user.click(within(network).getByRole("button", { name: "Add redirect target" }));
+    const origin = within(network).getByRole("textbox", { name: "Allowed origin 1" });
+    await user.type(origin, "https://cdn.example.com/path");
+    await user.click(within(network).getByRole("button", { name: "Save" }));
+    expect(
+      await within(network).findByText(
+        "Enter a unique origin such as https://cdn.example.com, without a path.",
+      ),
+    ).toBeVisible();
+    expect(patches.calls).toHaveLength(0);
+
+    await user.clear(origin);
+    await user.type(origin, "https://cdn.example.com");
+    const prefix = within(network).getByRole("textbox", { name: "Path prefix 1" });
+    await user.clear(prefix);
+    await user.type(prefix, "/files/");
+    await user.click(within(network).getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(patches.calls).toHaveLength(1);
+    });
+    expect(patches.calls[0]).toMatchObject({
+      ifMatch: '"9"',
+      body: {
+        set: {
+          redirect_protection: "basic",
+          redirect_allowlist: [{ origin: "https://cdn.example.com", prefix: "/files/" }],
+        },
+        unset: [],
+      },
+    });
+  });
+
   it.each([
     ["http-cache", "Cache rules", "Metadata freshness"],
     ["codex", "Metadata freshness", "Cache rules"],

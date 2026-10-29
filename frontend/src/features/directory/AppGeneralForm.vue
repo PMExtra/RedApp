@@ -168,6 +168,7 @@ const providerName = computed(() => {
         :reloading="reloading"
         :save="networkSave"
         :read-only="readOnly"
+        :allowlist="provider === 'http-cache'"
       />
     </div>
   </AsyncState>

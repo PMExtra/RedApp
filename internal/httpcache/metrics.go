@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/PMExtra/RedApp/internal/application"
+	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/spool"
 	"github.com/PMExtra/RedApp/internal/store"
 )
@@ -88,14 +89,24 @@ func (w *metricWriter) Write(p []byte) (int, error) {
 	}
 	return n, err
 }
-func (s *Service) upstreamFailure(entry application.Entry, path string, status int) error {
+
+// upstreamFailure counts and records an upstream failure. A request error
+// carries its own administrator-facing reason, such as a refused redirect
+// with its redacted URLs; other causes keep the generic message.
+func (s *Service) upstreamFailure(entry application.Entry, path string, status int, cause error) error {
 	if err := s.db.AddFor(entry.MetricsID(), "upstream_errors", 1); err != nil {
 		return err
 	}
 	event := store.Event{AppID: entry.MetricsID(), ResourceKey: path, Category: "http", Code: "upstream_http", Message: "HTTP upstream failed to provide a complete representation"}
-	if status >= 100 && status <= 599 {
+	var request *distributor.RequestError
+	switch {
+	case status >= 100 && status <= 599:
 		event.UpstreamStatus = &status
-	} else {
+	case errors.As(cause, &request) && request.Kind == distributor.KindRedirect:
+		event.Code, event.Message = "upstream_redirect", request.Error()
+	case errors.As(cause, &request):
+		event.Code, event.Message = "upstream_connection", request.Error()
+	default:
 		event.Code = "upstream_connection"
 	}
 	return s.db.RecordEvent(event)
