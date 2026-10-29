@@ -48,7 +48,7 @@ Queries are trusted administrator configuration. They have no installed environm
 - Both return a non-cacheable temporary redirect to `/{vendor}/{app}/releases/{version}/{key}` on RedApp.
 - `/api/apps/{vendor}/{app}/downloads?channel=latest` returns normalized options and local URLs from one snapshot.
 
-The application page downloads from its header. The version badge opens the list of discovered releases; the download button offers one package of the chosen release, and its arrow lists the other visible packages. The offered package fits the visitor's system and, when the browser reports it, architecture: the default package if it fits, else the first fitting package by key. When nothing fits or the system is unknown, the default package is offered, else the first visible one. Detection is a suggestion; check the package before installing.
+The application page downloads from its header. The version badge opens the list of discovered releases; the download button offers one package of the chosen release, and its arrow lists the other visible packages. The offered package fits the visitor's system and, when the browser reports it, architecture: the default package if it fits; else, when the browser does not report the architecture, a universal or x64 package, which ARM Windows and Macs can also run; else the first fitting package by key. When nothing fits or the system is unknown, the default package is offered, else the first visible one. Detection is a suggestion; check the package before installing.
 
 ## Version history and lookup
 
