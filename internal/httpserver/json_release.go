@@ -207,6 +207,9 @@ func (s *Server) previewJSONRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	client, err := s.pool.NewScopedClient(input.Config.Sources.Metadata[0].Origin, distributor.ConfiguredRelease, entry.UID, entry.VendorUID)
+	if err == nil && entry.Upstream != nil {
+		client, err = client.WithRedirectProtection(entry.Upstream.RedirectProtection(), nil)
+	}
 	if err != nil {
 		s.writeError(w, r, storageError(err))
 		return

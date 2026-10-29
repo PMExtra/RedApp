@@ -18,6 +18,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/cachepolicy"
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/networkproxy"
+	"github.com/PMExtra/RedApp/internal/releaseconfig"
 	"github.com/PMExtra/RedApp/presets"
 )
 
@@ -35,6 +36,8 @@ type DirectorySnapshot struct {
 	GlobalProxy         networkproxy.Config
 	GlobalProxyRevision int64
 	ProxyScopes         map[string]networkproxy.Scope
+	// RedirectPolicies is each application's resolved redirect protection.
+	RedirectPolicies    map[string]RedirectPolicy
 	ReviewedDescriptors []presets.Descriptor
 	TemplateBindings    map[string]string
 	ProviderDefaults    map[string]string
@@ -44,18 +47,26 @@ type DirectorySnapshot struct {
 }
 type Object map[string]any
 
+// RedirectPolicy is an application's resolved redirect protection and, for an
+// HTTP cache, the extra targets strict protection allows.
+type RedirectPolicy struct {
+	networkproxy.RedirectEffective
+	Allowlist []releaseconfig.Source
+}
+
 type Configuration struct {
-	Revision             int64                  `json:"revision"`
-	InstructionsRevision int64                  `json:"instructions_revision,omitempty"`
-	ProxyEffective       networkproxy.Effective `json:"proxy_effective"`
-	TemplateRef          *string                `json:"template_ref"`
-	TemplateHash         *string                `json:"template_hash"`
-	TemplateProvider     *string                `json:"template_provider,omitempty"`
-	TemplateMissing      bool                   `json:"template_missing"`
-	Defaults             Object                 `json:"defaults"`
-	Overrides            Object                 `json:"overrides"`
-	Effective            Object                 `json:"effective"`
-	Fields               map[string]FieldOrigin `json:"fields"`
+	Revision             int64                          `json:"revision"`
+	InstructionsRevision int64                          `json:"instructions_revision,omitempty"`
+	ProxyEffective       networkproxy.Effective         `json:"proxy_effective"`
+	RedirectEffective    networkproxy.RedirectEffective `json:"redirect_protection_effective"`
+	TemplateRef          *string                        `json:"template_ref"`
+	TemplateHash         *string                        `json:"template_hash"`
+	TemplateProvider     *string                        `json:"template_provider,omitempty"`
+	TemplateMissing      bool                           `json:"template_missing"`
+	Defaults             Object                         `json:"defaults"`
+	Overrides            Object                         `json:"overrides"`
+	Effective            Object                         `json:"effective"`
+	Fields               map[string]FieldOrigin         `json:"fields"`
 }
 type FieldOrigin struct {
 	Resettable bool   `json:"resettable"`
@@ -185,11 +196,11 @@ func encode(value any) []byte             { b, _ := json.Marshal(value); return 
 func configKey(kind, uid string) string   { return kind + ":" + uid }
 func templateKey(kind, key string) string { return kind + ":" + key }
 func paths(kind string) []string {
-	out := []string{"name.en", "name.zh-CN", "description.en", "description.zh-CN", "icon", "proxy"}
+	out := []string{"name.en", "name.zh-CN", "description.en", "description.zh-CN", "icon", "proxy", "redirect_protection"}
 	if kind == "Vendor" {
 		return append(out, "localized_icons.en", "localized_icons.zh-CN")
 	}
-	return append(out, "instructions.en", "instructions.zh-CN", "json_release", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "auto_index", "default_artifact", "hidden_artifacts", "retention", "prewarm", "categories", "tags")
+	return append(out, "instructions.en", "instructions.zh-CN", "json_release", "base_url", "base_urls", "source_strategy", "cache_ttl_seconds", "http_policy.rules", "http_policy.auto_cleanup", "http_policy.stale_fallback", "auto_index", "default_artifact", "hidden_artifacts", "retention", "prewarm", "categories", "tags", "redirect_allowlist")
 }
 
 // AppPathApplies reports whether an application configuration path (or a
@@ -205,7 +216,7 @@ func AppPathApplies(provider, path string) bool {
 		return provider == "json-release"
 	case "base_url", "retention", "prewarm":
 		return presets.VersionsProvider(provider)
-	case "base_urls", "source_strategy", "http_policy":
+	case "base_urls", "source_strategy", "http_policy", "redirect_allowlist":
 		return provider == "http-cache"
 	case "cache_ttl_seconds":
 		return provider == "http-cache" || presets.VersionsProvider(provider)
@@ -387,6 +398,12 @@ func (w *configSet) effective(kind string, c ownedConfig) (Object, error) {
 	if effective == nil {
 		return nil, ErrInvalidDirectory
 	}
+	// Configurations written before redirect protection inherit it.
+	if mode, ok := effective["redirect_protection"]; !ok {
+		effective["redirect_protection"] = networkproxy.RedirectInherit
+	} else if text, _ := mode.(string); presets.ValidateRedirectProtection(text) != nil || text == "" {
+		return nil, ErrInvalidDirectory
+	}
 	if kind == "App" {
 		var spec presets.AppSpec
 		if err := strict(effective, &spec); err != nil {
@@ -421,6 +438,12 @@ func (w *configSet) effective(kind string, c ownedConfig) (Object, error) {
 		}
 		if presets.ValidateDownloadChoices(spec.Provider, spec.DefaultArtifact, spec.HiddenArtifacts) != nil {
 			return nil, ErrInvalidDirectory
+		}
+		if presets.ValidateRedirectAllowlist(spec.Provider, spec.RedirectAllowlist) != nil {
+			return nil, ErrInvalidDirectory
+		}
+		if spec.Provider == "http-cache" && spec.RedirectAllowlist == nil {
+			effective["redirect_allowlist"] = []any{}
 		}
 		if presets.DownloadChoicesProvider(spec.Provider) {
 			if spec.DefaultArtifact == nil {
@@ -464,6 +487,23 @@ func (w *configSet) ownProxy(kind string, c ownedConfig) (networkproxy.Config, e
 		return proxy, ErrInvalidDirectory
 	}
 	return proxy, nil
+}
+
+// ownRedirect is the entity's own redirect protection and, for an HTTP
+// cache, its allowlist, both taken from the effective spec.
+func (w *configSet) ownRedirect(kind string, c ownedConfig) (string, []releaseconfig.Source, error) {
+	spec, err := w.effective(kind, c)
+	if err != nil {
+		return "", nil, err
+	}
+	mode, _ := spec["redirect_protection"].(string)
+	var allowlist []releaseconfig.Source
+	if raw, ok := spec["redirect_allowlist"]; ok {
+		if err := json.Unmarshal(encode(raw), &allowlist); err != nil {
+			return "", nil, ErrInvalidDirectory
+		}
+	}
+	return mode, allowlist, nil
 }
 
 // objectProxy is the proxy an entity uses: an application's resolved through
@@ -603,6 +643,26 @@ func (w *configSet) view(kind, uid string) (Configuration, error) {
 			}
 		}
 		out.Fields[p] = f
+	}
+	redirect, err := w.globalRedirect()
+	if err != nil {
+		return Configuration{}, err
+	}
+	own, _ := effective["redirect_protection"].(string)
+	if kind == "App" {
+		a, _ := w.app(uid)
+		v, err := w.vendor(a.VendorUID)
+		if err != nil || v == nil {
+			return Configuration{}, missingEntity(err)
+		}
+		vendor, _, err := w.ownRedirect("Vendor", v.config)
+		if err != nil {
+			return Configuration{}, err
+		}
+		out.RedirectEffective = networkproxy.ResolveRedirectProtection(own, a.Key, vendor, v.ID, redirect.mode)
+	} else {
+		v, _ := w.vendor(uid)
+		out.RedirectEffective = networkproxy.ResolveRedirectProtection(networkproxy.RedirectInherit, "", own, v.ID, redirect.mode)
 	}
 	if kind == "App" {
 		a, _ := w.app(uid)
@@ -989,6 +1049,10 @@ func snapshots(set presets.Set) ([]templateSnapshot, error) {
 		v.Spec.Proxy = normalizedProxy(v.Spec.Proxy)
 		spec := object(v.Spec)
 		hash := semanticHash(v.SchemaVersion, v.Kind, object(v.Metadata), spec)
+		// Added after hashing, so introducing the setting changes no template hash.
+		if _, ok := spec["redirect_protection"]; !ok {
+			spec["redirect_protection"] = networkproxy.RedirectInherit
+		}
 		icon, err := set.Icon(v.Spec.Icon)
 		if err != nil {
 			return nil, err
@@ -1062,6 +1126,13 @@ func snapshots(set presets.Set) ([]templateSnapshot, error) {
 			}
 		}
 		hash := semanticHash(a.SchemaVersion, a.Kind, object(a.Metadata), spec)
+		// Added after hashing, so introducing the setting changes no template hash.
+		if _, ok := spec["redirect_protection"]; !ok {
+			spec["redirect_protection"] = networkproxy.RedirectInherit
+		}
+		if _, ok := spec["redirect_allowlist"]; !ok && a.Spec.Provider == "http-cache" {
+			spec["redirect_allowlist"] = []any{}
+		}
 		icon, err := set.Icon(a.Spec.Icon)
 		if err != nil {
 			return nil, err
@@ -1434,6 +1505,58 @@ func parseGlobalProxy(raw []byte) (networkproxy.Config, error) {
 		return networkproxy.Config{}, ErrInvalidDirectory
 	}
 	return c, nil
+}
+
+func parseGlobalRedirect(raw []byte) (string, error) {
+	var payload struct {
+		Mode string `json:"mode"`
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if d.Decode(&payload) != nil || !networkproxy.ValidRedirectProtection(payload.Mode, false) {
+		return "", ErrInvalidDirectory
+	}
+	return payload.Mode, nil
+}
+
+// GlobalRedirectProtection returns the global redirect protection and its revision.
+func (s *Store) GlobalRedirectProtection() (string, int64, error) {
+	var mode string
+	var revision int64
+	err := s.readConfiguration(func(w *configSet) error {
+		g, err := w.globalRedirect()
+		if err != nil {
+			return err
+		}
+		mode, revision = g.mode, g.revision
+		return nil
+	})
+	return mode, revision, err
+}
+
+// PatchGlobalRedirectProtection changes the global redirect protection under
+// CAS on its own revision. Like the global proxy it rewrites no vendor or
+// application; their clients follow from the published view.
+func (s *Store) PatchGlobalRedirectProtection(expected int64, mode string) (int64, error) {
+	if !networkproxy.ValidRedirectProtection(mode, false) {
+		return 0, ErrInvalidDirectory
+	}
+	err := s.writeConfiguration(func(w *configSet) error {
+		g, err := w.globalRedirect()
+		if err != nil {
+			return err
+		}
+		if g.revision != expected {
+			return ErrConflict
+		}
+		g.mode = mode
+		g.revision++
+		return nil
+	}, nil)
+	if err != nil {
+		return 0, err
+	}
+	return expected + 1, nil
 }
 
 // PatchGlobalProxy changes the global proxy under CAS on its own revision. It

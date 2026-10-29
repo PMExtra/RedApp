@@ -199,7 +199,7 @@ func serve(c config.Deployment, logger *slog.Logger) error {
 	sources := snapshot.Sources
 	clients := make(map[string]*distributor.Client, len(sources))
 	for _, source := range sources {
-		client, e := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, snapshot.ProviderDefaults[source.Provider], source.AppUID, snapshot.ProxyScopes[source.AppUID].VendorUID, upstream, source.JSONRelease)
+		client, e := builtin.NewScopedSourceClient(source.Provider, source.BaseURL, snapshot.ProviderDefaults[source.Provider], source.AppUID, snapshot.ProxyScopes[source.AppUID].VendorUID, upstream, snapshot.RedirectPolicies[source.AppUID], source.JSONRelease)
 		if e != nil {
 			return e
 		}

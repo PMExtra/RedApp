@@ -113,25 +113,47 @@ func TestConfiguredHTTPMethodsAndHeaderAllowlist(t *testing.T) {
 
 func TestRedirectModesAndCredentialBoundary(t *testing.T) {
 	pool := NewPool()
+	protect := func(c *Client, mode string, allow func(string) bool) *Client {
+		t.Helper()
+		protected, err := c.WithRedirectProtection(mode, allow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return protected
+	}
 	general, _ := pool.NewClient("https://source.example/files", GeneralHTTP)
 	release, _ := pool.NewClient("https://source.example/files", ConfiguredRelease)
 	httpSource, _ := pool.NewClient("http://source.example/files", GeneralHTTP)
+	allowCDN := func(raw string) bool { return strings.HasPrefix(raw, "https://cdn.example/download/") }
+	generalAllow := protect(general, "strict", allowCDN)
+	generalBasic, httpBasic, releaseBasic := protect(general, "basic", nil), protect(httpSource, "basic", nil), protect(release, "basic", nil)
+	generalOff, httpOff := protect(general, "off", nil), protect(httpSource, "off", nil)
 	for _, tc := range []struct {
 		name, target string
 		client       *Client
 		allowed      bool
 	}{
-		{"general same root", "https://source.example/files/next", general, true},
-		{"same-host HTTPS upgrade", "https://source.example/files/next", httpSource, true},
-		{"cross-host HTTPS upgrade", "https://cdn.example/files/next", httpSource, true},
-		{"cross-host HTTP denied", "http://cdn.example/files/next", httpSource, false},
-		{"general outside root", "https://source.example/other/next", general, false},
-		{"general CDN", "https://cdn.example/download/file", general, true},
-		{"release CDN", "https://cdn.example/download/file", release, false},
-		{"downgrade", "http://cdn.example/download/file", general, false},
-		{"redirect query", "https://cdn.example/file?token=secret", general, false},
-		{"redirect credentials", "https://user:secret@cdn.example/file", general, false},
-		{"redirect traversal", "https://cdn.example/a/%2e%2e/file", general, false},
+		// Strict, the default: the source itself or its allowlist.
+		{"strict same root", "https://source.example/files/next", general, true},
+		{"strict same-host HTTPS upgrade", "https://source.example/files/next", httpSource, true},
+		{"strict cross-host", "https://cdn.example/files/next", httpSource, false},
+		{"strict outside root", "https://source.example/other/next", general, false},
+		{"strict CDN", "https://cdn.example/download/file", general, false},
+		{"strict allowlisted CDN", "https://cdn.example/download/file?token=secret", generalAllow, true},
+		{"strict CDN outside allowlist", "https://cdn.example/other/file", generalAllow, false},
+		{"strict release CDN", "https://cdn.example/download/file", release, false},
+		// Basic: HTTPS across origins, no downgrade, no credentials or traversal.
+		{"basic cross-host HTTPS upgrade", "https://cdn.example/files/next", httpBasic, true},
+		{"basic cross-host HTTP", "http://cdn.example/files/next", httpBasic, false},
+		{"basic outside root", "https://source.example/other/next", generalBasic, true},
+		{"basic CDN with query", "https://cdn.example/file?token=secret", generalBasic, true},
+		{"basic release CDN", "https://cdn.example/download/file", releaseBasic, true},
+		{"basic downgrade", "http://cdn.example/download/file", generalBasic, false},
+		{"basic credentials", "https://user:secret@cdn.example/file", generalBasic, false},
+		{"basic traversal", "https://cdn.example/a/%2e%2e/file", generalBasic, false},
+		// Off: nothing is checked.
+		{"off downgrade", "http://cdn.example/download/file", generalOff, true},
+		{"off cross-host HTTP", "http://cdn.example/files/next", httpOff, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			initial, _ := http.NewRequest(http.MethodGet, sourceURL(tc.client, "start"), nil)
@@ -152,6 +174,17 @@ func TestRedirectModesAndCredentialBoundary(t *testing.T) {
 			}
 		})
 	}
+	// A refusal names both URLs without credentials or the query, and why.
+	refusing := protect(general, "strict", nil)
+	refusing.HTTP.Transport = compressionTransport(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 302, Header: http.Header{"Location": {"https://user:pw@cdn.example/file?Signature=secret"}}, Body: http.NoBody, Request: r}, nil
+	})
+	_, err := refusing.Get(context.Background(), sourceURL(refusing, "start"), nil)
+	want := "upstream redirect from https://source.example/files/start to https://cdn.example/file is not allowed: the target contains credentials"
+	if err == nil || err.Error() != want || Classify(err) != KindRedirect {
+		t.Fatalf("refusal message %v", err)
+	}
+	general = generalBasic
 	// Run the actual net/http redirect machinery with an injected RoundTripper.
 	calls := 0
 	general.HTTP = &http.Client{Transport: compressionTransport(func(r *http.Request) (*http.Response, error) {

@@ -21,7 +21,7 @@ import (
 // releases may choose a limited compatibility window; zero disables migration.
 const MinimumMigratableVersion = 15
 
-var migrations = []migrationStep{{From: 15, Name: "JSON release configuration and refresh state", Up: migrate15To16}, {From: 16, Name: "Provider-scoped template overlays", Up: migrate16To17}, {From: 17, Name: "Directory listings (auto_index)", Up: migrate17To18}, {From: 18, Name: "Instance identity", Up: migrate18To19}, {From: 19, Name: "Upstream mirrors", Up: migrate19To20}, {From: 20, Name: "Download choices", Up: migrate20To21}}
+var migrations = []migrationStep{{From: 15, Name: "JSON release configuration and refresh state", Up: migrate15To16}, {From: 16, Name: "Provider-scoped template overlays", Up: migrate16To17}, {From: 17, Name: "Directory listings (auto_index)", Up: migrate17To18}, {From: 18, Name: "Instance identity", Up: migrate18To19}, {From: 19, Name: "Upstream mirrors", Up: migrate19To20}, {From: 20, Name: "Download choices", Up: migrate20To21}, {From: 21, Name: "Redirect protection", Up: migrate21To22}}
 
 // migrationStep upgrades schema From to From+1 inside the migration
 // transaction. Foreign key enforcement is off, so a step may rebuild tables

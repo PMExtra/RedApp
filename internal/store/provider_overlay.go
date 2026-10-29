@@ -21,12 +21,13 @@ func providerPath(path string) bool {
 }
 
 func providerDefaults(provider string) Object {
-	out := Object{"provider": provider, "proxy": object(networkproxy.Inherit()), "categories": []any{}, "tags": []any{}, "description": map[string]any{"en": "", "zh-CN": ""}, "instructions": map[string]any{"en": "", "zh-CN": ""}, "icon": ""}
+	out := Object{"provider": provider, "proxy": object(networkproxy.Inherit()), "redirect_protection": networkproxy.RedirectInherit, "categories": []any{}, "tags": []any{}, "description": map[string]any{"en": "", "zh-CN": ""}, "instructions": map[string]any{"en": "", "zh-CN": ""}, "icon": ""}
 	switch provider {
 	case "http-cache":
 		out["cache_ttl_seconds"] = 300
 		out["source_strategy"] = "ordered"
 		out["http_policy"] = object(cachepolicy.Empty())
+		out["redirect_allowlist"] = []any{}
 	case "codex", "claude-code":
 		key, _ := presets.ReleaseTemplateKey(provider)
 		for _, app := range presets.Embedded().Apps {

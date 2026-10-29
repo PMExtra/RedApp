@@ -10,12 +10,15 @@ export type HomepageSettingsState = Schema<"HomepageSettingsState">;
 export type HomepagePinnedApp = Schema<"HomepagePinnedApp">;
 export type GlobalProxySettings = Schema<"GlobalProxySettings">;
 export type GlobalProxyState = Schema<"GlobalProxyState">;
+export type RedirectProtectionSettings = Schema<"RedirectProtectionSettings">;
+export type RedirectProtectionState = Schema<"RedirectProtectionState">;
 export type AppListItem = Schema<"AppListItem">;
 
 export const siteSettingsKey = queryKey("getSiteSettings");
 export const publicUrlSettingsKey = queryKey("getPublicUrlSettings");
 export const homepageSettingsKey = queryKey("getHomepageSettings");
 export const globalProxySettingsKey = queryKey("getGlobalProxySettings");
+export const redirectProtectionSettingsKey = queryKey("getRedirectProtectionSettings");
 
 /*
  * Each settings document is its own revisioned resource: reads go through
@@ -106,6 +109,29 @@ export function useSaveGlobalProxy(state: MaybeRefOrGetter<GlobalProxyState | un
     mutationFn: (body, ifMatch) =>
       unwrap(
         api.PUT("/admin/api/settings/proxy", { params: { header: { "If-Match": ifMatch } }, body }),
+      ),
+  });
+}
+
+export function useRedirectProtectionSettings() {
+  return useQuery({
+    queryKey: redirectProtectionSettingsKey,
+    queryFn: ({ signal }) => unwrap(api.GET("/admin/api/settings/redirect-protection", { signal })),
+  });
+}
+
+export function useSaveRedirectProtection(
+  state: MaybeRefOrGetter<RedirectProtectionState | undefined>,
+) {
+  return useRevisionedMutation<RedirectProtectionState, RedirectProtectionSettings>({
+    revision: () => toValue(state)?.revision,
+    queryKey: redirectProtectionSettingsKey,
+    mutationFn: (body, ifMatch) =>
+      unwrap(
+        api.PUT("/admin/api/settings/redirect-protection", {
+          params: { header: { "If-Match": ifMatch } },
+          body,
+        }),
       ),
   });
 }

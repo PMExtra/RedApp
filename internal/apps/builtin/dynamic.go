@@ -3,25 +3,31 @@ package builtin
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/distributor"
 	"github.com/PMExtra/RedApp/internal/identity"
 	"github.com/PMExtra/RedApp/internal/jsonrelease"
+	"github.com/PMExtra/RedApp/internal/networkproxy"
 	"github.com/PMExtra/RedApp/internal/releaseconfig"
 	"github.com/PMExtra/RedApp/internal/store"
 	"sort"
 )
 
 // NewScopedSourceClient builds the upstream client of a current or historical
-// application source, bound to its owner's proxy scope.
-func NewScopedSourceClient(provider, baseURL, defaultBase, appUID, vendorUID string, pool *distributor.Pool, configs ...*releaseconfig.Config) (*distributor.Client, error) {
+// application source, bound to its owner's proxy scope and following its
+// redirect protection.
+func NewScopedSourceClient(provider, baseURL, defaultBase, appUID, vendorUID string, pool *distributor.Pool, redirect store.RedirectPolicy, configs ...*releaseconfig.Config) (*distributor.Client, error) {
 	if appUID == "" || vendorUID == "" {
 		return nil, errors.New("application transport scope required")
 	}
 	client, err := newSourceClient(provider, baseURL, defaultBase, appUID, vendorUID, pool)
-	if err != nil || provider != application.JSONRelease {
+	if err != nil || client == nil {
+		return client, err
+	}
+	if client, err = protect(client, provider, redirect, []string{baseURL}); err != nil || provider != application.JSONRelease {
 		return client, err
 	}
 	if len(configs) != 1 || configs[0] == nil {
@@ -30,6 +36,28 @@ func NewScopedSourceClient(provider, baseURL, defaultBase, appUID, vendorUID str
 	sources := append([]releaseconfig.Source(nil), configs[0].Sources.Artifacts...)
 	return client.WithReleaseSources(func(raw string) bool { return releaseconfig.Allows(sources, raw) })
 }
+
+// protect applies an application's redirect protection. Under strict
+// protection an HTTP cache may also reach its own bases and its allowlist;
+// a release source's allowlist is its source policy.
+func protect(client *distributor.Client, provider string, policy store.RedirectPolicy, bases []string) (*distributor.Client, error) {
+	mode := policy.Mode
+	if mode == "" {
+		mode = networkproxy.RedirectStrict
+	}
+	var allow func(string) bool
+	if provider == application.HttpCache {
+		sources := append([]releaseconfig.Source(nil), policy.Allowlist...)
+		for _, base := range bases {
+			if u, err := url.Parse(base); err == nil && base != "" {
+				sources = append(sources, releaseconfig.Source{Origin: u.Scheme + "://" + strings.ToLower(u.Host), Prefix: strings.TrimSuffix(u.Path, "/") + "/"})
+			}
+		}
+		allow = func(raw string) bool { return releaseconfig.Allows(sources, raw) }
+	}
+	return client.WithRedirectProtection(mode, allow)
+}
+
 func newSourceClient(provider, baseURL, defaultBase, appUID, vendorUID string, pool *distributor.Pool) (*distributor.Client, error) {
 	if provider == application.Info || provider == application.Hosted {
 		return nil, nil
@@ -107,6 +135,12 @@ func entriesFromConfiguration(snapshot store.DirectorySnapshot, pool *distributo
 		if err != nil {
 			return nil, err
 		}
+		redirect := snapshot.RedirectPolicies[app.UID]
+		if client != nil {
+			if client, err = protect(client, app.Provider, redirect, config.BaseURLs); err != nil {
+				return nil, err
+			}
+		}
 		entry := application.Entry{Provider: app.Provider, Upstream: client}
 		if app.Provider == application.Info || app.Provider == application.Hosted {
 			entry.Descriptor = application.Descriptor{Protocol: app.Provider}
@@ -134,6 +168,9 @@ func entriesFromConfiguration(snapshot store.DirectorySnapshot, pool *distributo
 			for i, base := range config.BaseURLs {
 				entry.Upstreams[i], err = newSourceClient(app.Provider, base, "", scopeUID, scopeVendor, pool)
 				if err != nil {
+					return nil, err
+				}
+				if entry.Upstreams[i], err = protect(entry.Upstreams[i], app.Provider, redirect, config.BaseURLs); err != nil {
 					return nil, err
 				}
 			}

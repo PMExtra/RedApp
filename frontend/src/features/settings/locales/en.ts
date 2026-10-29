@@ -86,5 +86,12 @@ export default {
       save: "Save proxy",
       saved: "Proxy saved. New upstream connections use it; transfers in progress continue.",
     },
+    redirectProtection: {
+      title: "Global redirect protection",
+      description:
+        "How upstream redirects of release and HTTP cache applications are checked, unless a vendor or application sets its own. Initial requests always stay within the configured sources.",
+      save: "Save redirect protection",
+      saved: "Redirect protection saved. New upstream requests use it.",
+    },
   },
 } satisfies LocaleModule;

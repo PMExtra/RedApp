@@ -183,7 +183,7 @@ func (s *Service) fetchIndexFrom(ctx context.Context, entry application.Entry, c
 	defer release()
 	resp, err := client.Index(ctx, dir)
 	if err != nil {
-		if e := s.upstreamFailure(entry, dir+"/", 0); e != nil {
+		if e := s.upstreamFailure(entry, dir+"/", 0, err); e != nil {
 			return Index{}, false, e
 		}
 		return Index{}, errors.Is(err, distributor.ErrConnection), err
@@ -191,7 +191,7 @@ func (s *Service) fetchIndexFrom(ctx context.Context, entry application.Entry, c
 	defer resp.Body.Close()
 	switch {
 	case resp.StatusCode >= 500:
-		if e := s.upstreamFailure(entry, dir+"/", resp.StatusCode); e != nil {
+		if e := s.upstreamFailure(entry, dir+"/", resp.StatusCode, nil); e != nil {
 			return Index{}, false, e
 		}
 		return Index{}, true, ErrUpstream

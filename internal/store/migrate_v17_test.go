@@ -51,7 +51,7 @@ func TestMigration16PreservesRowsAndRollsBackFailures(t *testing.T) {
 			}
 			s.Close()
 			_, after := oldRows(t, path, queries)
-			if !reflect.DeepEqual(before, after) {
+			if !preserved(before, after) {
 				t.Fatal("old configuration/cache rows changed")
 			}
 			if len(backups(t, dir)) != 1 {

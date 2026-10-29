@@ -138,6 +138,7 @@ export function codexConfiguration(
     icon: "/assets/presets/openai/codex/icon.svg",
     provider: "codex",
     proxy: { mode: "inherit" },
+    redirect_protection: "inherit",
     base_url: "https://releases.openai.com/codex",
     cache_ttl_seconds: 60,
     categories: [],
@@ -160,6 +161,7 @@ export function codexConfiguration(
       prewarm: { source: "inherited", differs_from_template: false },
     },
     proxy_effective: { mode: "direct", source_scope: "global", source_id: "", dns: "local" },
+    redirect_protection_effective: { mode: "strict", source_scope: "global", source_id: "" },
     ...overrides,
   };
 }
@@ -175,6 +177,8 @@ export function httpCacheConfiguration(
     icon: "/assets/presets/generic/icon.svg",
     provider: "http-cache",
     proxy: { mode: "inherit" },
+    redirect_protection: "inherit",
+    redirect_allowlist: [],
     base_urls: ["https://origin.example.com"],
     source_strategy: "ordered",
     cache_ttl_seconds: 300,

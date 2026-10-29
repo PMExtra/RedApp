@@ -114,10 +114,12 @@ func (r transportReference) Load() *http.Transport {
 
 // transportSwitch resolves the proxy setting on every hop, so a settings
 // change applies to new requests without rebuilding clients. base is the
-// configured source host used for the redirect address policy.
+// configured source host used for the redirect address policy, which
+// unchecked (redirect protection off) disables.
 type transportSwitch struct {
-	current transportReference
-	base    string
+	current   transportReference
+	base      string
+	unchecked bool
 }
 
 func (s *transportSwitch) RoundTrip(r *http.Request) (*http.Response, error) {
@@ -125,7 +127,7 @@ func (s *transportSwitch) RoundTrip(r *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	transport, err := set.forRequest(r, s.current.pool.net, s.current.configured, s.base)
+	transport, err := set.forRequest(r, s.current.pool.net, s.current.configured, s.base, s.unchecked)
 	if err != nil {
 		return nil, err
 	}

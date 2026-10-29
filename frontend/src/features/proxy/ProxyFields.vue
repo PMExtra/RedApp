@@ -52,9 +52,10 @@ const effectiveText = computed(() => {
 </script>
 
 <template>
-  <fieldset class="flex flex-col gap-3" :disabled="disabled">
+  <!-- The legend sits in a row with the reset slot, so it names the group explicitly. -->
+  <fieldset class="flex flex-col gap-3" :disabled="disabled" :aria-labelledby="`${id}-legend`">
     <div class="mb-2 flex h-6 items-center justify-between gap-2">
-      <legend class="text-sm font-medium">{{ t("proxy.legend") }}</legend>
+      <legend :id="`${id}-legend`" class="text-sm font-medium">{{ t("proxy.legend") }}</legend>
       <slot name="reset" />
     </div>
     <RadioGroup v-model="mode" :options="options" orientation="horizontal" :name="`${id}-mode`" />

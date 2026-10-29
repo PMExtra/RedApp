@@ -211,14 +211,14 @@ func (s *Service) Discover(ctx context.Context, entry application.Entry, indexes
 				resp, err := a.Client.Index(ctx, strings.TrimPrefix(d.path, "/"))
 				if err != nil {
 					writer()
-					_ = s.upstreamFailure(entry, d.path, 0)
+					_ = s.upstreamFailure(entry, d.path, 0, err)
 					last = err
 					continue
 				}
 				if resp.StatusCode != 200 || resp.Uncompressed || resp.Header.Get("Content-Encoding") != "" && resp.Header.Get("Content-Encoding") != "identity" {
 					resp.Body.Close()
 					writer()
-					_ = s.upstreamFailure(entry, d.path, resp.StatusCode)
+					_ = s.upstreamFailure(entry, d.path, resp.StatusCode, nil)
 					last = ErrUpstream
 					continue
 				}

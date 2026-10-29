@@ -6,6 +6,9 @@ export {
   siteSettingsKey,
   useAppSearch,
   useGlobalProxySettings,
+  redirectProtectionSettingsKey,
+  useRedirectProtectionSettings,
+  useSaveRedirectProtection,
   useHomepageSettings,
   usePublicUrlSettings,
   useSaveGlobalProxy,
@@ -21,3 +24,4 @@ export { default as SiteTextsForm } from "./SiteTextsForm.vue";
 export { default as PublicUrlForm } from "./PublicUrlForm.vue";
 export { default as HomepagePinsForm } from "./HomepagePinsForm.vue";
 export { default as GlobalProxyForm } from "./GlobalProxyForm.vue";
+export { default as GlobalRedirectProtectionForm } from "./GlobalRedirectProtectionForm.vue";

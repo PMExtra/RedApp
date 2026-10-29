@@ -144,10 +144,13 @@ func (s *Store) dropFromView(apps, vendors []string) {
 type directoryView struct {
 	globalProxy    networkproxy.Config
 	globalRevision int64
+	globalRedirect string
 	vendors        map[string]Vendor // by UID
 	vendorProxy    map[string]networkproxy.Config
+	vendorRedirect map[string]string
 	apps           map[string]Application // by UID
 	appProxy       map[string]networkproxy.Config
+	appRedirect    map[string]RedirectPolicy // own mode and allowlist, unresolved
 	appRef         map[string]string
 	sources        map[string]SourceRecord // by storage ID
 	distributions  map[string]trustedDistribution
@@ -184,9 +187,16 @@ func loadDirectoryView(w *configSet) (*directoryView, error) {
 	if err != nil {
 		return nil, err
 	}
-	v := &directoryView{globalProxy: global.config, globalRevision: global.revision, vendors: map[string]Vendor{}, vendorProxy: map[string]networkproxy.Config{}, apps: map[string]Application{}, appProxy: map[string]networkproxy.Config{}, appRef: map[string]string{}, sources: map[string]SourceRecord{}, distributions: map[string]trustedDistribution{}}
+	redirect, err := w.globalRedirect()
+	if err != nil {
+		return nil, err
+	}
+	v := &directoryView{globalProxy: global.config, globalRevision: global.revision, globalRedirect: redirect.mode, vendors: map[string]Vendor{}, vendorProxy: map[string]networkproxy.Config{}, vendorRedirect: map[string]string{}, apps: map[string]Application{}, appProxy: map[string]networkproxy.Config{}, appRedirect: map[string]RedirectPolicy{}, appRef: map[string]string{}, sources: map[string]SourceRecord{}, distributions: map[string]trustedDistribution{}}
 	for uid, e := range w.vendors {
 		if v.vendorProxy[uid], err = w.ownProxy("Vendor", e.config); err != nil {
+			return nil, err
+		}
+		if v.vendorRedirect[uid], _, err = w.ownRedirect("Vendor", e.config); err != nil {
 			return nil, err
 		}
 		v.vendors[uid] = e.Vendor
@@ -198,6 +208,11 @@ func loadDirectoryView(w *configSet) (*directoryView, error) {
 		if v.appProxy[uid], err = w.ownProxy("App", e.config); err != nil {
 			return nil, err
 		}
+		mode, allowlist, err := w.ownRedirect("App", e.config)
+		if err != nil {
+			return nil, err
+		}
+		v.appRedirect[uid] = RedirectPolicy{RedirectEffective: networkproxy.RedirectEffective{Mode: mode}, Allowlist: allowlist}
 		v.apps[uid] = e.Application
 		if e.config.Ref != nil {
 			v.appRef[uid] = *e.config.Ref
@@ -231,8 +246,8 @@ func loadDirectoryView(w *configSet) (*directoryView, error) {
 
 func (v *directoryView) clone() *directoryView {
 	out := *v
-	out.vendors, out.vendorProxy = maps.Clone(v.vendors), maps.Clone(v.vendorProxy)
-	out.apps, out.appProxy, out.appRef = maps.Clone(v.apps), maps.Clone(v.appProxy), maps.Clone(v.appRef)
+	out.vendors, out.vendorProxy, out.vendorRedirect = maps.Clone(v.vendors), maps.Clone(v.vendorProxy), maps.Clone(v.vendorRedirect)
+	out.apps, out.appProxy, out.appRedirect, out.appRef = maps.Clone(v.apps), maps.Clone(v.appProxy), maps.Clone(v.appRedirect), maps.Clone(v.appRef)
 	out.sources, out.distributions = maps.Clone(v.sources), maps.Clone(v.distributions)
 	return &out
 }
@@ -242,9 +257,12 @@ func (w *configSet) applyTo(v *directoryView) {
 	if g := w.global; g != nil && g.revision != g.stored {
 		v.globalProxy, v.globalRevision = g.config, g.revision
 	}
+	if g := w.redirect; g != nil && g.revision != g.stored {
+		v.globalRedirect = g.mode
+	}
 	for uid, e := range w.vendors {
 		if e.changed {
-			v.vendors[uid], v.vendorProxy[uid] = e.Vendor, e.proxy
+			v.vendors[uid], v.vendorProxy[uid], v.vendorRedirect[uid] = e.Vendor, e.proxy, e.redirect
 		}
 	}
 	for uid, e := range w.apps {
@@ -252,6 +270,7 @@ func (w *configSet) applyTo(v *directoryView) {
 			continue
 		}
 		v.apps[uid], v.appProxy[uid] = e.Application, e.proxy
+		v.appRedirect[uid] = RedirectPolicy{RedirectEffective: networkproxy.RedirectEffective{Mode: e.redirect}, Allowlist: e.redirectAllow}
 		if e.config.Ref != nil {
 			v.appRef[uid] = *e.config.Ref
 		} else {
@@ -272,6 +291,7 @@ func (v *directoryView) remove(apps, vendors []string) {
 	for _, uid := range apps {
 		delete(v.apps, uid)
 		delete(v.appProxy, uid)
+		delete(v.appRedirect, uid)
 		delete(v.appRef, uid)
 		for id, source := range v.sources {
 			if source.AppUID == uid {
@@ -282,6 +302,7 @@ func (v *directoryView) remove(apps, vendors []string) {
 	for _, uid := range vendors {
 		delete(v.vendors, uid)
 		delete(v.vendorProxy, uid)
+		delete(v.vendorRedirect, uid)
 	}
 }
 
@@ -289,7 +310,7 @@ func (v *directoryView) remove(apps, vendors []string) {
 // three-level inheritance, template bindings, reviewed contracts and the
 // current eligibility of every source.
 func (v *directoryView) snapshot() DirectorySnapshot {
-	out := DirectorySnapshot{GlobalProxy: v.globalProxy, GlobalProxyRevision: v.globalRevision, ProxyScopes: map[string]networkproxy.Scope{}, TemplateBindings: map[string]string{}, ProviderDefaults: map[string]string{}}
+	out := DirectorySnapshot{GlobalProxy: v.globalProxy, GlobalProxyRevision: v.globalRevision, ProxyScopes: map[string]networkproxy.Scope{}, RedirectPolicies: map[string]RedirectPolicy{}, TemplateBindings: map[string]string{}, ProviderDefaults: map[string]string{}}
 	for _, vendor := range v.vendors {
 		out.Vendors = append(out.Vendors, vendor)
 	}
@@ -308,6 +329,8 @@ func (v *directoryView) snapshot() DirectorySnapshot {
 		vendor := v.vendors[app.VendorUID]
 		proxy := networkproxy.Resolve(v.appProxy[app.UID], app.Key, v.vendorProxy[app.VendorUID], vendor.ID, v.globalProxy)
 		out.ProxyScopes[app.UID] = networkproxy.Scope{VendorUID: app.VendorUID, Proxy: proxy, Allowed: app.DeletedAt == nil && vendor.DeletedAt == nil}
+		own := v.appRedirect[app.UID]
+		out.RedirectPolicies[app.UID] = RedirectPolicy{RedirectEffective: networkproxy.ResolveRedirectProtection(own.Mode, app.Key, v.vendorRedirect[app.VendorUID], vendor.ID, v.globalRedirect), Allowlist: own.Allowlist}
 		if ref, ok := v.appRef[app.UID]; ok {
 			if d, ok := v.distributions[ref]; ok && d.Provider == app.Provider {
 				out.TemplateBindings[app.UID] = ref

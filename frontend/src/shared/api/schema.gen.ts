@@ -997,6 +997,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/api/settings/redirect-protection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the global redirect protection. */
+        get: operations["getRedirectProtectionSettings"];
+        /**
+         * Replace the global redirect protection.
+         * @description Vendors and applications set to `inherit` use it. `inherit` is not allowed globally; the default is `strict`.
+         *     A change applies to new upstream requests only.
+         */
+        put: operations["replaceRedirectProtectionSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/api/settings/homepage": {
         parameters: {
             query?: never;
@@ -2889,6 +2911,45 @@ export interface components {
             source: "override" | "environment" | "request";
             revision: components["schemas"]["Revision"];
         };
+        /**
+         * @description How upstream redirects of release and HTTP cache applications are checked. Initial URLs are always limited to
+         *     the configured sources.
+         *     - `strict`: the target must also be allowed: a JSON release source of the request's role, the fixed root of a
+         *       Codex or Claude Code source, or an HTTP cache base URL or `redirect_allowlist` entry.
+         *     - `basic`: only the general rules: a redirect to another origin uses HTTPS, HTTPS never downgrades to HTTP, the
+         *       target has no credentials or path traversal, and a new host stays in the address class of the source (a
+         *       public source cannot reach intranet addresses and the reverse).
+         *     - `off`: nothing is checked.
+         *     In every mode credentials and cookies are dropped across origins and at most 4 redirects are followed.
+         *     `inherit` uses the vendor's setting, then the global one.
+         * @enum {string}
+         */
+        RedirectProtectionMode: "inherit" | "strict" | "basic" | "off";
+        RedirectProtectionSettings: {
+            /** @enum {string} */
+            mode: "strict" | "basic" | "off";
+        };
+        RedirectProtectionState: {
+            /** @enum {string} */
+            mode: "strict" | "basic" | "off";
+            revision: components["schemas"]["Revision"];
+        };
+        /** @description Resolved redirect protection after inheritance (application → vendor → global). */
+        RedirectProtectionEffective: {
+            /** @enum {string} */
+            mode: "strict" | "basic" | "off";
+            /** @enum {string} */
+            source_scope: "app" | "vendor" | "global";
+            /** @description Key of the scope that supplied the setting (`vendor/app`, vendor ID, or `""` for global). */
+            source_id: string;
+        };
+        /** @description Extra targets an HTTP cache may be redirected to under `strict` protection, besides its base URLs. */
+        RedirectAllowlist: {
+            /** @description Canonical `http(s)://host[:port]` without path. */
+            origin: string;
+            /** @description Absolute directory path ending in `/`, for example `/` or `/downloads/`. */
+            prefix: string;
+        }[];
         GlobalProxySettings: {
             /** @enum {string} */
             mode: "direct" | "url";
@@ -3128,6 +3189,7 @@ export interface components {
             icon: components["schemas"]["IconPath"];
             localized_icons: components["schemas"]["LocalizedIcons"];
             proxy: components["schemas"]["ProxyConfig"];
+            redirect_protection?: components["schemas"]["RedirectProtectionMode"];
         };
         ReleaseDownloads: {
             stale?: boolean;
@@ -3238,6 +3300,8 @@ export interface components {
             icon: components["schemas"]["IconPath"];
             provider: components["schemas"]["ProviderKey"];
             proxy: components["schemas"]["ProxyConfig"];
+            redirect_protection?: components["schemas"]["RedirectProtectionMode"];
+            redirect_allowlist?: components["schemas"]["RedirectAllowlist"];
             categories: components["schemas"]["Slug"][];
             tags: string[];
             instructions: components["schemas"]["Instructions"];
@@ -3420,9 +3484,9 @@ export interface components {
          */
         PlatformId: "darwin-arm64" | "darwin-x64" | "linux-arm64" | "linux-x64" | "win32-arm64" | "win32-x64" | "linux-arm64-musl" | "linux-x64-musl";
         /** @enum {string} */
-        VendorConfigurationPath: "name.en" | "name.zh-CN" | "description.en" | "description.zh-CN" | "icon" | "localized_icons.en" | "localized_icons.zh-CN" | "proxy";
+        VendorConfigurationPath: "name.en" | "name.zh-CN" | "description.en" | "description.zh-CN" | "icon" | "localized_icons.en" | "localized_icons.zh-CN" | "proxy" | "redirect_protection";
         /** @enum {string} */
-        AppConfigurationPath: "name.en" | "name.zh-CN" | "description.en" | "description.zh-CN" | "icon" | "proxy" | "instructions.en" | "instructions.zh-CN" | "json_release" | "base_url" | "base_urls" | "source_strategy" | "cache_ttl_seconds" | "http_policy.rules" | "http_policy.auto_cleanup" | "http_policy.stale_fallback" | "auto_index" | "default_artifact" | "hidden_artifacts" | "retention" | "prewarm" | "categories" | "tags";
+        AppConfigurationPath: "name.en" | "name.zh-CN" | "description.en" | "description.zh-CN" | "icon" | "proxy" | "redirect_protection" | "redirect_allowlist" | "instructions.en" | "instructions.zh-CN" | "json_release" | "base_url" | "base_urls" | "source_strategy" | "cache_ttl_seconds" | "http_policy.rules" | "http_policy.auto_cleanup" | "http_policy.stale_fallback" | "auto_index" | "default_artifact" | "hidden_artifacts" | "retention" | "prewarm" | "categories" | "tags";
         VendorConfiguration: {
             revision: components["schemas"]["Revision"];
             /** @description Preset key (vendor ID) when linked to a template. */
@@ -3441,6 +3505,7 @@ export interface components {
                 [key: string]: components["schemas"]["FieldOrigin"];
             };
             proxy_effective: components["schemas"]["ProxyEffective"];
+            redirect_protection_effective: components["schemas"]["RedirectProtectionEffective"];
         };
         AppConfiguration: {
             revision: components["schemas"]["Revision"];
@@ -3458,6 +3523,7 @@ export interface components {
                 [key: string]: components["schemas"]["FieldOrigin"];
             };
             proxy_effective: components["schemas"]["ProxyEffective"];
+            redirect_protection_effective: components["schemas"]["RedirectProtectionEffective"];
         };
         VendorConfigurationPatch: {
             set?: {
@@ -3469,6 +3535,7 @@ export interface components {
                 "localized_icons.en"?: components["schemas"]["IconPath"];
                 "localized_icons.zh-CN"?: components["schemas"]["IconPath"];
                 proxy?: components["schemas"]["ProxyConfig"];
+                redirect_protection?: components["schemas"]["RedirectProtectionMode"];
             };
             unset?: components["schemas"]["VendorConfigurationPath"][];
         };
@@ -3480,6 +3547,8 @@ export interface components {
                 "description.zh-CN"?: string;
                 icon?: components["schemas"]["IconPath"];
                 proxy?: components["schemas"]["ProxyConfig"];
+                redirect_protection?: components["schemas"]["RedirectProtectionMode"];
+                redirect_allowlist?: components["schemas"]["RedirectAllowlist"];
                 "instructions.en"?: string;
                 json_release?: components["schemas"]["JSONReleaseConfig"];
                 "instructions.zh-CN"?: string;
@@ -6026,6 +6095,70 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GlobalProxyState"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getRedirectProtectionSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Global redirect protection. */
+            200: {
+                headers: {
+                    ETag: components["headers"]["ETag"];
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RedirectProtectionState"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    replaceRedirectProtectionSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description The `ETag` (quoted revision) the client last read. */
+                "If-Match": components["parameters"]["IfMatch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RedirectProtectionSettings"];
+            };
+        };
+        responses: {
+            /** @description Saved state. */
+            200: {
+                headers: {
+                    ETag: components["headers"]["ETag"];
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RedirectProtectionState"];
                 };
             };
             400: components["responses"]["BadRequest"];

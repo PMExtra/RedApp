@@ -52,8 +52,9 @@ type configSet struct {
 	categoriesBefore map[string]*TaxonomyItem
 	allCategories    bool
 
-	notes  map[string]*noteEntry // configKey(kind, uid)
-	global *globalEntry
+	notes    map[string]*noteEntry // configKey(kind, uid)
+	global   *globalEntry
+	redirect *globalRedirectEntry
 
 	// removedApps and removedVendors are purged by the operation's finalize
 	// step; the runtime view drops them once the purge has committed.
@@ -64,9 +65,10 @@ type vendorEntry struct {
 	Vendor
 	before               *Vendor // nil for a vendor created by this operation
 	config, configBefore ownedConfig
-	// proxy is the vendor's own proxy setting, derived by materialize.
-	proxy   networkproxy.Config
-	changed bool
+	// proxy and redirect are the vendor's own settings, derived by materialize.
+	proxy    networkproxy.Config
+	redirect string
+	changed  bool
 }
 
 type appEntry struct {
@@ -77,10 +79,12 @@ type appEntry struct {
 	policy, policyBefore             *cachepolicy.Config
 	pendingBefore, pending           bool
 	pendingRevision                  int64
-	// proxy and newSource are derived by materialize.
-	proxy     networkproxy.Config
-	newSource *SourceRecord
-	changed   bool
+	// proxy, redirect, redirectAllow and newSource are derived by materialize.
+	proxy         networkproxy.Config
+	redirect      string
+	redirectAllow []releaseconfig.Source
+	newSource     *SourceRecord
+	changed       bool
 }
 
 type noteEntry struct {
@@ -91,6 +95,13 @@ type globalEntry struct {
 	config   networkproxy.Config
 	revision int64
 	stored   int64 // revision of the stored row; 0 when none exists
+}
+
+// globalRedirectEntry is the global redirect protection, versioned like globalEntry.
+type globalRedirectEntry struct {
+	mode     string
+	revision int64
+	stored   int64
 }
 
 func newConfigSet(q querier) *configSet {
@@ -634,9 +645,32 @@ func (w *configSet) globalProxy() (*globalEntry, error) {
 	return g, nil
 }
 
+func (w *configSet) globalRedirect() (*globalRedirectEntry, error) {
+	if w.redirect != nil {
+		return w.redirect, nil
+	}
+	g := &globalRedirectEntry{mode: networkproxy.RedirectStrict}
+	var raw []byte
+	err := w.q.QueryRow(`SELECT revision,payload FROM settings WHERE key='redirect_protection'`).Scan(&g.revision, &raw)
+	switch {
+	case err == nil:
+		if g.mode, err = parseGlobalRedirect(raw); err != nil {
+			return nil, err
+		}
+	case !errors.Is(err, sql.ErrNoRows):
+		return nil, err
+	}
+	g.stored = g.revision
+	w.redirect = g
+	return g, nil
+}
+
 // changed reports whether the operation changed any stored row.
 func (w *configSet) changed() bool {
 	if w.global != nil && w.global.revision != w.global.stored {
+		return true
+	}
+	if w.redirect != nil && w.redirect.revision != w.redirect.stored {
 		return true
 	}
 	for _, v := range w.vendors {
@@ -716,6 +750,7 @@ func (w *configSet) materializeVendor(v *vendorEntry) error {
 	if v.proxy, err = decodeProxy(spec["proxy"]); err != nil {
 		return ErrInvalidDirectory
 	}
+	v.redirect = typed.RedirectProtection
 	v.Name, v.Description, v.Icon, v.LocalizedIcons = in.Name, in.Description, in.Icon, in.LocalizedIcons
 	_, v.HasTemplate = BuiltinVendorTemplate(v.ID)
 	// One classifier owns all runtime revision changes, regardless of write endpoint.
@@ -808,6 +843,10 @@ func (w *configSet) materializeApp(a *appEntry) error {
 	if a.proxy, err = decodeProxy(spec["proxy"]); err != nil {
 		return ErrInvalidDirectory
 	}
+	if presets.ValidateRedirectAllowlist(a.Provider, typed.RedirectAllowlist) != nil {
+		return ErrInvalidDirectory
+	}
+	a.redirect, a.redirectAllow = typed.RedirectProtection, typed.RedirectAllowlist
 	if a.before != nil && (a.BaseURL != in.BaseURL || !reflect.DeepEqual(a.BaseURLs, in.BaseURLs) || a.SourceStrategy != in.SourceStrategy || !releaseconfig.SameSource(a.JSONRelease, in.JSONRelease)) {
 		a.SourceEpoch++
 	}
@@ -970,6 +1009,14 @@ func (w *configSet) write(tx *sql.Tx) error {
 		if err := casExec(tx, g.stored == 0,
 			`INSERT INTO settings(key,revision,payload) VALUES('upstream_proxy',?,?) ON CONFLICT(key) DO NOTHING`, []any{g.revision, encode(g.config)},
 			`UPDATE settings SET revision=?,payload=? WHERE key='upstream_proxy' AND revision=?`, []any{g.revision, encode(g.config), g.stored}); err != nil {
+			return err
+		}
+	}
+	if g := w.redirect; g != nil && g.revision != g.stored {
+		payload := encode(map[string]string{"mode": g.mode})
+		if err := casExec(tx, g.stored == 0,
+			`INSERT INTO settings(key,revision,payload) VALUES('redirect_protection',?,?) ON CONFLICT(key) DO NOTHING`, []any{g.revision, payload},
+			`UPDATE settings SET revision=?,payload=? WHERE key='redirect_protection' AND revision=?`, []any{g.revision, payload, g.stored}); err != nil {
 			return err
 		}
 	}

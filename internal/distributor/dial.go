@@ -31,6 +31,27 @@ const (
 	privateAddress
 )
 
+func (c addressClass) String() string {
+	if c == privateAddress {
+		return "intranet"
+	}
+	return "public"
+}
+
+// addressError names the host and the address that broke its class, so an
+// administrator can see, for example, that DNS returned a private address
+// for a public source. It matches ErrAddressNotAllowed.
+type addressError struct {
+	host  string
+	ip    net.IP
+	class addressClass
+}
+
+func (e *addressError) Error() string {
+	return fmt.Sprintf("upstream address is not allowed: %s resolves to %s, which is not a %s address", e.host, e.ip, e.class)
+}
+func (e *addressError) Is(target error) bool { return target == ErrAddressNotAllowed }
+
 func (c addressClass) allows(ip net.IP) bool {
 	switch c {
 	case publicAddress:
@@ -126,7 +147,7 @@ func (n network) dialer(class addressClass) func(context.Context, string, string
 		}
 		for _, ip := range ips {
 			if !class.allows(ip) {
-				return nil, ErrAddressNotAllowed
+				return nil, &addressError{host: host, ip: ip, class: class}
 			}
 		}
 		var last error
@@ -192,12 +213,15 @@ func (n network) transport(conf proxyConfig, class addressClass) (*http.Transpor
 // whose source host is base. A configured source may reach any address, but a
 // redirect to a different host may only reach the address class of the source
 // itself: a public source can never redirect the server into the intranet, and
-// an intranet source never sends the server to the internet.
-func (s *transportSet) forRequest(r *http.Request, n network, configured bool, base string) (*http.Transport, error) {
-	if !configured {
+// an intranet source never sends the server to the internet. With redirect
+// protection off (unchecked), a redirect to a different host may reach any
+// address.
+func (s *transportSet) forRequest(r *http.Request, n network, configured bool, base string, unchecked bool) (*http.Transport, error) {
+	sameHost := strings.EqualFold(r.URL.Hostname(), base)
+	if !configured && (sameHost || !unchecked) {
 		return s.public, nil
 	}
-	if s.proxied || strings.EqualFold(r.URL.Hostname(), base) {
+	if s.proxied || sameHost || unchecked {
 		return s.configured, nil
 	}
 	class, err := n.classOf(r.Context(), base)

@@ -132,7 +132,11 @@ func TestPublicSourceCannotRedirectIntoTheIntranet(t *testing.T) {
 		}
 		t.Errorf("request reached %s", r.Host)
 	}))
-	client, err := newPool(fake.network()).NewClient("http://public.test/files", GeneralHTTP)
+	source, err := newPool(fake.network()).NewClient("http://public.test/files", GeneralHTTP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := source.WithRedirectProtection("basic", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +148,21 @@ func TestPublicSourceCannotRedirectIntoTheIntranet(t *testing.T) {
 	if !errors.Is(err, ErrAddressNotAllowed) || errors.Is(err, ErrConnection) {
 		t.Fatalf("refusal is not a final address-policy error: %v", err)
 	}
+	if want := "upstream address is not allowed: internal.test resolves to 10.0.0.5, which is not a public address"; err.Error() != want {
+		t.Fatalf("refusal does not name the host and address: %v", err)
+	}
 	if fake.wasDialed("10.0.0.5") {
 		t.Fatal("private redirect target was dialed")
+	}
+	// With redirect protection off, the same redirect reaches the intranet.
+	off, err := source.WithRedirectProtection("off", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp, err = off.Get(context.Background(), sourceURL(off, "file"), nil); err == nil {
+		resp.Body.Close()
+	}
+	if !fake.wasDialed("10.0.0.5") || errors.Is(err, ErrAddressNotAllowed) {
+		t.Fatalf("protection off still refused the intranet target: %v", err)
 	}
 }

@@ -284,6 +284,7 @@ HTTP 层只有一处映射（`previews.go`）：未知、其他应用或其他�
 
 - **上游信任**：只从配置的固定上游获取；Codex 依赖 HTTPS 和官方元数据中的摘要，Claude 额外验证固定公钥签名。下载完成并校验摘要后才发布缓存。回源强制 `Accept-Encoding: identity`，拒绝非 identity 编码（[ADR 0003](adr/0003-no-http-compression.md)）。
 - **重定向地址类别**：内置公共来源只连接公网地址。管理员配置的来源主机可以在内网，但重定向到其他主机时只能连接与来源同类的地址（公网来源只到公网，非公网来源只到非公网；来源同时解析到两类时拒绝跨主机重定向）。检查在拨号时按解析出的 IP 进行，并直接连接这些 IP，DNS 重绑定无法绕过。配置出口代理时由代理解析主机名，本地不做此检查。
+- **重定向保护**：`networkproxy` 定义 `strict`/`basic`/`off` 与 `inherit`，与代理一样按应用 → 厂商 → 全局解析（全局存于 `settings` 的 `redirect_protection`，厂商与应用存于 spec，缺省即 `inherit`）。`builtin.protect` 用 `Client.WithRedirectProtection` 给每个发布类与 HTTP 缓存客户端设置模式；严格模式下发布类按来源策略或固定根路径校验每一跳，HTTP 缓存按自己的源地址与 `redirect_allowlist`；基础模式只做 HTTPS、降级、凭据、路径与地址类别检查；关闭模式不检查，拨号时也不限制地址类别。被拒绝的跳转返回 `KindRedirect` 的 `RequestError`，消息含脱敏（去掉凭据与查询串）的来源与目标 URL 和原因；只写入事件与日志，不进入公开响应。
 - **管理认证**：单个管理员密码（bcrypt），内存会话（8 小时，`Path=/admin`、HttpOnly、SameSite=Strict），所有非 GET 请求要求 `X-CSRF-Token`，并检查 Origin。登录按 IP 限速。
 - **输入校验**：JSON 拒绝重复键和未知字段，有大小上限；查询参数白名单；SVG 删除主动内容与外部引用（上传需管理员确认，导入与预置必须无需删除），位图重编码。
 - **响应头**：全部响应带 `nosniff`、`X-Frame-Options: DENY`、`Cache-Control: no-store`；SPA 有严格 CSP。

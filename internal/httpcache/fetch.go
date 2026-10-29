@@ -141,7 +141,7 @@ func (s *Service) fetchAttempt(ctx context.Context, run *fetchRun, old *Row, att
 	headers := sourceValidators(old, source)
 	resp, err := s.get(ctx, attempt.Client, source, headers)
 	if err != nil {
-		if e := s.upstreamFailure(run.entry, run.path, 0); e != nil {
+		if e := s.upstreamFailure(run.entry, run.path, 0, err); e != nil {
 			return fetchResult{}, false, e
 		}
 		return fetchResult{}, errors.Is(err, distributor.ErrConnection) || ctx.Err() != nil, err
@@ -153,7 +153,7 @@ func (s *Service) fetchAttempt(ctx context.Context, run *fetchRun, old *Row, att
 		}
 	}()
 	if resp.StatusCode >= 500 && resp.StatusCode <= 599 {
-		if e := s.upstreamFailure(run.entry, run.path, resp.StatusCode); e != nil {
+		if e := s.upstreamFailure(run.entry, run.path, resp.StatusCode, nil); e != nil {
 			return fetchResult{}, false, e
 		}
 		return fetchResult{}, true, ErrUpstream
@@ -229,7 +229,7 @@ func (s *Service) fetchUnconditional(ctx context.Context, run *fetchRun, attempt
 	}
 	resp, err := s.get(ctx, attempt.Client, source, nil)
 	if err != nil {
-		if e := s.upstreamFailure(run.entry, run.path, 0); e != nil {
+		if e := s.upstreamFailure(run.entry, run.path, 0, err); e != nil {
 			return fetchResult{}, false, e
 		}
 		return fetchResult{}, errors.Is(err, distributor.ErrConnection) || ctx.Err() != nil, err
@@ -241,7 +241,7 @@ func (s *Service) fetchUnconditional(ctx context.Context, run *fetchRun, attempt
 		}
 	}()
 	if resp.StatusCode >= 500 && resp.StatusCode <= 599 {
-		if e := s.upstreamFailure(run.entry, run.path, resp.StatusCode); e != nil {
+		if e := s.upstreamFailure(run.entry, run.path, resp.StatusCode, nil); e != nil {
 			return fetchResult{}, false, e
 		}
 		return fetchResult{}, true, ErrUpstream

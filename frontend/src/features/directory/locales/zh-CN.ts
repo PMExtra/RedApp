@@ -95,6 +95,15 @@ export default {
         "图片包含脚本、动画或指向文件外部的引用，必须删除后才能上传：{items}。静态图形和颜色会保留，被删除的效果将不再显示。",
       sanitizeConfirm: "清洗并上传",
     },
+    redirect: {
+      allowlist: "重定向白名单",
+      allowlistHint: "严格保护下，源地址还可以跳转到这些来源和目录前缀。前缀填 / 表示整个来源。",
+      allowlistEmpty: "没有额外的跳转目标。",
+      origin: "允许的来源 {number}",
+      prefix: "路径前缀 {number}",
+      remove: "移除跳转目标 {number}",
+      add: "添加跳转目标",
+    },
     source: {
       urls: "源地址",
       urlsHint:
@@ -187,6 +196,9 @@ export default {
       urlsUnique: "每个源地址只能出现一次。",
       ttl: "请输入 0 到 86400 之间的整数秒数。",
       proxyUrl: "请输入代理地址。",
+      redirectOrigin: "请输入不重复的来源，例如 https://cdn.example.com，不含路径。",
+      redirectPrefix: "请输入以 / 开头并以 / 结尾的目录路径。",
+      redirectUnique: "该来源和路径前缀已在列表中。",
       vendorId: "请使用小写字母、数字和单个连字符（不能是 admin、api、assets、health 或 all）。",
       appId: "请使用小写字母、数字和单个连字符。",
       vendorExists: "已存在此 ID 的厂商。",

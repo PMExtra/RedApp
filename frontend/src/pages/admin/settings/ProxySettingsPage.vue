@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
-import { GlobalProxyForm } from "@/features/settings";
+import { GlobalProxyForm, GlobalRedirectProtectionForm } from "@/features/settings";
 import { PageHeader } from "@/shared/ui";
 
 const { t } = useI18n();
@@ -13,5 +13,6 @@ const { t } = useI18n();
       :description="t('proxySettingsPage.description')"
     />
     <GlobalProxyForm />
+    <GlobalRedirectProtectionForm />
   </div>
 </template>

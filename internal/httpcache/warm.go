@@ -87,7 +87,7 @@ func (s *Service) warmCurrent(ctx context.Context, f fill, old *Row, budget *war
 			resp, headErr := a.Client.Head(ctx, source, headers)
 			release()
 			if headErr != nil || resp.StatusCode >= 500 && resp.StatusCode != 501 {
-				_ = s.upstreamFailure(entry, path, 0)
+				_ = s.upstreamFailure(entry, path, 0, headErr)
 				if resp != nil {
 					resp.Body.Close()
 				}

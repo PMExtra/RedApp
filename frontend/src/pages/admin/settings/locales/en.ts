@@ -7,6 +7,6 @@ export default {
   },
   proxySettingsPage: {
     description:
-      "The outbound proxy for upstream requests. Vendors and applications inherit it unless they set their own.",
+      "The outbound proxy and redirect protection of upstream requests. Vendors and applications inherit them unless they set their own.",
   },
 } satisfies LocaleModule;
