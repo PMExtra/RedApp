@@ -1,2 +1,4 @@
+export { default as DownloadChoicesSection } from "./DownloadChoicesSection.vue";
 export { default as JSONReleaseSection } from "./JSONReleaseSection.vue";
-export { default as ReleaseDownloads } from "./ReleaseDownloads.vue";
+export { default as ReleaseDownloadButton } from "./ReleaseDownloadButton.vue";
+export { default as ReleaseVersionPicker } from "./ReleaseVersionPicker.vue";

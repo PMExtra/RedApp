@@ -5,7 +5,26 @@ const artifact = (
   os: Artifact["os"],
   arch: Artifact["arch"],
   format = "zip",
-): Artifact => ({ key, os, arch, format, url: "/local", sha256: "a".repeat(64) });
+  hidden = false,
+): Artifact => ({
+  key,
+  os,
+  arch,
+  format,
+  url: "/local",
+  path: "releases/r/" + key,
+  sha256: "a".repeat(64),
+  hidden,
+});
+// The VS Code preset's packages, in release order.
+const vscode = [
+  artifact("win32-x64-user", "windows", "x64", "exe"),
+  artifact("win32-arm64-user", "windows", "arm64", "exe"),
+  artifact("win32-x64", "windows", "x64", "exe"),
+  artifact("darwin-universal", "macos", "universal"),
+  artifact("linux-x64", "linux", "x64", "tar.gz"),
+  artifact("linux-deb-x64", "linux", "x64", "deb"),
+];
 describe("package recommendations", () => {
   it("does not guess architecture from Windows or Intel Mac compatibility tokens", () => {
     expect(detectEnvironment("Windows NT 10.0; Win64; x64")).toEqual({
@@ -16,24 +35,33 @@ describe("package recommendations", () => {
       os: "macos",
       arch: undefined,
     });
-    expect(recommend([artifact("win", "windows", "x64")], { os: "windows" })).toBeUndefined();
-  });
-  it("uses optional browser hints and permits one universal package", () => {
     expect(
       detectEnvironment("", { platform: "Windows", architecture: "arm", bitness: "64" }),
     ).toEqual({ os: "windows", arch: "arm64" });
-    expect(recommend([artifact("mac", "macos", "universal")], { os: "macos" })).toBe("mac");
   });
-  it("does not choose Linux packaging or substitute another architecture", () => {
-    expect(
-      recommend([artifact("deb", "linux", "x64", "deb"), artifact("rpm", "linux", "x64", "rpm")], {
-        os: "linux",
-        arch: "x64",
-      }),
-    ).toBeUndefined();
-    expect(
-      recommend([artifact("win", "windows", "x64")], { os: "windows", arch: "arm64" }),
-    ).toBeUndefined();
-    expect(recommend([artifact("win", "windows", "x64")], {})).toBeUndefined();
+  it("prefers the default among the packages for the environment", () => {
+    // Windows without architecture hints, as in Firefox.
+    expect(recommend(vscode, { os: "windows" }, "win32-x64-user")).toBe("win32-x64-user");
+    expect(recommend(vscode, { os: "windows", arch: "x64" }, "win32-x64")).toBe("win32-x64");
+    expect(recommend(vscode, { os: "windows", arch: "arm64" }, "win32-x64-user")).toBe(
+      "win32-arm64-user",
+    );
+    expect(recommend(vscode, { os: "macos" }, "win32-x64-user")).toBe("darwin-universal");
+    // Several Linux packages: the first in release order.
+    expect(recommend(vscode, { os: "linux", arch: "x64" }, "win32-x64-user")).toBe("linux-x64");
+  });
+  it("falls back to the default, then the first visible package", () => {
+    expect(recommend(vscode, {}, "win32-x64-user")).toBe("win32-x64-user");
+    expect(recommend(vscode, { os: "linux", arch: "arm64" }, "win32-x64-user")).toBe(
+      "win32-x64-user",
+    );
+    expect(recommend(vscode, {}, null)).toBe("win32-x64-user");
+    expect(recommend(vscode, {}, "gone")).toBe("win32-x64-user");
+  });
+  it("never offers hidden packages", () => {
+    const hidden = vscode.map((a) => ({ ...a, hidden: a.key !== "linux-deb-x64" }));
+    expect(recommend(hidden, { os: "windows" }, "win32-x64-user")).toBe("linux-deb-x64");
+    expect(recommend(hidden, { os: "linux", arch: "x64" }, null)).toBe("linux-deb-x64");
+    expect(recommend([artifact("a", "windows", "x64", "exe", true)], {}, "a")).toBeUndefined();
   });
 });

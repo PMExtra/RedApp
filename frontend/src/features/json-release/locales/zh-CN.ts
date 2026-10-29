@@ -1,5 +1,17 @@
 import type { LocaleModule } from "@/shared/i18n";
 export default {
+  downloadChoices: {
+    title: "下载选项",
+    description: "决定公开页面提供哪些安装包。隐藏的安装包仍可通过链接下载。",
+    default: "默认安装包",
+    defaultHint: "访问者的系统或架构无法识别，或没有对应安装包时推荐。",
+    noDefault: "无（使用第一个安装包）",
+    offered: "提供的安装包",
+    offeredHint: "当前发布中的安装包。以后新增的安装包默认提供，可在此取消。",
+    none: "尚未发现任何发布；首次刷新后会列出安装包。",
+    missing: "{key}（当前发布中没有）",
+    saved: "下载选项已保存",
+  },
   jsonRelease: {
     prewarm: "元数据刷新后预热的安装包",
     applyPrewarm: "使用选定的预热 key",

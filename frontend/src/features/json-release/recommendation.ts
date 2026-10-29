@@ -1,5 +1,5 @@
 import type { Schema } from "@/shared/api";
-export type Artifact = Schema<"ReleaseArtifact">;
+export type Artifact = Schema<"ReleaseDownloadChoice">;
 export interface Environment {
   os?: Artifact["os"];
   arch?: Artifact["arch"];
@@ -25,13 +25,26 @@ export function detectEnvironment(
   // macOS Intel and Windows Win64 UA tokens may describe an emulated browser.
   return { os, arch };
 }
-export function recommend(artifacts: Artifact[], environment: Environment): string | undefined {
-  if (!environment.os) return;
-  const matches = artifacts.filter(
+/**
+ * The package offered first. Candidates are the visible packages for the
+ * detected OS and, when known, architecture (universal packages always fit):
+ * the configured default when it is one, else the first in release order
+ * (stored releases list their packages by key).
+ * Without a detected OS or any candidate, the default, else the first visible
+ * package. Undefined only when no package is visible.
+ */
+export function recommend(
+  artifacts: Artifact[],
+  environment: Environment,
+  defaultKey?: string | null,
+): string | undefined {
+  const visible = artifacts.filter((a) => !a.hidden);
+  const fallback = visible.find((a) => a.key === defaultKey) ?? visible[0];
+  if (!environment.os) return fallback?.key;
+  const candidates = visible.filter(
     (a) =>
       a.os === environment.os &&
-      (a.arch === "universal" || (environment.arch !== undefined && a.arch === environment.arch)),
+      (environment.arch === undefined || a.arch === "universal" || a.arch === environment.arch),
   );
-  // Never guess a package manager, installation scope or competing package.
-  return matches.length === 1 ? matches[0]?.key : undefined;
+  return (candidates.find((a) => a.key === defaultKey) ?? candidates[0] ?? fallback)?.key;
 }
