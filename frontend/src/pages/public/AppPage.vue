@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { FolderOpen, Share2 } from "@lucide/vue";
 import { useI18n } from "vue-i18n";
 import { RouterLink, useRoute } from "vue-router";
@@ -18,12 +18,14 @@ import {
   PageHeader,
   Skeleton,
 } from "@/shared/ui";
-import { ReleaseDownloads } from "@/features/json-release";
+import { ReleaseDownloadButton, ReleaseVersionPicker } from "@/features/json-release";
 import NotFoundPage from "./NotFoundPage.vue";
 
 /**
  * `/{vendor}/{app}`: identity, version, usage instructions and downloads. The
- * share button copies the page link (the only share target for now).
+ * share button copies the page link (the only share target for now). A JSON
+ * release downloads from the header: its version badge picks the release and
+ * the split button the package.
  */
 const { t, locale } = useI18n();
 const localized = useLocalized();
@@ -57,9 +59,16 @@ const instructions = computed(
     !!app.value?.instructions_available[locale.value as Locale],
 );
 const hosted = computed(() => !!capabilities.value?.hosted_files);
+const releases = computed(() => app.value?.provider === "json-release");
 const prefix = computed(
-  () => !!capabilities.value?.files && !capabilities.value.installers && !hosted.value,
+  () =>
+    !!capabilities.value?.files &&
+    !capabilities.value.installers &&
+    !hosted.value &&
+    !releases.value,
 );
+/** The release a JSON release page offers; undefined is the default channel's. */
+const release = ref<string>();
 </script>
 
 <template>
@@ -106,6 +115,12 @@ const prefix = computed(
               {{ t("catalog.app.browse") }}
             </a>
           </Button>
+          <ReleaseDownloadButton
+            v-if="releases"
+            :vendor="app.vendor.id"
+            :app="app.id"
+            :release="release"
+          />
           <CopyButton
             :text="pageUrl"
             :icon="Share2"
@@ -115,7 +130,14 @@ const prefix = computed(
           />
         </template>
         <template v-if="capabilities?.versions || app.categories.length" #meta>
-          <AppVersion :app="app" />
+          <ReleaseVersionPicker
+            v-if="releases"
+            v-model="release"
+            :vendor="app.vendor.id"
+            :app="app.id"
+            :latest="app.latest_known_version"
+          />
+          <AppVersion v-else :app="app" />
           <ul v-if="app.categories.length" class="flex flex-wrap gap-1.5">
             <li v-for="item in app.categories" :key="item.id">
               <RouterLink
@@ -132,8 +154,7 @@ const prefix = computed(
       <Card v-if="instructions" :title="t('catalog.app.instructions')">
         <InstructionsDocument :vendor="app.vendor.id" :app="app.id" :revision="app.revision" />
       </Card>
-      <ReleaseDownloads v-if="app.provider === 'json-release'" :vendor="vendor" :app="appId" />
-      <HostedFiles v-else-if="hosted" :app="app" />
+      <HostedFiles v-if="hosted" :app="app" />
       <DownloadPrefix v-else-if="prefix" :app-key="app.key" />
     </template>
   </div>

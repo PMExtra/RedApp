@@ -28,7 +28,15 @@ export function isUpstreamRef(ref: string | null | undefined): boolean {
 }
 
 /** Paths of a mirrored application that follow the upstream unless overridden. */
-const UPSTREAM_PATHS = ["name", "description", "icon", "instructions", "auto_index"];
+const UPSTREAM_PATHS = [
+  "name",
+  "description",
+  "icon",
+  "instructions",
+  "auto_index",
+  "default_artifact",
+  "hidden_artifacts",
+];
 
 /** Whether `path` of a mirrored application follows its upstream. */
 export function followsUpstream(path: string): boolean {

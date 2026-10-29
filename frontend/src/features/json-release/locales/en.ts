@@ -1,5 +1,19 @@
 import type { LocaleModule } from "@/shared/i18n";
 export default {
+  downloadChoices: {
+    title: "Download choices",
+    description: "What the public page offers. Hidden packages stay downloadable by their links.",
+    default: "Default package",
+    defaultHint:
+      "Recommended when the visitor's system or architecture is unknown or has no package of its own.",
+    noDefault: "None (the first package)",
+    offered: "Offered packages",
+    offeredHint:
+      "Packages of the current releases. Packages added later are offered until you clear them here.",
+    none: "No release has been discovered yet; packages appear after the first refresh.",
+    missing: "{key} (not in the current releases)",
+    saved: "Download choices saved",
+  },
   jsonRelease: {
     prewarm: "Packages to prewarm after metadata refresh",
     applyPrewarm: "Use selected prewarm keys",

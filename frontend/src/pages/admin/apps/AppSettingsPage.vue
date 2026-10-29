@@ -10,7 +10,7 @@ import {
   type ProviderKey,
 } from "@/features/directory";
 import { AutoIndexSection } from "@/features/file-index";
-import { JSONReleaseSection } from "@/features/json-release";
+import { DownloadChoicesSection, JSONReleaseSection } from "@/features/json-release";
 import { MirrorSection } from "@/features/mirrors";
 import { AppTaxonomyForm } from "@/features/taxonomy";
 
@@ -42,6 +42,7 @@ interface ProviderSection {
  */
 const providerSections: readonly ProviderSection[] = [
   { id: "json-release", providers: ["json-release"], component: JSONReleaseSection },
+  { id: "download-choices", providers: ["json-release"], component: DownloadChoicesSection },
   { id: "cache-policy", providers: ["http-cache"], component: CachePolicySection },
   { id: "file-index", providers: ["hosted", "http-cache"], component: AutoIndexSection },
   { id: "channel-ttl", providers: ["codex", "claude-code"], component: ChannelTtlSection },

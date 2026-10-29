@@ -5,13 +5,20 @@ import {
   DropdownMenuRoot,
   DropdownMenuTrigger,
 } from "reka-ui";
-import { panelClass } from "./cn";
+import { cn, panelClass } from "./cn";
 
 /**
  * Menu of actions. Put DropdownMenuItem (and Reka's DropdownMenuSeparator,
  * DropdownMenuLabel, DropdownMenuRadioGroup) in the default slot.
  */
-withDefaults(defineProps<{ align?: "start" | "center" | "end" }>(), { align: "end" });
+withDefaults(
+  defineProps<{
+    align?: "start" | "center" | "end";
+    /** Extra classes of the menu panel, for example a maximum height. */
+    contentClass?: string;
+  }>(),
+  { align: "end", contentClass: undefined },
+);
 defineSlots<{ trigger: () => unknown; default: () => unknown }>();
 </script>
 
@@ -21,7 +28,7 @@ defineSlots<{ trigger: () => unknown; default: () => unknown }>();
       <slot name="trigger" />
     </DropdownMenuTrigger>
     <DropdownMenuPortal>
-      <DropdownMenuContent :align="align" :side-offset="6" :class="panelClass">
+      <DropdownMenuContent :align="align" :side-offset="6" :class="cn(panelClass, contentClass)">
         <slot />
       </DropdownMenuContent>
     </DropdownMenuPortal>
