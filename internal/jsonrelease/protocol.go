@@ -2,7 +2,6 @@ package jsonrelease
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,15 +42,19 @@ func NewProtocol(config releaseconfig.Config, discover Discoverer) (*Protocol, e
 func (p *Protocol) CanonicalChannel(channel string) (string, error) {
 	return ResolveChannel(p.config, channel)
 }
+
+// ValidateVersion accepts a release's version, which identifies it. Channel
+// names are refused: a path naming one is not a release.
 func (p *Protocol) ValidateVersion(version string) (string, error) {
-	if len(version) != 66 || !strings.HasPrefix(version, "r-") {
-		return "", application.ErrNotFound
-	}
-	if _, err := hex.DecodeString(version[2:]); err != nil || strings.ToLower(version) != version {
+	if _, channel := p.config.Channels[version]; !releaseconfig.ValidVersion(version) || version == "latest" || channel {
 		return "", application.ErrNotFound
 	}
 	return version, nil
 }
+
+// CompareVersions orders versions by semver precedence (package
+// CompareVersions). Versions outside the semver form have no order here, so
+// version cleanup keeps and reports them instead of guessing.
 func (p *Protocol) CompareVersions(a, b string) (int, error) {
 	if _, err := p.ValidateVersion(a); err != nil {
 		return 0, err
@@ -59,12 +62,10 @@ func (p *Protocol) CompareVersions(a, b string) (int, error) {
 	if _, err := p.ValidateVersion(b); err != nil {
 		return 0, err
 	}
-	if a == b {
-		return 0, nil
+	if !SemverLike(a) || !SemverLike(b) {
+		return 0, errors.New("versions outside the semver form have no order")
 	}
-	// A digest is not a version ordering. Retention must use the stored display
-	// version/build, never compare these path identities lexicographically.
-	return 0, errors.New("release identities have no intrinsic version ordering")
+	return CompareVersions(a, b), nil
 }
 func (p *Protocol) ResolveChannel(ctx context.Context, channel string) (application.ChannelResolution, error) {
 	release, err := p.discover.Discover(ctx, p.config, channel)

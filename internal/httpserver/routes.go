@@ -38,7 +38,7 @@ type route struct {
 func (s *Server) routeTable() []route {
 	return []route{
 		// Health, public API, pages, assets, distribution, authentication.
-		{method: "GET", path: "/api/apps/{vendor}/{app}/downloads", operation: "getReleaseDownloads", serve: s.getReleaseDownloads, query: []string{"channel", "release", "version"}},
+		{method: "GET", path: "/api/apps/{vendor}/{app}/downloads", operation: "getReleaseDownloads", serve: s.getReleaseDownloads, query: []string{"channel", "version"}},
 		{method: "GET", path: "/api/apps/{vendor}/{app}/releases", operation: "listReleases", serve: s.listReleases},
 		{method: "POST", path: "/admin/api/apps/{vendor}/{app}/releases/lookup", operation: "lookupRelease", serve: s.lookupRelease, auth: authAdmin, maxBody: 4096},
 		{method: "GET", path: "/admin/api/apps/{vendor}/{app}/artifacts", operation: "listReleaseArtifacts", serve: s.listReleaseArtifacts, auth: authAdmin},

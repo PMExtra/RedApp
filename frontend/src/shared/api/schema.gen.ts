@@ -243,12 +243,11 @@ export interface paths {
         };
         /**
          * Read normalized download choices from one immutable JSON release snapshot.
-         * @description The release is a channel's current release (`channel`, the default `latest`), a discovered release
-         *     (`release`, a `release_id` from `listReleases`) or the newest discovered release with a display version
-         *     (`version`); give at most one, else `400 INVALID_QUERY`. An unknown release or version is `404 FILE_NOT_FOUND`;
-         *     only a channel is refreshed, and failure to refresh retains the last valid snapshot. `channel` in the response
-         *     is empty and `stale` false unless a channel was read. URLs stay on RedApp. No architecture or older-version
-         *     fallback is performed.
+         * @description The release is a channel's current release (`channel`, the default `latest`) or a discovered release
+         *     (`version`, as `listReleases` names it); give one at most, else `400 INVALID_QUERY`. A release is identified
+         *     by its version. An unknown version is `404 FILE_NOT_FOUND`; only a channel is refreshed, and failure to refresh
+         *     retains the last valid snapshot. `channel` in the response is empty and `stale` false unless a channel was
+         *     read. URLs stay on RedApp. No architecture or older-version fallback is performed.
          */
         get: operations["getReleaseDownloads"];
         put?: never;
@@ -273,9 +272,11 @@ export interface paths {
         };
         /**
          * List the releases a JSON release application discovered.
-         * @description Every release of the current source epoch, discovered by a channel refresh or `lookupRelease`, newest display
-         *     version first (digit runs compare as numbers). At most 200; `truncated` reports more. Releases of earlier
-         *     source epochs are not served and not listed. Read `getReleaseDownloads` with `release` for the packages of one.
+         * @description Every release of the current source epoch, discovered by a channel refresh or `lookupRelease`, newest version
+         *     first by semantic versioning precedence with any number of numeric core parts (`2024.3` is a version; a missing
+         *     part counts as 0): pre-releases precede their release, build metadata has no precedence, and versions outside
+         *     this form follow, in string order. At most 200; `truncated` reports more. Releases of earlier
+         *     source epochs are not served and not listed. Read `getReleaseDownloads` with `version` for the packages of one.
          */
         get: operations["listReleases"];
         put?: never;
@@ -304,7 +305,7 @@ export interface paths {
          * Discover one version of a JSON release application.
          * @description Runs the configuration's `lookup` for the version and stores the verified release without moving any channel.
          *     It then appears in `listReleases` and the versions tab, and its packages download like any release. A version
-         *     already discovered is verified again and must be identical. Without a `lookup` the request fails with
+         *     already stored is returned as stored without asking the upstream. Without a `lookup` the request fails with
          *     `VALIDATION_FAILED`; a version the upstream does not have is `VERSION_NOT_FOUND`. Like a channel refresh, it
          *     needs an enabled application (`APPLICATION_DISABLED`).
          */
@@ -1595,8 +1596,7 @@ export interface paths {
         /**
          * List locally known versions of the current source epoch, newest first.
          * @description Ordered by the provider's version order (newest first); versions the provider cannot parse follow in string
-         *     order. A JSON release's versions are release IDs, ordered by their display version like `listReleases`. A
-         *     cursor is bound to the source epoch: after a source change it is `400 INVALID_CURSOR`. Available for `codex`,
+         *     order; JSON release versions follow semantic versioning precedence (see `listReleases`). A cursor is bound to the source epoch: after a source change it is `400 INVALID_CURSOR`. Available for `codex`,
          *     `claude-code` and `json-release`.
          */
         get: operations["listVersions"];
@@ -1838,7 +1838,7 @@ export interface paths {
         };
         /**
          * List the source epochs of an application, oldest first.
-         * @description Available for `http-cache`, `codex` and `claude-code`. Old epochs stay listed while they own cached data;
+         * @description Available for `http-cache`, `codex`, `claude-code` and `json-release`. Old epochs stay listed while they own cached data;
          *     select one with `source_epoch` to inspect or clean it. `active` is false while a configuration change is
          *     being published or after the application was disabled or deleted.
          */
@@ -3095,7 +3095,6 @@ export interface components {
             /** Format: date-time */
             fetched_at?: string;
             channel: string;
-            release_id: string;
             version: string;
             build: string;
             artifacts: components["schemas"]["ReleaseDownloadChoice"][];
@@ -3159,7 +3158,6 @@ export interface components {
             }[];
         };
         ReleaseSummary: {
-            release_id: string;
             version: string;
             build: string;
             /** Format: date-time */
@@ -3638,8 +3636,6 @@ export interface components {
         };
         Version: {
             version: string;
-            /** @description The version as people name it; for a JSON release its version and build, else `version`. */
-            display_version: string;
             /** Format: date-time */
             first_seen: string;
             /**
@@ -4765,7 +4761,6 @@ export interface operations {
         parameters: {
             query?: {
                 channel?: string;
-                release?: string;
                 version?: string;
             };
             header?: never;

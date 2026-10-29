@@ -15,7 +15,6 @@ import {
   type AppTab,
 } from "@/features/directory";
 import { CopyAppDialog, ExportDialog } from "@/features/exchange";
-import { versionLabel } from "@/features/releases";
 import { isApiError } from "@/shared/api";
 import { useLocalized } from "@/shared/i18n";
 import { useDocumentTitle } from "@/shared/lib";
@@ -83,10 +82,7 @@ const breadcrumbs = computed<Crumb[]>(() => [
     to: { name: "admin-vendor-apps", params: { vendor: vendorId.value } },
   },
   ...(version.value && app.data.value
-    ? [
-        { label: name.value, to: appRoute(app.data.value, "versions") },
-        { label: versionLabel(version.value) },
-      ]
+    ? [{ label: name.value, to: appRoute(app.data.value, "versions") }, { label: version.value }]
     : [{ label: name.value }]),
 ]);
 

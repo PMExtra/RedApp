@@ -29,7 +29,6 @@ const choice = (
 const current: Schema<"ReleaseDownloads"> = {
   stale: true,
   channel: "stable",
-  release_id: "r-" + "a".repeat(64),
   version: "1.2.3",
   build: "abc",
   artifacts: [
@@ -44,21 +43,18 @@ const older: Schema<"ReleaseDownloads"> = {
   ...current,
   stale: false,
   channel: "",
-  release_id: "r-" + "c".repeat(64),
   version: "1.0.0",
   artifacts: [choice("win-user", "windows", "x64", "exe", "user")],
   default_artifact: null,
 };
 const history: Schema<"ReleaseSummary">[] = [
   {
-    release_id: current.release_id,
     version: "1.2.3",
     build: "abc",
     discovered_at: "2026-10-01T00:00:00Z",
     channels: ["stable"],
   },
   {
-    release_id: older.release_id,
     version: "1.0.0",
     build: "",
     discovered_at: "2026-10-20T00:00:00Z",
@@ -73,7 +69,7 @@ beforeEach(() => {
   );
   useHandlers(
     mockApi("get", "/api/apps/{vendor}/{app}/downloads", ({ request }) =>
-      new URL(request.url).searchParams.get("release") === older.release_id ? older : current,
+      new URL(request.url).searchParams.get("version") === "1.0.0" ? older : current,
     ),
     mockApi("get", "/api/apps/{vendor}/{app}/releases", () => ({
       items: history,
@@ -113,7 +109,7 @@ describe("release download button", () => {
 
   it("offers the packages of a chosen release", async () => {
     await renderWithApp(ReleaseDownloadButton, {
-      props: { vendor: "microsoft", app: "vscode", release: older.release_id },
+      props: { vendor: "microsoft", app: "vscode", version: "1.0.0" },
     });
     // The old release lacks the default package: the system's package wins.
     expect(await screen.findByRole("link", { name: /Windows · x64 · exe · user/ })).toHaveAttribute(
@@ -149,7 +145,7 @@ describe("release version picker", () => {
     expect(first).toHaveAttribute("aria-checked", "true");
     expect(within(first).getByText("stable")).toBeInTheDocument();
     await user.click(second);
-    await waitFor(() => expect(update).toHaveBeenCalledWith(older.release_id));
+    await waitFor(() => expect(update).toHaveBeenCalledWith("1.0.0"));
   });
 
   it("returns to the default release with undefined", async () => {
@@ -159,7 +155,7 @@ describe("release version picker", () => {
         vendor: "microsoft",
         app: "vscode",
         latest: { version: "1.2.3", first_seen: null },
-        modelValue: older.release_id,
+        modelValue: "1.0.0",
         "onUpdate:modelValue": update,
       },
     });

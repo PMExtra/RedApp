@@ -49,7 +49,7 @@ func TestSnapshotIdentityAndInternalDownload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(path, "/microsoft/vscode/releases/r-") || strings.Contains(path, "cdn.example") {
+	if path != "/microsoft/vscode/releases/1.2.3/windows-x64-exe-user" {
 		t.Fatal(path)
 	}
 	r.Artifacts[0].SHA256 = strings.Repeat("b", 64)
@@ -60,7 +60,16 @@ func TestSnapshotIdentityAndInternalDownload(t *testing.T) {
 	if old.CheckImmutable(conflict) == nil {
 		t.Fatal("same version/build changed bytes")
 	}
+	// Another build of a known version conflicts: the version is the identity.
 	r.Build = "def"
+	rebuilt, err := NewSnapshot(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old.CheckImmutable(rebuilt) == nil {
+		t.Fatal("another build of the same version accepted")
+	}
+	r.Version = "1.2.4"
 	next, err := NewSnapshot(r)
 	if err != nil {
 		t.Fatal(err)

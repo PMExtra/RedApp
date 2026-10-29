@@ -80,29 +80,29 @@ func TestJSONReleasePreviewDownloadsAndInternalAliases(t *testing.T) {
 		t.Fatal("preview published channel", channel, err)
 	}
 	choices := getJSON[releaseDownloadsDTO](h, "/api/apps/fixture/editor/downloads")
-	if choices.Channel != "stable" || choices.Version != "1.2.3" || len(choices.Artifacts) != 1 || !strings.Contains(choices.Artifacts[0].URL, "/fixture/editor/releases/"+choices.ReleaseID+"/windows-x64-user") {
+	if choices.Channel != "stable" || choices.Version != "1.2.3" || len(choices.Artifacts) != 1 || !strings.Contains(choices.Artifacts[0].URL, "/fixture/editor/releases/1.2.3/windows-x64-user") {
 		t.Fatal(choices)
 	}
 	if strings.HasPrefix(choices.Artifacts[0].URL, origin) || artifactReads.Load() != 0 {
 		t.Fatal("public metadata bypassed local download")
 	}
-	if choices.Artifacts[0].Path != "releases/"+choices.ReleaseID+"/windows-x64-user" {
+	if choices.Artifacts[0].Path != "releases/1.2.3/windows-x64-user" {
 		t.Fatal("download choice lacks its application-relative path", choices.Artifacts[0].Path)
 	}
 	mirror := getJSON[mirrorAppDTO](h, "/api/apps/fixture/editor/mirror")
 	if mirror.Provider != "json-release" || strings.Join(mirror.Channels, ",") != "latest,stable" {
 		t.Fatal("mirror description of a JSON release", mirror)
 	}
-	testDownloadChoices(t, h, choices.ReleaseID)
+	testDownloadChoices(t, h)
 	for _, alias := range []string{"latest", "stable"} {
 		body, headers := h.request("GET", "/fixture/editor/download/"+alias+"/windows-x64-user", nil, 307, nil)
-		if len(body) != 0 || headers.Get("Content-Type") != "" || headers.Get("Location") != "/fixture/editor/releases/"+choices.ReleaseID+"/windows-x64-user" || headers.Get("Cache-Control") != "no-store" {
+		if len(body) != 0 || headers.Get("Content-Type") != "" || headers.Get("Location") != "/fixture/editor/releases/1.2.3/windows-x64-user" || headers.Get("Cache-Control") != "no-store" {
 			t.Fatal(headers)
 		}
 	}
 	h.expectError("GET", "/fixture/editor/download/stable/linux-arm64", nil, 404, codeFileNotFound, nil)
 	h.expectError("GET", "/api/apps/fixture/editor/downloads?channel=nightly", nil, 404, codeFileNotFound, nil)
-	data, headers := h.request("GET", "/fixture/editor/releases/"+choices.ReleaseID+"/windows-x64-user", nil, 200, nil)
+	data, headers := h.request("GET", "/fixture/editor/releases/1.2.3/windows-x64-user", nil, 200, nil)
 	if string(data) != string(body) || artifactReads.Load() != 1 || headers.Get("Content-Disposition") != "attachment; filename=setup.exe" {
 		t.Fatal("download", string(data), artifactReads.Load())
 	}
@@ -111,7 +111,7 @@ func TestJSONReleasePreviewDownloadsAndInternalAliases(t *testing.T) {
 // Download choices are presentation only: they never start a source epoch,
 // hidden packages stay listed and downloadable, and they apply to JSON
 // releases only.
-func testDownloadChoices(t *testing.T, h *harness, releaseID string) {
+func testDownloadChoices(t *testing.T, h *harness) {
 	t.Helper()
 	if vscode, err := h.store.Application("microsoft/vscode"); err != nil || vscode.DefaultArtifact != "win32-x64-user" || len(vscode.HiddenArtifacts) != 0 {
 		t.Fatal("preset download choices", vscode.DefaultArtifact, vscode.HiddenArtifacts, err)
@@ -133,7 +133,7 @@ func testDownloadChoices(t *testing.T, h *harness, releaseID string) {
 		t.Fatal("download choices", after, err)
 	}
 	choices = getJSON[releaseDownloadsDTO](h, "/api/apps/fixture/editor/downloads")
-	if choices.ReleaseID != releaseID || choices.DefaultArtifact == nil || *choices.DefaultArtifact != "windows-x64-user" || !choices.Artifacts[0].Hidden {
+	if choices.Version != "1.2.3" || choices.DefaultArtifact == nil || *choices.DefaultArtifact != "windows-x64-user" || !choices.Artifacts[0].Hidden {
 		t.Fatal("configured download choices", choices)
 	}
 	if mirror := getJSON[mirrorAppDTO](h, "/api/apps/fixture/editor/mirror"); mirror.DefaultArtifact != "windows-x64-user" || strings.Join(mirror.HiddenArtifacts, ",") != "windows-x64-user,gone-key" {

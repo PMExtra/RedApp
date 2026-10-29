@@ -52,7 +52,7 @@ func TestDiscoverEmbeddedQueryOverBoundedHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	path, err := snapshot.DownloadPath("microsoft/vscode", "win-x64-user")
-	if err != nil || !strings.HasPrefix(path, "/microsoft/vscode/releases/r-") {
+	if err != nil || path != "/microsoft/vscode/releases/1.2.3/win-x64-user" {
 		t.Fatal(path, err)
 	}
 }

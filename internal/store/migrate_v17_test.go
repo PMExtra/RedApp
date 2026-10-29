@@ -120,8 +120,13 @@ func TestMigration16MaterializesLegacyJSONOverlay(t *testing.T) {
 	if spec.JSONRelease["refresh_seconds"] != float64(777) || spec.JSONRelease["sources"] == nil || spec.JSONRelease["channels"] == nil {
 		t.Fatal(spec)
 	}
-	after, err := s.Source(before.StorageID())
-	if err != nil || !reflect.DeepEqual(source, after) {
-		t.Fatal("migration changed source/cache identity", after, err)
+	// Schema 21 names JSON releases by version: the old epoch keeps its
+	// source and files, and the application continues in the next epoch.
+	old, err := s.Source(before.StorageID())
+	if err != nil || old.Provider != source.Provider || !reflect.DeepEqual(old.JSONRelease, source.JSONRelease) || !old.CreatedAt.Equal(source.CreatedAt) {
+		t.Fatal("migration changed the old source", old, err)
+	}
+	if current, err := s.Application("microsoft/vscode"); err != nil || current.SourceEpoch != before.SourceEpoch+1 {
+		t.Fatal("JSON release did not start a new epoch", current.SourceEpoch, err)
 	}
 }

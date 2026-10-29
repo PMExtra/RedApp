@@ -5,7 +5,11 @@ import "database/sql"
 // migrate20To21 adds the download choices of JSON release applications. No
 // default package and nothing hidden is what every configuration meant before;
 // presets that now name a default reach their applications through the usual
-// template update. Keep this SQL independent of future schema.
+// template update. JSON releases are now named by their versions instead of
+// digests, so every JSON release application starts a new source epoch: its
+// releases are discovered again and its packages downloaded again, while the
+// old epoch keeps its files for cleanup. Keep this SQL independent of future
+// schema.
 func migrate20To21(tx *sql.Tx) error {
 	_, err := tx.Exec(`
 CREATE TABLE applications_v21(
@@ -36,6 +40,8 @@ CREATE TABLE applications_v21(
 INSERT INTO applications_v21(uid,vendor_uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,provider,base_url,base_urls_json,json_release_json,source_strategy,cache_ttl_seconds,auto_index,enabled,revision,runtime_revision,source_epoch,deleted_at_s) SELECT uid,vendor_uid,id,name_en,name_zh_cn,description_en,description_zh_cn,icon,provider,base_url,base_urls_json,json_release_json,source_strategy,cache_ttl_seconds,auto_index,enabled,revision,runtime_revision,source_epoch,deleted_at_s FROM applications;
 DROP TABLE applications;
 ALTER TABLE applications_v21 RENAME TO applications;
+UPDATE applications SET source_epoch=source_epoch+1,runtime_revision=runtime_revision+1 WHERE provider='json-release';
+INSERT INTO application_sources(app_uid,epoch,provider,base_url,base_urls_json,json_release_json,source_strategy,created_at_s) SELECT uid,source_epoch,provider,base_url,base_urls_json,json_release_json,source_strategy,CAST(strftime('%s','now') AS INTEGER) FROM applications WHERE provider='json-release';
 `)
 	return err
 }

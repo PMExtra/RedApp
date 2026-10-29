@@ -148,7 +148,7 @@ func TestMirrorApplicationsOfAnotherInstance(t *testing.T) {
 	if choices.Channel != "beta" || choices.Version != "2.0.0" || len(choices.Artifacts) != 1 || !strings.HasPrefix(choices.Artifacts[0].URL, b.http.URL+"/mirror/feed/releases/") {
 		t.Fatalf("B's download choices %+v", choices)
 	}
-	if data, _ := b.request("GET", "/mirror/feed/releases/"+choices.ReleaseID+"/win-x64", nil, 200, nil); !bytes.Equal(data, setup) {
+	if data, _ := b.request("GET", "/mirror/feed/releases/2.0.0/win-x64", nil, 200, nil); !bytes.Equal(data, setup) {
 		t.Fatal("JSON release artifact through the mirror", string(data))
 	}
 	// A new source upstream gives the mirror a new epoch too, so the same
@@ -160,7 +160,7 @@ func TestMirrorApplicationsOfAnotherInstance(t *testing.T) {
 	if next := b.adminApp("mirror/feed").SourceEpoch; next != epoch+1 {
 		t.Fatal("the mirror kept its epoch after the upstream source changed", epoch, next)
 	}
-	if again := getJSON[releaseDownloadsDTO](b, "/api/apps/mirror/feed/downloads"); again.ReleaseID != choices.ReleaseID {
+	if again := getJSON[releaseDownloadsDTO](b, "/api/apps/mirror/feed/downloads"); again.Version != choices.Version {
 		t.Fatalf("release after the upstream epoch change %+v", again)
 	}
 	// Download choices follow the upstream like the display fields, without

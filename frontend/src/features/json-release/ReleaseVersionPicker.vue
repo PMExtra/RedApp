@@ -10,7 +10,7 @@ import { useReleaseDownloads, useReleaseHistory } from "./queries";
 
 /**
  * The version badge of a JSON release, with an arrow that lists every
- * discovered release. The model is the chosen release ID; `undefined` is the
+ * discovered release. The model is the chosen version; `undefined` is the
  * default channel's release, which the badge shows initially.
  */
 const props = defineProps<{
@@ -36,17 +36,15 @@ const history = useReleaseHistory(
 
 const items = computed(() => history.data.value?.items ?? []);
 const shown = computed(() =>
-  items.value.find((item) => item.release_id === (model.value ?? current.data.value?.release_id)),
+  items.value.find((item) => item.version === (model.value ?? current.data.value?.version)),
 );
-const version = computed(
-  () => (model.value ? shown.value?.version : current.data.value?.version) ?? props.latest?.version,
-);
+const version = computed(() => model.value ?? current.data.value?.version ?? props.latest?.version);
 const firstSeen = computed(() => shown.value?.discovered_at ?? props.latest?.first_seen);
 const stale = computed(() => !model.value && !!current.data.value?.stale);
 
 function choose(value: unknown) {
   if (typeof value !== "string") return;
-  model.value = value === current.data.value?.release_id ? undefined : value;
+  model.value = value === current.data.value?.version ? undefined : value;
 }
 </script>
 
@@ -71,13 +69,13 @@ function choose(value: unknown) {
       </p>
       <DropdownMenuRadioGroup
         v-else
-        :model-value="model ?? current.data.value?.release_id"
+        :model-value="model ?? current.data.value?.version"
         @update:model-value="choose"
       >
         <DropdownMenuRadioItem
           v-for="item in items"
-          :key="item.release_id"
-          :value="item.release_id"
+          :key="item.version"
+          :value="item.version"
           :class="cn(itemClass, 'ps-7')"
         >
           <DropdownMenuItemIndicator class="absolute start-2 inline-flex">

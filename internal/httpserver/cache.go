@@ -78,7 +78,7 @@ type sourceListDTO struct {
 }
 
 func (s *Server) listSources(w http.ResponseWriter, r *http.Request) {
-	entry, ok := s.managedAppWith(w, r, application.HttpCache, application.Codex, application.ClaudeCode)
+	entry, ok := s.managedAppWith(w, r, application.HttpCache, application.Codex, application.ClaudeCode, application.JSONRelease)
 	if !ok {
 		return
 	}

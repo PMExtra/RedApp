@@ -92,6 +92,13 @@ const sections = computed<TabItem[]>(() => [
         <RetentionPanel :vendor="vendor" :app="app" :read-only="deleted" :inactive="inactive" />
         <VersionCleanup :vendor="vendor" :app="app" :disabled="deleted" />
       </template>
+      <!-- A JSON release configures prewarm in json_release and has no retention. -->
+      <VersionCleanup
+        v-else-if="provider === 'json-release'"
+        :vendor="vendor"
+        :app="app"
+        :disabled="deleted"
+      />
 
       <template v-else>
         <SourceEpochSelect

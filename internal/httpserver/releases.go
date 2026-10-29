@@ -69,10 +69,7 @@ func (s *Server) refuseDisabled(w http.ResponseWriter, r *http.Request, e applic
 }
 
 type versionDTO struct {
-	Version string `json:"version"`
-	// DisplayVersion is what people call the version: the version and build
-	// of a JSON release, whose Version is an opaque release ID.
-	DisplayVersion  string          `json:"display_version"`
+	Version         string          `json:"version"`
 	FirstSeen       time.Time       `json:"first_seen"`
 	Requests        int64           `json:"requests"`
 	DownstreamBytes int64           `json:"downstream_bytes"`
@@ -112,11 +109,11 @@ func versionFiles(views []download.View) map[string]versionFilesDTO {
 }
 
 // newestFirst orders versions by the provider's version order, newest first.
-// Versions the provider cannot parse follow in string order.
+// Versions the provider cannot parse or order follow in string order.
 func newestFirst(protocol application.Protocol, versions []string) []string {
 	var comparable, other []string
 	for _, v := range versions {
-		if canonical, err := protocol.ValidateVersion(v); err == nil && canonical == v {
+		if canonical, err := protocol.ValidateVersion(v); err == nil && canonical == v && orderable(protocol, v) {
 			comparable = append(comparable, v)
 		} else {
 			other = append(other, v)
@@ -129,6 +126,11 @@ func newestFirst(protocol application.Protocol, versions []string) []string {
 		return err == nil && order > 0
 	})
 	return append(comparable, other...)
+}
+
+func orderable(protocol application.Protocol, v string) bool {
+	_, err := protocol.CompareVersions(v, v)
+	return err == nil
 }
 
 func (s *Server) listVersions(w http.ResponseWriter, r *http.Request) {
@@ -156,15 +158,7 @@ func (s *Server) listVersions(w http.ResponseWriter, r *http.Request) {
 	for v := range stats {
 		names = append(names, v)
 	}
-	display, err := s.displayVersions(e)
-	if err != nil {
-		s.writeError(w, r, storageError(err))
-		return
-	}
 	ordered := newestFirst(e.Protocol, names)
-	if display != nil {
-		ordered = byDisplayVersion(names, display)
-	}
 	start := 0
 	if last != "" {
 		i := slices.Index(ordered, last)
@@ -179,11 +173,7 @@ func (s *Server) listVersions(w http.ResponseWriter, r *http.Request) {
 	page := cursorPage[versionDTO]{Items: make([]versionDTO, 0, end-start)}
 	for _, v := range ordered[start:end] {
 		row := stats[v]
-		label := row.Version
-		if release, ok := display[row.Version]; ok {
-			label = release.label()
-		}
-		page.Items = append(page.Items, versionDTO{Version: row.Version, DisplayVersion: label, FirstSeen: row.FirstSeen.UTC(), Requests: row.ArtifactRequests, DownstreamBytes: row.DownstreamBytes, Files: files[v]})
+		page.Items = append(page.Items, versionDTO{Version: row.Version, FirstSeen: row.FirstSeen.UTC(), Requests: row.ArtifactRequests, DownstreamBytes: row.DownstreamBytes, Files: files[v]})
 	}
 	if end < len(ordered) {
 		page.NextCursor = afterCursor("listVersions", scope, ordered[end-1])

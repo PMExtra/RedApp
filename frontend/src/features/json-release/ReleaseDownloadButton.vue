@@ -12,16 +12,16 @@ import { recommend, type Artifact } from "./recommendation";
 /**
  * Split download button of a JSON release: the main part downloads the
  * package recommended for the visitor's environment, the arrow lists every
- * other visible package of the same release. `release` selects a discovered
+ * other visible package of the same release. `version` selects a discovered
  * release; without it, the default channel's.
  */
-const props = defineProps<{ vendor: string; app: string; release?: string }>();
+const props = defineProps<{ vendor: string; app: string; version?: string }>();
 const { t } = useI18n();
 const format = useFormat();
 const query = useReleaseDownloads(
   () => props.vendor,
   () => props.app,
-  () => props.release,
+  () => props.version,
 );
 const environment = useEnvironment();
 
