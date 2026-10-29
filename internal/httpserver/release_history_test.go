@@ -82,6 +82,13 @@ func TestReleaseHistoryAndLookup(t *testing.T) {
 			t.Fatal("old package", string(data))
 		}
 	}
+	// The versions tab names releases by version, newest first, and the
+	// metrics tab is available.
+	versions := getJSON[cursorPage[versionDTO]](h, "/admin/api/apps/fixture/editor/versions")
+	if len(versions.Items) != 2 || versions.Items[0].DisplayVersion != "1.10.0" || versions.Items[1].DisplayVersion != "1.0.0" || versions.Items[1].Version != looked.ReleaseID {
+		t.Fatalf("versions %+v", versions.Items)
+	}
+	h.request("GET", "/admin/api/apps/fixture/editor/status", nil, 200, nil)
 	h.expectError("GET", "/api/apps/fixture/editor/downloads?version=3.0.0", nil, 404, codeFileNotFound, nil)
 	h.expectError("GET", "/api/apps/fixture/editor/downloads?release=r-"+strings.Repeat("0", 64), nil, 404, codeFileNotFound, nil)
 	h.expectError("GET", "/api/apps/fixture/editor/downloads?channel=stable&version=1.0.0", nil, 400, codeInvalidQuery, nil)

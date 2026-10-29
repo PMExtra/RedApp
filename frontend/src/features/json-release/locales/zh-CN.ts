@@ -1,5 +1,15 @@
 import type { LocaleModule } from "@/shared/i18n";
 export default {
+  releaseLookup: {
+    title: "发现版本",
+    description:
+      "从上游查找较早的版本。发现的版本会被保存，不改变任何渠道，并出现在版本列表和公开页面中。",
+    version: "版本",
+    submit: "发现",
+    found: "已发现版本 {version}",
+    unavailable:
+      "发布配置没有 lookup。在 JSON 发布配置中添加 lookup 后即可按版本发现，见 JSON 发布指南。",
+  },
   downloadChoices: {
     title: "下载选项",
     description: "决定公开页面提供哪些安装包。隐藏的安装包仍可通过链接下载。",

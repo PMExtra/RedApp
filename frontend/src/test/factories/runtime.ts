@@ -54,8 +54,10 @@ export function httpCacheApp(overrides: Overrides<Schema<"App">> = {}): Schema<"
 }
 
 export function version(overrides: Overrides<Schema<"Version">> = {}): Schema<"Version"> {
+  const name = overrides.version ?? "0.46.0";
   return {
-    version: "0.46.0",
+    version: name,
+    display_version: name,
     first_seen: CREATED,
     requests: 42,
     downstream_bytes: 1024 * 1024 * 80,
