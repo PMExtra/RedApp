@@ -379,7 +379,7 @@ func (c *Client) Send(ctx context.Context, req Request) (*http.Response, error) 
 		var hostname x509.HostnameError
 		var invalidCertificate x509.CertificateInvalidError
 		if errors.As(err, &redirect) {
-			return nil, &RequestError{Kind: KindRedirect}
+			return nil, &RequestError{Kind: KindRedirect, message: "upstream redirect is not allowed"}
 		}
 		if errors.Is(err, ErrAddressNotAllowed) {
 			return nil, &RequestError{Kind: KindNetwork, message: "Upstream address is not allowed", cause: ErrAddressNotAllowed}

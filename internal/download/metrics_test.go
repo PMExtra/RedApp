@@ -128,6 +128,11 @@ func TestTransportFailureCategories(t *testing.T) {
 			}
 		})
 	}
+	// A redirect the source policy refuses is not reported as a connection failure.
+	redirecting, _ := testutil.Upstream(t, http.RedirectHandler("http://elsewhere.invalid/asset", http.StatusFound))
+	if _, err := redirecting.Get(context.Background(), testutil.SourceURL(redirecting, "asset"), nil); err == nil || err.Error() != "upstream redirect is not allowed" || failureCategory(err) != "redirect" {
+		t.Fatal("refused redirect category", err)
+	}
 	// Body read failures keep their stable message and their transport class.
 	interrupted := &failure{message: "Upstream download interrupted", category: "upstream", cause: &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}, transient: true}
 	if got := failureCategory(interrupted); got != "timeout" {

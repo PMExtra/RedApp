@@ -1122,6 +1122,8 @@ func failureCategory(err error) string {
 		return "tls"
 	case distributor.KindTimeout:
 		return "timeout"
+	case distributor.KindRedirect:
+		return "redirect"
 	}
 	return "upstream"
 }
