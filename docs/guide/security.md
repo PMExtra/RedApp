@@ -99,6 +99,7 @@ Configuration packages may come from another administrator or another organizati
 
 - PNG and JPEG images are decoded and re-encoded, which removes metadata.
 - SVG files are checked against an allowlist of shapes, gradients and presentation attributes. Scripts, event handlers, external references, foreign elements and entities are rejected, not stripped.
+- Simple `.class` rules containing allowlisted presentation properties are converted to SVG attributes; editor `data-name` metadata is discarded. Complex selectors, other CSS properties and inline styles are rejected.
 - Icons are served with a restrictive Content Security Policy.
 
 ### Hosted files

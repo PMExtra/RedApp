@@ -145,7 +145,7 @@ watch(
       <div v-if="app.data.value" class="flex flex-col gap-6">
         <PageHeader :title="name" :breadcrumbs="breadcrumbs">
           <template #media>
-            <EntityIcon :src="app.data.value.icon" size="xl" />
+            <EntityIcon :src="app.data.value.icon" size="xl" :disabled="!published" />
           </template>
           <template #meta>
             <span class="font-mono">{{ app.data.value.key }}</span>

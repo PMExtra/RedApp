@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 
@@ -289,4 +290,25 @@ func TestIconUploadValidatesAndServesInertImages(t *testing.T) {
 		t.Fatal("published vendor icon", public[app.Key])
 	}
 	h.request("GET", media.PublicPrefix+"untrusted-name.svg", nil, 404, nil)
+}
+
+func TestExporterIconUpload(t *testing.T) {
+	h := newHarness(t)
+	h.login("")
+	raw, err := os.ReadFile("../media/testdata/hillstone-networks-logo-en.svg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := h.uploadIcon(string(raw), 201)
+	served, headers := h.request("GET", path, nil, 200, nil)
+	if !bytes.Contains(served, []byte(`fill="#003285"`)) || bytes.Contains(served, []byte("<style")) || bytes.Contains(served, []byte("class=")) || bytes.Contains(served, []byte("data-name=")) {
+		t.Fatal("exporter icon lost paint or retained CSS/metadata")
+	}
+	if headers.Get("Content-Type") != "image/svg+xml" || headers.Get("Content-Security-Policy") != "sandbox; default-src 'none'" {
+		t.Fatal("lost inert image headers", headers)
+	}
+	if again := h.uploadIcon(string(served), 201); again != path {
+		t.Fatal("normalized upload is not stable")
+	}
+	h.uploadIcon(`<svg><style>.a{fill:url(https://example.test/evil)}</style><path class="a"/></svg>`, 400)
 }

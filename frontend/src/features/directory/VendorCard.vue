@@ -167,7 +167,13 @@ onBeforeUnmount(() => {
           {{ countLabel }}
         </RouterLink>
       </div>
-      <EntityIcon :src="vendorLogo(vendor, locale)" variant="logo" size="lg" decorative />
+      <EntityIcon
+        :src="vendorLogo(vendor, locale)"
+        :disabled="!vendor.enabled || !!vendor.deleted_at"
+        variant="logo"
+        size="lg"
+        decorative
+      />
     </header>
 
     <div class="group/strip relative">
@@ -193,7 +199,11 @@ onBeforeUnmount(() => {
                 )
               "
             >
-              <EntityIcon :src="app.icon" size="lg" />
+              <EntityIcon
+                :src="app.icon"
+                size="lg"
+                :disabled="appState(app) !== '' || !!vendor.deleted_at"
+              />
               <span class="line-clamp-2 h-8 w-full break-words">
                 {{ localized(app.name) || app.id }}
               </span>

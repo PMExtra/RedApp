@@ -55,7 +55,11 @@ function choose(option: AppOption) {
     >
       <template #option="{ option }">
         <span class="flex min-w-0 items-center gap-2">
-          <EntityIcon :src="option.app.icon" size="xs" />
+          <EntityIcon
+            :src="option.app.icon"
+            size="xs"
+            :disabled="!option.app.enabled || !!option.app.deleted_at"
+          />
           <span class="truncate">{{ localized(option.app.name) }}</span>
           <code class="ms-auto shrink-0 text-xs text-muted">{{ option.value }}</code>
           <span v-if="option.disabled" class="shrink-0 text-xs text-muted">
