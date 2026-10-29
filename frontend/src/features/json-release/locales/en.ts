@@ -1,5 +1,15 @@
 import type { LocaleModule } from "@/shared/i18n";
 export default {
+  releaseLookup: {
+    title: "Discover a version",
+    description:
+      "Look up an older version upstream. It is stored without changing any channel and appears in the version list and on the public page.",
+    version: "Version",
+    submit: "Discover",
+    found: "Version {version} discovered",
+    unavailable:
+      "The release configuration has no lookup. Add a lookup to the JSON release configuration to discover versions; see the JSON release guide.",
+  },
   downloadChoices: {
     title: "Download choices",
     description: "What the public page offers. Hidden packages stay downloadable by their links.",

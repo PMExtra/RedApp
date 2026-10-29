@@ -859,7 +859,7 @@ export interface paths {
         };
         /**
          * Read the current metrics of one application.
-         * @description Available for `http-cache`, `codex` and `claude-code` (17 metrics: 6 `resources.*` metrics, counters except
+         * @description Available for `http-cache`, `codex`, `claude-code` and `json-release` (17 metrics: 6 `resources.*` metrics, counters except
          *     `counters.requests`, and `versions.total` with `value: null` for `http-cache`). Deleted applications are readable.
          */
         get: operations["getAppStatus"];
@@ -1595,8 +1595,9 @@ export interface paths {
         /**
          * List locally known versions of the current source epoch, newest first.
          * @description Ordered by the provider's version order (newest first); versions the provider cannot parse follow in string
-         *     order. A cursor is bound to the source epoch: after a source change it is `400 INVALID_CURSOR`. Available for
-         *     `codex` and `claude-code`.
+         *     order. A JSON release's versions are release IDs, ordered by their display version like `listReleases`. A
+         *     cursor is bound to the source epoch: after a source change it is `400 INVALID_CURSOR`. Available for `codex`,
+         *     `claude-code` and `json-release`.
          */
         get: operations["listVersions"];
         put?: never;
@@ -1622,7 +1623,7 @@ export interface paths {
         /**
          * List download generations of the current source epoch.
          * @description One item per stored copy (generation) of a release artifact, ordered by generation ID.
-         *     Includes retired generations until they are deleted. Available for `codex` and `claude-code`.
+         *     Includes retired generations until they are deleted. Available for `codex`, `claude-code` and `json-release`.
          */
         get: operations["listResources"];
         put?: never;
@@ -3637,6 +3638,8 @@ export interface components {
         };
         Version: {
             version: string;
+            /** @description The version as people name it; for a JSON release its version and build, else `version`. */
+            display_version: string;
             /** Format: date-time */
             first_seen: string;
             /**

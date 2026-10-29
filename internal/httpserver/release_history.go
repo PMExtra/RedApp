@@ -75,6 +75,57 @@ func (s *Server) releaseHistory(e application.Entry) ([]releaseSummaryDTO, error
 	return out, nil
 }
 
+// label is how a release is named to people: its version, with its build
+// when it has one.
+func (r releaseSummaryDTO) label() string {
+	if r.Build == "" {
+		return r.Version
+	}
+	return r.Version + " (" + r.Build + ")"
+}
+
+// displayVersions maps the release IDs of a JSON release to their releases;
+// nil for other providers, whose versions name themselves.
+func (s *Server) displayVersions(e application.Entry) (map[string]releaseSummaryDTO, error) {
+	if _, ok := e.Protocol.(application.SnapshotProtocol); !ok {
+		return nil, nil
+	}
+	history, err := s.releaseHistory(e)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]releaseSummaryDTO, len(history))
+	for _, r := range history {
+		out[r.ReleaseID] = r
+	}
+	return out, nil
+}
+
+// byDisplayVersion orders release IDs newest display version first, like
+// releaseHistory; IDs without stored metadata follow in string order.
+func byDisplayVersion(ids []string, display map[string]releaseSummaryDTO) []string {
+	out := slices.Clone(ids)
+	slices.SortFunc(out, func(a, b string) int {
+		x, okA := display[a]
+		y, okB := display[b]
+		switch {
+		case okA && okB:
+			if order := jsonrelease.CompareDisplayVersions(y.Version, x.Version); order != 0 {
+				return order
+			}
+			if order := jsonrelease.CompareDisplayVersions(y.Build, x.Build); order != 0 {
+				return order
+			}
+		case okA:
+			return -1
+		case okB:
+			return 1
+		}
+		return strings.Compare(a, b)
+	})
+	return out
+}
+
 // releaseOfVersion is the newest discovered release with this display
 // version.
 func (s *Server) releaseOfVersion(e application.Entry, version string) (string, error) {

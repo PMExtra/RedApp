@@ -35,6 +35,7 @@ export {
   versionRoute,
   hasVersions,
   hasCache,
+  hasMetrics,
   hasHostedFiles,
   isReleaseProvider,
   isPublished,

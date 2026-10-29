@@ -95,7 +95,7 @@ func (s *Server) getStatus(w http.ResponseWriter, r *http.Request) {
 // metricsApp resolves an application that records metrics: HTTP cache and
 // release applications, including disabled and deleted ones.
 func (s *Server) metricsApp(w http.ResponseWriter, r *http.Request) (application.Entry, bool) {
-	return s.managedAppWith(w, r, application.HttpCache, application.Codex, application.ClaudeCode)
+	return s.managedAppWith(w, r, application.HttpCache, application.Codex, application.ClaudeCode, application.JSONRelease)
 }
 
 func (s *Server) getAppStatus(w http.ResponseWriter, r *http.Request) {

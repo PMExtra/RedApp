@@ -13,7 +13,7 @@ import {
   CacheEntriesPanel,
   CacheRefreshPanel,
 } from "@/features/http-cache";
-import { appRoute, hasVersions, useApp, useVendor, vendorRoute } from "@/features/directory";
+import { appRoute, isReleaseProvider, useApp, useVendor, vendorRoute } from "@/features/directory";
 import { PrewarmPanel } from "@/features/prewarm";
 import { SourceEpochSelect, VersionCleanup, useSources } from "@/features/releases";
 import { RetentionPanel } from "@/features/retention";
@@ -87,7 +87,7 @@ const sections = computed<TabItem[]>(() => [
           </Button>
         </template>
       </Alert>
-      <template v-if="hasVersions(provider)">
+      <template v-if="isReleaseProvider(provider)">
         <PrewarmPanel :vendor="vendor" :app="app" :read-only="deleted" :inactive="inactive" />
         <RetentionPanel :vendor="vendor" :app="app" :read-only="deleted" :inactive="inactive" />
         <VersionCleanup :vendor="vendor" :app="app" :disabled="deleted" />

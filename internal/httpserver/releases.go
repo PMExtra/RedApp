@@ -69,7 +69,10 @@ func (s *Server) refuseDisabled(w http.ResponseWriter, r *http.Request, e applic
 }
 
 type versionDTO struct {
-	Version         string          `json:"version"`
+	Version string `json:"version"`
+	// DisplayVersion is what people call the version: the version and build
+	// of a JSON release, whose Version is an opaque release ID.
+	DisplayVersion  string          `json:"display_version"`
 	FirstSeen       time.Time       `json:"first_seen"`
 	Requests        int64           `json:"requests"`
 	DownstreamBytes int64           `json:"downstream_bytes"`
@@ -153,7 +156,15 @@ func (s *Server) listVersions(w http.ResponseWriter, r *http.Request) {
 	for v := range stats {
 		names = append(names, v)
 	}
+	display, err := s.displayVersions(e)
+	if err != nil {
+		s.writeError(w, r, storageError(err))
+		return
+	}
 	ordered := newestFirst(e.Protocol, names)
+	if display != nil {
+		ordered = byDisplayVersion(names, display)
+	}
 	start := 0
 	if last != "" {
 		i := slices.Index(ordered, last)
@@ -168,7 +179,11 @@ func (s *Server) listVersions(w http.ResponseWriter, r *http.Request) {
 	page := cursorPage[versionDTO]{Items: make([]versionDTO, 0, end-start)}
 	for _, v := range ordered[start:end] {
 		row := stats[v]
-		page.Items = append(page.Items, versionDTO{Version: row.Version, FirstSeen: row.FirstSeen.UTC(), Requests: row.ArtifactRequests, DownstreamBytes: row.DownstreamBytes, Files: files[v]})
+		label := row.Version
+		if release, ok := display[row.Version]; ok {
+			label = release.label()
+		}
+		page.Items = append(page.Items, versionDTO{Version: row.Version, DisplayVersion: label, FirstSeen: row.FirstSeen.UTC(), Requests: row.ArtifactRequests, DownstreamBytes: row.DownstreamBytes, Files: files[v]})
 	}
 	if end < len(ordered) {
 		page.NextCursor = afterCursor("listVersions", scope, ordered[end-1])

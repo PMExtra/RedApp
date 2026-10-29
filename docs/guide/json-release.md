@@ -54,6 +54,8 @@ The application page downloads from its header. The version badge opens the list
 
 Every release the application discovers stays available while its source epoch lasts: `/api/apps/{vendor}/{app}/releases` lists them, newest version first, and `/api/apps/{vendor}/{app}/downloads?release={release_id}` or `?version={version}` returns the packages of one. The public page lets visitors pick one. Version cleanup deletes cached files, not this history; a package downloaded again is verified against the same digest.
 
+In the administration, the versions tab lists the discovered releases by version, each with its cached files, and the metrics tab shows the application's downloads. JSON releases have no cache tab: their prewarm is part of `json_release`, and cached files cannot yet be cleaned up by version.
+
 An administrator can discover an older version in the versions tab. The optional `lookup` object has the shape of a channel. `{version}` in its request URLs (escaped) and context values is replaced by the version entered, and its query must return that version. A request answered with 404, or a query result of `null`, means the version has no such package; the version is not found only when no package remains. The discovered release is stored without moving any channel. Changing `lookup` does not start a new source epoch, but its requests must stay inside `sources.metadata`.
 
 The VS Code preset looks versions up at `/api/versions/{version}/<platform>/stable`, so its metadata source covers `/api/`. The JetBrains presets read the product's complete release list and select the version in the query. A mirror looks up the versions its upstream has discovered.

@@ -13,15 +13,23 @@ const TAB_ROUTES: Record<AppTab, string> = {
   "admin-notes": "admin-app-notes",
 };
 
-export function hasVersions(provider: ProviderKey): boolean {
+/** Providers with a base URL that defaults from the provider (release protocols). */
+export function isReleaseProvider(provider: ProviderKey): boolean {
   return provider === "codex" || provider === "claude-code";
 }
 
-/** Providers with a base URL that defaults from the provider (release protocols). */
-export const isReleaseProvider = hasVersions;
+/** Providers whose releases the versions tab lists. */
+export function hasVersions(provider: ProviderKey): boolean {
+  return isReleaseProvider(provider) || provider === "json-release";
+}
 
+/** Providers with cache maintenance (prewarm, retention, cleanup or cached paths). */
 export function hasCache(provider: ProviderKey): boolean {
-  return provider === "http-cache" || hasVersions(provider);
+  return provider === "http-cache" || isReleaseProvider(provider);
+}
+
+export function hasMetrics(provider: ProviderKey): boolean {
+  return hasCache(provider) || provider === "json-release";
 }
 
 export function hasHostedFiles(provider: ProviderKey): boolean {
@@ -29,14 +37,16 @@ export function hasHostedFiles(provider: ProviderKey): boolean {
 }
 
 /**
- * Tabs an application offers: files for `hosted`; cache and metrics for `http-cache`,
- * `codex` and `claude-code`; versions for `codex` and `claude-code` (not for
- * deleted applications, whose release data is no longer browsable).
+ * Tabs an application offers: files for `hosted`; cache for `http-cache`,
+ * `codex` and `claude-code`, which also have metrics like `json-release`;
+ * versions for `codex`, `claude-code` and `json-release` (not for deleted
+ * applications, whose release data is no longer browsable).
  */
 export function appTabs(app: Pick<App, "provider" | "deleted_at">): AppTab[] {
   const tabs: AppTab[] = ["settings"];
   if (hasVersions(app.provider) && !app.deleted_at) tabs.push("versions");
-  if (hasCache(app.provider)) tabs.push("cache", "metrics");
+  if (hasCache(app.provider)) tabs.push("cache");
+  if (hasMetrics(app.provider)) tabs.push("metrics");
   if (hasHostedFiles(app.provider)) tabs.push("files");
   tabs.push("admin-notes");
   return tabs;
