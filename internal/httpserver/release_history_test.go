@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/PMExtra/RedApp/internal/releaseconfig"
@@ -28,8 +29,11 @@ func TestReleaseHistoryAndLookup(t *testing.T) {
 	release := func(version string) releaseconfig.Release {
 		return releaseconfig.Release{Version: version, Artifacts: []releaseconfig.Artifact{{Key: "win-x64", OS: "windows", Arch: "x64", Format: "exe", URL: origin + "/files/" + version + "/setup.exe", SHA256: fmt.Sprintf("%x", sha256.Sum256(pkg(version)))}}}
 	}
+	var down atomic.Bool
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case down.Load() && !strings.HasPrefix(r.URL.Path, "/files/"):
+			w.WriteHeader(http.StatusBadGateway)
 		case r.URL.Path == "/latest/win":
 			json.NewEncoder(w).Encode(release("1.10.0"))
 		case r.URL.Path == "/versions/1.0.0/win":
@@ -119,19 +123,31 @@ func TestReleaseHistoryAndLookup(t *testing.T) {
 	h.expectError("POST", "/admin/api/apps/fixture/editor/releases/lookup", map[string]string{"version": "2.0.0"}, 502, codeMetadataUntrusted, nil)
 	h.expectError("POST", "/admin/api/apps/fixture/editor/releases/lookup", map[string]string{"version": "../x"}, 400, codeValidationFailed, nil)
 
-	// The upstream rebuilds both known versions. Discovering one again is
-	// refused as a conflict; re-fetching replaces each release, by its
-	// channel or by the lookup, and the new bytes are served.
+	// Re-fetching an unchanged version deletes nothing.
+	if same := decodeJSONBody[refetchDTO](t, mustBody(h.request("POST", "/admin/api/apps/fixture/editor/versions/1.0.0/refetch", nil, 200, nil))); same.Replaced || same.Release.Version != "1.0.0" {
+		t.Fatalf("unchanged re-fetch %+v", same)
+	}
+	if versions := getJSON[cursorPage[versionDTO]](h, "/admin/api/apps/fixture/editor/versions"); versions.Items[1].Files.Complete != 1 {
+		t.Fatal("unchanged re-fetch deleted files", versions.Items[1].Files)
+	}
+
+	// The upstream rebuilds both known versions. A lookup returns the stored
+	// release; re-fetching replaces each, by its channel or by the lookup,
+	// and the new bytes are served.
 	mu.Lock()
 	packages["1.0.0"], packages["1.10.0"] = []byte("rebuilt old package"), []byte("rebuilt new package")
 	mu.Unlock()
-	h.expectError("POST", "/admin/api/apps/fixture/editor/releases/lookup", map[string]string{"version": "1.0.0"}, 502, codeMetadataUntrusted, nil)
+	h.request("POST", "/admin/api/apps/fixture/editor/releases/lookup", map[string]string{"version": "1.0.0"}, 200, nil)
+	// While the upstream is unreachable, a re-fetch changes nothing.
+	down.Store(true)
+	h.expectError("POST", "/admin/api/apps/fixture/editor/versions/1.0.0/refetch", nil, 502, codeUpstreamUnavailable, nil)
+	down.Store(false)
 	if data, _ := h.request("GET", "/fixture/editor/releases/1.0.0/win-x64", nil, 200, nil); string(data) != "old package" {
-		t.Fatal("conflict replaced the cached package", string(data))
+		t.Fatal("the stored release changed before a re-fetch", string(data))
 	}
 	for _, version := range []string{"1.0.0", "1.10.0"} {
-		again := decodeJSONBody[releaseSummaryDTO](t, mustBody(h.request("POST", "/admin/api/apps/fixture/editor/versions/"+version+"/refetch", nil, 200, nil)))
-		if again.Version != version {
+		again := decodeJSONBody[refetchDTO](t, mustBody(h.request("POST", "/admin/api/apps/fixture/editor/versions/"+version+"/refetch", nil, 200, nil)))
+		if !again.Replaced || again.Release.Version != version {
 			t.Fatalf("re-fetched %+v", again)
 		}
 		if data, _ := h.request("GET", "/fixture/editor/releases/"+version+"/win-x64", nil, 200, nil); string(data) != string(pkg(version)) {

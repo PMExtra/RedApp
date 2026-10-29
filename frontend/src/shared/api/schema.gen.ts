@@ -305,11 +305,12 @@ export interface paths {
         /**
          * Replace a stored JSON release with what the upstream publishes now.
          * @description For an upstream that published another build of a version RedApp already knows, which a refresh refuses as
-         *     conflicting metadata. The version's cached files are cleaned up, its metadata is forgotten, and it is
-         *     discovered again: by the channels that pointed at it, else by the configuration's `lookup`
-         *     (`VALIDATION_FAILED` when neither can). Files being transferred refuse the request with
-         *     `OPERATION_IN_PROGRESS`; retry later. `VERSION_NOT_FOUND` when the upstream no longer publishes the
-         *     version; it is then forgotten. JSON releases only; needs an enabled application.
+         *     conflicting metadata. The version is discovered again first, by a channel that points at it, else by the
+         *     configuration's `lookup` (`VALIDATION_FAILED` when neither can), and verified. Only when the result differs are
+         *     the version's cached files cleaned up and its metadata replaced, with the channel heads that pointed at it, in
+         *     one transaction; `replaced` reports it. A failed discovery changes nothing. Files being transferred refuse the
+         *     request with `OPERATION_IN_PROGRESS`; retry later. `VERSION_NOT_FOUND` when the upstream no longer publishes
+         *     the version. JSON releases only; needs an enabled application.
          */
         post: operations["refetchRelease"];
         delete?: never;
@@ -4869,13 +4870,17 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The release as discovered again. */
+            /** @description The release as stored after the re-fetch. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ReleaseSummary"];
+                    "application/json": {
+                        release: components["schemas"]["ReleaseSummary"];
+                        /** @description False when the upstream publishes the stored release unchanged; nothing was deleted. */
+                        replaced: boolean;
+                    };
                 };
             };
             400: components["responses"]["BadRequest"];

@@ -21,8 +21,14 @@ const refetch = useMutation({
         params: { path: { vendor: props.vendor, app: props.app, version: props.version } },
       }),
     ),
-  onSuccess: async () => {
-    toast({ tone: "success", title: t("releaseRefetch.done", { version: props.version }) });
+  onSuccess: (result) =>
+    toast({
+      tone: "success",
+      title: t(result.replaced ? "releaseRefetch.done" : "releaseRefetch.unchanged", {
+        version: props.version,
+      }),
+    }),
+  onSettled: async () => {
     await Promise.all(
       ["listVersions", "listResources", "listReleases", "getReleaseDownloads"].map((operation) =>
         client.invalidateQueries({ queryKey: queryKey(operation as "listVersions") }),

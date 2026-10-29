@@ -11,7 +11,15 @@ describe("release re-fetch", () => {
     useHandlers(
       mockApi("post", "/admin/api/apps/{vendor}/{app}/versions/{version}/refetch", ({ params }) => {
         requested.push(String(params.version));
-        return { version: "1.2.3", build: "", discovered_at: "2026-10-01T00:00:00Z", channels: [] };
+        return {
+          release: {
+            version: "1.2.3",
+            build: "",
+            discovered_at: "2026-10-01T00:00:00Z",
+            channels: [],
+          },
+          replaced: true,
+        };
       }),
     );
     await renderWithApp(ReleaseRefetchButton, {
@@ -22,7 +30,9 @@ describe("release re-fetch", () => {
     expect(await screen.findByText("Re-fetch version 1.2.3?")).toBeInTheDocument();
     const dialog = await screen.findByRole("alertdialog");
     await user.click(within(dialog).getByRole("button", { name: "Re-fetch" }));
-    expect(await screen.findByText("Version 1.2.3 re-fetched")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Version 1.2.3 replaced with the upstream's current build"),
+    ).toBeInTheDocument();
     expect(requested).toEqual(["1.2.3"]);
   });
 });

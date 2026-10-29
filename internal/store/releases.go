@@ -165,24 +165,33 @@ func (s *Store) Release(app, version string) (ReleaseMetadata, error) {
 // ErrReleaseInUse reports a release that still has download generations.
 var ErrReleaseInUse = errors.New("the release still has cached files")
 
-// ForgetRelease deletes a release's metadata and resources so that it can be
-// discovered again, and returns the channels that pointed at it (their heads
-// are deleted too). Its files must be gone first: generations reference its
+// ReplaceRelease replaces a stored release with newly verified metadata and
+// resources in one transaction, and moves the channels that pointed at it to
+// the new metadata with a fresh expiry; it returns those channels. The old
+// release's files must be gone first, because generations reference its
 // resources. Its version statistics and first-seen time stay.
-func (s *Store) ForgetRelease(app, version string, expected ...SourceFence) ([]string, error) {
-	if err := requireApp(app); err != nil {
-		return nil, err
+func (s *Store) ReplaceRelease(m ReleaseMetadata, resources []Resource, ttl time.Duration, expected ...SourceFence) ([]string, error) {
+	if requireApp(m.AppID) != nil || m.Version == "" || m.Raw == nil || m.TrustRevision < 1 || m.FetchedAt.IsZero() || ttl <= 0 {
+		return nil, errors.New("invalid trusted release")
+	}
+	for _, r := range resources {
+		if err := validateResource(r); err != nil {
+			return nil, err
+		}
+		if r.AppID != m.AppID || r.Version != m.Version {
+			return nil, errors.New("release resource identity mismatch")
+		}
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
-	if err = s.requireSourceActive(tx, app, expected...); err != nil {
+	if err = s.requireSourceActive(tx, m.AppID, expected...); err != nil {
 		return nil, err
 	}
 	var exists, generations int
-	if err = tx.QueryRow("SELECT (SELECT count(*) FROM release_metadata WHERE app_id=? AND version=?),(SELECT count(*) FROM generations WHERE app_id=? AND version=?)", app, version, app, version).Scan(&exists, &generations); err != nil {
+	if err = tx.QueryRow("SELECT (SELECT count(*) FROM release_metadata WHERE app_id=? AND version=?),(SELECT count(*) FROM generations WHERE app_id=? AND version=?)", m.AppID, m.Version, m.AppID, m.Version).Scan(&exists, &generations); err != nil {
 		return nil, err
 	}
 	if exists == 0 {
@@ -191,7 +200,7 @@ func (s *Store) ForgetRelease(app, version string, expected ...SourceFence) ([]s
 	if generations != 0 {
 		return nil, ErrReleaseInUse
 	}
-	rows, err := tx.Query("SELECT channel FROM channels WHERE app_id=? AND version=? ORDER BY channel", app, version)
+	rows, err := tx.Query("SELECT channel FROM channels WHERE app_id=? AND version=? ORDER BY channel", m.AppID, m.Version)
 	if err != nil {
 		return nil, err
 	}
@@ -209,9 +218,22 @@ func (s *Store) ForgetRelease(app, version string, expected ...SourceFence) ([]s
 	if err != nil {
 		return nil, err
 	}
-	// Resources and channel heads cascade.
-	if _, err = tx.Exec("DELETE FROM release_metadata WHERE app_id=? AND version=?", app, version); err != nil {
+	// Resources and channel heads cascade; they are written again below.
+	if _, err = tx.Exec("DELETE FROM release_metadata WHERE app_id=? AND version=?", m.AppID, m.Version); err != nil {
 		return nil, err
+	}
+	if _, err = tx.Exec(`INSERT INTO release_metadata(app_id,version,raw,signature,trust_revision,fetched_at_s) VALUES(?,?,?,?,?,?)`, m.AppID, m.Version, m.Raw, m.Signature, m.TrustRevision, m.FetchedAt.Unix()); err != nil {
+		return nil, err
+	}
+	for _, r := range resources {
+		if _, err = tx.Exec("INSERT INTO resources(app_id,version,resource_key,source_url,sha256,expected_size) VALUES(?,?,?,?,?,?)", r.AppID, r.Version, r.Key, r.SourceURL, r.SHA256, r.ExpectedSize); err != nil {
+			return nil, err
+		}
+	}
+	for _, name := range channels {
+		if _, err = tx.Exec("INSERT INTO channels(app_id,channel,version,fetched_at_s,expires_at_s) VALUES(?,?,?,?,?)", m.AppID, name, m.Version, m.FetchedAt.Unix(), m.FetchedAt.Add(ttl).Unix()); err != nil {
+			return nil, err
+		}
 	}
 	return channels, tx.Commit()
 }

@@ -430,15 +430,21 @@ func (s *Service) Lookup(ctx context.Context, app, version string) (application.
 	return s.verifyAndPersist(e, resolved.Version, *resolved.Envelope)
 }
 
-// Forget deletes a stored release of an application so that it can be
-// discovered again, and returns the channels that pointed at it. Its cached
-// files must be gone (store.ErrReleaseInUse otherwise).
-func (s *Service) Forget(app, version string) ([]string, error) {
+// Replace stores a verified release in place of the stored release of the
+// same version, and returns the channels that pointed at it, which now point
+// at the replacement. The old release's cached files must be gone
+// (store.ErrReleaseInUse otherwise).
+func (s *Service) Replace(app string, r application.Release) ([]string, error) {
 	e, ok := s.registry.Lookup(app)
 	if !ok {
 		return nil, application.ErrNotFound
 	}
-	return s.db.ForgetRelease(e.StorageID(), version, sourceFence(e))
+	resources := make([]store.Resource, 0, len(r.Artifacts))
+	for _, a := range r.Artifacts {
+		resources = append(resources, store.Resource{AppID: e.StorageID(), Version: r.Version, Key: a.Key, SourceURL: a.Source, SHA256: a.SHA256, ExpectedSize: a.Size})
+	}
+	ttl := time.Duration(e.Descriptor.DefaultChannelTTLSeconds) * time.Second
+	return s.db.ReplaceRelease(store.ReleaseMetadata{AppID: e.StorageID(), Version: r.Version, Raw: r.Envelope.Raw, Signature: r.Envelope.Signature, TrustRevision: e.Descriptor.TrustRevision, FetchedAt: time.Now().UTC()}, resources, ttl, sourceFence(e))
 }
 
 // Refresh explicitly fetches one channel. Unlike normal reads it reports errors
