@@ -878,6 +878,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/api/apps/{vendor}/{app}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Vendor ID. */
+                vendor: components["parameters"]["Vendor"];
+                /** @description Application ID within the vendor. */
+                app: components["parameters"]["App"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List recent operational events of one application, newest first.
+         * @description The same retained events as `listEvents`, limited to the application. Deleted applications are readable.
+         */
+        get: operations["listAppEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/api/apps/{vendor}/{app}/status": {
         parameters: {
             query?: never;
@@ -5842,6 +5867,43 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listAppEvents: {
+        parameters: {
+            query?: {
+                /** @description Page size. */
+                limit?: components["parameters"]["Limit50"];
+                /** @description `next_cursor` of the previous page; omit for the first page. */
+                cursor?: components["parameters"]["Cursor"];
+            };
+            header?: never;
+            path: {
+                /** @description Vendor ID. */
+                vendor: components["parameters"]["Vendor"];
+                /** @description Application ID within the vendor. */
+                app: components["parameters"]["App"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the application's events. */
+            200: {
+                headers: {
+                    "X-Request-Id": components["headers"]["XRequestId"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
             503: components["responses"]["ServiceUnavailable"];
         };

@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/store"
 )
 
@@ -33,12 +34,28 @@ func eventDocument(e store.ListedEvent, scopes map[string]string) eventDTO {
 }
 
 func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
+	s.eventPage(w, r, "listEvents", "")
+}
+
+// listAppEvents lists the events of one application, of any provider.
+func (s *Server) listAppEvents(w http.ResponseWriter, r *http.Request) {
+	entry, ok := s.maintainedApp(w, r, func(application.Entry) bool { return true })
+	if !ok {
+		return
+	}
+	s.eventPage(w, r, "listAppEvents", entry.MetricsID())
+}
+
+// eventPage writes one page of events, all of them or those of the
+// application metrics scope app. Cursors are bound to the operation and scope.
+func (s *Server) eventPage(w http.ResponseWriter, r *http.Request, operation, app string) {
 	limit, e := queryInt(r, "limit", 50, 1, 100)
 	if e != nil {
 		s.writeError(w, r, e)
 		return
 	}
-	last, e := decodeAfterCursor(r, "listEvents", cursorScope())
+	scope := cursorScope(app)
+	last, e := decodeAfterCursor(r, operation, scope)
 	if e != nil {
 		s.writeError(w, r, e)
 		return
@@ -52,7 +69,7 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		before = n
 	}
-	rows, err := s.store.EventPage("", before, limit+1)
+	rows, err := s.store.EventPage(app, before, limit+1)
 	if err != nil {
 		s.writeError(w, r, storageError(err))
 		return
@@ -60,7 +77,7 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 	page := cursorPage[eventDTO]{Items: []eventDTO{}}
 	if len(rows) > limit {
 		rows = rows[:limit]
-		page.NextCursor = afterCursor("listEvents", cursorScope(), strconv.FormatInt(rows[limit-1].ID, 10))
+		page.NextCursor = afterCursor(operation, scope, strconv.FormatInt(rows[limit-1].ID, 10))
 	}
 	scopes := s.publicScopes()
 	for _, row := range rows {

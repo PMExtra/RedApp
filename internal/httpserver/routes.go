@@ -142,6 +142,7 @@ func (s *Server) routeTable() []route {
 		{method: "GET", path: "/admin/api/status", operation: "getStatus", serve: s.getStatus, auth: authAdmin},
 		{method: "GET", path: "/admin/api/history", operation: "getHistory", serve: s.getHistory, auth: authAdmin, query: []string{"metric", "range"}},
 		{method: "GET", path: "/admin/api/events", operation: "listEvents", serve: s.listEvents, auth: authAdmin, query: []string{"limit", "cursor"}},
+		{method: "GET", path: "/admin/api/apps/{vendor}/{app}/events", operation: "listAppEvents", serve: s.listAppEvents, auth: authAdmin, query: []string{"limit", "cursor"}},
 		{method: "GET", path: "/admin/api/apps/{vendor}/{app}/status", operation: "getAppStatus", serve: s.getAppStatus, auth: authAdmin},
 		{method: "GET", path: "/admin/api/apps/{vendor}/{app}/history", operation: "getAppHistory", serve: s.getAppHistory, auth: authAdmin, query: []string{"metric", "range"}},
 		{method: "GET", path: "/admin/api/settings/site", operation: "getSiteSettings", serve: s.getSiteSettings, auth: authAdmin},

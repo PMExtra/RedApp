@@ -217,7 +217,7 @@ Background tasks log failures and results, never one line per request or per fil
 
 Every response carries an `X-Request-Id` header, and error responses repeat it as `error.request_id`. Search the log for that value when a user reports an error.
 
-Operational warnings go to the **Events** page instead of the log. Examples are stale cache fallback, cache rules that override upstream `no-store`, upstream errors, failed downloads and failed automatic cleanup. RedApp keeps the newest 1,000 events for up to 30 days.
+Operational warnings go to the **Events** page instead of the log. Examples are stale cache fallback, cache rules that override upstream `no-store`, upstream errors, failed downloads and failed automatic cleanup. RedApp keeps the newest 1,000 events for up to 30 days. Each application also has an **Events** tab with only its own events. A long message is shown on one line; select it to read the full text in a dialog and copy it.
 
 ## SQLite temporary space
 

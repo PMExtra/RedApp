@@ -14,5 +14,10 @@ export default {
     httpStatus: "HTTP {status}",
     version: "Version {version}",
     generation: "Generation {id}",
+    stale: "Refresh failed. Showing the last successful page.",
+    cursorExpired: "This page is no longer available.",
+    firstPage: "Go to the first page",
+    messageTitle: "Event message",
+    showMessage: "Show the full message: {message}",
   },
 } satisfies LocaleModule;

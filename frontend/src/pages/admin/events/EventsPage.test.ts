@@ -82,4 +82,26 @@ describe("events", () => {
     );
     expect(screen.getByText("New failure")).toBeVisible();
   });
+
+  it("shows a long message on one line and in full in a dialog", async () => {
+    const message =
+      "upstream redirect from https://download.example.com/app.exe to https://cdn.example.net/app.exe is not allowed:\nthe target is not an allowed source";
+    useHandlers(
+      mockApi("get", "/admin/api/events", () => ({
+        items: [operationalEvent(1, { message })],
+        next_cursor: null,
+      })),
+    );
+    await renderEvents();
+    const table = await screen.findByRole("table", { name: /Recent operational events/ });
+    const open = await within(table).findByRole("button", { name: /^Show the full message/ });
+    expect(open).toHaveClass("truncate");
+
+    const user = userEvent.setup();
+    await user.click(open);
+    const dialog = await screen.findByRole("dialog", { name: "Event message" });
+    // The full text keeps its line break (no whitespace normalization).
+    expect(within(dialog).getByText(message, { normalizer: (text) => text })).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: /Copy/ })).toBeVisible();
+  });
 });

@@ -42,6 +42,7 @@ export default {
       cache: "缓存",
       metrics: "指标",
       files: "文件",
+      events: "事件",
     },
     notFound: {
       description: "该管理页面不存在。",

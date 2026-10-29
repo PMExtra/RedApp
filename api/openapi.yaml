@@ -170,6 +170,7 @@ x-spa-routes:
     - /admin/vendors/{vendor}/apps/{app}/versions/{version}
     - /admin/vendors/{vendor}/apps/{app}/cache
     - /admin/vendors/{vendor}/apps/{app}/metrics
+    - /admin/vendors/{vendor}/apps/{app}/events
     - /admin/vendors/{vendor}/apps/{app}/files
 
 paths:
@@ -1629,6 +1630,43 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /admin/api/apps/{vendor}/{app}/events:
+    parameters:
+      - $ref: '#/components/parameters/Vendor'
+      - $ref: '#/components/parameters/App'
+    get:
+      operationId: listAppEvents
+      tags: [overview]
+      summary: List recent operational events of one application, newest first.
+      description: The same retained events as `listEvents`, limited to the application. Deleted applications are readable.
+      parameters:
+        - $ref: '#/components/parameters/Limit50'
+        - $ref: '#/components/parameters/Cursor'
+      security:
+        - sessionCookie: []
+      x-error-codes: [APPLICATION_NOT_FOUND, INVALID_CURSOR]
+      responses:
+        '200':
+          description: One page of the application's events.
+          headers:
+            X-Request-Id:
+              $ref: '#/components/headers/XRequestId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
         '503':

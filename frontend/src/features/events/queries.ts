@@ -6,27 +6,40 @@ export type OperationalEvent = Schema<"Event">;
 
 export const EVENTS_PAGE_SIZE = 50;
 
+/** An application whose events are listed instead of all events. */
+export interface EventsApp {
+  vendor: string;
+  app: string;
+}
+
 /**
- * One cursor page of `listEvents` (newest first). Failed refetches keep the
- * last page in `data`.
+ * One cursor page of `listEvents`, or of `listAppEvents` with `app` (newest
+ * first). Failed refetches keep the last page in `data`.
  */
 export function useEvents(
   cursor: MaybeRefOrGetter<string | null>,
-  options: { refetchInterval?: MaybeRefOrGetter<number | false> } = {},
+  options: {
+    refetchInterval?: MaybeRefOrGetter<number | false>;
+    app?: MaybeRefOrGetter<EventsApp | undefined>;
+  } = {},
 ) {
   return useQuery({
-    queryKey: computed(() =>
-      queryKey("listEvents", { limit: EVENTS_PAGE_SIZE, cursor: toValue(cursor) }),
-    ),
+    queryKey: computed(() => {
+      const app = toValue(options.app);
+      const query = { limit: EVENTS_PAGE_SIZE, cursor: toValue(cursor) };
+      return app ? queryKey("listAppEvents", { ...app, ...query }) : queryKey("listEvents", query);
+    }),
     queryFn: ({ signal }) => {
       const current = toValue(cursor);
+      const app = toValue(options.app);
+      const query = { limit: EVENTS_PAGE_SIZE, ...(current ? { cursor: current } : {}) };
       return unwrap(
-        api.GET("/admin/api/events", {
-          params: {
-            query: { limit: EVENTS_PAGE_SIZE, ...(current ? { cursor: current } : {}) },
-          },
-          signal,
-        }),
+        app
+          ? api.GET("/admin/api/apps/{vendor}/{app}/events", {
+              params: { path: app, query },
+              signal,
+            })
+          : api.GET("/admin/api/events", { params: { query }, signal }),
       );
     },
     placeholderData: keepPreviousData,

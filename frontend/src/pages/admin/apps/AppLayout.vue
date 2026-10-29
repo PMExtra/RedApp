@@ -92,6 +92,7 @@ const TAB_LABELS: Record<AppTab, string> = {
   cache: "adminShell.tabs.cache",
   metrics: "adminShell.tabs.metrics",
   files: "adminShell.tabs.files",
+  events: "adminShell.tabs.events",
   "admin-notes": "adminShell.tabs.adminNotes",
 };
 const available = computed<AppTab[]>(() => (app.data.value ? appTabs(app.data.value) : []));
