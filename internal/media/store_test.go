@@ -87,6 +87,31 @@ func TestRasterNormalizationAndContentAddress(t *testing.T) {
 	}
 }
 
+// The fixture is golang.org/x/image testdata (BSD-3-Clause).
+func TestWebPIsStoredAsPNG(t *testing.T) {
+	store, _ := testStore(t)
+	input, err := os.ReadFile("testdata/blue-purple-pink.lossy.webp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := store.Put(bytes.NewReader(input), false)
+	if err != nil || !strings.HasSuffix(path, ".png") {
+		t.Fatal(path, err)
+	}
+	f, mime, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	decoded, err := png.Decode(f)
+	if err != nil || mime != "image/png" || decoded.Bounds().Dx() == 0 {
+		t.Fatal(mime, err)
+	}
+	if _, err := store.Put(bytes.NewReader(input[:len(input)/2]), false); !errors.Is(err, ErrInvalidIcon) {
+		t.Fatal("truncated WebP accepted", err)
+	}
+}
+
 func TestRejectMalformedLargeAndDecodeBombImages(t *testing.T) {
 	store, dir := testStore(t)
 	pngData := raster(t, "png")

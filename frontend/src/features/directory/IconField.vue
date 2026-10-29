@@ -25,7 +25,7 @@ const id = useId();
 const input = ref<HTMLInputElement>();
 const progress = ref<number | null>(null);
 const uploading = ref(false);
-const ACCEPT = "image/png,image/jpeg,image/svg+xml,.png,.jpg,.jpeg,.svg";
+const ACCEPT = "image/png,image/jpeg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg";
 
 async function choose(event: Event): Promise<void> {
   const target = event.target as HTMLInputElement;

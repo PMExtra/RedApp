@@ -12,6 +12,7 @@
 | github.com/yuin/goldmark | 1.7.13 | [goldmark.LICENSE](goldmark.LICENSE) |
 | go.yaml.in/yaml/v3 | 3.0.5 | [go-yaml.LICENSE](go-yaml.LICENSE)、[go-yaml.NOTICE](go-yaml.NOTICE) |
 | golang.org/x/net（HTML 目录解析） | 0.44.0 | [x-net.LICENSE](x-net.LICENSE)、[x-net.PATENTS](x-net.PATENTS) |
+| golang.org/x/image（WebP 图标解码） | 0.44.0 | [x-image.LICENSE](x-image.LICENSE)、[x-image.PATENTS](x-image.PATENTS) |
 | github.com/bmatcuk/doublestar/v4 | 4.10.2 | [doublestar.LICENSE](doublestar.LICENSE) |
 | golang.org/x/crypto（bcrypt） | 0.42.0 | [x-crypto.LICENSE](x-crypto.LICENSE) |
 | github.com/ProtonMail/go-crypto（Claude Code 清单 OpenPGP 验签） | 1.5.2 | [protonmail-go-crypto.LICENSE](protonmail-go-crypto.LICENSE)、[protonmail-go-crypto.PATENTS](protonmail-go-crypto.PATENTS) |
