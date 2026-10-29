@@ -38,6 +38,8 @@
   --rd-overlay: rgb(10 14 22 / 0.45);
   /* Icons are drawn for light backgrounds, so dark tiles stay light (dimmed). */
   --rd-icon-bg: transparent;
+  /* Square application and vendor icons sit on a padded tile in both themes. */
+  --rd-icon-tile: #f2f4f7;
 
   /* Shadows */
   --rd-shadow-sm: 0 1px 2px rgb(16 24 40 / 0.06);
@@ -75,6 +77,7 @@
   --rd-focus: #84adff;
   --rd-overlay: rgb(0 0 0 / 0.6);
   --rd-icon-bg: #e4e7ec;
+  --rd-icon-tile: #e4e7ec;
   --rd-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
   --rd-shadow-md: 0 2px 6px rgb(0 0 0 / 0.45);
   --rd-shadow-overlay: 0 12px 32px rgb(0 0 0 / 0.55), 0 0 0 1px rgb(255 255 255 / 0.06);

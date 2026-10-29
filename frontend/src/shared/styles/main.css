@@ -36,6 +36,7 @@
   --color-focus: var(--rd-focus);
   --color-overlay: var(--rd-overlay);
   --color-icon-bg: var(--rd-icon-bg);
+  --color-icon-tile: var(--rd-icon-tile);
 
   --font-sans:
     system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", "PingFang SC",
