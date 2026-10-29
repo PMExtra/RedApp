@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"bytes"
 	"database/sql"
 	"errors"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"github.com/PMExtra/RedApp/internal/application"
 	"github.com/PMExtra/RedApp/internal/jsonrelease"
 	"github.com/PMExtra/RedApp/internal/releaseconfig"
+	"github.com/PMExtra/RedApp/internal/store"
 )
 
 // maxReleaseHistory bounds the releases listReleases returns.
@@ -94,6 +96,140 @@ func (s *Server) listReleases(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeOK(w, out)
+}
+
+type refetchDTO struct {
+	Release releaseSummaryDTO `json:"release"`
+	// Replaced is false when the upstream publishes the stored release
+	// unchanged; nothing was deleted then.
+	Replaced bool `json:"replaced"`
+}
+
+// refetchRelease replaces a stored JSON release with what the upstream
+// publishes now, for an upstream that published another build of a version
+// RedApp already knows. The version is discovered first, by a channel that
+// points at it, else by the lookup, and verified; only a changed release has
+// its cached files cleaned up and is replaced, with its channel heads, in one
+// transaction. A failed discovery changes nothing.
+func (s *Server) refetchRelease(w http.ResponseWriter, r *http.Request) {
+	entry, ok := s.maintainedApp(w, r, func(e application.Entry) bool { return e.Provider == application.JSONRelease })
+	if !ok || s.refuseDeleted(w, r, entry) || s.refuseDisabled(w, r, entry) {
+		return
+	}
+	version := r.PathValue("version")
+	if _, err := entry.Protocol.ValidateVersion(version); err != nil {
+		s.fail(w, r, codeFileNotFound, err, "Version not found")
+		return
+	}
+	storage := entry.StorageID()
+	stored, err := s.store.Release(storage, version)
+	if err != nil {
+		s.writeError(w, r, releaseLookupError(err))
+		return
+	}
+	channels := []string{}
+	for _, channel := range entry.Descriptor.Channels {
+		if head, err := s.store.Channel(storage, channel); err == nil && head.Version == version && channel != "latest" {
+			channels = append(channels, channel)
+		}
+	}
+	lookup, canLookup := entry.Protocol.(application.VersionLookupProtocol)
+	canLookup = canLookup && lookup.CanLookup()
+	if len(channels) == 0 && !canLookup {
+		s.fail(w, r, codeValidationFailed, nil, "No channel points at this version and the release configuration has no lookup, so it cannot be discovered again")
+		return
+	}
+	var resolved *application.ChannelResolution
+	for _, channel := range channels {
+		found, err := entry.Protocol.ResolveChannel(r.Context(), channel)
+		if err != nil {
+			s.writeError(w, r, releaseError(err))
+			return
+		}
+		if found.Version == version && found.Envelope != nil {
+			resolved = &found
+			break
+		}
+	}
+	if resolved == nil {
+		// The channel moved on, or none points at the version.
+		if !canLookup {
+			s.fail(w, r, codeVersionNotFound, nil, "The channel publishes another version now and the release configuration has no lookup")
+			return
+		}
+		found, err := lookup.LookupVersion(r.Context(), version)
+		if errors.Is(err, application.ErrVersionNotFound) {
+			s.fail(w, r, codeVersionNotFound, err, "The upstream no longer has this version")
+			return
+		}
+		if err != nil {
+			s.writeError(w, r, releaseError(err))
+			return
+		}
+		if found.Version != version || found.Envelope == nil {
+			s.fail(w, r, codeMetadataUntrusted, nil, "The lookup returned another version")
+			return
+		}
+		resolved = &found
+	}
+	release, err := entry.Protocol.VerifyRelease(version, *resolved.Envelope)
+	if err != nil {
+		s.fail(w, r, codeMetadataUntrusted, err, "Upstream release metadata failed verification")
+		return
+	}
+	replaced := !bytes.Equal(stored.Raw, resolved.Envelope.Raw)
+	if replaced {
+		// Clean up the old files through the version cleanup path, then
+		// replace the metadata; a transfer still running refuses both.
+		ids := map[string]bool{}
+		for _, view := range s.downloads.SnapshotFor(storage, version) {
+			if view.ActiveWriter || view.Readers > 0 {
+				s.fail(w, r, codeOperationInProgress, nil, "Files of this version are being transferred; retry when they finish")
+				return
+			}
+			if !view.Retired {
+				ids[view.Resource.ID] = true
+			}
+		}
+		if len(ids) > 0 {
+			preview, err := s.downloads.Preview(storage, ids, nil)
+			if err == nil {
+				err = s.downloads.Cleanup(storage, preview.ID)
+			}
+			if errors.Is(err, store.ErrPreviewRunning) {
+				s.fail(w, r, codeOperationInProgress, err, "Files of this version are being cleaned up; retry when it finishes")
+				return
+			}
+			if err != nil {
+				s.writeError(w, r, previewBuildFailure(err))
+				return
+			}
+		}
+		_, err = s.catalog.Replace(entry.Descriptor.ID, release)
+		switch {
+		case errors.Is(err, store.ErrReleaseInUse):
+			s.fail(w, r, codeOperationInProgress, err, "Files of this version are being transferred; retry when they finish")
+			return
+		case errors.Is(err, store.ErrSourceInactive):
+			s.fail(w, r, codeSourceChanged, err, "Application source changed; retry the request")
+			return
+		case err != nil:
+			s.writeError(w, r, releaseLookupError(err))
+			return
+		}
+	}
+	history, err := s.releaseHistory(entry)
+	if err != nil {
+		s.writeError(w, r, storageError(err))
+		return
+	}
+	for _, item := range history {
+		if item.Version == version {
+			writeOK(w, refetchDTO{Release: item, Replaced: replaced})
+			return
+		}
+	}
+	s.writeError(w, r, storageError(errors.New("re-fetched release is not stored")))
 }
 
 // lookupRelease discovers a version an administrator names and stores it

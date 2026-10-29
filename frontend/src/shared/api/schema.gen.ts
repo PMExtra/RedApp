@@ -287,6 +287,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/api/apps/{vendor}/{app}/versions/{version}/refetch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Vendor ID. */
+                vendor: components["parameters"]["Vendor"];
+                /** @description Application ID within the vendor. */
+                app: components["parameters"]["App"];
+                version: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replace a stored JSON release with what the upstream publishes now.
+         * @description For an upstream that published another build of a version RedApp already knows, which a refresh refuses as
+         *     conflicting metadata. The version is discovered again first, by a channel that points at it, else by the
+         *     configuration's `lookup` (`VALIDATION_FAILED` when neither can), and verified. Only when the result differs are
+         *     the version's cached files cleaned up and its metadata replaced, with the channel heads that pointed at it, in
+         *     one transaction; `replaced` reports it. A failed discovery changes nothing. Files being transferred refuse the
+         *     request with `OPERATION_IN_PROGRESS`; retry later. `VERSION_NOT_FOUND` when the upstream no longer publishes
+         *     the version. JSON releases only; needs an enabled application.
+         */
+        post: operations["refetchRelease"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/api/apps/{vendor}/{app}/releases/lookup": {
         parameters: {
             query?: never;
@@ -4820,6 +4852,44 @@ export interface operations {
             };
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    refetchRelease: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Vendor ID. */
+                vendor: components["parameters"]["Vendor"];
+                /** @description Application ID within the vendor. */
+                app: components["parameters"]["App"];
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The release as stored after the re-fetch. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        release: components["schemas"]["ReleaseSummary"];
+                        /** @description False when the upstream publishes the stored release unchanged; nothing was deleted. */
+                        replaced: boolean;
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            500: components["responses"]["InternalError"];
+            502: components["responses"]["BadGateway"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };

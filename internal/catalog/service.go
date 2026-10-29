@@ -430,6 +430,23 @@ func (s *Service) Lookup(ctx context.Context, app, version string) (application.
 	return s.verifyAndPersist(e, resolved.Version, *resolved.Envelope)
 }
 
+// Replace stores a verified release in place of the stored release of the
+// same version, and returns the channels that pointed at it, which now point
+// at the replacement. The old release's cached files must be gone
+// (store.ErrReleaseInUse otherwise).
+func (s *Service) Replace(app string, r application.Release) ([]string, error) {
+	e, ok := s.registry.Lookup(app)
+	if !ok {
+		return nil, application.ErrNotFound
+	}
+	resources := make([]store.Resource, 0, len(r.Artifacts))
+	for _, a := range r.Artifacts {
+		resources = append(resources, store.Resource{AppID: e.StorageID(), Version: r.Version, Key: a.Key, SourceURL: a.Source, SHA256: a.SHA256, ExpectedSize: a.Size})
+	}
+	ttl := time.Duration(e.Descriptor.DefaultChannelTTLSeconds) * time.Second
+	return s.db.ReplaceRelease(store.ReleaseMetadata{AppID: e.StorageID(), Version: r.Version, Raw: r.Envelope.Raw, Signature: r.Envelope.Signature, TrustRevision: e.Descriptor.TrustRevision, FetchedAt: time.Now().UTC()}, resources, ttl, sourceFence(e))
+}
+
 // Refresh explicitly fetches one channel. Unlike normal reads it reports errors
 // even when an older valid snapshot remains available.
 func (s *Service) Refresh(ctx context.Context, app, channel string) (application.Release, error) {

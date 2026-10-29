@@ -8,21 +8,32 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/PMExtra/RedApp/internal/releaseconfig"
 )
 
 // A JSON release lists every release it discovered, serves each by version,
-// and discovers older versions on request.
+// discovers older versions on request and re-fetches a rebuilt version.
 func TestReleaseHistoryAndLookup(t *testing.T) {
+	var mu sync.Mutex
 	packages := map[string][]byte{"1.0.0": []byte("old package"), "1.10.0": []byte("new package")}
+	pkg := func(version string) []byte {
+		mu.Lock()
+		defer mu.Unlock()
+		return packages[version]
+	}
 	var origin string
 	release := func(version string) releaseconfig.Release {
-		return releaseconfig.Release{Version: version, Artifacts: []releaseconfig.Artifact{{Key: "win-x64", OS: "windows", Arch: "x64", Format: "exe", URL: origin + "/files/" + version + "/setup.exe", SHA256: fmt.Sprintf("%x", sha256.Sum256(packages[version]))}}}
+		return releaseconfig.Release{Version: version, Artifacts: []releaseconfig.Artifact{{Key: "win-x64", OS: "windows", Arch: "x64", Format: "exe", URL: origin + "/files/" + version + "/setup.exe", SHA256: fmt.Sprintf("%x", sha256.Sum256(pkg(version)))}}}
 	}
+	var down atomic.Bool
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case down.Load() && !strings.HasPrefix(r.URL.Path, "/files/"):
+			w.WriteHeader(http.StatusBadGateway)
 		case r.URL.Path == "/latest/win":
 			json.NewEncoder(w).Encode(release("1.10.0"))
 		case r.URL.Path == "/versions/1.0.0/win":
@@ -32,7 +43,7 @@ func TestReleaseHistoryAndLookup(t *testing.T) {
 			json.NewEncoder(w).Encode(release("1.0.0"))
 		case strings.HasPrefix(r.URL.Path, "/files/"):
 			version := strings.Split(r.URL.Path, "/")[2]
-			w.Write(packages[version])
+			w.Write(pkg(version))
 		default:
 			// No version has a Linux package; 9.9.9 does not exist at all.
 			w.WriteHeader(http.StatusNotFound)
@@ -93,7 +104,7 @@ func TestReleaseHistoryAndLookup(t *testing.T) {
 	// Versions order by semver precedence, so cleanup below 1.10.0 selects
 	// 1.0.0's file.
 	cleanup := decodeJSONBody[versionCleanupDTO](t, mustBody(h.request("POST", "/admin/api/apps/fixture/editor/version-cleanup/preview", map[string]string{"minimum_version": "1.10.0"}, 201, nil)))
-	if len(cleanup.UnknownVersions) != 0 || cleanup.LogicalBytes != int64(len(packages["1.0.0"])) {
+	if len(cleanup.UnknownVersions) != 0 || cleanup.LogicalBytes != int64(len(pkg("1.0.0"))) {
 		t.Fatalf("version cleanup %+v", cleanup)
 	}
 	h.expectError("GET", "/api/apps/fixture/editor/downloads?version=3.0.0", nil, 404, codeFileNotFound, nil)
@@ -112,11 +123,48 @@ func TestReleaseHistoryAndLookup(t *testing.T) {
 	h.expectError("POST", "/admin/api/apps/fixture/editor/releases/lookup", map[string]string{"version": "2.0.0"}, 502, codeMetadataUntrusted, nil)
 	h.expectError("POST", "/admin/api/apps/fixture/editor/releases/lookup", map[string]string{"version": "../x"}, 400, codeValidationFailed, nil)
 
+	// Re-fetching an unchanged version deletes nothing.
+	if same := decodeJSONBody[refetchDTO](t, mustBody(h.request("POST", "/admin/api/apps/fixture/editor/versions/1.0.0/refetch", nil, 200, nil))); same.Replaced || same.Release.Version != "1.0.0" {
+		t.Fatalf("unchanged re-fetch %+v", same)
+	}
+	if versions := getJSON[cursorPage[versionDTO]](h, "/admin/api/apps/fixture/editor/versions"); versions.Items[1].Files.Complete != 1 {
+		t.Fatal("unchanged re-fetch deleted files", versions.Items[1].Files)
+	}
+
+	// The upstream rebuilds both known versions. A lookup returns the stored
+	// release; re-fetching replaces each, by its channel or by the lookup,
+	// and the new bytes are served.
+	mu.Lock()
+	packages["1.0.0"], packages["1.10.0"] = []byte("rebuilt old package"), []byte("rebuilt new package")
+	mu.Unlock()
+	h.request("POST", "/admin/api/apps/fixture/editor/releases/lookup", map[string]string{"version": "1.0.0"}, 200, nil)
+	// While the upstream is unreachable, a re-fetch changes nothing.
+	down.Store(true)
+	h.expectError("POST", "/admin/api/apps/fixture/editor/versions/1.0.0/refetch", nil, 502, codeUpstreamUnavailable, nil)
+	down.Store(false)
+	if data, _ := h.request("GET", "/fixture/editor/releases/1.0.0/win-x64", nil, 200, nil); string(data) != "old package" {
+		t.Fatal("the stored release changed before a re-fetch", string(data))
+	}
+	for _, version := range []string{"1.0.0", "1.10.0"} {
+		again := decodeJSONBody[refetchDTO](t, mustBody(h.request("POST", "/admin/api/apps/fixture/editor/versions/"+version+"/refetch", nil, 200, nil)))
+		if !again.Replaced || again.Release.Version != version {
+			t.Fatalf("re-fetched %+v", again)
+		}
+		if data, _ := h.request("GET", "/fixture/editor/releases/"+version+"/win-x64", nil, 200, nil); string(data) != string(pkg(version)) {
+			t.Fatal("re-fetched package", version, string(data))
+		}
+	}
+	if stable := getJSON[releaseDownloadsDTO](h, "/api/apps/fixture/editor/downloads"); stable.Version != "1.10.0" || stable.Channel != "stable" {
+		t.Fatalf("channel after re-fetch %+v", stable)
+	}
+	h.expectError("POST", "/admin/api/apps/fixture/editor/versions/3.0.0/refetch", nil, 404, codeFileNotFound, nil)
+
 	cfg.Lookup = nil
 	h.request("POST", "/admin/api/apps", map[string]any{"vendor": "fixture", "id": "plain", "provider": "json-release", "name": map[string]string{"en": "Plain", "zh-CN": "普通"}, "enabled": true, "json_release": cfg}, 201, nil)
 	h.expectError("POST", "/admin/api/apps/fixture/plain/releases/lookup", map[string]string{"version": "1.0.0"}, 400, codeValidationFailed, nil)
 	h.setAppEnabled("fixture/editor", false)
 	h.expectError("POST", "/admin/api/apps/fixture/editor/releases/lookup", map[string]string{"version": "1.0.0"}, 409, codeApplicationDisabled, nil)
+	h.expectError("POST", "/admin/api/apps/fixture/editor/versions/1.0.0/refetch", nil, 409, codeApplicationDisabled, nil)
 	h.request("POST", "/admin/api/apps", map[string]any{"vendor": "fixture", "id": "files", "provider": "hosted", "name": map[string]string{"en": "Files", "zh-CN": "文件"}, "enabled": true}, 201, nil)
 	h.expectError("GET", "/api/apps/fixture/files/releases", nil, 404, codeCapabilityUnsupported, nil)
 }

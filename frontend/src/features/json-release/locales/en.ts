@@ -1,5 +1,14 @@
 import type { LocaleModule } from "@/shared/i18n";
 export default {
+  releaseRefetch: {
+    action: "Re-fetch",
+    title: "Re-fetch version {version}?",
+    description:
+      "Use this when the upstream published another build of this version. The version is discovered again from its channel or with the lookup; if it changed, its cached files are deleted and downloaded again on demand.",
+    confirm: "Re-fetch",
+    done: "Version {version} replaced with the upstream's current build",
+    unchanged: "Version {version} is unchanged upstream; nothing was replaced",
+  },
   releaseLookup: {
     title: "Discover a version",
     description:
