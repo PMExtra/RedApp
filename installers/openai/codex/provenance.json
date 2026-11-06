@@ -10,18 +10,23 @@
       "sha256": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc"
     },
     "install.sh": {
-      "bytes": 42779,
-      "sha256": "95d14ccaba915e52a3f0cc590638ca5ac510086ff6a23dc9ac9f77e957403a93",
+      "bytes": 43667,
+      "sha256": "44ac252c1b9a68c02bdf0de8e1c6cbfde36fc1afa8684624962eae7d4c461e70",
       "source": "https://releases.openai.com/codex/install.sh"
     },
     "install.ps1": {
-      "bytes": 70571,
-      "sha256": "a59cb66350098c33b021ff470d586ae8fe3b7caf189ca7137b4fe3af5d4dce74",
+      "bytes": 71052,
+      "sha256": "6474c659b4d7bf6fa95d23abc153ee466b9a10009219ee12128318578ab55c4f",
       "source": "https://releases.openai.com/codex/install.ps1"
     },
     "NOTICE": {
       "bytes": 242,
       "sha256": "9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915"
     }
+  },
+  "script_baseline": {
+    "kind": "official-live",
+    "checked_at": "2026-11-06T14:21:40.464446+00:00",
+    "previous_main_commit": "142c2c1ca8321660cd81610b60a03d97d82504ef"
   }
 }
