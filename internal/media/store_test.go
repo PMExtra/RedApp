@@ -235,30 +235,40 @@ func TestNewRejectsSymlinkDirectories(t *testing.T) {
 }
 
 func TestConcurrentUploadsPublishOneCompleteFile(t *testing.T) {
-	store, dir := testStore(t)
 	input := raster(t, "png")
-	var wg sync.WaitGroup
-	for range 8 {
-		wg.Go(func() {
-			path, err := store.Put(bytes.NewReader(input), false)
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			f, _, err := store.Open(path)
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			defer f.Close()
-			if _, err := png.Decode(f); err != nil {
-				t.Errorf("published incomplete file: %v", err)
-			}
-		})
-	}
-	wg.Wait()
-	entries, err := os.ReadDir(filepath.Join(dir, "objects", "icons"))
-	if err != nil || len(entries) != 1 || strings.HasPrefix(entries[0].Name(), ".upload-") {
-		t.Fatalf("unexpected stored files: %v %v", entries, err)
+	// Each round starts from an empty store so that the writers race to
+	// create the file; a later writer must not replace it under an open.
+	for range 50 {
+		store, dir := testStore(t)
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for range 8 {
+			wg.Go(func() {
+				<-start
+				path, err := store.Put(bytes.NewReader(input), false)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				f, _, err := store.Open(path)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				defer f.Close()
+				if _, err := png.Decode(f); err != nil {
+					t.Errorf("published incomplete file: %v", err)
+				}
+			})
+		}
+		close(start)
+		wg.Wait()
+		entries, err := os.ReadDir(filepath.Join(dir, "objects", "icons"))
+		if err != nil || len(entries) != 1 || strings.HasPrefix(entries[0].Name(), ".") {
+			t.Fatalf("unexpected stored files: %v %v", entries, err)
+		}
+		if t.Failed() {
+			return
+		}
 	}
 }
