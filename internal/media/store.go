@@ -36,22 +36,26 @@ var (
 // Store owns the icon directory below the caller's already validated and
 // locked RedApp data directory.
 //
-// Files are content addressed, so concurrent writers of the same name write
-// identical bytes and need no lock. The only conflict is a failed import
-// removing a file it created while another caller is writing or has just
-// been handed the same name; mu coordinates that without being held during
-// any file operation.
+// Files are content addressed, so writers of the same name write identical
+// bytes. Writes of one name still run one at a time: a write that found no
+// file publishes by rename, which would replace a file another writer has
+// just published and make that writer's or a reader's open fail. The other
+// conflict is a failed import removing a file it created while another caller
+// is writing or has just been handed the same name. mu coordinates both
+// without being held during any file operation.
 type Store struct {
 	dir     string
 	mu      sync.Mutex
-	settled *sync.Cond // signalled when a removal finishes
+	settled *sync.Cond // signalled when a removal or a file write finishes
 	// writes holds the sequence number of the latest write of each name
-	// while an import is in flight, writing counts the writes in progress and
-	// removing marks a name a failed import is deleting.
+	// while an import is in flight, writing counts the writes in progress or
+	// waiting, busy marks a name whose file is being written and removing
+	// marks a name a failed import is deleting.
 	seq      uint64
 	imports  int
 	writes   map[string]uint64
 	writing  map[string]int
+	busy     map[string]bool
 	removing map[string]bool
 }
 
@@ -78,7 +82,7 @@ func New(dir string) (*Store, error) {
 			return nil, err
 		}
 	}
-	s := &Store{dir: icons, writes: map[string]uint64{}, writing: map[string]int{}, removing: map[string]bool{}}
+	s := &Store{dir: icons, writes: map[string]uint64{}, writing: map[string]int{}, busy: map[string]bool{}, removing: map[string]bool{}}
 	s.settled = sync.NewCond(&s.mu)
 	return s, nil
 }
@@ -121,9 +125,15 @@ func (s *Store) putContent(content []byte, extension string) (string, claim, err
 	}
 	c := claim{name: name, seq: s.seq, shared: s.writing[name] > 0}
 	s.writing[name]++
+	for s.busy[name] {
+		s.settled.Wait()
+	}
+	s.busy[name] = true
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
+		delete(s.busy, name)
+		s.settled.Broadcast()
 		s.writing[name]--
 		if s.writing[name] == 0 {
 			delete(s.writing, name)
