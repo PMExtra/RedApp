@@ -60,7 +60,7 @@ class CheckToolchainTest(unittest.TestCase):
         self.assert_problem("go-version-file")
 
     def test_actions_must_be_pinned_to_commits(self):
-        self.edit(".github/workflows/ci.yml", "actions/checkout@11d5960a326750d5838078e36cf38b85af677262", "actions/checkout@v4")
+        self.edit(".github/workflows/ci.yml", "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/checkout@v4")
         self.assert_problem("actions/checkout@v4")
 
     def test_floating_pulls_and_pull_request_target_are_rejected(self):
