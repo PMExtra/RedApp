@@ -233,15 +233,6 @@
      fi
    else
      download_url="$(release_url_for_asset "$asset" "$resolved_version")"
-@@ -743,7 +652,7 @@
-   if [ "$lock_kind" = "mkdir" ]; then
-     rm -rf "$LOCK_DIR" 2>/dev/null || true
-   elif [ "$lock_kind" = "flock" ] || [ "$lock_kind" = "lockf" ]; then
--    exec 9>&- 2>/dev/null || true
-+    { exec 9>&-; } 2>/dev/null || true
-   fi
-   lock_kind=""
- }
 @@ -1293,6 +1202,24 @@
  release_dir="$RELEASES_DIR/$release_name"
  current_version="$(current_installed_version)"

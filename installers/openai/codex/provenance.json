@@ -1,7 +1,7 @@
 {
   "version": "0.164.0",
   "commit": "ff6aec96948b70d94983af2641a6b67c94faeff5",
-  "retrieved_at": "2026-10-24T17:36:35.779236+00:00",
+  "retrieved_at": "2026-11-13T08:10:20.321927+00:00",
   "source": "https://github.com/openai/codex",
   "auto_update_policy": "suppress_installer_marker_unmodified_cli",
   "files": {
@@ -10,13 +10,13 @@
       "sha256": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc"
     },
     "install.sh": {
-      "bytes": 43667,
-      "sha256": "44ac252c1b9a68c02bdf0de8e1c6cbfde36fc1afa8684624962eae7d4c461e70",
+      "bytes": 43647,
+      "sha256": "5a8eea5c3716b555fd8e539db7e5b0e7470bcee5693191b4758a0de373624a70",
       "source": "https://releases.openai.com/codex/install.sh"
     },
     "install.ps1": {
       "bytes": 71052,
-      "sha256": "54cd08164256492263b4f38a841c403af4c17134762f0f3a593a2b9f9dfdc07a",
+      "sha256": "1c9fb58806333691c0322b97e68a9b0b5604abf6ebc0d7205e637d36d1ef38a0",
       "source": "https://releases.openai.com/codex/install.ps1"
     },
     "NOTICE": {
