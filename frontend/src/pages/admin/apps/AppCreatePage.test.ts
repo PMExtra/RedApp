@@ -38,6 +38,23 @@ describe("application creation", () => {
     expect(screen.queryByLabelText(/^Base URL/)).toBeNull();
   });
 
+  it.each([/^Codex/, /^HTTP cache/])("submits after switching away from %s", async (from) => {
+    const created = createServer();
+    const { router, user } = await renderAdminPage("/admin/vendors/example/apps/new");
+    await user.click(await screen.findByRole("radio", { name: from }));
+    await user.click(screen.getByRole("radio", { name: /^Information/ }));
+    await user.type(screen.getByLabelText(/^Application ID/), "notes");
+    await user.type(screen.getByLabelText(/^Name \(English\)/), "Notes");
+    await user.type(screen.getByLabelText(/^Name \(简体中文\)/), "笔记");
+    await user.click(screen.getByRole("button", { name: "Create application" }));
+    await waitFor(() => {
+      expect(router.currentRoute.value.fullPath).toBe("/admin/vendors/example/apps/notes/settings");
+    });
+    expect(created.calls[0]?.body).toMatchObject({ provider: "info", id: "notes" });
+    expect(created.calls[0]?.body).not.toHaveProperty("base_url");
+    expect(created.calls[0]?.body).not.toHaveProperty("base_urls");
+  });
+
   it("validates and submits the ordered sources of an HTTP cache", async () => {
     const created = createServer();
     const { router, user } = await renderAdminPage("/admin/vendors/example/apps/new");

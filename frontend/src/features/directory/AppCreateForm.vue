@@ -83,6 +83,9 @@ const schema = z
 const { handleSubmit, meta, defineField, setFieldError, setValues, resetForm, isSubmitting } =
   useForm({
     validationSchema: zodSchema(schema),
+    // Fields of other providers unmount; without this their values become
+    // undefined, fail the base schema and block submission with no visible error.
+    keepValuesOnUnmount: true,
     initialValues: {
       provider: "info" as ProviderKey,
       json_release: "",
