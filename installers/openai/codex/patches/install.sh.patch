@@ -241,7 +241,7 @@
      fi
    else
      download_url="$(release_url_for_asset "$asset" "$resolved_version")"
-@@ -1313,6 +1230,24 @@
+@@ -1309,6 +1226,24 @@
  release_dir="$RELEASES_DIR/$release_name"
  current_version="$(current_installed_version)"
  
@@ -266,7 +266,7 @@
  if [ -n "$current_version" ] && [ "$current_version" != "$resolved_version" ]; then
    step "Updating Codex CLI from $current_version to $resolved_version"
  elif [ -n "$current_version" ]; then
-@@ -1417,7 +1352,9 @@
+@@ -1413,7 +1348,9 @@
    else
      expected_digest="$(release_asset_digest "$asset")"
    fi
@@ -276,7 +276,7 @@
  
    step "Installing standalone package to $release_dir"
    if [ "$install_layout" = "package" ]; then
-@@ -1461,12 +1398,7 @@
+@@ -1457,12 +1394,7 @@
    # Do not publish history for a migration until Rust has committed the cutover.
    update_current_link "$release_dir"
  fi
@@ -290,9 +290,9 @@
  if [ "$DAEMON_ONLY" = "1" ]; then
    release_install_lock
    exit 0
-@@ -1496,5 +1428,148 @@
-     ;;
- esac
+@@ -1477,5 +1409,148 @@
+ handle_conflicting_install
+ print_launch_instructions
  
 +# Preserve user TOML verbatim except for the supported root update-check setting.
 +disable_startup_update_check() (
