@@ -1,13 +1,13 @@
 {
-  "retrieved_at": "2026-10-02",
+  "retrieved_at": "2026-11-25T17:46:36.970635+00:00",
   "source": "User-supplied original official installer materials; byte identity verified locally",
   "verified_manifest_version": "2.1.285",
   "signing_fingerprint": "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE",
   "auto_update_policy": "unmodified_binary_managed_launcher_DISABLE_UPDATES_1",
   "files": {
     "install.sh": {
-      "bytes": 9704,
-      "sha256": "3a68d3406cf674e17bed1733a4dcf37805e2e47d87417700007d7e1aa766a944",
+      "bytes": 9822,
+      "sha256": "2c5506d110560bf618bbe88f678f2c2a0047c86a9c6585fc84976120b1de0b44",
       "source": "https://claude.ai/install.sh"
     },
     "install.ps1": {
