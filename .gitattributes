@@ -4,3 +4,6 @@ installers/*/*/generated/* -text -whitespace
 installers/*/*/patches/* -text -whitespace
 internal/apps/claude/testdata/manifest.json -text
 internal/apps/claude/testdata/manifest.json.sig -text
+
+# Committed frontend bundle (ADR 0007): CI checks it is reproducible; review the sources.
+internal/httpserver/web/** linguist-generated=true -diff
