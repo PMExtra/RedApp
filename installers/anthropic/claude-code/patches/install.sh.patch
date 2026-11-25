@@ -23,7 +23,27 @@
  DOWNLOAD_DIR="$HOME/.claude/downloads"
  
  # Check for required dependencies
-@@ -144,13 +144,17 @@
+@@ -66,13 +66,17 @@
+     local output="$2"
+     
+     if [ "$DOWNLOADER" = "curl" ]; then
+-        if [ -n "$output" ]; then
++        if [ -n "$output" ] && [ -t 2 ]; then
++            curl -fL --progress-bar -o "$output" "$url"
++        elif [ -n "$output" ]; then
+             curl -fsSL -o "$output" "$url"
+         else
+             curl -fsSL "$url"
+         fi
+     elif [ "$DOWNLOADER" = "wget" ]; then
+-        if [ -n "$output" ]; then
++        if [ -n "$output" ] && [ -t 2 ] && wget --help 2>&1 | grep -q -- --show-progress; then
++            wget -q --show-progress -O "$output" "$url"
++        elif [ -n "$output" ]; then
+             wget -q -O "$output" "$url"
+         else
+             wget -q -O - "$url"
+@@ -144,13 +148,17 @@
      platform="${os}-${arch}"
  fi
  mkdir -p "$DOWNLOAD_DIR"
@@ -46,7 +66,7 @@
      echo "This can happen if the download service is unreachable or not available in your region - see https://www.anthropic.com/supported-countries" >&2
      exit 1
  fi
-@@ -220,11 +224,25 @@
+@@ -220,11 +228,25 @@
  
  chmod +x "$binary_path"
  

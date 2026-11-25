@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 
 from installer_test_support import (
-    InstallerServer, codex_fixture, CODEX_DAEMON_CASES,
+    PROGRESS_FLAGS, InstallerServer, codex_fixture, require, run_with_terminal_stderr, CODEX_DAEMON_CASES,
     prepare_codex_daemon_case, check_codex_daemon_case, CODEX_CONFIG_CASES,
     prepare_codex_config_case, check_codex_config_case,
 )
@@ -53,6 +53,11 @@ def test_shell(directory, application):
                 redirect=True,
             )
             count += 1
+            run_case(
+                root, directory, base, curl, config, seen, *variants[0], False, "latest", "",
+                terminal=True,
+            )
+            count += 1
             for scenario in CODEX_DAEMON_CASES:
                 run_case(root, directory, base, curl, config, seen, *variants[0],
                          False, "0.159.2", "", daemon=scenario)
@@ -70,7 +75,8 @@ def test_shell(directory, application):
 
 
 def run_case(root, directory, base, curl, config, seen, osname, arch, target, npm,
-             legacy, requested, failure, redirect=False, daemon=None, config_case=None):
+             legacy, requested, failure, redirect=False, daemon=None, config_case=None,
+             terminal=False):
     """Run one install.sh case with stubbed tools and verify its outcome and traffic."""
     case = root / (str(len(list(root.iterdir()))) + "-case")
     wrapper = case / "tools"
@@ -83,7 +89,7 @@ def run_case(root, directory, base, curl, config, seen, osname, arch, target, np
         "import sys,json,subprocess\n"
         "from pathlib import Path\n"
         "urls=[a for a in sys.argv[1:] if a.startswith(('http://','https://'))]\n"
-        "with open(" + repr(str(log)) + ", 'a') as f: f.write(json.dumps(urls)+'\\n')\n"
+        "with open(" + repr(str(log)) + ", 'a') as f: f.write(json.dumps(sys.argv[1:])+'\\n')\n"
         "if len(urls)!=1 or not urls[0].startswith(" + repr(base + "/") + "): sys.exit(77)\n"
         "sys.exit(subprocess.call([" + repr(curl) + "]+sys.argv[1:]))\n"
     )
@@ -135,7 +141,10 @@ exit "$REDAPP_DAEMON_RESULT"
         env['CODEX_RELEASE'] = 'latest'
     if config_case:
         prepare_codex_config_case(case, config_case)
-    result = subprocess.run(["sh", str(script)], env=env, capture_output=True, text=True, timeout=30)
+    if terminal:
+        result = run_with_terminal_stderr(["sh", str(script)], env=env, timeout=30)
+    else:
+        result = subprocess.run(["sh", str(script)], env=env, capture_output=True, text=True, timeout=30)
     installed = bindir / "codex"
     if config_case:
         check_codex_config_case(case, result, config_case)
@@ -157,7 +166,14 @@ exit "$REDAPP_DAEMON_RESULT"
         raise AssertionError("自动更新标记未抑制")
     if not log.exists():
         raise AssertionError("没有网络记录")
-    for line in log.read_text().splitlines():
-        urls = json.loads(line)
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    for argv in calls:
+        urls = [a for a in argv if a.startswith(("http://", "https://"))]
         if len(urls) != 1 or not urls[0].startswith(base + "/"):
             raise AssertionError("安装器尝试访问公网: " + repr(urls))
+        # Only the package archive shows progress, and only when stderr is a terminal.
+        archive = urls[0].endswith("/" + config["asset"])
+        require(bool(PROGRESS_FLAGS & set(argv)) == (terminal and archive), (terminal, argv))
+    if terminal:
+        require(any(PROGRESS_FLAGS & set(argv) for argv in calls), calls)
+        require("100" in result.stderr, result.stderr)

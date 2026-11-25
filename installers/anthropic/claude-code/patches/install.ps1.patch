@@ -48,7 +48,55 @@
          Write-Error "Platform $platform not found in manifest"
          exit 1
      }
-@@ -76,35 +81,49 @@
+@@ -54,10 +59,46 @@
+     exit 1
+ }
+ 
++# Invoke-WebRequest progress is very slow on Windows PowerShell 5.1, so stream the file and report progress at most twice a second
++function Save-DownloadWithProgress {
++    param([string]$Uri, [string]$OutFile, [string]$Activity, [int]$TimeoutSec = 0)
++    $ProgressPreference = 'Continue'
++    Add-Type -AssemblyName System.Net.Http
++    $client = New-Object System.Net.Http.HttpClient
++    $client.Timeout = [System.Threading.Timeout]::InfiniteTimeSpan
++    $cancel = New-Object System.Threading.CancellationTokenSource
++    if ($TimeoutSec -gt 0) { $cancel.CancelAfter([TimeSpan]::FromSeconds($TimeoutSec)) }
++    $response = $null; $source = $null; $target = $null; $show = $false
++    try {
++        $response = $client.GetAsync($Uri, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead, $cancel.Token).GetAwaiter().GetResult()
++        $null = $response.EnsureSuccessStatusCode()
++        $total = $response.Content.Headers.ContentLength
++        $show = $total -gt 0 -and -not [Console]::IsOutputRedirected
++        $source = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
++        $target = [System.IO.File]::Create($OutFile)
++        $buffer = New-Object byte[] 81920
++        $done = 0L
++        $clock = [System.Diagnostics.Stopwatch]::StartNew()
++        while (($read = $source.ReadAsync($buffer, 0, $buffer.Length, $cancel.Token).GetAwaiter().GetResult()) -gt 0) {
++            $target.Write($buffer, 0, $read)
++            $done += $read
++            if ($show -and $clock.ElapsedMilliseconds -ge 500) {
++                $clock.Restart()
++                $status = [string]::Format([Globalization.CultureInfo]::InvariantCulture, '{0:0.0} MB / {1:0.0} MB', $done / 1MB, $total / 1MB)
++                Write-Progress -Activity $Activity -Status $status -PercentComplete ([Math]::Min(100, [int](100 * $done / $total)))
++            }
++        }
++    }
++    finally {
++        if ($show) { Write-Progress -Activity $Activity -Completed }
++        foreach ($item in @($target, $source, $response, $client, $cancel)) { if ($null -ne $item) { $item.Dispose() } }
++    }
++}
++
+ # Download and verify
+ $binaryPath = "$DOWNLOAD_DIR\claude-$version-$platform.exe"
+ try {
+-    Invoke-WebRequest -Uri "$DOWNLOAD_BASE_URL/$version/$platform/claude.exe" -OutFile $binaryPath -ErrorAction Stop
++    Save-DownloadWithProgress -Uri "$DOWNLOAD_BASE_URL/$version/$platform/claude.exe" -OutFile $binaryPath -Activity "Downloading Claude Code $version"
+ }
+ catch {
+     Write-Error "Failed to download binary: $_"
+@@ -76,35 +117,49 @@
      exit 1
  }
  

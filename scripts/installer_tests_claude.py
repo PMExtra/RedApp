@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """离线 CLI：无害二进制桩、真实 Bash/curl/wget、受控本地 HTTP；不运行上游二进制。"""
+import json
 import os
 from pathlib import Path
 import shutil
@@ -7,7 +8,7 @@ import subprocess
 import tempfile
 
 
-from installer_test_support import InstallerServer, require
+from installer_test_support import PROGRESS_FLAGS, InstallerServer, require, run_with_terminal_stderr
 
 
 def test_shell(directory, application):
@@ -54,6 +55,10 @@ def test_shell(directory, application):
                 run(downloader=downloader, redirect=True)
             print('Launcher lifecycle: PASS (curl/jq and wget/fallback)')
 
+            for downloader in ['curl', 'wget']:
+                run(downloader=downloader, terminal=True)
+            print('Download progress: PASS (binary only, curl/wget on a terminal)')
+
             # Exercise every actual downloader/parser pair at the failure boundaries.
             for downloader in ['curl', 'wget']:
                 for use_jq in [False, True]:
@@ -79,7 +84,8 @@ def test_shell(directory, application):
 
 def case(root, script, config, seen, base, *, osname='Linux', arch='x86_64',
          musl=False, rosetta=False, platform='linux-x64', requested='', failure='',
-         use_jq=False, downloader='curl', lifecycle=False, takeover='', redirect=False):
+         use_jq=False, downloader='curl', lifecycle=False, takeover='', redirect=False,
+         terminal=False):
     """Run one install.sh case in a restricted PATH and check its effects."""
     work = root / str(len(list(root.iterdir())))
     tools = work / 'tools'
@@ -105,10 +111,14 @@ def case(root, script, config, seen, base, *, osname='Linux', arch='x86_64',
     executable = shutil.which(downloader)
     require(executable)
     download_log = work / 'downloader.log'
+    argv_log = work / 'downloader.jsonl'
     tool(
         downloader,
         '#!/usr/bin/python3\n'
-        'import sys,subprocess\n'
+        'import json,sys,subprocess\n'
+        # Feature probe for the progress option; it cannot reach the network.
+        'if sys.argv[1:]==["--help"]: sys.exit(subprocess.call([' + repr(executable) + ',"--help"]))\n'
+        'with open(' + repr(str(argv_log)) + ', "a") as log: log.write(json.dumps(sys.argv[1:])+"\\n")\n'
         'urls=[x for x in sys.argv[1:] if x.startswith(("http://","https://"))]\n'
         'if len(urls)!=1 or not urls[0].startswith(' + repr(base + '/') + '): sys.exit(97)\n'
         'with open(' + repr(str(download_log)) + ', "a") as log: log.write('
@@ -160,7 +170,10 @@ def case(root, script, config, seen, base, *, osname='Linux', arch='x86_64',
     original_version = destination.read_bytes() if destination.is_file() else None
     seen.clear()
     command = [shutil.which('bash'), '-s', '--'] + ([requested] if requested else [])
-    r = subprocess.run(command, input=script, text=True, capture_output=True, env=env, timeout=20)
+    if terminal:
+        r = run_with_terminal_stderr(command, input=script, env=env, timeout=20)
+    else:
+        r = subprocess.run(command, input=script, text=True, capture_output=True, env=env, timeout=20)
     if failure:
         require(r.returncode != 0, (failure, r.stdout, r.stderr))
         require('Installation complete!' not in r.stdout)
@@ -188,6 +201,14 @@ def case(root, script, config, seen, base, *, osname='Linux', arch='x86_64',
         require(('/latest' in seen) == (requested in ['', 'latest']))
         require(('/stable' in seen) == (requested == 'stable'))
         require(f'/2.1.285/{platform}/claude' in seen, seen)
+    # Only the binary download shows progress, and only when stderr is a terminal.
+    calls = [json.loads(x) for x in argv_log.read_text().splitlines()] if argv_log.exists() else []
+    for argv in calls:
+        binary = any(a.endswith(('/claude', '/claude.zst')) for a in argv)
+        require(bool(PROGRESS_FLAGS & set(argv)) == (terminal and binary), (terminal, argv))
+    if terminal:
+        require(any(PROGRESS_FLAGS & set(argv) for argv in calls), calls)
+        require('100' in r.stderr, r.stderr)
     if lifecycle:
         run = subprocess.run(
             [str(launcher), 'argument with spaces', 'semi;colon', '--flag'],

@@ -111,6 +111,42 @@ function Find-ReleaseAssetMetadata {
     }
 }
 
+# Invoke-WebRequest progress is very slow on Windows PowerShell 5.1, so stream the file and report progress at most twice a second
+function Save-DownloadWithProgress {
+    param([string]$Uri, [string]$OutFile, [string]$Activity, [int]$TimeoutSec = 0)
+    $ProgressPreference = "Continue"
+    Add-Type -AssemblyName System.Net.Http
+    $client = New-Object System.Net.Http.HttpClient
+    $client.Timeout = [System.Threading.Timeout]::InfiniteTimeSpan
+    $cancel = New-Object System.Threading.CancellationTokenSource
+    if ($TimeoutSec -gt 0) { $cancel.CancelAfter([TimeSpan]::FromSeconds($TimeoutSec)) }
+    $response = $null; $source = $null; $target = $null; $show = $false
+    try {
+        $response = $client.GetAsync($Uri, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead, $cancel.Token).GetAwaiter().GetResult()
+        $null = $response.EnsureSuccessStatusCode()
+        $total = $response.Content.Headers.ContentLength
+        $show = $total -gt 0 -and -not [Console]::IsOutputRedirected
+        $source = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+        $target = [System.IO.File]::Create($OutFile)
+        $buffer = New-Object byte[] 81920
+        $done = 0L
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        while (($read = $source.ReadAsync($buffer, 0, $buffer.Length, $cancel.Token).GetAwaiter().GetResult()) -gt 0) {
+            $target.Write($buffer, 0, $read)
+            $done += $read
+            if ($show -and $clock.ElapsedMilliseconds -ge 500) {
+                $clock.Restart()
+                $status = [string]::Format([Globalization.CultureInfo]::InvariantCulture, "{0:0.0} MB / {1:0.0} MB", $done / 1MB, $total / 1MB)
+                Write-Progress -Activity $Activity -Status $status -PercentComplete ([Math]::Min(100, [int](100 * $done / $total)))
+            }
+        }
+    }
+    finally {
+        if ($show) { Write-Progress -Activity $Activity -Completed }
+        foreach ($item in @($target, $source, $response, $client, $cancel)) { if ($null -ne $item) { $item.Dispose() } }
+    }
+}
+
 function Invoke-WebRequestWithFallback {
     param(
         [object]$Metadata,
@@ -118,12 +154,17 @@ function Invoke-WebRequestWithFallback {
         [string]$ExpectedDigest,
         [string]$AssetName,
         [string]$ReleaseVersion,
-        [string]$RequiredManifestAsset
+        [string]$RequiredManifestAsset,
+        [switch]$ShowProgress
     )
     if (-not $Metadata.Url.StartsWith("$ReleasesBaseUri/", [System.StringComparison]::Ordinal)) {
         throw "RedApp: blocked external URL"
     }
-    Invoke-WebRequest -UseBasicParsing -Uri $Metadata.Url -OutFile $OutFile -TimeoutSec $ReleasesAssetTimeoutSec
+    if ($ShowProgress) {
+        Save-DownloadWithProgress -Uri $Metadata.Url -OutFile $OutFile -Activity "Downloading Codex CLI" -TimeoutSec $ReleasesAssetTimeoutSec
+    } else {
+        Invoke-WebRequest -UseBasicParsing -Uri $Metadata.Url -OutFile $OutFile -TimeoutSec $ReleasesAssetTimeoutSec
+    }
     Test-ArchiveDigest -ArchivePath $OutFile -ExpectedDigest $ExpectedDigest
     if (-not [string]::IsNullOrWhiteSpace($RequiredManifestAsset)) {
         $null = Get-PackageArchiveDigest -ManifestPath $OutFile -AssetName $RequiredManifestAsset
@@ -1058,7 +1099,7 @@ try {
             } else {
                 $expectedPackageDigest = $packageMetadata.Sha256
             }
-            Invoke-WebRequestWithFallback -Metadata $packageMetadata -OutFile $archivePath -ExpectedDigest $expectedPackageDigest -AssetName $packageAsset -ReleaseVersion $resolvedVersion
+            Invoke-WebRequestWithFallback -Metadata $packageMetadata -OutFile $archivePath -ExpectedDigest $expectedPackageDigest -AssetName $packageAsset -ReleaseVersion $resolvedVersion -ShowProgress
 
             New-Item -ItemType Directory -Force -Path $releasesDir | Out-Null
             if (Test-Path -LiteralPath $stagingDir) {

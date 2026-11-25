@@ -3,7 +3,9 @@ import hashlib
 import http.server
 import io
 import json
+import os
 from pathlib import Path
+import subprocess
 import tarfile
 import threading
 
@@ -186,6 +188,39 @@ class InstallerServer:
             else:
                 body = None
         return (404, b'', {}) if body is None else (200, body, {})
+
+
+PROGRESS_FLAGS = {'--progress-bar', '--show-progress'}
+
+
+def run_with_terminal_stderr(command, *, timeout, **options):
+    """Run with stderr on a pseudo-terminal so `[ -t 2 ]` holds; stderr returns the terminal output."""
+    import pty  # POSIX only; this module is also imported by the Windows suite
+    master, slave = pty.openpty()
+    chunks = []
+
+    def drain():
+        while True:
+            try:
+                data = os.read(master, 65536)
+            except OSError:
+                return
+            if not data:
+                return
+            chunks.append(data)
+
+    reader = threading.Thread(target=drain)
+    reader.start()
+    try:
+        result = subprocess.run(
+            command, stdout=subprocess.PIPE, stderr=slave, text=True, timeout=timeout, **options
+        )
+    finally:
+        os.close(slave)
+        reader.join(5)
+        os.close(master)
+    result.stderr = b''.join(chunks).decode(errors='replace')
+    return result
 
 
 def file_state(directory):

@@ -118,10 +118,18 @@ download_file() {
   output="$2"
   case "$url" in "$RELEASES_BASE_URL"/*) ;; *) echo "RedApp: blocked external URL" >&2; return 1 ;; esac
   if command -v curl >/dev/null 2>&1; then
+    if [ "${download_progress:-}" = 1 ] && [ -t 2 ]; then
+      curl -fL --progress-bar --connect-timeout "$RELEASES_CONNECT_TIMEOUT" --max-time "$RELEASES_ASSET_TIMEOUT" "$url" -o "$output"
+      return
+    fi
     curl -fsSL --connect-timeout "$RELEASES_CONNECT_TIMEOUT" --max-time "$RELEASES_ASSET_TIMEOUT" "$url" -o "$output"
     return
   fi
   if command -v wget >/dev/null 2>&1; then
+    if [ "${download_progress:-}" = 1 ] && [ -t 2 ] && wget --help 2>&1 | grep -q -- --show-progress; then
+      wget -q --show-progress -t 1 -T "$RELEASES_ASSET_TIMEOUT" -O "$output" "$url"
+      return
+    fi
     wget -q -t 1 -T "$RELEASES_ASSET_TIMEOUT" -O "$output" "$url"
     return
   fi
@@ -1344,7 +1352,9 @@ if ! release_dir_is_complete "$release_dir" "$resolved_version" "$vendor_target"
   else
     expected_digest="$(release_asset_digest "$asset")"
   fi
+  download_progress=1
   download_file_with_fallback "$download_url" "$download_fallback_url" "$archive_path" "$expected_digest" "$asset"
+  download_progress=
 
   step "Installing standalone package to $release_dir"
   if [ "$install_layout" = "package" ]; then

@@ -66,13 +66,17 @@ download_file() {
     local output="$2"
     
     if [ "$DOWNLOADER" = "curl" ]; then
-        if [ -n "$output" ]; then
+        if [ -n "$output" ] && [ -t 2 ]; then
+            curl -fL --progress-bar -o "$output" "$url"
+        elif [ -n "$output" ]; then
             curl -fsSL -o "$output" "$url"
         else
             curl -fsSL "$url"
         fi
     elif [ "$DOWNLOADER" = "wget" ]; then
-        if [ -n "$output" ]; then
+        if [ -n "$output" ] && [ -t 2 ] && wget --help 2>&1 | grep -q -- --show-progress; then
+            wget -q --show-progress -O "$output" "$url"
+        elif [ -n "$output" ]; then
             wget -q -O "$output" "$url"
         else
             wget -q -O - "$url"

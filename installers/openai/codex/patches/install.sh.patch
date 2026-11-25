@@ -24,7 +24,7 @@
  EOF
          exit 0
          ;;
-@@ -115,97 +116,42 @@
+@@ -115,97 +116,50 @@
  download_file() {
    url="$1"
    output="$2"
@@ -39,6 +39,10 @@
 -        curl -fsSL "$url" -o "$output"
 -        ;;
 -    esac
++    if [ "${download_progress:-}" = 1 ] && [ -t 2 ]; then
++      curl -fL --progress-bar --connect-timeout "$RELEASES_CONNECT_TIMEOUT" --max-time "$RELEASES_ASSET_TIMEOUT" "$url" -o "$output"
++      return
++    fi
 +    curl -fsSL --connect-timeout "$RELEASES_CONNECT_TIMEOUT" --max-time "$RELEASES_ASSET_TIMEOUT" "$url" -o "$output"
      return
    fi
@@ -52,6 +56,10 @@
 -        wget -q -O "$output" "$url"
 -        ;;
 -    esac
++    if [ "${download_progress:-}" = 1 ] && [ -t 2 ] && wget --help 2>&1 | grep -q -- --show-progress; then
++      wget -q --show-progress -t 1 -T "$RELEASES_ASSET_TIMEOUT" -O "$output" "$url"
++      return
++    fi
 +    wget -q -t 1 -T "$RELEASES_ASSET_TIMEOUT" -O "$output" "$url"
      return
    fi
@@ -134,7 +142,7 @@
  }
  
  parse_release_metadata() {
-@@ -215,7 +161,8 @@
+@@ -215,7 +169,8 @@
    LC_ALL=C fold -b -w 4096 | LC_ALL=C awk '
      function finish_string(value) {
        if (object_depth == 1 &&
@@ -144,7 +152,7 @@
          print key "\t" value
        } else if (object_depth == asset_object_depth) {
          if (key == "name") {
-@@ -317,10 +264,7 @@
+@@ -317,10 +272,7 @@
  }
  
  release_url_for_asset() {
@@ -156,7 +164,7 @@
  }
  
  releases_url_for_asset() {
-@@ -331,9 +275,7 @@
+@@ -331,9 +283,7 @@
  }
  
  release_metadata_url() {
@@ -167,7 +175,7 @@
  }
  
  parse_downloaded_release_metadata() {
-@@ -359,29 +301,8 @@
+@@ -359,29 +309,8 @@
  }
  
  resolve_release_from_github() {
@@ -199,7 +207,7 @@
  }
  
  resolve_release_from_releases() {
-@@ -416,19 +337,7 @@
+@@ -416,19 +345,7 @@
  resolve_release() {
    normalized_version="$(normalize_version "$RELEASE")"
    validate_version "$normalized_version"
@@ -220,7 +228,7 @@
  }
  
  release_asset_digest_or_empty() {
-@@ -493,10 +402,10 @@
+@@ -493,10 +410,10 @@
  
    if [ "$release_source" = "releases.openai.com" ]; then
      download_url="$(releases_url_for_asset "$asset" "$resolved_version")"
@@ -233,7 +241,7 @@
      fi
    else
      download_url="$(release_url_for_asset "$asset" "$resolved_version")"
-@@ -1293,6 +1202,24 @@
+@@ -1313,6 +1230,24 @@
  release_dir="$RELEASES_DIR/$release_name"
  current_version="$(current_installed_version)"
  
@@ -258,7 +266,17 @@
  if [ -n "$current_version" ] && [ "$current_version" != "$resolved_version" ]; then
    step "Updating Codex CLI from $current_version to $resolved_version"
  elif [ -n "$current_version" ]; then
-@@ -1441,12 +1368,7 @@
+@@ -1417,7 +1352,9 @@
+   else
+     expected_digest="$(release_asset_digest "$asset")"
+   fi
++  download_progress=1
+   download_file_with_fallback "$download_url" "$download_fallback_url" "$archive_path" "$expected_digest" "$asset"
++  download_progress=
+ 
+   step "Installing standalone package to $release_dir"
+   if [ "$install_layout" = "package" ]; then
+@@ -1461,12 +1398,7 @@
    # Do not publish history for a migration until Rust has committed the cutover.
    update_current_link "$release_dir"
  fi
@@ -272,7 +290,7 @@
  if [ "$DAEMON_ONLY" = "1" ]; then
    release_install_lock
    exit 0
-@@ -1476,5 +1398,148 @@
+@@ -1496,5 +1428,148 @@
      ;;
  esac
  

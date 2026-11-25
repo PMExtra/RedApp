@@ -14,9 +14,56 @@
  $ReleasesMetadataTimeoutSec = 30
  $ReleasesAssetTimeoutSec = 300
  
-@@ -119,39 +120,13 @@
+@@ -110,6 +111,42 @@
+     }
+ }
+ 
++# Invoke-WebRequest progress is very slow on Windows PowerShell 5.1, so stream the file and report progress at most twice a second
++function Save-DownloadWithProgress {
++    param([string]$Uri, [string]$OutFile, [string]$Activity, [int]$TimeoutSec = 0)
++    $ProgressPreference = "Continue"
++    Add-Type -AssemblyName System.Net.Http
++    $client = New-Object System.Net.Http.HttpClient
++    $client.Timeout = [System.Threading.Timeout]::InfiniteTimeSpan
++    $cancel = New-Object System.Threading.CancellationTokenSource
++    if ($TimeoutSec -gt 0) { $cancel.CancelAfter([TimeSpan]::FromSeconds($TimeoutSec)) }
++    $response = $null; $source = $null; $target = $null; $show = $false
++    try {
++        $response = $client.GetAsync($Uri, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead, $cancel.Token).GetAwaiter().GetResult()
++        $null = $response.EnsureSuccessStatusCode()
++        $total = $response.Content.Headers.ContentLength
++        $show = $total -gt 0 -and -not [Console]::IsOutputRedirected
++        $source = $response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
++        $target = [System.IO.File]::Create($OutFile)
++        $buffer = New-Object byte[] 81920
++        $done = 0L
++        $clock = [System.Diagnostics.Stopwatch]::StartNew()
++        while (($read = $source.ReadAsync($buffer, 0, $buffer.Length, $cancel.Token).GetAwaiter().GetResult()) -gt 0) {
++            $target.Write($buffer, 0, $read)
++            $done += $read
++            if ($show -and $clock.ElapsedMilliseconds -ge 500) {
++                $clock.Restart()
++                $status = [string]::Format([Globalization.CultureInfo]::InvariantCulture, "{0:0.0} MB / {1:0.0} MB", $done / 1MB, $total / 1MB)
++                Write-Progress -Activity $Activity -Status $status -PercentComplete ([Math]::Min(100, [int](100 * $done / $total)))
++            }
++        }
++    }
++    finally {
++        if ($show) { Write-Progress -Activity $Activity -Completed }
++        foreach ($item in @($target, $source, $response, $client, $cancel)) { if ($null -ne $item) { $item.Dispose() } }
++    }
++}
++
+ function Invoke-WebRequestWithFallback {
+     param(
+         [object]$Metadata,
+@@ -117,41 +154,20 @@
+         [string]$ExpectedDigest,
+         [string]$AssetName,
          [string]$ReleaseVersion,
-         [string]$RequiredManifestAsset
+-        [string]$RequiredManifestAsset
++        [string]$RequiredManifestAsset,
++        [switch]$ShowProgress
      )
 -
 -    try {
@@ -54,14 +101,18 @@
 +    if (-not $Metadata.Url.StartsWith("$ReleasesBaseUri/", [System.StringComparison]::Ordinal)) {
 +        throw "RedApp: blocked external URL"
 +    }
-+    Invoke-WebRequest -UseBasicParsing -Uri $Metadata.Url -OutFile $OutFile -TimeoutSec $ReleasesAssetTimeoutSec
++    if ($ShowProgress) {
++        Save-DownloadWithProgress -Uri $Metadata.Url -OutFile $OutFile -Activity "Downloading Codex CLI" -TimeoutSec $ReleasesAssetTimeoutSec
++    } else {
++        Invoke-WebRequest -UseBasicParsing -Uri $Metadata.Url -OutFile $OutFile -TimeoutSec $ReleasesAssetTimeoutSec
++    }
 +    Test-ArchiveDigest -ArchivePath $OutFile -ExpectedDigest $ExpectedDigest
 +    if (-not [string]::IsNullOrWhiteSpace($RequiredManifestAsset)) {
 +        $null = Get-PackageArchiveDigest -ManifestPath $OutFile -AssetName $RequiredManifestAsset
      }
  }
  
-@@ -172,9 +147,9 @@
+@@ -172,9 +188,9 @@
      $checksumFallbackUrl = $null
      if ($ResolvedRelease.Source -eq "ReleasesOpenAICom") {
          $packageUrl = "$ReleasesBaseUri/releases/$version/$packageAsset"
@@ -73,7 +124,7 @@
      }
  
      $packageMetadata = Find-ReleaseAssetMetadata -AssetName $packageAsset -ReleaseMetadata $releaseMetadata -Url $packageUrl -FallbackUrl $packageFallbackUrl
-@@ -193,7 +168,7 @@
+@@ -193,7 +209,7 @@
      $packageFallbackUrl = $null
      if ($ResolvedRelease.Source -eq "ReleasesOpenAICom") {
          $packageUrl = "$ReleasesBaseUri/releases/$version/$packageAsset"
@@ -82,7 +133,7 @@
      }
      $packageMetadata = Find-ReleaseAssetMetadata -AssetName $packageAsset -ReleaseMetadata $releaseMetadata -Url $packageUrl -FallbackUrl $packageFallbackUrl
      if ($null -eq $packageMetadata) {
-@@ -343,31 +318,7 @@
+@@ -343,31 +359,7 @@
      param(
          [string]$NormalizedVersion
      )
@@ -115,7 +166,7 @@
  }
  
  function Resolve-ReleaseFromReleases {
-@@ -402,16 +353,9 @@
+@@ -402,16 +394,9 @@
  function Resolve-Release {
      $normalizedVersion = Normalize-Version -RawVersion $Release
      Assert-ValidReleaseVersion -Version $normalizedVersion
@@ -135,7 +186,7 @@
  }
  
  function Get-VersionFromBinary {
-@@ -993,6 +937,17 @@
+@@ -1003,6 +988,17 @@
  $releaseName = "$resolvedVersion-$target"
  $releaseDir = Join-Path $releasesDir $releaseName
  
@@ -153,7 +204,7 @@
  if (-not [string]::IsNullOrWhiteSpace($currentVersion) -and $currentVersion -ne $resolvedVersion) {
      Write-Step "Updating Codex CLI from $currentVersion to $resolvedVersion"
  } elseif (-not [string]::IsNullOrWhiteSpace($currentVersion)) {
-@@ -1015,6 +970,7 @@
+@@ -1025,6 +1021,7 @@
  $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("codex-install-" + [System.Guid]::NewGuid().ToString("N"))
  New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
  $guardRejected = $false
@@ -161,7 +212,7 @@
  
  try {
      Invoke-WithInstallLock -LockPath $lockPath -Script {
-@@ -1050,6 +1006,7 @@
+@@ -1060,6 +1057,7 @@
              }
          }
          if ($env:CODEX_INSTALL_IF_LATEST -eq "1" -or $env:CODEX_INSTALL_IF_CURRENT -eq "1" -or $oldUpdaterParent) {
@@ -169,7 +220,16 @@
              $previousRelease = if ($oldUpdaterParent -and (Test-Path -LiteralPath $autoUpdateVersion)) {
                  [System.IO.File]::ReadAllText($autoUpdateVersion)
              } else {
-@@ -1168,14 +1125,8 @@
+@@ -1101,7 +1099,7 @@
+             } else {
+                 $expectedPackageDigest = $packageMetadata.Sha256
+             }
+-            Invoke-WebRequestWithFallback -Metadata $packageMetadata -OutFile $archivePath -ExpectedDigest $expectedPackageDigest -AssetName $packageAsset -ReleaseVersion $resolvedVersion
++            Invoke-WebRequestWithFallback -Metadata $packageMetadata -OutFile $archivePath -ExpectedDigest $expectedPackageDigest -AssetName $packageAsset -ReleaseVersion $resolvedVersion -ShowProgress
+ 
+             New-Item -ItemType Directory -Force -Path $releasesDir | Out-Null
+             if (Test-Path -LiteralPath $stagingDir) {
+@@ -1178,14 +1176,8 @@
                  Write-WarningStep "Could not record daemon selection; pruning will be skipped."
              }
          }
@@ -186,7 +246,7 @@
          }
  
          if ($daemonOnly) { return }
-@@ -1247,6 +1198,151 @@
+@@ -1257,6 +1249,151 @@
  
  Write-Step "Current PowerShell session: codex"
  Write-Step "Future PowerShell windows: open a new PowerShell window and run: codex"
