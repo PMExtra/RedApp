@@ -138,7 +138,7 @@ def test_windows(apps, installer_root, directory=None, requested_shell=None):
         fixtures = {}
         for app in apps:
             provider = app['installer_validator']
-            for version in (['0.159.2', '0.159.3'] if provider == 'codex' else ['2.1.285']):
+            for version in (['0.159.1', '0.159.2', '0.159.3'] if provider == 'codex' else ['2.1.285']):
                 if (provider, version) not in fixtures:
                     fixtures[provider, version] = compile_fixture(root, provider, version)
         for engine in engines:
@@ -401,7 +401,7 @@ def codex_case(root, script, fixtures, shell, server, legacy=False, requested='l
         marker.parent.mkdir(parents=True)
         marker.write_text('old version')
     if daemon:
-        prepare_codex_daemon_case(home, env, daemon, fixtures['codex', '0.159.3'])
+        prepare_codex_daemon_case(home, env, daemon, {v: fixtures['codex', v] for v in ('0.159.1', '0.159.3')})
     if daemon and daemon.startswith('latest-'):
         requested = 'latest'
     if config_case:

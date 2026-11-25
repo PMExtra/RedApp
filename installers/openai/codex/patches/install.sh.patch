@@ -290,7 +290,7 @@
  if [ "$DAEMON_ONLY" = "1" ]; then
    release_install_lock
    exit 0
-@@ -1477,5 +1409,148 @@
+@@ -1477,5 +1409,152 @@
  handle_conflicting_install
  print_launch_instructions
  
@@ -399,34 +399,38 @@
 +  fi
 +  # A passive probe avoids restarting an already matching running daemon.
 +  # Missing/unsupported status is not evidence that synchronization succeeded.
++  probed=false
 +  if daemon_status="$("$installed_codex" app-server daemon version 2>/dev/null)" &&
 +     daemon_metadata="$(printf '%s\n' "$daemon_status" | parse_release_metadata)"; then
-+    if [ "$RELEASE" = "latest" ]; then
-+      if ! printf '%s\n' "$daemon_metadata" | awk -F '\t' -v expected="$resolved_version" '
-+        $1 == "managedCodexVersion" || $1 == "appServerVersion" {
-+          if ($2 !~ /^[0-9]+\.[0-9]+\.[0-9]+$/) exit 2
-+          n++; split($2, v, "."); split(expected, e, ".")
-+          for (j=1; j<=3; j++) { if (v[j]+0 > e[j]+0) exit 1; if (v[j]+0 < e[j]+0) break }
-+        }
-+        END { if (!n) exit 2 }
-+      '; then
-+        warn "CLI $resolved_version installed; daemon version is newer or cannot be safely compared. Keeping its current package; scheduled official updates are disabled. Select an explicit release to replace it."
-+        return 0
-+      fi
-+    fi
-+    if printf '%s\n' "$daemon_metadata" |
-+      awk -F '\t' -v expected="$resolved_version" '
-+        $1 == "backend" { backend = $2 }
-+        $1 == "managedCodexVersion" { installed = $2 }
-+        $1 == "appServerVersion" { running = $2 }
-+        END { exit !(backend == "pid" && installed == expected && running == expected) }
-+      '; then
-+      step "Existing app-server daemon already matches Codex $resolved_version"
++    probed=true
++  else
++    # The probe only reaches a running daemon; a stopped one starts from its selected package.
++    package_version="$(version_from_binary "$CODEX_HOME_DIR/packages/app-server-daemon/current/bin/codex" || true)"
++    daemon_metadata=""
++    [ -z "$package_version" ] || daemon_metadata="$(printf 'managedCodexVersion\t%s' "$package_version")"
++  fi
++  if [ "$RELEASE" = "latest" ]; then
++    if ! printf '%s\n' "$daemon_metadata" | awk -F '\t' -v expected="$resolved_version" '
++      $1 == "managedCodexVersion" || $1 == "appServerVersion" {
++        if ($2 !~ /^[0-9]+\.[0-9]+\.[0-9]+$/) exit 2
++        n++; split($2, v, "."); split(expected, e, ".")
++        for (j=1; j<=3; j++) { if (v[j]+0 > e[j]+0) exit 1; if (v[j]+0 < e[j]+0) break }
++      }
++      END { if (!n) exit 2 }
++    '; then
++      warn "CLI $resolved_version installed; daemon version is newer or cannot be safely compared. Keeping its current package; scheduled official updates are disabled. Select an explicit release to replace it."
 +      return 0
 +    fi
-+  elif [ "$RELEASE" = "latest" ]; then
-+    echo "RedApp: installation partially completed: daemon version could not be checked; refusing a possible downgrade. Retry or select an explicit release." >&2
-+    return 1
++  fi
++  if [ "$probed" = "true" ] && printf '%s\n' "$daemon_metadata" |
++    awk -F '\t' -v expected="$resolved_version" '
++      $1 == "backend" { backend = $2 }
++      $1 == "managedCodexVersion" { installed = $2 }
++      $1 == "appServerVersion" { running = $2 }
++      END { exit !(backend == "pid" && installed == expected && running == expected) }
++    '; then
++    step "Existing app-server daemon already matches Codex $resolved_version"
++    return 0
 +  fi
 +  warn "Synchronizing existing app-server daemon from the installed CLI; a running daemon will restart and active sessions may be interrupted."
 +  if ! "$installed_codex" app-server daemon update --from-cli --yes </dev/null; then

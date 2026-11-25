@@ -235,12 +235,28 @@ def file_state(directory):
 CODEX_DAEMON_CASES = (
     'absent', 'existing', 'legacy', 'matching', 'stopped', 'downgrade',
     'failed', 'unsupported', 'malformed', 'external', 'daemon-only', 'deferred', 'background',
-    'latest-newer', 'latest-matching', 'latest-stopped', 'latest-legacy-newer',
+    'latest-newer', 'latest-matching', 'latest-stopped', 'latest-stopped-newer',
+    'latest-unknown', 'latest-legacy-newer',
 )
 
+# A stopped daemon cannot answer the passive probe; its selected package version decides latest.
+CODEX_STOPPED_DAEMON_PACKAGES = {'latest-stopped': '0.159.1', 'latest-stopped-newer': '0.159.3'}
 
-def prepare_codex_daemon_case(home, env, scenario, existing_binary=None):
-    """Create only inert daemon state; lifecycle commands run in fixture binaries."""
+
+def codex_fixture_binary(directory, version, binaries=None):
+    """Write a passive Codex binary that only reports its version."""
+    directory.mkdir(parents=True, exist_ok=True)
+    binary = directory / ('codex.exe' if binaries else 'codex')
+    binary.write_bytes(binaries[version] if binaries else
+                       f"#!/bin/sh\necho 'codex-cli {version}'\n".encode())
+    binary.chmod(0o755)
+
+
+def prepare_codex_daemon_case(home, env, scenario, binaries=None):
+    """Create only inert daemon state; lifecycle commands run in fixture binaries.
+
+    binaries maps versions to native fixture executables; without it Shell stubs are written.
+    """
     daemon_root = home / 'codex-home/packages/app-server-daemon'
     state = home / 'codex-home/app-server-daemon'
     if scenario in ('legacy', 'daemon-only', 'deferred', 'latest-legacy-newer'):
@@ -250,26 +266,24 @@ def prepare_codex_daemon_case(home, env, scenario, existing_binary=None):
     elif scenario != 'absent':
         (daemon_root / 'current').mkdir(parents=True)
     if scenario == 'latest-legacy-newer':
-        prior = home / 'codex-home/packages/standalone/current/bin'
-        prior.mkdir(parents=True)
-        binary = prior / ('codex.exe' if existing_binary else 'codex')
-        binary.write_bytes(existing_binary or b"#!/bin/sh\necho 'codex-cli 0.159.3'\n")
-        binary.chmod(0o755)
+        codex_fixture_binary(home / 'codex-home/packages/standalone/current/bin', '0.159.3', binaries)
+    if scenario in CODEX_STOPPED_DAEMON_PACKAGES:
+        codex_fixture_binary(daemon_root / 'current/bin', CODEX_STOPPED_DAEMON_PACKAGES[scenario], binaries)
+    # The official probe exits non-zero without output when no daemon answers its control socket.
+    stopped = scenario in ('stopped', 'latest-unknown') or scenario in CODEX_STOPPED_DAEMON_PACKAGES
     version = '0.159.2' if scenario in ('matching', 'malformed', 'external', 'latest-matching') else (
         '0.159.3' if scenario in ('downgrade', 'latest-newer') else '0.159.1'
     )
-    status = {'backend': 'external' if scenario == 'external' else 'pid',
-              'managedCodexVersion': version}
-    if scenario not in ('stopped', 'latest-stopped'):
-        status['appServerVersion'] = version
+    status = json.dumps({'backend': 'external' if scenario == 'external' else 'pid',
+                         'managedCodexVersion': version, 'appServerVersion': version})
     if scenario not in ('absent', 'daemon-only', 'deferred', 'background'):
         daemon_root.mkdir(parents=True, exist_ok=True)
         (daemon_root / 'auto-update-version').write_text('eligible')
     env.update(
         REDAPP_DAEMON_LOG=str(home / 'daemon-calls.txt'),
-        REDAPP_DAEMON_STATUS=json.dumps(status)[:-1] if scenario == 'malformed' else json.dumps(status),
+        REDAPP_DAEMON_STATUS='' if stopped else (status[:-1] if scenario == 'malformed' else status),
         REDAPP_DAEMON_RESULT='42' if scenario in ('failed', 'unsupported') else '0',
-        REDAPP_DAEMON_PROBE_RESULT='2' if scenario == 'unsupported' else '0',
+        REDAPP_DAEMON_PROBE_RESULT='2' if scenario == 'unsupported' else ('1' if stopped else '0'),
     )
     if scenario in ('daemon-only', 'deferred'):
         env['CODEX_INSTALL_DAEMON_ONLY'] = '1'
@@ -290,7 +304,8 @@ def check_codex_daemon_case(home, result, scenario, executable):
         require(prior.is_dir() and not executable.exists(), 'legacy selection must remain untouched')
         return
     skipped = scenario in ('absent', 'daemon-only', 'deferred', 'background')
-    update = not skipped and scenario not in ('matching', 'latest-matching', 'latest-newer')
+    kept = scenario in ('latest-newer', 'latest-stopped-newer', 'latest-unknown')
+    update = not skipped and not kept and scenario not in ('matching', 'latest-matching')
     expected = [] if skipped else [str(executable), 'app-server daemon version']
     if update:
         expected += [str(executable), 'app-server daemon update --from-cli --yes']
@@ -307,6 +322,8 @@ def check_codex_daemon_case(home, result, scenario, executable):
         require('installed successfully' not in output, output)
     if update:
         require('active sessions may be interrupted' in output, output)
+    if kept:
+        require('Keeping its current package' in output, output)
     if not skipped:
         require(not (home / 'codex-home/packages/app-server-daemon/auto-update-version').exists())
         require(executable.exists(), 'CLI must remain installed after daemon sync')

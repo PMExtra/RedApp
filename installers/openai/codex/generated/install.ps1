@@ -1367,7 +1367,9 @@ if (-not $backgroundInstall -and -not $deferSelection) {
         $keepDaemon = $false
         if ($Release -eq "latest") {
             if ($null -eq $daemonStatus) {
-                throw "RedApp: installation partially completed: daemon version could not be checked; refusing a possible downgrade. Retry or select an explicit release."
+                # The probe only reaches a running daemon; a stopped one starts from its selected package.
+                $packageVersion = Get-VersionFromBinary -CodexPath (Join-Path $codexHome "packages/app-server-daemon/current/bin/codex.exe")
+                $daemonStatus = [pscustomobject]@{ managedCodexVersion = $packageVersion }
             }
             $knownVersions = @('managedCodexVersion', 'appServerVersion') | ForEach-Object {
                 $property = $daemonStatus.PSObject.Properties[$_]

@@ -246,7 +246,7 @@
          }
  
          if ($daemonOnly) { return }
-@@ -1257,6 +1249,151 @@
+@@ -1257,6 +1249,153 @@
  
  Write-Step "Current PowerShell session: codex"
  Write-Step "Future PowerShell windows: open a new PowerShell window and run: codex"
@@ -368,7 +368,9 @@
 +        $keepDaemon = $false
 +        if ($Release -eq "latest") {
 +            if ($null -eq $daemonStatus) {
-+                throw "RedApp: installation partially completed: daemon version could not be checked; refusing a possible downgrade. Retry or select an explicit release."
++                # The probe only reaches a running daemon; a stopped one starts from its selected package.
++                $packageVersion = Get-VersionFromBinary -CodexPath (Join-Path $codexHome "packages/app-server-daemon/current/bin/codex.exe")
++                $daemonStatus = [pscustomobject]@{ managedCodexVersion = $packageVersion }
 +            }
 +            $knownVersions = @('managedCodexVersion', 'appServerVersion') | ForEach-Object {
 +                $property = $daemonStatus.PSObject.Properties[$_]
